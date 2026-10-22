@@ -118,6 +118,14 @@ with seed $E^{00}_0 = e^{-\alpha\beta/\gamma\,(A_x-B_x)^2}$ (and 0
 for $t \neq 0$). Same recursion for $j$. The 3D version is a tensor
 product of three 1D recursions.
 
+The general Bloch and reciprocal-weighted per-cell kernels omit the reciprocal
+loop for a primitive whose computed radial prefactor is exactly zero, including
+floating-point underflow. This is not a positive screening threshold: nonzero
+subnormal contributions and the physical pair domain remain unchanged. The
+shortcut requires finite phase and Hermite-product bounds; extreme inputs that
+could otherwise form `0 * inf` retain the original arithmetic. This local work
+reduction does not establish the full one-electron cost target.
+
 The libint convention is **real spherical harmonics** (with the
 exception that $l = 0$ omits $Y_{00}$, see
 `_real_sph_harm` notes in `aux_basis.py`). The McMurchie-Davidson

@@ -83,6 +83,12 @@ def test_basis_library_resolution_order(tmp_path, monkeypatch):
         (candidate / "basis").mkdir(parents=True)
         for name in ("def2-svp.g94", "6-311+g3df2p.g94", "pob-tzvp-rev2.g94"):
             (candidate / "basis" / name).write_text("canary\n")
+    # An overlay is selected only with the content receipt setup writes (#409).
+    from vibeqc import _basis_overlay as guard
+
+    guard.prepare_overlay_content(
+        overlay, bundled, sorted(p.name for p in (bundled / "basis").iterdir())
+    )
 
     # 2. Build overlay beats the bundled + legacy copies ...
     assert _vq._resolve_basis_library(package_dir) == overlay

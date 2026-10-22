@@ -22,6 +22,38 @@ understand it.
 The `job.spec` payload is declarative data, never code: running a
 container never executes an embedded script (QVF spec § 5.9).
 
+A single job may name its input geometry with `structure_ref` on the section
+or in its payload; the section reference takes precedence. The input geometry,
+drawing members, metadata and extension declarations remain in the archive.
+Results receive their own structure and section references, and the result
+geometry is the default view. The original `job.spec` section and payload stay
+unchanged, including when execution is forced again.
+
+A legacy job without either reference must have exactly one structure. It keeps
+that structure's id for the latest result and stores the submitted geometry as
+`attachment.input_structure_*` members of the run record. It is not silently
+converted into an ambiguous job with several structures. Prior canonical result
+sections are replaced in this legacy mode; their old bytes and run history remain
+in the archive, without associating old properties with the new geometry.
+Colliding result paths and understood references are relocated; conflicting
+extension declarations or
+opaque vendor references that cannot be relocated safely cause an atomic
+rollback to the submitted archive.
+
+`basis` and `functional` follow QVF spec § 5.9. A name is a nonempty string.
+`null` states that the method takes no such input: semiempirical,
+tight-binding (xTB, DFTB) and MACE jobs record `"basis": null` and
+`"functional": null`, and Hartree-Fock and correlated wavefunction jobs record
+`"functional": null`. An absent key leaves the choice to the engine. The
+runners and `write_pending_qvf` write these spellings and never the empty
+string. Reading a container, `vibeqc run` treats `null`, an absent key and the
+deprecated `""` that earlier versions wrote alike: it supplies no basis set or
+functional of its own. A container stamped with the withdrawn `qvf_version: 2`
+is read as version 1 with a `W_VERSION_WITHDRAWN` warning and is rewritten as
+version 1 when it is updated in place; any other version is refused. Explicit
+job specs passed to the low-level writer are preserved verbatim, except that
+an empty `basis` or `functional` is written as `null`.
+
 ## Build a pending container
 
 ```python
@@ -32,15 +64,89 @@ vq.write_pending_qvf(
     mol, "job",
     method="rhf", basis="sto-3g",
     tasks=["single_point"],            # or ["optimize", "hessian"]
-    options={"perf_log": True},        # any run_job/run_periodic_job kwarg
+    options={"perf_log": True},        # supported JSON engine options
 )
 # -> job.qvf, run_status "pending"
 ```
 
 Periodic systems work the same way - pass a `PeriodicSystem` (its
 `charge`/`multiplicity` are recorded) plus `kpoints=[n1, n2, n3]`.
-`options` takes any keyword the target runner understands; unknown
-keys are refused at run time rather than silently dropped.
+`options` uses the target runner's keyword names. Values must have a supported
+JSON representation; keyword recognition alone does not make arbitrary Python
+runtime objects portable. Unknown keys and unsupported representations are
+refused at run time rather than silently dropped.
+
+### Structured engine options
+
+Supply option-class arguments as JSON objects, for example:
+
+```python
+options={"rhf_options": {
+    "use_diis": True, "damping": 0.0,
+    "max_iter": 120, "conv_tol_energy": 1e-8,
+}}
+```
+
+The engine reconstructs its options object before calling the runner. Omitted
+fields retain that class's defaults; explicit zero, false and null values are
+not replaced by defaults. Supported records are `rhf_options`, `uhf_options`,
+`rks_options`, `uks_options`, `rohf_options`, `roks_options`, `mp2_options`,
+`ump2_options`, `ccsd_options`, `cisd_options`, `cc3_options`, `ccsdt_options`,
+`selected_ci_options`, `dmrg_options`, `v2rdm_options`,
+`transcorrelated_options`, `casci_options`, `caspt2_options`, `nevpt2_options`,
+`casscf_options`, `dlpno_options`, `dlpno_ccsd_options`, `mlip_options`,
+`ccm_options`, `thermo_options`, periodic `smearing`, and
+`opentrustregion_options` when that constructor is available in the installed
+runtime.
+
+`dlpno_ccsd_options` is the `LocalCCSDOptions` of the local DLPNO-CCSD and
+DLPNO-CCSD(T) solver that `run_job` uses (the O(N^6) correctness pilot stays a
+Python-API option). A container states its local triples algorithm with
+`"triples_mode"`: `"local"` (DLPNO-(T0)), `"t1"` (the default) or `"exact"`.
+Its enumerated text fields accept only the values the molecular route
+implements, so a misspelling is refused at its path rather than read as some
+other choice: `triples_mode`, `localise` (`"boys"` or `"none"`),
+`residual_domain`, `domain_criterion` and `pno_norm` (canonical names). Because
+`run_job` refuses the top-level `dlpno_thresholds` beside an options object,
+`dlpno_options` and `dlpno_ccsd_options` records may name their preset in a
+reserved `"dlpno_thresholds"` key, the JSON form of
+`options_from_dlpno_thresholds`: the preset is applied first and the record's
+own fields after it, so an explicit threshold labels the result `custom`.
+
+```python
+options={"dlpno_ccsd_options": {"dlpno_thresholds": "tight",
+                                "triples_mode": "t1"},
+         "frozen_core": "chemical"}
+```
+
+The run record's `system` attachment then carries `dlpno_triples_mode` and
+`dlpno_triples_algorithm`, the algorithm that ran.
+
+Native enum fields use their public member names as strings (case insensitive),
+for example `"initial_guess": "SAD"` or `"scf_accelerator": "DIIS"`.
+Nested option objects such as `"grid": {"n_radial": 75}` and
+`"davidson": {"max_iter": 50}` are reconstructed recursively. Typed numeric
+arrays, including level-shift schedules, are validated element by element.
+Python option records retain their constructor validation, including smearing
+aliases and CCSD frozen-core explicitness. Boolean values are not numbers here;
+`"max_iter": true`, unknown fields and non-finite numbers are errors that name
+the full option path.
+
+This is an engine-specific encoding inside QVF's existing open `options`
+object, not a new QVF schema version. It does not deserialize arbitrary classes.
+Native matrices, nonempty native object arrays (such as explicit ECP objects),
+callbacks, CASSCF `pt2` objects, and structured `band_structure`,
+`dft_plus_u`, `read_from`, `dispersion`, `citype`, `triples` or
+`dlpno_thresholds` objects currently receive an explicit refusal.
+Use the Python runner API for those runtime objects. Scalar shorthand forms
+remain available where the runner supports them. Existing mapping APIs such as
+`geom_opt_options` and `solvent`, and fragment atom-index lists, keep their
+normal consumer semantics (`fragments` must contain lists of integer atom
+indices; `dft_plus_u=[]` remains a no-site request). Local Python `run_container(..., **overrides)`
+values remain ordinary runner objects, outside the serialized spec.
+
+An option-conversion refusal occurs before SCF and settles an attempted
+in-place execution as `failed`, preserving the original `job.spec` bytes.
 
 ## Run it locally
 
@@ -164,3 +270,26 @@ Runnable companions live under the checkout path
 
 Format details: [QVF design](../design_qvf_format.md) and the QVF
 specification ([published QVF spec](../qvf/spec.md), § 3.2 and § 5.9).
+
+
+### Explicit molecular symmetry source
+
+Experimental molecular RHF/UHF single points can request the source-qualified
+fixed-orbit path through the `symmetry_reduction` option. It carries explicit
+operations, screening tolerance, omission cap, budget and execution policy.
+The [shared symmetry reference](../developer_shared_symmetry.md#job-and-qvf-source-requests)
+describes the strict record and its constructor helper. Every execution
+qualifies a fresh integral producer; a saved audit or source hash cannot
+replace that check. Keep convergence/guess controls in the existing method
+option record. Correlation, derivatives, fitting and periodic calculations
+require their own source admission.
+
+
+With hierarchical screening, `executor="ordered"` uses native omission bounds
+to qualify the fixed mask without integral audit reads. It evaluates all
+retained ordered tiles during SCF. `executor="auto"` with `expected_builds`
+1 or 2 also takes this path and skips unprofitable calibration; larger
+estimates keep measured routing and the retained-source audit. This is an
+experimental molecular execution choice, not a new symmetry assumption
+about the electronic state or a guaranteed speedup. Version 2 source hashes
+separate the actual integral mask from qualification and cost evidence.

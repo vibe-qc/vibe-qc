@@ -4,8 +4,7 @@ GPAW is today's plane-wave-limit oracle: 28 systems at r2SCAN with
 converged cutoff, k-mesh and box, and with the free-atom convention
 problem solved (aspherical, spin-polarised, Hund where magmom > 0, plus
 damped-mixer branches for K / Ca / Br). That work is validated and
-recorded in ``handovers/HANDOVER_GPAW_PW_REFERENCE.md`` and
-``studies/pw_limit_atomization/CONSOLIDATED.md``.
+recorded in ``studies/pw_limit_atomization/CONSOLIDATED.md``.
 
 Why this is a stub
 ------------------

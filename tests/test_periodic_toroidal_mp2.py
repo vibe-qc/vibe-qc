@@ -110,8 +110,13 @@ def test_toroidal_mp2_sanity():
     "route_name",
     ("canonical", "pairs", "dlpno-mp2", "dlpno-ccsd", "dlpno-ccsd(t)"),
 )
-def test_toroidal_routes_force_periodic_ewald_hf(monkeypatch, route_name):
-    """Every toroidal post-HF API requires the periodic Ewald HF branch."""
+def test_toroidal_routes_run_bvk_gamma_hf(monkeypatch, route_name):
+    """Every toroidal post-HF API runs its HF on the GDF Hamiltonian at Gamma.
+
+    Until #566 they forced the Ewald-J / molecular-limit-K branch of
+    ``run_rhf_periodic_gamma_gdf``, whose exchange is not invariant under a
+    translation of the torus.
+    """
     import vibeqc.periodic_rhf_gdf as rhf_gdf
     from vibeqc.periodic_toroidal_mp2 import (
         toroidal_dlpno_ccsd,
@@ -126,26 +131,63 @@ def test_toroidal_routes_force_periodic_ewald_hf(monkeypatch, route_name):
         "dlpno-ccsd": toroidal_dlpno_ccsd,
         "dlpno-ccsd(t)": toroidal_dlpno_ccsd_t,
     }
-    captured_kwargs = []
+    captured = []
 
     class _StopAfterRouting(Exception):
         pass
 
-    def _capture_rhf_call(*args, **kwargs):
-        captured_kwargs.append(kwargs)
+    def _capture_bulk_call(*args, **kwargs):
+        captured.append((args, kwargs))
         raise _StopAfterRouting
 
-    monkeypatch.setattr(
-        rhf_gdf,
-        "run_rhf_periodic_gamma_gdf",
-        _capture_rhf_call,
-    )
+    def _refuse_legacy_route(*args, **kwargs):
+        raise AssertionError("toroidal HF must not use the legacy Gamma driver")
+
+    monkeypatch.setattr(rhf_gdf, "_bulk_gamma_k_gdf", _capture_bulk_call)
+    monkeypatch.setattr(rhf_gdf, "run_rhf_periodic_gamma_gdf", _refuse_legacy_route)
+    options = vq.PeriodicRHFOptions()
+    options.max_iter = 77
 
     with pytest.raises(_StopAfterRouting):
-        routes[route_name](_h2_chain_cell(), "sto-3g", (1, 1, 3))
+        routes[route_name](_h2_chain_cell(), "sto-3g", (1, 1, 3), rhf_options=options)
 
-    assert len(captured_kwargs) == 1
-    assert captured_kwargs[0]["_force_ewald_jk"] is True
+    assert len(captured) == 1
+    args, kwargs = captured[0]
+    assert len(args[0].unit_cell) == 6
+    assert args[2] is options
+    assert kwargs["aux_basis"] == "def2-svp-jk"
+
+
+@pytest.mark.parametrize("n_cells", (3, 4))
+def test_toroidal_hf_is_the_unit_cell_kmesh_hf(n_cells):
+    """The supercell HF is the unit-cell KRHF on the N-point mesh (BvK).
+
+    Its density commutes with the one-cell translation of the torus. The
+    molecular-limit exchange used before #566 broke both: K changed by
+    3.2e-3 (N = 3) and 4.4e-3 (N = 4) under the translation, and the
+    converged density by 5.5e-4 and 2.5e-4.
+    """
+    from vibeqc.periodic_toroidal_mp2 import _toroidal_bvk_hf
+
+    unit = _h2_chain_cell()
+    supercell = build_toroidal_supercell(unit, (1, 1, n_cells))
+    basis = vq.BasisSet(supercell.unit_cell_molecule(), "sto-3g")
+    hf = _toroidal_bvk_hf(supercell, basis, None, "def2-svp-jk")
+    assert hf.converged
+    assert hf.exchange_q0 == "BvK-ewald"
+    assert not np.iscomplexobj(hf.mo_coeffs)
+
+    shift = (np.arange(basis.nbasis) + basis.nbasis // n_cells) % basis.nbasis
+    density = np.asarray(hf.density)
+    translated = np.empty_like(density)
+    translated[np.ix_(shift, shift)] = density
+    assert np.abs(translated - density).max() < 1e-9
+
+    kmesh = vq.run_krhf_periodic_gdf(
+        unit, vq.BasisSet(unit.unit_cell_molecule(), "sto-3g"),
+        (1, 1, n_cells), aux_basis="def2-svp-jk", progress=False,
+    )
+    assert hf.energy / n_cells == pytest.approx(kmesh.energy, abs=1e-10)
 
 
 def test_toroidal_mp2_nrep3_retains_periodic_hf_beyond_cutoff():
@@ -162,11 +204,27 @@ def test_toroidal_mp2_nrep3_retains_periodic_hf_beyond_cutoff():
         rhf_options=options,
     )
 
-    # Deterministic single-thread repeats on the repaired Ewald branch are
-    # bit-identical.  The old cutoff-selected molecular branch returned
-    # -2.7879828251544 Ha/cell and -0.0049169556998 Ha/cell, respectively.
-    assert result.e_hf_per_cell == pytest.approx(-1.1164515356204, abs=2e-8)
-    assert result.e_corr_per_cell == pytest.approx(-0.0135092212660, abs=2e-8)
+    # Deterministic single-thread repeats are bit-identical.
+    #
+    # The HF is the GDF Hamiltonian at Gamma with exxdiv='ewald' exchange,
+    # the unit-cell KRHF on the 3-point mesh (#566;
+    # test_toroidal_hf_is_the_unit_cell_kmesh_hf). PySCF 2.14 KRHF/FFTDF at
+    # kmesh (1, 1, 3) gives -1.1178240341 Ha/cell, 2.3e-5 above the pin; the
+    # same offset at 2 and 4 cells is the def2-svp-jk fitting error.
+    #
+    # Pin history. The cutoff-selected molecular branch returned
+    # -2.7879828251544 / -0.0049169556998 Ha/cell (#166/#183). The correlation
+    # pin was -0.0135092212660 until the compcell DF tensor summed its
+    # auxiliary images (23d5e8db, #172) and its AFT part took in the seam AO
+    # pairs (0ef4b2fd, #438). The SCF pins were -1.1164515356204 and
+    # -0.0132120104972 until the Ewald-J HF reached the AO pairs across the
+    # seam (8c24e3af), then -1.1164536588821 and -0.0131980528416 until #566
+    # replaced its molecular-limit exchange, which was not invariant under a
+    # translation of the torus (K residual 3.2e-3 at this size).
+    assert result.e_hf_per_cell == pytest.approx(-1.1178468400477, abs=2e-8)
+    assert result.e_corr_per_cell == pytest.approx(-0.0131780803597, abs=2e-8)
+    # The caller's options are untouched.
+    assert options.lattice_opts.cutoff_bohr == 15.0
 
 
 def test_toroidal_mp2_cpp_matches_python_backend():
@@ -315,22 +373,34 @@ def test_pair_L_wannier_cell_assignment():
         assert r5b.unique_L == n
 
 
-def test_pair_correlation_decays_with_distance():
-    """Per-L MP2 correlation decays with |L|; symmetric wrap-around pairs equal."""
+@pytest.fixture(scope="module")
+def _pairs_n4():
     from vibeqc.periodic_toroidal_mp2 import toroidal_mp2_gamma_pairs
 
-    system = _h2_chain_cell()
-    r5b = toroidal_mp2_gamma_pairs(system, "sto-3g", (1, 1, 4))
+    return toroidal_mp2_gamma_pairs(_h2_chain_cell(), "sto-3g", (1, 1, 4))
 
-    by_L = r5b.e_corr_by_L
-    assert (0, 0, 0) in by_L
-    # Intra-cell (L=0) is the most negative.
+
+def test_pair_correlation_wrap_around_families_agree(_pairs_n4):
+    """Per-L partition: the L and N - L families agree and the parts sum up."""
+    by_L = _pairs_n4.e_corr_by_L
+    assert set(by_L) == {(0, 0, 0), (0, 0, 1), (0, 0, 2), (0, 0, 3)}
+    # Swapping i and j maps L to N - L, so these agree by construction.
+    assert by_L[(0, 0, 1)] == pytest.approx(by_L[(0, 0, 3)], abs=1e-12)
+    assert sum(by_L.values()) == pytest.approx(_pairs_n4.e_corr_total, abs=1e-14)
+
+
+def test_pair_correlation_decays_with_distance(_pairs_n4):
+    """Per-L MP2 correlation is largest in-cell and decays with |L|.
+
+    The split is over Wannier pairs (#566): about -5.2e-2, -2.5e-4 and
+    -1.9e-5 Ha for |L| = 0, 1 and 2 on the 4-cell chain. Assigning the
+    canonical (Bloch) orbitals of the torus to cells left this decided by
+    noise, and the test was a non-strict xfail.
+    """
+    by_L = _pairs_n4.e_corr_by_L
     for dL in by_L:
         if dL != (0, 0, 0):
             assert by_L[dL] > by_L[(0, 0, 0)]  # less negative = smaller magnitude
-    # Nearest-neighbour pairs (L=1 and L=3 = N-1) are equivalent.
-    assert by_L[(0, 0, 1)] == pytest.approx(by_L[(0, 0, 3)], abs=1e-12)
-    # Correlation magnitude decays: max-distance < nearest-neighbour.
     assert abs(by_L[(0, 0, 2)]) < abs(by_L[(0, 0, 1)])
 
 
@@ -538,10 +608,16 @@ def test_toroidal_tdl_basics():
     # The toroidal (BvK) finite-size error is larger than the open-megacell
     # one because periodic Ewald energies converge slower than open-boundary.
     assert tdl.fit_max_residual < 1e-4
-    # The finite-N per-cell averages converge toward the bulk from below.
-    # With one consistent Ewald Hamiltonian, they become less negative with N.
+    # The finite-N per-cell averages converge toward the bulk from above:
+    # they become more negative with N (-0.0130227, -0.0131781, -0.0132412,
+    # -0.0132738 Ha/cell for N = 2..5 on the BvK HF of #566).  On the
+    # molecular-limit-exchange HF before #566, PySCF FFTDF integrals on the
+    # same orbitals ordered the same way (-0.0130839, -0.0132097, -0.0132623,
+    # -0.0132898 for N = 2..5).  The opposite order asserted before
+    # #172 (23d5e8db) came from the single-image DF tensor, whose seam error
+    # (-5.2e-4 Ha/cell at N = 2, -1.4e-4 at N = 5) shrinks with N.
     for i in range(len(tdl.e_corr_per_cell) - 1):
-        assert tdl.e_corr_per_cell[i] < tdl.e_corr_per_cell[i + 1]
+        assert tdl.e_corr_per_cell[i] > tdl.e_corr_per_cell[i + 1]
 
 
 def test_toroidal_tdl_increments():
@@ -581,7 +657,8 @@ def test_toroidal_local_defaults_pin_pre_sweep_periodic_convention():
         mp2.tcut_pairs,
         mp2.tcut_pairs_weak,
         mp2.pno_norm,
-    ) == (0, 1e-8, 1e-7, 1e-3, 1e-6, 1e-4, "legacy")
+        mp2.domain_criterion,
+    ) == (0, 1e-8, 1e-7, 1e-3, 1e-6, 1e-4, "legacy", "mulliken")
 
     cc = _pre_sweep_toroidal_dlpno_cc_options()
     assert (
@@ -592,6 +669,7 @@ def test_toroidal_local_defaults_pin_pre_sweep_periodic_convention():
         cc.residual_domain,
         cc.pno_norm,
         cc.pno_correction,
+        cc.tcut_pno_diag_scale,
     ) == (
         0,
         1e-7,
@@ -600,6 +678,7 @@ def test_toroidal_local_defaults_pin_pre_sweep_periodic_convention():
         "pair",
         "legacy",
         False,
+        1.0,
     )
 
 
@@ -871,6 +950,9 @@ def test_toroidal_dlpno_mp2_torus_screening_beats_euclidean():
         tcut_mkn=1e-3,
         tcut_pairs=1e-6,
         tcut_pairs_weak=1e-4,
+        # tcut_mkn=1e-3 here means Mulliken domains (#190 made DOI the
+        # molecular default).
+        domain_criterion="mulliken",
     )
 
     r_exact = toroidal_dlpno_mp2(
@@ -994,3 +1076,159 @@ def test_toroidal_dlpno_ccsd_coupling_uses_torus_distance():
         "wrap-around neighbour was not recovered"
     )
     assert r_torus.pair_classification is not None
+
+
+@pytest.mark.parametrize("custom_distance,fail", [(False, False), (True, False), (False, True)])
+def test_toroidal_mp2_interleaved_sources_keep_overlap_and_options_local(
+    monkeypatch, custom_distance, fail,
+):
+    from dataclasses import asdict
+    from types import SimpleNamespace
+
+    import vibeqc._vibeqc_core as core
+    import vibeqc.dlpno.mp2 as solver
+    import vibeqc.periodic_df as periodic_df
+    import vibeqc.periodic_rhf_gdf as rhf_gdf
+    import vibeqc.periodic_toroidal_mp2 as toroidal
+    from vibeqc.dlpno.source import LpqFactors
+
+    system = _h2_chain_cell()
+    other_basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    compute_overlap = core.compute_overlap
+    molecular_overlap = np.asarray(compute_overlap(other_basis))
+    overlaps = [np.diag([1., 1.1, 1.2, 1.3]), np.diag([1.4, 1.5, 1.6, 1.7])]
+    refs = [SimpleNamespace(
+        energy=-2., converged=True, overlap=S,
+        fock=np.diag([-1., -.9, .5, .6]),
+        mo_coeffs=np.diag(1 / np.sqrt(S.diagonal())), exchange_q0="molecular-limit",
+    ) for S in overlaps]
+    queued_refs = iter(refs)
+    factors = LpqFactors(np.ones((1, 4, 4)))
+    factors.n_fit = 1
+    factors.nbf = 4
+    monkeypatch.setattr(rhf_gdf, "_bulk_gamma_k_gdf", lambda *a, **k: next(queued_refs))
+    monkeypatch.setattr(periodic_df, "build_periodic_gamma_df", lambda *a, **k: factors)
+    distance = (lambda a, b: float(np.linalg.norm(a-b))) if custom_distance else None
+    options = solver.DLPNOMP2Options(n_frozen=1, pair_distance_fn=distance)
+    before = asdict(options)
+    seen = []
+
+    class SolverFailure(Exception):
+        pass
+
+    def solve(mol, basis, reference, df, options, *, source=None):
+        index = len(seen)
+        seen.append(source)
+        assert core.compute_overlap is compute_overlap
+        np.testing.assert_array_equal(core.compute_overlap(other_basis), molecular_overlap)
+        np.testing.assert_array_equal(source.overlap_matrix(), overlaps[index])
+        assert source.reference is refs[index]
+        assert source.reference_kind == "rhf"
+        assert not source.conventions.same_source
+        assert source.conventions.exchange_q0 == "molecular-limit"
+        assert source.conventions.kmesh == (1, 1, 2)
+        assert source.pair_distance_fn(np.zeros(3), np.array([0., 0., 11.])) == pytest.approx(1.)
+        assert options.pair_distance_fn is distance
+        assert options.n_frozen == 1
+        if index == 0:
+            toroidal.toroidal_dlpno_mp2(system, "sto-3g", (1, 1, 2), dlpno_options=options)
+            np.testing.assert_array_equal(source.overlap_matrix(), overlaps[0])
+            if fail:
+                raise SolverFailure
+        return SimpleNamespace(e_corr=-.02, source_kind=source.kind,
+                               source_identity=source.identity)
+
+    monkeypatch.setattr(solver, "run_dlpno_mp2", solve)
+    if fail:
+        with pytest.raises(SolverFailure):
+            toroidal.toroidal_dlpno_mp2(system, "sto-3g", (1, 1, 2), dlpno_options=options)
+    else:
+        result = toroidal.toroidal_dlpno_mp2(system, "sto-3g", (1, 1, 2), dlpno_options=options)
+        assert result.source_kind == result.dlpno_result.source_kind == "toroidal-compcell"
+        assert result.source_identity == seen[0].identity
+        assert not result.same_source
+        assert result.exchange_q0 == "molecular-limit"
+        assert result.e_corr_per_cell == pytest.approx(-.01)
+        assert result.e_total == pytest.approx(-2.02)
+    assert len(seen) == 2
+    assert seen[0].identity != seen[1].identity
+    assert asdict(options) == before
+    assert core.compute_overlap is compute_overlap
+    for ref, S in zip(refs, overlaps):
+        np.testing.assert_array_equal(ref.overlap, S)
+
+
+@pytest.mark.parametrize("with_triples,custom_distance,fail", [
+    (False, False, False), (False, True, False),
+    (True, False, False), (True, True, False), (True, True, True),
+])
+def test_toroidal_cc_keeps_overlap_and_options_local(
+    monkeypatch, with_triples, custom_distance, fail,
+):
+    """An interleaved molecular calculation must keep its own AO metric."""
+    from types import SimpleNamespace
+
+    import vibeqc._vibeqc_core as core
+    import vibeqc.dlpno.ccsd_local_solver as solver
+    import vibeqc.periodic_df as periodic_df
+    import vibeqc.periodic_rhf_gdf as rhf_gdf
+    import vibeqc.periodic_toroidal_mp2 as toroidal
+    from vibeqc.dlpno.source import LpqFactors
+
+    system = _h2_chain_cell()
+    other_basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    compute_overlap = core.compute_overlap
+    molecular_overlap = np.asarray(compute_overlap(other_basis))
+    S = np.diag([1.0, 1.1, 1.2, 1.3])
+    hf = SimpleNamespace(
+        energy=-2.0, converged=True, overlap=S, fock=np.diag([-1., -.9, .5, .6]),
+        mo_coeffs=np.diag(1 / np.sqrt(S.diagonal())), exchange_q0="molecular-limit",
+    )
+    factors = LpqFactors(np.ones((1, 4, 4)))
+    factors.n_fit = 1
+    factors.nbf = 4
+    monkeypatch.setattr(rhf_gdf, "_bulk_gamma_k_gdf", lambda *a, **k: hf)
+    monkeypatch.setattr(periodic_df, "build_periodic_gamma_df", lambda *a, **k: factors)
+    distance = (lambda a, b: float(np.linalg.norm(a-b))) if custom_distance else None
+    options = solver.LocalCCSDOptions(
+        compute_triples=not with_triples, pair_distance_fn=distance,
+    )
+
+    class SolverFailure(Exception):
+        pass
+
+    def solve(mol, basis, reference, df, options, *, source=None):
+        assert options.compute_triples == with_triples
+        assert core.compute_overlap is compute_overlap
+        np.testing.assert_array_equal(core.compute_overlap(other_basis), molecular_overlap)
+        np.testing.assert_array_equal(source.overlap_matrix(), S)
+        assert source.reference is hf
+        assert not source.conventions.same_source
+        assert source.conventions.exchange_q0 == "molecular-limit"
+        assert source.conventions.kmesh == (1, 1, 2)
+        assert source.pair_distance_fn(np.zeros(3), np.array([0., 0., 11.])) == pytest.approx(1.)
+        assert options.pair_distance_fn is distance
+        if fail:
+            raise SolverFailure
+        return SimpleNamespace(
+            e_corr=-.02, e_t=-.001 if options.compute_triples else 0.,
+            source_kind=source.kind, source_identity=source.identity,
+        )
+
+    monkeypatch.setattr(solver, "run_local_dlpno_ccsd", solve)
+    driver = toroidal.toroidal_dlpno_ccsd_t if with_triples else toroidal.toroidal_dlpno_ccsd
+    if fail:
+        with pytest.raises(SolverFailure):
+            driver(system, "sto-3g", (1, 1, 2), cc_options=options)
+    else:
+        result = driver(system, "sto-3g", (1, 1, 2), cc_options=options)
+        assert result.source_kind == result.cc_result.source_kind == "toroidal-compcell"
+        assert result.source_identity == result.cc_result.source_identity
+        assert len(result.source_identity) == 64
+        assert not result.same_source
+        assert result.exchange_q0 == "molecular-limit"
+        assert result.e_t == (-.001 if with_triples else None)
+        assert result.e_total == pytest.approx(-2.02 - (.001 if with_triples else 0))
+    assert options.compute_triples == (not with_triples)
+    assert options.pair_distance_fn is distance
+    assert core.compute_overlap is compute_overlap

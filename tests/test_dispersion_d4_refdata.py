@@ -332,3 +332,80 @@ def test_molecular_c6_requires_basis_b_when_mol_b_given():
     h2 = Molecule([Atom(1, [0.0, 0.0, 0.0]), Atom(1, [0.0, 0.0, 1.4])])
     with pytest.raises(ValueError, match="basis_b is required"):
         molecular_c6(he, he_b, h2, None, n_freq=7)
+
+
+def test_unrestricted_imaginary_response_single_electron():
+    """The empty beta response block must not double the H polarizability."""
+    from vibeqc import UHFOptions, run_uhf
+    from vibeqc.dispersion_d4_refdata import coupled_polarizability_imag_freq_uks
+
+    mol = Molecule([Atom(1, [0., 0., 0.])], 0, 2)
+    basis = BasisSet(mol, "aug-cc-pvdz")
+    result = run_uhf(mol, basis, UHFOptions())
+    alpha = coupled_polarizability_imag_freq_uks(
+        result, basis, mol, [0., .1, 1., 100.], None,
+    )
+    # Exact nonrelativistic hydrogen alpha(0)=9/2 a0^3; this finite
+    # double-zeta basis is within 5%, and a spurious spin factor is not.
+    assert alpha[0] == pytest.approx(4.5, rel=.05)
+    assert np.all(alpha > 0)
+    assert np.all(np.diff(alpha) < 0)
+    assert alpha[-1] < 1e-3
+    with pytest.raises(ValueError, match="nonnegative"):
+        coupled_polarizability_imag_freq_uks(result, basis, mol, [-.1], None)
+
+
+def test_unrestricted_imaginary_response_closed_shell_dft_limit():
+    """Spin-coupled PBE38 response reproduces the restricted singlet."""
+    from vibeqc import RKSOptions, UKSOptions, run_rks, run_uks
+    from vibeqc.dispersion_d4_reference_data import _ensure_functional_registered
+    from vibeqc.dispersion_d4_refdata import (
+        coupled_polarizability_imag_freq_dft,
+        coupled_polarizability_imag_freq_uks,
+    )
+    from vibeqc.runner import apply_ks_grid_default
+
+    _ensure_functional_registered("pbe38")
+    mol = Molecule([Atom(1, [0., 0., 0.]), Atom(1, [0., 0., 1.4])], 0, 1)
+    basis = BasisSet(mol, "cc-pvdz")
+    ro, uo = RKSOptions(), UKSOptions()
+    for options in (ro, uo):
+        options.functional = "pbe38"
+        options.conv_tol_energy = 1e-11
+        apply_ks_grid_default(options, "orca-defgrid3")
+    rr, ur = run_rks(mol, basis, ro), run_uks(mol, basis, uo)
+    frequencies = [0., .1, 1., 10.]
+    restricted = coupled_polarizability_imag_freq_dft(
+        rr, basis, mol, frequencies, "pbe38", grid_options=ro.grid,
+    )
+    unrestricted = coupled_polarizability_imag_freq_uks(
+        ur, basis, mol, frequencies, "pbe38", grid_options=uo.grid,
+    )
+    np.testing.assert_allclose(unrestricted, restricted, rtol=1e-7, atol=1e-9)
+
+
+def test_unrestricted_reference_response_rejects_unstable_singlet():
+    """Stretched restricted H2 is stationary but unstable to spin splitting."""
+    from types import SimpleNamespace
+    from vibeqc.dispersion_d4_refdata import coupled_polarizability_imag_freq_uks
+
+    mol = Molecule([Atom(1, [0., 0., 0.]), Atom(1, [0., 0., 4.])], 0, 1)
+    basis = BasisSet(mol, "sto-3g")
+    rhf = run_rhf(mol, basis, RHFOptions())
+    assert rhf.converged
+    # Express the converged restricted determinant in two spin blocks.
+    reference = SimpleNamespace(
+        converged=True,
+        mo_coeffs_alpha=rhf.mo_coeffs, mo_coeffs_beta=rhf.mo_coeffs,
+        mo_energies_alpha=rhf.mo_energies, mo_energies_beta=rhf.mo_energies,
+        density_alpha=np.asarray(rhf.density) / 2,
+        density_beta=np.asarray(rhf.density) / 2,
+    )
+    with pytest.raises(ValueError, match="unstable or singular"):
+        coupled_polarizability_imag_freq_uks(reference, basis, mol, [0., .1], None)
+    reference.density_alpha *= .5
+    with pytest.raises(ValueError, match="integral Aufbau"):
+        coupled_polarizability_imag_freq_uks(reference, basis, mol, [0.], None)
+    reference.converged = False
+    with pytest.raises(ValueError, match="must be converged"):
+        coupled_polarizability_imag_freq_uks(reference, basis, mol, [0.], None)

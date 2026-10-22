@@ -1,6 +1,6 @@
 """Keyword selector for Γ-CCM and the 2014 four-centre lineage.
 
-Ruling R1 (2026-08-21, AICCM article repo ``HANDOVER.md`` §2/§2b and
+Ruling R1 (2026-08-21, AICCM article repo and
 ``ROUTES_AND_VALIDATION.md`` §0) fixes the paper-facing nomenclature, and this
 module follows it:
 

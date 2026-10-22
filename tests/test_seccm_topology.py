@@ -706,6 +706,11 @@ def test_package_exports_only_reviewed_public_surface():
         "GFN2SECCMConvergenceError",
         "GFN2SECCMResult",
         "GFN2SECCMStateChange",
+        # #417 state audit (#569): result.state_audit and the warning a
+        # same-Hamiltonian state ambiguity emits, both documented in
+        # docs/user_guide/semiempirical.md.
+        "GFN2SECCMStateAudit",
+        "GFN2SECCMStateAmbiguityWarning",
         "compare_gfn2_seccm_states",
         "run_gfn2_seccm",
     }

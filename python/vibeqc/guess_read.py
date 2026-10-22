@@ -316,8 +316,12 @@ def _prior_from_qvf_bloch_gamma(
 
 
 def _prior_from_qvf(path: str) -> _Prior:
+    from .output.formats.qvf import qvf_read_version
+
     with zipfile.ZipFile(path, "r") as zf:
         manifest = json.loads(zf.read("manifest.json").decode("utf-8"))
+        # QVF spec Sec. 3.1: read the withdrawn version 2 as 1, refuse others.
+        qvf_read_version(manifest, source=f"READ: {path}")
         sections = {s.get("kind"): s for s in manifest.get("sections", [])}
         bloch_wf = sections.get(_QVF_BLOCH_WF_KIND)
         if bloch_wf is not None:
@@ -925,8 +929,12 @@ def _density_k_from_qvf_bloch_payload(
     expected_n_k: Optional[int],
     n_basis: Optional[int],
 ) -> List[np.ndarray]:
+    from .output.formats.qvf import qvf_read_version
+
     with zipfile.ZipFile(path, "r") as zf:
         manifest = json.loads(zf.read("manifest.json").decode("utf-8"))
+        # QVF spec Sec. 3.1: read the withdrawn version 2 as 1, refuse others.
+        qvf_read_version(manifest, source=f"READ: {path}")
         sections = list(manifest.get("sections", []))
         wf = next(
             (s for s in sections if s.get("kind") == _QVF_BLOCH_WF_KIND),

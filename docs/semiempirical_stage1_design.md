@@ -33,8 +33,11 @@ element are:
 
 STO exponents ζ are taken from the DFTB literature (Porezag et al.,
 Phys. Rev. B 51, 12947, 1995). Each STO is expanded in 6 Gaussians
-using the standard STO-NG least-squares fit coefficients from
-Hehre, Stewart & Pople (J. Chem. Phys. 51, 2657, 1969).
+using the standard STO-NG least-squares fit coefficients, keyed by the
+shell's principal quantum number: Stewart (J. Chem. Phys. 52, 431, 1970),
+Tables I to V, for six primitives, verified row by row against the residuals
+he publishes. (Until 2026-09-19 two l-keyed tables of unknown provenance
+stood here; they were not Slater fits, see the changelog.)
 
 ### 2.2 Hamiltonian matrix H⁰
 
@@ -55,9 +58,10 @@ where:
 
 The off-diagonal form is the Wolfsberg-Helmholtz approximation,
 which captures the key physics that the hopping integral scales
-with the overlap and the average of the on-site energies. This is
-the same approximation used in extended Hückel theory and in the
-non-SCC DFTB of Porezag et al.
+with the overlap and the average of the on-site energies. The
+normalization follows Wolfsberg and Helmholz, J. Chem. Phys. 20, 837 (1952), p. 838, DOI 10.1063/1.1700580. Using atom-averaged
+on-site energies is an in-house approximation; it is not the tabulated
+two-center Hamiltonian of the Porezag DFTB method.
 
 ### 2.3 Energy expression
 
@@ -174,7 +178,7 @@ function build_hamiltonian(basis, overlap_S, params):
             # two-center: Wolfsberg-Helmholtz
             h_avg = (params.average_onsite(A.Z) + params.average_onsite(B.Z)) / 2
             kappa = 1.75
-            H0[μ, ν] = 0.5 * kappa * S[μ, ν] * h_avg
+            H0[μ, ν] = kappa * S[μ, ν] * h_avg
 
     return H0
 ```

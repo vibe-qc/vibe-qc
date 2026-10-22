@@ -20,6 +20,14 @@ them through the low-level solver API *or* through the familiar
 > symmetries) are on the roadmap.  But the APIs you learn here are
 > the ones that will persist.
 
+**Status at a glance** (labels as defined in
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels)):
+FCI, selected CI and v2RDM are production as small-active-space references
+(v2RDM without Q/G feedback, see its section); **DMRG is experimental**, a
+dense toy backend capped at 6 spatial orbitals; **transcorrelated CI is a
+preview** with research-grade correlators. Each section below repeats its
+label. Numbers on this page were re-run on a vibe-qc 0.17.10 development build.
+
 ---
 
 ## Quick start
@@ -47,8 +55,9 @@ vq.run_job(
 
 That's it.  vibe-qc runs RHF to get the MO basis, builds the
 Hamiltonian, runs Selected-CI with iterative determinant selection,
-and writes the result to ``h2o_selci.out``.  The whole call takes a
-few tens of milliseconds for this system.
+and writes the result to ``h2o_selci.out``.  The call took a few seconds
+on a loaded shared machine and printed `E = -74.99328470` Ha for this
+1.43/-0.98 bohr geometry.
 
 For the low-level API (more control, returns a ``SolverResult``
 object directly):
@@ -131,8 +140,10 @@ solvers without rebuilding integrals.
 
 ## Selected-CI walkthrough, H₂O convergence scan
 
-Selected-CI is the workhorse.  It starts with the HF determinant,
-iteratively adds the most important singles and doubles (ranked by
+Selected-CI is the workhorse ({vibeqc-cite}`huron_malrieu_cipsi_1973`;
+in its modern heat-bath form {vibeqc-cite}`holmes_tubman_umrigar_shci_2016`).
+It starts with the HF determinant, iteratively adds the most important
+singles and doubles (ranked by
 their perturbative contribution), and re-diagonalises.  As you
 increase ``target_size``, the energy converges smoothly toward the
 FCI limit.
@@ -199,36 +210,44 @@ for target in [1, 3, 5, 10, 20, 50, 100, 200]:
     )
 ```
 
-What you should see:
+What you should see (the `ms` column was measured on a heavily loaded
+shared machine, so read it only as relative growth):
 
 ```
-E(RHF)  = -74.96306453 Ha
+E(RHF)  = -74.96293239 Ha
 
  target    ndet            E_var           ΔE        E_pt2           E_tot     ms
 -----------------------------------------------------------------------------
-      1       1   -74.9630645300   0.00e+00   0.00e+00   -74.9630645300      0
-      3       3   -74.9652419726  -2.18e-03  -4.69e-02   -75.0121489285      1
-      5       5   -74.9667159170  -1.47e-03  -4.54e-02   -75.0121315831      1
-     10      10   -74.9686632147  -1.95e-03  -4.35e-02   -75.0121341488      1
-     20      20   -74.9712110099  -2.55e-03  -4.09e-02   -75.0121318632      2
-     50      50   -74.9765719143  -5.36e-03  -3.55e-02   -75.0121088645      4
-    100     100   -74.9841836813  -7.61e-03  -2.79e-02   -75.0121058434      9
-    200     200   -74.9912803868  -7.10e-03  -2.08e-02   -75.0120885498     19
+      1       1   -74.9629323893   0.00e+00  -5.38e-02   -75.0167359525      9
+      3       1   -74.9629323893   0.00e+00  -5.38e-02   -75.0167359525   1205
+      5       1   -74.9629323893   0.00e+00  -5.38e-02   -75.0167359525   1306
+     10      11   -75.0022772492  -3.93e-02  -9.21e-03   -75.0114855955   4404
+     20      22   -75.0111775034  -8.90e-03  -1.30e-03   -75.0124729881   9243
+     50      88   -75.0121414476  -9.64e-04  -3.05e-04   -75.0124464426  15430
+    100     117   -75.0121729216  -3.15e-05  -2.71e-04   -75.0124439486  30606
+    200     125   -75.0121730661  -1.45e-07  -2.71e-04   -75.0124439326  32221
 ```
 
-A few things to notice:
+The full-CI energy of the same problem is `-75.01241144` Ha (next
+section). A few things to notice:
 
-- **target_size=1** gives you back the RHF energy, the reference
-  determinant alone.
-- By **~10 determinants**, you've captured 95% of the correlation
-  energy.
-- The **PT2 correction** shrinks as the variational space grows, 
+- **`target_size` is an upper bound, not the determinant count.** The
+  space grows by a bounded factor per cycle and is closed under the
+  alpha/beta swap, so `ndet` need not equal `target_size`, and for very small
+  targets (1, 3, 5) it never leaves the reference determinant: the row then
+  is the RHF energy plus a PT2 estimate from a single-determinant reference,
+  which overshoots (`E_tot` lies 4 mHa below full CI). It is not a converged
+  number.
+- Once the space grows, **the variational energy converges quickly**: 11
+  determinants recover about 80% of the correlation energy, 22 determinants
+  97%, and the last two rows differ by 0.15 microhartree. The space
+  saturates near 125 determinants because the selection threshold
+  (`pt2_threshold=1e-8`) admits nothing more.
+- The **PT2 correction** shrinks as the variational space grows,
   it's estimating the energy from determinants you haven't included
   yet, so it naturally decays as you include more.
-- The total energy (E_var + E_pt2) is remarkably stable across the
-  whole scan, usually within ~0.1 mHa after the first few
-  determinants.  This is the hallmark of a well-behaved CIPSI
-  selection.
+- The total energy (E_var + E_pt2) settles within 0.03 mHa of full CI from
+  about 50 determinants on (`-75.0124464` against `-75.0124114`).
 
 ### How it works under the hood
 
@@ -247,7 +266,11 @@ Each Selected-CI iteration does three things:
    expanded determinant space.  This is the variational step; it
    guarantees an upper bound to the exact-in-basis energy.
 
-The optional PT2 correction uses Epstein-Nesbet denominators to
+The optional PT2 correction uses Epstein-Nesbet denominators
+(P. S. Epstein, *Phys. Rev.* **28**, 695 (1926),
+doi:10.1103/PhysRev.28.695; R. K. Nesbet, *Proc. R. Soc. Lond. A*
+**230**, 312 (1955), doi:10.1098/rspa.1955.0134; on a selected-CI
+wavefunction {vibeqc-cite}`sharma_semistochastic_hci_2017`) to
 estimate the residual correlation from all singles and doubles
 outside the variational space.
 
@@ -256,7 +279,7 @@ outside the variational space.
 ## Full CI, exact-in-basis for small molecules
 
 Full CI diagonalises the Hamiltonian over the *complete* determinant
-space.  It's the exact solution within the given one-electron basis, 
+space ({vibeqc-cite}`knowles_handy_fci_1984`).  It's the exact solution within the given one-electron basis, 
 the gold standard that Selected-CI and DMRG approximate.  The current
 v2RDM route returns the exact N-representable 1/2-RDM in the same
 small active space.
@@ -265,106 +288,67 @@ For H₂O / STO-3G (7 spatial orbitals, 10 electrons), the full
 determinant space has $C(7,5) \times C(7,5) = 21 \times 21 = 441$
 Slater determinants, small enough for dense diagonalisation.
 
-### Build and diagonalise the full FCI matrix manually
+### Build and diagonalise the full FCI matrix
 
-This walks the full CI by hand: generate all 441 determinants for
-H₂O / STO-3G, fill the Hamiltonian matrix element by element with the
-Slater-Condon rules (diagonal, single, and double excitations), and
-diagonalise it with dense `scipy.linalg.eigh`.
+This builds the full CI by hand from the pieces: generate all 441
+determinants for H₂O / STO-3G, fill the Hamiltonian matrix with the library's
+Slater-Condon routine (J. C. Slater, *Phys. Rev.* **34**, 1293 (1929),
+doi:10.1103/PhysRev.34.1293; E. U. Condon, *Phys. Rev.* **36**, 1121
+(1930), doi:10.1103/PhysRev.36.1121) (diagonal elements, single and double excitations, all
+determinant pairs connected by at most two excitations), and diagonalise it
+with dense `scipy.linalg.eigh`:
 
 ```python
 import numpy as np
 from scipy.linalg import eigh
-from vibeqc.solvers import (
-    build_hamiltonian_matrix,
-    build_hamiltonian_mo,
-    generate_determinants,
-    get_hf_orbital_provider,
-)
-from vibeqc.solvers._determinant import excitation_rank
-from vibeqc.solvers._slater_condon import (
-    diagonal_matrix_element_unrestricted,
-    single_excitation_matrix_element,
-    double_excitation_matrix_element,
-)
+from vibeqc.solvers import generate_determinants
+from vibeqc.solvers._slater_condon import build_hamiltonian_matrix_unrestricted
 
-# Assumes `mol`, `basis`, `H` from the selected-CI example above
+# Assumes `mol`, `H` and `rhf_result` from the selected-CI example above.
 norb = H.norb
 nalpha = nbeta = mol.n_electrons() // 2
 
 # Generate all determinants (441 for H₂O/STO-3G)
 all_dets = generate_determinants(norb, nalpha, nbeta)
-ndet = len(all_dets)
-print(f"Full FCI space: {ndet} determinants")
+print(f"Full FCI space: {len(all_dets)} determinants")
 
-# Build the Hamiltonian matrix
-H_full = np.zeros((ndet, ndet))
-
-# Diagonal elements
-for I, (aI, bI) in enumerate(all_dets):
-    H_full[I, I] = diagonal_matrix_element_unrestricted(aI, bI, H.h1e, H.h2e)
-
-# Off-diagonal: only connect determinants with excitation rank ≤ 2
-for I in range(ndet):
-    aI, bI = all_dets[I]
-    for J in range(I + 1, ndet):
-        aJ, bJ = all_dets[J]
-        rank_a = excitation_rank(aI, aJ)
-        rank_b = excitation_rank(bI, bJ)
-        total = rank_a + rank_b
-        if total > 2:
-            continue
-
-        val = 0.0
-        if total == 1:
-            if rank_a == 1:
-                holes = sorted(set(aI) - set(aJ))
-                parts = sorted(set(aJ) - set(aI))
-                val = single_excitation_matrix_element(aI, holes[0], parts[0], H.h1e, H.h2e)
-            else:
-                holes = sorted(set(bI) - set(bJ))
-                parts = sorted(set(bJ) - set(bI))
-                val = single_excitation_matrix_element(bI, holes[0], parts[0], H.h1e, H.h2e)
-        elif total == 2:
-            if rank_a == 2:
-                holes = sorted(set(aI) - set(aJ))
-                parts = sorted(set(aJ) - set(aI))
-                val = double_excitation_matrix_element(aI, holes[0], holes[1], parts[0], parts[1], H.h2e)
-            elif rank_b == 2:
-                holes = sorted(set(bI) - set(bJ))
-                parts = sorted(set(bJ) - set(bI))
-                val = double_excitation_matrix_element(bI, holes[0], holes[1], parts[0], parts[1], H.h2e)
-            elif rank_a == 1 and rank_b == 1:
-                from vibeqc.solvers._slater_condon import _phase_factor
-                h_a = sorted(set(aI) - set(aJ)); p_a = sorted(set(aJ) - set(aI))
-                h_b = sorted(set(bI) - set(bJ)); p_b = sorted(set(bJ) - set(bI))
-                sign = _phase_factor(aI, [(h_a[0], p_a[0])]) * _phase_factor(bI, [(h_b[0], p_b[0])])
-                val = sign * H.h2e[h_a[0], h_b[0], p_a[0], p_b[0]]
-
-        H_full[I, J] = val
-        H_full[J, I] = val
+# Build the Hamiltonian matrix in the spin-orbital determinant basis
+H_full = build_hamiltonian_matrix_unrestricted(all_dets, H.h1e, H.h2e)
 
 # Diagonalise
-evals, evecs = eigh(H_full)
+evals = eigh(H_full, eigvals_only=True)
 e_fci = evals[0] + H.nuclear_repulsion
 
 print(f"E(FCI, full)  = {e_fci:.8f} Ha")
 print(f"E(RHF)        = {rhf_result.energy:.8f} Ha")
 print(f"E_corr        = {e_fci - rhf_result.energy:+.8f} Ha")
+# Full FCI space: 441 determinants
+# E(FCI, full)  = -75.01241144 Ha
+# E(RHF)        = -74.96293239 Ha
+# E_corr        = -0.04947905 Ha
 ```
+
+The matrix is symmetric to machine precision and its lowest eigenvalue equals
+`run_job(method="fci")`. Hand-coding the Slater-Condon phases is error-prone:
+a hand-written loop over determinant pairs with the single-, double- and
+mixed-spin excitation formulas returned -75.01407151 Ha on the current build, 1.7 mHa *below* the solver's full CI
+energy and therefore below the variational bound. Use the library builder, and
+treat any FCI energy that falls below `run_job(method="fci")` as a bug in the
+matrix, not a lucky result.
 
 ### Literature benchmark, H₂O FCI
 
-The vibe-qc FCI energy for H₂O / STO-3G is **−75.01241 Ha**,
-matching the literature reference of −75.01266 Ha to **0.12 mHa**
-(Bauschlicher & Taylor, *J. Chem. Phys.* 85, 2779, 1986).  The
-sub-milliHartree agreement validates the integral transformation,
-Slater-Condon rules, and Hamiltonian diagonalisation against an
-independent implementation, this is the gold-standard test for any
-post-HF code path.
+The vibe-qc FCI energy for H₂O / STO-3G is **−75.01241 Ha** (re-run:
+`-75.01241144`, from `run_job(method="fci")`; the 441-determinant space is
+confirmed by `generate_determinants`). The literature value cited for this
+case, −75.01266 Ha (Bauschlicher & Taylor, *J. Chem. Phys.* 85, 2779, 1986),
+differs by 0.25 mHa; that paper's basis set and geometry were not re-checked
+in this documentation pass, so treat the comparison as approximate. The
+sub-milliHartree agreement still cross-checks the integral transformation, Slater-Condon rules and
+Hamiltonian diagonalisation against an independent implementation.
 
-The corresponding correlation energy is −0.04960 Ha (≈ 31.1 kcal/mol,
-or about 5% of the total electronic energy).  Most of it comes from
+The corresponding correlation energy is −0.04948 Ha (≈ 31.0 kcal/mol,
+or about 0.07% of the total energy).  Most of it comes from
 determinants where the α and β occupation patterns differ, the
 so-called "open-shell singlet" configurations are essential for
 quantitative dynamic correlation.
@@ -377,7 +361,21 @@ bohr, ∠HOH = 104.52°) and basis set (STO-3G).
 
 ## DMRG, bond-dimension scheduling
 
-The Density Matrix Renormalisation Group represents the wavefunction
+```{admonition} Status: experimental
+:class: warning
+
+DMRG is an experimental route; the source labels it "EXPERIMENTAL / TOY".
+It builds the dense full Fock-space Hamiltonian, and is therefore capped at
+**6 spatial orbitals (12 spin orbitals)**; a larger request raises
+`ValueError` ("Maximum is 12 spin-orbitals (6 spatial)") instead of
+returning a number. Its numbers are research output, not validated results,
+and it is not part of the release gate. The label vocabulary is defined in
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+```
+
+The Density Matrix Renormalisation Group ({vibeqc-cite}`white_dmrg_1992`;
+in quantum chemistry {vibeqc-cite}`chan_headgordon_dmrg_2002`) represents
+the wavefunction
 as a **matrix product state** (MPS), a chain of tensors, one per
 orbital, with a controllable bond dimension $M$ that sets the maximum
 entanglement captured.
@@ -394,9 +392,13 @@ from vibeqc.solvers import (
     solve_dmrg,
 )
 
-# Assumes `mol`, `basis` from above
-C = get_hf_orbital_provider(mol, basis)
-H = build_hamiltonian_mo(mol, basis, C)
+# LiH / STO-3G has 6 spatial orbitals, the largest space the toy backend
+# accepts (H2O / STO-3G has 7 and raises).
+import vibeqc as vq
+lih = vq.Molecule([vq.Atom(3, [0.0, 0.0, 0.0]), vq.Atom(1, [0.0, 0.0, 3.015])])
+lih_basis = vq.BasisSet(lih, "sto-3g")
+C = get_hf_orbital_provider(lih, lih_basis)
+H = build_hamiltonian_mo(lih, lih_basis, C)
 
 opts = DMRGOptions(
     bond_dim_schedule=[4, 8, 16, 32, 64],
@@ -409,7 +411,15 @@ result = solve_dmrg(H, opts)
 print(f"E(DMRG)     = {result.energy:.10f} Ha")
 print(f"bond_dim    = {result.bond_dim}")
 print(f"trunc_err   = {result.truncation_error}")
+# E(DMRG)     = -7.8823949575 Ha     (identical to FCI)
+# bond_dim    = 64
+# trunc_err   = None
 ```
+
+`run_job(lih, basis="sto-3g", method="dmrg")` gives the same
+`-7.88239496` Ha for LiH. The same call on H₂O / STO-3G raises
+`ValueError: DMRG _build_full_hamiltonian: 14 spin-orbitals requires a
+2^14x2^14 dense matrix (2.0 GB). Maximum is 12 spin-orbitals (6 spatial).`
 
 For H₂ / STO-3G (2 orbitals, 2 electrons), DMRG recovers the FCI
 energy at $M=4$.  At the current dense-backend ceiling, LiH / STO-3G
@@ -441,8 +451,9 @@ same FCI energy in the fixed-$(N, M_S)$ sector.
 
 ## v2RDM, variational 2-RDM under N-representability
 
-Instead of working with the $N$-electron wavefunction, v2RDM works
-directly with the **two-electron reduced density matrix** (2-RDM):
+Instead of working with the $N$-electron wavefunction, v2RDM
+({vibeqc-cite}`gidofalvi_mazziotti_v2rdm_2008`,
+{vibeqc-cite}`mazziotti_v2rdm_2011`) works directly with the **two-electron reduced density matrix** (2-RDM):
 
 $$E[{}^1D, {}^2D] = \sum_{ij} h_{ij} \, {}^1D_{ij}
   + \frac{1}{4} \sum_{ijkl} g_{ijkl} \, {}^2D_{ijkl} + E_{\rm nuc}$$
@@ -496,13 +507,39 @@ them to decide convergence.  ``constraints`` containing ``"q"`` or
 > **v2RDM returns a 4-index 2-RDM and uses a determinant-space exact
 > solve.**  Keep the active space small, as for full CI/CASCI.
 
+```{admonition} Status: production, without Q/G feedback
+:class: note
+
+v2RDM is production as a small-active-space reference: with
+`constraints="p"` it returns the exact N-representable 1/2-RDM from the
+determinant Hamiltonian, so the energy equals full CI in the same active
+space (H₂O / STO-3G at the Pitzer geometry above: `-75.01241144` Ha, trace
+residual 4e-15, identical to `run_job(method="fci")`). There is no semidefinite
+programming loop yet: requesting the Q or G conditions raises
+`NotImplementedError: v2RDM Q/G constraint feedback is not yet implemented`
+instead of being silently downgraded. See
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+```
+
 ---
 
 ## Transcorrelated, similarity-transformed Hamiltonian
 
-Transcorrelated methods take a different approach.  Instead of
-expanding the wavefunction, they apply a similarity transformation
-to the Hamiltonian:
+```{admonition} Status: preview
+:class: note
+
+Transcorrelated CI is a maintained preview: the similarity transformation,
+the normal-ordered two-body folding and the hand-off to the production
+selected-CI solver ship, but the correlator forms are research-grade
+index-proximity damping models rather than a fitted real-space Jastrow
+factor, so the transformed energies are not validated F12-class results.
+See [Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+```
+
+Transcorrelated methods ({vibeqc-cite}`boys_handy_transcorrelated_1969`;
+in modern CI form {vibeqc-cite}`cohen_alavi_transcorrelated_2019`) take a
+different approach.  Instead of expanding the wavefunction, they apply a
+similarity transformation to the Hamiltonian:
 
 $$\tilde{H} = e^{-\tau} \, H \, e^{\tau}$$
 
@@ -596,6 +633,17 @@ making the CI converged faster but increasing the three-body
 contribution (and the NO2B approximation error).  Typical values
 are in the range 0.1-1.0.
 
+Read the energy with care. For H₂ / STO-3G at 1.4 bohr, `gamma=0`
+reproduces the full-CI energy `-1.13727594` Ha exactly, but the transformed
+Hamiltonian's lowest eigenvalue then falls steadily as `gamma` grows:
+`-1.18421780` Ha at `gamma=0.1` and `-1.37204220` Ha at `gamma=0.5`. The exact
+nonrelativistic H₂ energy at this geometry is about `-1.1745` Ha, so both
+values lie below the true answer. With this simple correlator the number is
+an eigenvalue of a transformed operator that is not bounded by the exact
+energy, not a total energy you can compare with FCI or CCSD; use it to
+exercise the API and the transformation, and validate any physical
+conclusion with a method that is bounded.
+
 ---
 
 ## Active spaces
@@ -685,9 +733,10 @@ For most organic molecules near equilibrium:
    chemically inert and can be frozen at the HF level.
 4. Include a few low-lying virtuals for dynamic correlation.
 
-For H₂O / cc-pVDZ: 4 occupied orbitals (O 2s, O 2p×3 + H 1s×2,
-but one is the bonding combination), 2 core (O 1s), leaving ~5-6
-valence orbitals with 6-8 electrons as a natural active space.
+For H₂O / cc-pVDZ: 5 occupied orbitals, 1 core (O 1s), leaving 4
+occupied valence orbitals; with the 2 valence antibonding virtuals
+this is 6 valence orbitals (O 2s, O 2p×3, H 1s×2) holding 8
+electrons, CAS(8,6), as a natural active space.
 
 ---
 
@@ -823,13 +872,17 @@ You don't *have* to use HF orbitals.  Any orthonormal set of
 orbitals spanning the AO basis is valid, the solvers only require
 that the Hamiltonian integrals are in an orthonormal basis.
 
-The simplest alternative is **canonical (Löwdin) orthogonalisation**:
+The simplest alternative is **canonical orthogonalisation**
+({vibeqc-cite}`lowdin_1950`, {vibeqc-cite}`lowdin_ortho_1970`):
 
-$$X = U s^{-1/2} U^T$$
+$$X = U s^{-1/2}$$
 
 where $S = U s U^T$ is the eigen-decomposition of the AO overlap
-matrix.  This produces orbitals closest (in a least-squares sense)
-to the original AOs while enforcing orthonormality.
+matrix; eigenvectors with eigenvalues below a threshold are dropped,
+which removes near-linear dependence. This is what
+`canonical_orthogonalize` returns. Löwdin's symmetric variant,
+$X = U s^{-1/2} U^T$, is the one that gives orbitals closest (in a
+least-squares sense) to the original AOs.
 
 ```python
 from vibeqc.solvers import (
@@ -862,13 +915,14 @@ H_orth = transform_hamiltonian(H_ao, X)
 
 # 4. Solve
 result = solve_selected_ci(H_orth, SelectedCIOptions(target_size=100, verbose=1))
-print(f"E(Sel-CI, Löwdin) = {result.energy:.8f} Ha")
+print(f"E(Sel-CI, canonical) = {result.energy:.8f} Ha")
 ```
 
 Canonical orbitals are:
 - **Guaranteed to exist**, no SCF convergence problems.
-- **Fragment-consistent**, the orbitals are local and resemble AOs
-  (useful for embedding / fragment methods).
+- **Not local**, canonical orbitals are overlap eigenvectors and spread
+  over the molecule; the symmetric form $U s^{-1/2} U^T$ gives local,
+  AO-like orbitals instead (useful for embedding / fragment methods).
 - **Less compact** than HF, the determinant expansion is larger
   because the reference determinant is farther from the exact
   wavefunction.  You'll need a larger ``target_size`` to reach the

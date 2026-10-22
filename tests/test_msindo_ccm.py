@@ -25,6 +25,17 @@ import pytest
 import vibeqc as vq
 from vibeqc.molecule import ANGSTROM_TO_BOHR
 from vibeqc.semiempirical.methods import msindo, msindo_ccm as ccm
+from tests.msindo_seccm_article_systems import (
+    ARTICLE_222_PINS,
+    ARTICLE_333_PINS,
+    BENT_CHAIN_ENERGIES,
+    BENT_CHAIN_LEGACY_ENERGIES,
+    BENT_CHAIN_SWEEP_BOHR,
+    BENT_CHAIN_REFERENCE_3E3,
+    article_cluster,
+    bent_c3_chain,
+    pin_id,
+)
 from vibeqc.semiempirical.methods.msindo_ccm import (
     CCMOptions,
     WSNeighbor,
@@ -66,7 +77,9 @@ def _coords(cluster):
     return [[x, y, z] for _sym, x, y, z in cluster["real_atoms"]]
 
 
-@pytest.mark.parametrize("n,d", [(3, 1.28), (7, 1.28), (9, 1.3), (9, 1.375)])
+@pytest.mark.parametrize("n,d", [
+    (3, 1.28), (7, 1.28), (9, 1.3), (9, 1.375), (9, 1.575), (19, 1.28),
+])
 @pytest.mark.parametrize("madelung", [False, True])
 def test_carbon_chain_stable_under_coordinate_noise(n, d, madelung):
     """#249: a gapped final spectrum can still be an unstable SCF saddle."""
@@ -97,19 +110,591 @@ def test_carbon_chain_python_reference_stability(monkeypatch):
     assert result.total_energy / n == pytest.approx(-5.8507989864278, abs=1e-8)
 
 
-def test_carbon_chain_run_job_reports_stability(tmp_path):
+@pytest.mark.parametrize("backend", ["native", "python"])
+@pytest.mark.parametrize("madelung", [False, True])
+@pytest.mark.parametrize("variant", ["exact", "noise", "rotation", "permutation"])
+def test_c19_frontier_state_and_budget(monkeypatch, backend, madelung, variant):
+    """Retain #249's lower-state, permutation and literal-budget acceptance."""
+    if backend == "python":
+        monkeypatch.setattr(ccm, "_cpp_ccm_energy_kernel", lambda: None)
+    else:
+        assert ccm._cpp_ccm_energy_kernel() is not None
+    n, d = 19, 1.28
+    axis = np.array([.36, .48, .8]) if variant == "rotation" else np.array([1., 0., 0.])
+    coords = np.arange(n)[:, None] * d * axis
+    if variant == "noise":
+        coords *= 1 + 4.4e-10
+    if variant == "permutation":
+        coords = coords[(np.arange(n) + 2) % n] + np.array([2.3, -.7, .5])
+    result = run_ccm([6] * n, coords, [n * d * axis], madelung=madelung,
+                     max_iter=400, conv_tol=1e-9)
+    assert result.converged and result.stability_analysis_converged
+    assert result.stability_eigenvalue >= -4e-6
+    assert result.total_energy / n == pytest.approx(-5.847916793367882, abs=1e-8, rel=0)
+    assert 0 < result.frontier_seed_evaluations < result.n_iter <= 400
+    assert result.frontier_seed_completed
+    assert result.orbital_optimization_used
+
+
+@pytest.fixture(scope="module")
+def c19_continuation_density():
+    coords = np.zeros((19, 3))
+    coords[:, 0] = np.arange(19) * 1.28
+    result = run_ccm([6] * 19, coords, [[19 * 1.28, 0, 0]], max_iter=400,
+                     conv_tol=1e-9, stability="lowest")
+    assert result.converged
+    assert result.total_energy / 19 == pytest.approx(-5.847916793367882, abs=1e-8, rel=0)
+    return result.density.copy()
+
+
+@pytest.mark.parametrize("backend", ["native", "python"])
+@pytest.mark.parametrize("madelung", [False, True])
+@pytest.mark.parametrize("displacement", [1e-4, 3e-4, 1e-3, 3e-3, 4e-3])
+def test_c19_distorted_frontier_matches_density_continuation(
+        monkeypatch, c19_continuation_density, backend, madelung, displacement):
+    """#249: the old fresh state was 0.006867 Ha above continuation at 1e-4 A.
+
+    Both were locally stable. An adaptive seed alone retained a 0.005148 Ha
+    failure at 0.004 A; variational continuation must repair it too. A local
+    stability pass alone cannot select the lower branch; compare distinct
+    initial guesses in the same Hamiltonian.
+    """
+    if backend == "python":
+        monkeypatch.setattr(ccm, "_cpp_ccm_energy_kernel", lambda: None)
+    else:
+        assert ccm._cpp_ccm_energy_kernel() is not None
+    coords = np.zeros((19, 3))
+    coords[:, 0] = np.arange(19) * 1.28
+    coords[1, 0] += displacement
+    translations = np.array([[19 * 1.28, 0, 0]])
+    fresh = run_ccm([6] * 19, coords, translations, madelung=madelung,
+                    max_iter=400, conv_tol=1e-9, stability="lowest")
+    blocks, nsto = ccm._atom_blocks([6] * 19)
+    C, T = coords * ccm.ANGSTROM_TO_BOHR, translations * ccm.ANGSTROM_TO_BOHR
+    ws = build_wigner_seitz(C, T)
+    diagnostics = {}
+    followed = ccm._ccm_total_energy(
+        [6] * 19, C, blocks, nsto, [4] * 19, 38, ws, list(T),
+        madelung=madelung, max_iter=400, conv_tol=1e-9,
+        initial_density=c19_continuation_density.copy(), lowest_stable=True,
+        diagnostics=diagnostics,
+    )
+    assert fresh.converged and fresh.stability_analysis_converged
+    assert fresh.stability_eigenvalue >= -4e-6
+    assert followed[5] and diagnostics["stability_analysis_converged"]
+    assert diagnostics["stability_eigenvalue"] >= -4e-6
+    assert fresh.total_energy == pytest.approx(followed[0], abs=1e-8, rel=0)
+    assert fresh.n_iter <= 400 and followed[6] <= 400
+    assert fresh.frontier_seed_orbitals == 4
+    assert fresh.frontier_seed_expansions >= 1
+    assert diagnostics["frontier_seed_evaluations"] == 0
+
+
+@pytest.mark.parametrize("madelung", [False, True])
+def test_c19_selected_state_force_refines_quadratically(madelung):
+    """A nonzero force matches its branch's derivative, not a global-state claim."""
+    from vibeqc.semiempirical.methods.msindo_ccm_gradient_analytic import (
+        ccm_gradient_analytic,
+    )
+
+    n = 19
+    coords = np.zeros((n, 3))
+    coords[:, 0] = np.arange(n) * 1.28
+    coords[1, 0] += .003
+    translations = [[n * 1.28, 0, 0]]
+    controls = dict(madelung=madelung, max_iter=400, conv_tol=1e-10,
+                    stability="lowest")
+    analytic = ccm_gradient_analytic([6] * n, coords, translations, **controls)
+    assert np.linalg.norm(analytic[1]) > 1e-5
+    errors = []
+    # The repaired lower branch has much smaller truncation error. Resolve
+    # the quadratic regime at larger steps while retaining all original
+    # fine stencils. Every error must meet the unchanged absolute bound.
+    for step in (4e-3, 2e-3, 1e-3, 5e-4, 2.5e-4):
+        fd = ccm_gradient_fd([6] * n, coords, translations, atoms=[1],
+                             step=step, **controls)
+        errors.append(np.max(np.abs(analytic[1] - fd[1])))
+    assert max(errors) < 2e-6
+    assert all(3.5 < errors[i] / errors[i + 1] < 4.5 for i in range(2))
+
+
+@pytest.mark.parametrize("nocc", [1, 3])
+@pytest.mark.parametrize("budget", [1, 7, 26, 400])
+def test_frontier_seed_counts_all_fock_evaluations(nocc, budget):
+    """An exact quadratic functional supplies an independent known minimizer."""
+    from vibeqc.semiempirical.methods.msindo_ccm_frontier import frontier_seed
+
+    v = np.arange(1., 5.)
+    v /= np.linalg.norm(v)
+    target = 2 * np.outer(v, v)
+    if nocc == 3:
+        target = 2 * np.eye(4) - target
+    calls = 0
+
+    def evaluate(P):
+        nonlocal calls
+        calls += 1
+        delta = P - target
+        return delta, .5 * float(np.sum(delta * delta))
+
+    seed = frontier_seed(np.zeros((4, 4)), nocc, budget, evaluate)
+    assert seed.applicable and calls == seed.evaluations <= budget
+    np.testing.assert_allclose(seed.density @ seed.density, 2 * seed.density, atol=1e-12)
+    assert np.trace(seed.density) == pytest.approx(2 * nocc, abs=1e-12, rel=0)
+    np.testing.assert_allclose(seed.fock, seed.density - target, atol=1e-12)
+    assert seed.energy == pytest.approx(.5 * np.sum((seed.density-target)**2), abs=1e-12, rel=0)
+    if budget == 400:
+        assert seed.completed and seed.energy < 1e-16
+    else:
+        assert not seed.completed and seed.evaluations == budget
+
+
+@pytest.mark.parametrize("hole", [False, True])
+@pytest.mark.parametrize("budget", [1, 7, 26, 400])
+def test_frontier_seed_repairs_adjacent_block_curvature(hole, budget):
+    """An independent quadratic functional has a known occupied/hole projector."""
+    from vibeqc.semiempirical.methods.msindo_ccm_frontier import frontier_seed
+
+    H = np.diag([-1e-5, -1e-5, 0, 0, 0] if hole else [0, 0, 1e-5, 1e-5])
+    nocc = 4 if hole else 1
+    v = np.array([3., 4., 1., 1., 1.] if hole else [1., 2., 3., 4.])
+    v /= np.linalg.norm(v)
+    target = 2 * np.outer(v, v)
+    if hole:
+        target = 2 * np.eye(len(H)) - target
+    calls = 0
+
+    def evaluate(P):
+        nonlocal calls
+        calls += 1
+        delta = P - target
+        return delta, .5 * float(np.sum(delta * delta))
+
+    seed = frontier_seed(H, nocc, budget, evaluate)
+    assert seed.applicable and calls == seed.evaluations <= budget
+    np.testing.assert_allclose(seed.density @ seed.density, 2 * seed.density, atol=1e-12)
+    assert np.trace(seed.density) == pytest.approx(2 * nocc, abs=1e-12, rel=0)
+    np.testing.assert_allclose(seed.fock, seed.density - target, atol=1e-12)
+    assert seed.energy == pytest.approx(.5 * np.sum((seed.density-target)**2), abs=1e-12, rel=0)
+    if budget == 400:
+        assert seed.completed and seed.energy < 1e-16
+        assert seed.expansions == 1 and seed.orbital_end - seed.orbital_begin == len(H)
+    else:
+        assert not seed.completed and seed.evaluations == budget
+
+
+def test_frontier_screening_exhaustion_keeps_physical_state():
+    """Check every exhaustion point, including adjacent-block response calls."""
+    from vibeqc.semiempirical.methods.msindo_ccm_frontier import frontier_seed
+
+    H = np.diag([0., 0., 1e-5, 1e-5])
+    v = np.arange(1., 5.) / np.sqrt(30.)
+    target = 2 * np.outer(v, v)
+    calls = 0
+
+    def evaluate(P):
+        nonlocal calls
+        calls += 1
+        delta = P - target
+        return delta, .5 * float(np.sum(delta * delta))
+
+    complete = frontier_seed(H, 1, 400, evaluate)
+    assert complete.completed and complete.expansions == 1
+    for budget in range(1, complete.evaluations):
+        calls = 0
+        seed = frontier_seed(H, 1, budget, evaluate)
+        assert not seed.completed and seed.evaluations == calls == budget
+        np.testing.assert_allclose(seed.density @ seed.density, 2 * seed.density,
+                                   atol=1e-12, rtol=0)
+        np.testing.assert_allclose(seed.fock, seed.density - target, atol=1e-12, rtol=0)
+        assert seed.energy == pytest.approx(.5 * np.sum((seed.density-target)**2),
+                                            abs=1e-12, rel=0)
+
+
+@pytest.mark.parametrize("nocc", [1, 2, 3])
+@pytest.mark.parametrize("budget", [0, 1, 3, 200])
+def test_variational_continuation_preserves_projector_and_budget(nocc, budget):
+    """A quadratic functional supplies a known minimum for every occupation."""
+    from vibeqc.semiempirical.methods.msindo_ccm_orbitals import minimize_orbitals
+
+    v = np.arange(1., 5.) / np.sqrt(30.)
+    Q = np.eye(4) - 2 * np.outer(v, v)
+    target = 2 * Q[:, :nocc] @ Q[:, :nocc].T
+    initial = np.diag([2.] * nocc + [0.] * (4 - nocc))
+    calls = 0
+
+    def evaluate(P):
+        nonlocal calls
+        calls += 1
+        np.testing.assert_allclose(P @ P, 2 * P, atol=1e-12, rtol=0)
+        assert np.trace(P) == pytest.approx(2 * nocc, abs=1e-12, rel=0)
+        delta = P - target
+        return delta, .5 * float(np.sum(delta * delta))
+
+    F, E = evaluate(initial)
+    calls = 0  # The initial physical state has already been evaluated.
+    P, F, E, converged, used, optimized = minimize_orbitals(
+        initial, F, E, nocc, budget, 1e-10, evaluate,
+    )
+    assert used == calls <= budget
+    np.testing.assert_allclose(F, P - target, atol=1e-12, rtol=0)
+    assert E == pytest.approx(.5 * np.sum((P-target)**2), abs=1e-12, rel=0)
+    if budget == 200:
+        assert converged and optimized and E < 1e-16
+    else:
+        assert not converged and used == budget
+
+
+@pytest.mark.parametrize("budget", [1, 26])
+def test_python_frontier_exhaustion_retains_last_physical_state(monkeypatch, budget):
+    monkeypatch.setattr(ccm, "_cpp_ccm_energy_kernel", lambda: None)
+    result = run_ccm([6] * 3, [[0, 0, 0], [1.28, 0, 0], [2.56, 0, 0]],
+                     [[3.84, 0, 0]], max_iter=budget)
+    assert not result.converged and not result.frontier_seed_completed
+    assert result.n_iter == result.frontier_seed_evaluations == budget
+    assert not result.stability_checked and not result.orbital_optimization_used
+    assert np.isfinite(result.total_energy) and result.total_energy != 0
+    assert np.trace(result.density) == pytest.approx(12, abs=1e-12, rel=0)
+    np.testing.assert_allclose(result.density @ result.density, 2 * result.density,
+                               atol=1e-12, rtol=0)
+
+
+@pytest.mark.parametrize("n, energy", [(3, -5.8507989864278), (19, -5.847916793367882)])
+def test_carbon_chain_run_job_reports_stability(tmp_path, n, energy):
+    molecule = vq.Molecule([
+        vq.Atom(6, [i * 1.28 * ANGSTROM_TO_BOHR, 0, 0]) for i in range(n)
+    ])
+    result = vq.run_job(
+        molecule, method="seccm", output=str(tmp_path / "stable_chain"),
+        ccm_options=CCMOptions(translations=[[n * 1.28, 0, 0]], madelung=False,
+                               max_iter=200 if n == 3 else 400),
+        citations=True, verbose=0,
+    )
+    assert result.stability_checked and result.stability_analysis_converged
+    assert result.energy / n == pytest.approx(energy, abs=1e-8, rel=0)
+    assert "internal stability: stable" in (tmp_path / "stable_chain.out").read_text()
+    assert result.frontier_seed_completed and result.frontier_seed_evaluations > 0
+    assert "Fock evaluations included in max_iter" in (tmp_path / "stable_chain.out").read_text()
+    for field in ("frontier_seed_orbitals", "frontier_seed_expansions"):
+        assert (f"seccm_{field} = {getattr(result, field)}"
+                in (tmp_path / "stable_chain.system").read_text())
+    assert (f"seccm_frontier_seed_evaluations = {result.frontier_seed_evaluations}"
+            in (tmp_path / "stable_chain.system").read_text())
+    assert "10.3390/molecules25051218" in (tmp_path / "stable_chain.bibtex").read_text()
+    if n == 19:
+        assert result.orbital_optimization_used
+        assert "neese_soscf" in (tmp_path / "stable_chain.bibtex").read_text()
+
+
+# #249, verifier note of 2026-09-26: the C3 chain (atoms at 0, 1.283, 2.56 A;
+# T = 3.84 A) with atom 0 displaced transversely by dy bohr. Geometry and
+# pinned values live in tests/msindo_seccm_article_systems.py; the release
+# pins in test_release_msindo_cyclic_cluster_pins.py cover the native sweep.
+
+
+def _bent_c3_molecule(dy_bohr):
+    coords, translations = bent_c3_chain(dy_bohr)
+    molecule = vq.Molecule([
+        vq.Atom(6, [c * ANGSTROM_TO_BOHR for c in xyz]) for xyz in coords
+    ])
+    return molecule, translations
+
+
+def test_bent_carbon_chain_python_reference_matches_native(monkeypatch):
+    """Both twins implement both SCF state policies identically."""
+    coords, translations = bent_c3_chain(3e-3)
+    native = {
+        policy: run_ccm([6, 6, 6], coords, translations, max_iter=400, stability=policy)
+        for policy in ("reference", "lowest")
+    }
+    monkeypatch.setattr(ccm, "_cpp_ccm_energy_kernel", lambda: None)
+    for policy, expected, flagged in (
+        ("reference", BENT_CHAIN_REFERENCE_3E3[False], True),
+        ("lowest", BENT_CHAIN_ENERGIES[False][3], False),
+    ):
+        reference = run_ccm([6, 6, 6], coords, translations, max_iter=400,
+                            stability=policy)
+        assert reference.stability_checked and native[policy].stability_checked
+        assert reference.internal_instability == native[policy].internal_instability == flagged
+        assert reference.total_energy == pytest.approx(native[policy].total_energy, abs=1e-8)
+        assert reference.total_energy == pytest.approx(expected, abs=1e-8)
+
+
+@pytest.mark.parametrize("madelung", [False, True])
+@pytest.mark.parametrize("index,dy", list(enumerate(BENT_CHAIN_SWEEP_BOHR)))
+def test_bent_chain_preserves_old_branch_as_explicit_continuation(madelung, index, dy):
+    """Retain the old pins while demonstrating that they describe a higher state."""
+    coords, translations = bent_c3_chain(dy)
+    lower = run_ccm([6] * 3, coords, translations, madelung=madelung,
+                    max_iter=400, conv_tol=1e-10, stability="lowest")
+    rotation = np.eye(12)
+    for atom in range(3):
+        py, pz = 4 * atom + 2, 4 * atom + 3
+        rotation[py, py] = rotation[pz, pz] = 0.
+        rotation[py, pz], rotation[pz, py] = -1., 1.
+    start = rotation @ lower.density @ rotation.T
+    C = np.asarray(coords) * ccm.ANGSTROM_TO_BOHR
+    T = np.asarray(translations) * ccm.ANGSTROM_TO_BOHR
+    blocks, nsto = ccm._atom_blocks([6] * 3)
+    ws = build_wigner_seitz(C, T)
+    followed = ccm._ccm_total_energy(
+        [6] * 3, C, blocks, nsto, [4] * 3, 6, ws, list(T),
+        madelung=madelung, max_iter=400, conv_tol=1e-10,
+        initial_density=start, lowest_stable=False,
+    )
+    assert lower.converged and followed[5]
+    assert followed[0] == pytest.approx(BENT_CHAIN_LEGACY_ENERGIES[madelung][index],
+                                       abs=1e-8, rel=0)
+    assert lower.total_energy == pytest.approx(BENT_CHAIN_ENERGIES[madelung][index],
+                                              abs=1e-8, rel=0)
+    if dy >= 1e-3:
+        assert lower.total_energy < followed[0] - 1e-8
+
+
+@pytest.mark.parametrize("madelung", [False, True])
+def test_bent_carbon_chain_stable_under_coordinate_noise(madelung):
+    """1e-8 A coordinate noise must not select a different SCF solution;
+    #249's tolerance is 1e-8 Ha per atom."""
+    for policy in ("reference", "lowest"):
+        values = []
+        for noise in (0.0, 1e-8):
+            coords, translations = bent_c3_chain(3e-3, noise_angstrom=noise)
+            r = run_ccm([6, 6, 6], coords, translations, madelung=madelung,
+                        max_iter=400, stability=policy)
+            assert r.converged and r.stability_checked
+            values.append(r.total_energy / 3)
+        assert values[0] == pytest.approx(values[1], abs=1e-8), policy
+
+
+@pytest.mark.parametrize("madelung", [False, True])
+def test_bent_carbon_chain_transverse_force_matches_fd(madelung):
+    """Public route, lowest-stable policy: the analytic transverse force
+    agrees with a central difference of the public energy at 1e-3 bohr."""
+    from vibeqc.semiempirical.runner import run_seccm
+
+    def public(dy):
+        molecule, translations = _bent_c3_molecule(dy)
+        return run_seccm(molecule, CCMOptions(
+            translations=translations, madelung=madelung, max_iter=400,
+            stability="lowest"))
+
+    centre, step = 3e-3, 1e-3
+    analytic = np.asarray(public(centre).gradient())
+    assert analytic.shape == (3, 3)
+    fd = (public(centre + step).energy - public(centre - step).energy) / (2 * step)
+    assert abs(analytic[0, 1]) > 1e-4, "the bent chain must carry a transverse force"
+    assert analytic[0, 1] == pytest.approx(fd, abs=5e-6)
+
+
+def test_bent_carbon_chain_analytic_force_follows_its_state(monkeypatch):
+    """All-atom force acceptance on the chain's lowest state (#249).
+
+    That state breaks the z mirror: its pi pattern is rotated about the nearly
+    linear axis. The lowest-energy surface therefore has a cusp at z = 0, where
+    out-of-plane displacement lowers E linearly in |z| either way, so a
+    central difference of independent SCFs there is not the derivative of
+    either mirror branch. The analytic gradient must equal a central
+    difference that follows its own state from its own density (Python twin,
+    one trajectory throughout)."""
+    from vibeqc.semiempirical.methods import msindo_ccm_gradient_analytic as ga
+    from vibeqc.semiempirical.methods.msindo import eff_core_charge
+
+    monkeypatch.setattr(ga, "_cpp_ccm_gradient_kernel", lambda: None)
+    monkeypatch.setattr(ccm, "_cpp_ccm_energy_kernel", lambda: None)
+    Z = [6, 6, 6]
+    coords, translations = bent_c3_chain(3e-3)
+    analytic = ga.ccm_gradient_analytic(Z, coords, translations, max_iter=400,
+                                        conv_tol=1e-11, stability="lowest")
+    blocks, nsto = ccm._atom_blocks(Z)
+    cz = [eff_core_charge(z) for z in Z]
+    nocc = sum(cz) // 2
+    T = [np.asarray(t, float) * ccm.ANGSTROM_TO_BOHR for t in translations]
+
+    def energy(xyz, start, lowest):
+        C = np.asarray(xyz, float) * ccm.ANGSTROM_TO_BOHR
+        ws = ccm.build_wigner_seitz(C, T)
+        total, _e, _c, _eps, P, converged, _it = ccm._ccm_total_energy(
+            Z, C, blocks, nsto, cz, nocc, ws, T, madelung=False, max_iter=400,
+            conv_tol=1e-11, initial_density=start, lowest_stable=lowest)
+        assert converged
+        return total, P
+
+    e0, P0 = energy(coords, None, True)
+    h = 1e-3
+    followed = np.zeros((3, 3))
+    for atom in range(3):
+        for axis in range(3):
+            shift = np.zeros((3, 3))
+            shift[atom, axis] = h
+            ep = energy(coords + shift, P0, False)[0]
+            em = energy(coords - shift, P0, False)[0]
+            followed[atom, axis] = (ep - em) / (2 * h * ccm.ANGSTROM_TO_BOHR)
+    np.testing.assert_allclose(analytic, followed, rtol=0, atol=1e-6)
+    assert abs(analytic[1, 2]) > 1e-4, "the mirror-broken state carries an out-of-plane force"
+    # The cusp: out of plane lowers the lowest-state energy both ways.
+    for sign in (+1.0, -1.0):
+        shift = np.zeros((3, 3))
+        shift[1, 2] = sign * 2e-3
+        assert energy(coords + shift, None, True)[0] < e0 - 5e-7
+
+
+def test_seccm_options_expose_scf_controls():
+    from vibeqc.semiempirical.runner import run_seccm
+
+    molecule, translations = _bent_c3_molecule(0.0)
+    with pytest.raises(RuntimeError, match="did not converge"):
+        run_seccm(molecule, CCMOptions(translations=translations, madelung=False,
+                                       max_iter=1))
+    for bad, match in (({"max_iter": 0}, "max_iter"), ({"conv_tol": 0.0}, "conv_tol"),
+                       ({"stability": "global"}, "stability")):
+        with pytest.raises(ValueError, match=match):
+            run_seccm(molecule, CCMOptions(translations=translations,
+                                           madelung=False, **bad))
+    tight = run_seccm(molecule, CCMOptions(translations=translations, madelung=False))
+    loose = run_seccm(molecule, CCMOptions(translations=translations, madelung=False,
+                                           conv_tol=1e-5))
+    # Curvature-guided expansion of this unresolved Hcore frontier lands on
+    # a slightly symmetry-broken minimum before the final stability audit.
+    assert tight.run_fields.pop("seccm_max_abs_net_charge") == pytest.approx(
+        0.017428, abs=1e-4)
+    assert tight.run_fields.pop("seccm_stability_eigenvalue") > -4e-6
+    assert tight.run_fields.pop("seccm_stability_restarts") == 0
+    assert tight.run_fields.pop("seccm_frontier_seed_expansions") >= 1
+    assert tight.run_fields.pop("seccm_frontier_seed_orbitals") == 4
+    assert tight.run_fields.pop("seccm_frontier_seed_evaluations") > 0
+    assert tight.run_fields.pop("seccm_frontier_seed_completed") is True
+    assert tight.run_fields.pop("seccm_orbital_optimization_used") is True
+    assert tight.run_fields == {
+        "route_maturity": "experimental",
+        "route_status": "msindo-ccm-energy",
+        "seccm_periodic_dimension": 1,
+        "seccm_electrostatics_kernel": "none",
+        "seccm_scf_max_iter": 200,
+        "seccm_scf_conv_tol": 1e-9,
+        "seccm_gradient_conv_tol": 1e-10,
+        "seccm_stability_policy": "reference",
+        "seccm_stability_checked": True,
+        "seccm_stability_analysis_converged": True,
+        "seccm_internal_instability": False,
+    }
+    assert loose.run_fields["seccm_scf_conv_tol"] == 1e-5
+    assert loose.n_iter < tight.n_iter
+    assert loose.energy == pytest.approx(tight.energy, abs=1e-6)
+
+
+def test_seccm_run_job_records_kernel_and_controls(tmp_path):
+    """The .out and .system bind the number to the executed kernel, SCF
+    controls and state policy, naming the 1-D embedding a truncated sum."""
     molecule = vq.Molecule([
         vq.Atom(6, [i * 1.28 * ANGSTROM_TO_BOHR, 0, 0]) for i in range(3)
     ])
     result = vq.run_job(
-        molecule, method="seccm", output=str(tmp_path / "stable_chain"),
-        ccm_options=CCMOptions(translations=[[3.84, 0, 0]], madelung=False),
-        citations=True, verbose=0,
+        molecule, method="seccm", output=str(tmp_path / "chain"),
+        ccm_options=CCMOptions(translations=[[3.84, 0, 0]], madelung=True,
+                               max_iter=300, conv_tol=1e-8),
+        verbose=0,
     )
-    assert result.stability_checked and result.stability_analysis_converged
-    assert result.energy / 3 == pytest.approx(-5.8507989864278, abs=1e-8)
-    assert "internal stability: stable" in (tmp_path / "stable_chain.out").read_text()
-    assert "10.3390/molecules25051218" in (tmp_path / "stable_chain.bibtex").read_text()
+    assert result.run_fields["seccm_electrostatics_kernel"] == "madelung_truncated_1d"
+    out = (tmp_path / "chain.out").read_text()
+    assert ("SECCM: 1-D cyclic cluster; electrostatics kernel: "
+            "madelung_truncated_1d (truncated +/-2-shell bare lattice sum, "
+            "not an Ewald sum)") in out
+    assert ("SECCM SCF controls: max_iter=300 conv_tol=1.0e-08 "
+            "gradient_conv_tol=1.0e-10 stability=reference") in out
+    assert "SECCM net atomic charges: max |q| = 0.0000 e" in out
+    system = (tmp_path / "chain.system").read_text()
+    assert 'seccm_electrostatics_kernel = "madelung_truncated_1d"' in system
+    assert "seccm_scf_max_iter = 300" in system
+    assert "seccm_periodic_dimension = 1" in system
+    assert 'seccm_stability_policy = "reference"' in system
+    assert "seccm_max_abs_net_charge = " in system
+    assert "seccm_stability_checked = true" in system
+    assert "seccm_stability_analysis_converged = true" in system
+    assert "seccm_internal_instability = false" in system
+    assert "seccm_stability_eigenvalue = " in system
+
+
+@pytest.mark.parametrize(
+    ("checked", "audit_converged", "unstable"),
+    [(True, True, False), (True, False, False), (False, False, False),
+     (True, True, True)],
+)
+def test_seccm_stability_audit_flags_reach_system_and_qvf(
+    tmp_path, monkeypatch, checked, audit_converged, unstable,
+):
+    """Maturity stays experimental independently of the synthetic SCF audit."""
+    from types import SimpleNamespace
+    import zipfile
+
+    native_result = SimpleNamespace(
+        total_energy=-1.0, converged=True, n_iter=2, density=np.eye(2),
+        stability_checked=checked, stability_analysis_converged=audit_converged,
+        stability_eigenvalue=-0.1 if unstable else 0.0,
+        n_stability_restarts=0, internal_instability=unstable,
+    )
+    executed_controls = {}
+
+    def synthetic_scf(*args, **kwargs):
+        executed_controls.update(kwargs)
+        return native_result
+
+    monkeypatch.setattr(ccm, "run_ccm", synthetic_scf)
+    monkeypatch.setattr(ccm, "net_atomic_charges", lambda *args: [0.0, 0.0])
+    molecule = vq.Molecule([
+        vq.Atom(1, [0.0, 0.0, 0.0]), vq.Atom(1, [1.4, 0.0, 0.0]),
+    ])
+    result = vq.run_job(
+        molecule, method="seccm", output=str(tmp_path / "audit"),
+        ccm_options=CCMOptions(translations=[[8.0, 0.0, 0.0]], madelung=False),
+        output_qvf=True, record_hostname=False, verbose=0,
+    )
+    assert result.converged
+    assert result.energy == -1.0
+    assert result.route_plan.maturity == "experimental"
+    assert executed_controls["stability"] == "reference"
+    assert result.stability_checked is checked
+    assert result.stability_analysis_converged is audit_converged
+    expected = {
+        "route_maturity": "experimental",
+        "route_status": "msindo-ccm-energy",
+        "seccm_stability_checked": checked,
+        "seccm_stability_analysis_converged": audit_converged,
+        "seccm_internal_instability": unstable,
+        "seccm_stability_policy": "reference",
+    }
+    system = tomllib.loads((tmp_path / "audit.system").read_text())
+    with zipfile.ZipFile(tmp_path / "audit.qvf") as archive:
+        qvf_run = json.loads(archive.read("manifest.json"))["provenance"]["run_fields"]
+        job_spec = json.loads(archive.read("job_spec/spec.json"))
+    for record in (result.run_fields, system["run"], qvf_run):
+        assert {key: record[key] for key in expected} == expected
+    assert qvf_run == result.run_fields
+    assert not any(key.startswith("seccm_") for key in job_spec.get("options", {}))
+    # The existing warning remains independent of SCF convergence.
+    out = (tmp_path / "audit.out").read_text()
+    assert any(
+        line.split() == ["maturity", "=", "experimental"]
+        for line in out.splitlines()
+    )
+    assert ("SCF STABILITY UNVERIFIED" in out) == (checked and not audit_converged)
+    assert ("internally UNSTABLE stationary point" in out) == unstable
+
+
+def test_seccm_run_job_warns_on_a_flagged_saddle(tmp_path):
+    """A reference-policy saddle reaches the .out as a loud warning."""
+    molecule, translations = _bent_c3_molecule(3e-3)
+    result = vq.run_job(
+        molecule, method="seccm", output=str(tmp_path / "bent"),
+        ccm_options=CCMOptions(translations=translations, madelung=False,
+                               max_iter=400),
+        verbose=0,
+    )
+    assert result.internal_instability
+    assert result.energy == pytest.approx(BENT_CHAIN_REFERENCE_3E3[False], abs=1e-8)
+    out = (tmp_path / "bent.out").read_text()
+    assert "converged onto an internally UNSTABLE stationary point" in out
+    system = (tmp_path / "bent.system").read_text()
+    assert "seccm_internal_instability = true" in system
 
 
 def _oracle_origins(ws_cell):
@@ -679,6 +1264,34 @@ def test_ccm_total_energy_matches_oracle(name):
         cluster["reference"]["total_energy"], abs=5e-9)
 
 
+# Reference MSINDO converges to restricted-stability saddles on these frozen
+# clusters. The default "reference" policy reproduces the oracle energy and
+# flags the state; "lowest" descends below it (#249, decision in #420).
+_ORACLE_REFERENCE_SADDLES = frozenset({
+    "hfionic_a1.6_n1_noewald",
+    "hfionic_a1.6_n1_madelung",
+    "hf_rocksalt_a4.0_noewald",
+})
+
+
+def test_ccm_oracle_reference_states_flag_exactly_the_known_saddles():
+    """Oracle parity is a reference-state result: every frozen cluster is
+    audited, and exactly the known saddles carry the instability flag."""
+    flagged = set()
+    for name in _ALL:
+        res = _run(_CLUSTERS[name])
+        n_occupied = round(float(np.trace(res.density)) / 2)
+        # A cluster with no virtual orbital has nothing to rotate or audit.
+        assert res.converged and (
+            res.stability_checked or n_occupied == len(res.mo_energies)), name
+        assert res.total_energy == pytest.approx(
+            _CLUSTERS[name]["reference"]["total_energy"], abs=5e-9), name
+        if res.internal_instability:
+            assert res.stability_eigenvalue < -4e-6, name
+            flagged.add(name)
+    assert flagged == _ORACLE_REFERENCE_SADDLES
+
+
 @pytest.mark.parametrize("name", _ALL)
 def test_ccm_energy_components_match_oracle(name):
     """Electronic, Madelung-nuclear (WS-weighted core-core) and binding all
@@ -1201,3 +1814,340 @@ def test_seccm_mgo_222_invariant_under_anion_sublattice_lattice_translation():
     # The 4.4e-10 dilation of the coordinates alone is worth 2e-9 Ha.
     assert reference == pytest.approx(exact, abs=1.0e-7)
     assert shifted == pytest.approx(reference, abs=1.0e-8)
+
+
+# The article's equation-of-state systems. Geometries and pinned values live
+# in tests/msindo_seccm_article_systems.py; the fast 2x2x2 pins are blocking
+# T1 in test_release_msindo_cyclic_cluster_pins.py. The checks below ask
+# whether the pinned state is the only one: equivalent inputs and different
+# starting densities must reach it.
+
+
+def _rotation():
+    angle = 0.37
+    c, s = np.cos(angle), np.sin(angle)
+    tilt = np.array([[1.0, 0.0, 0.0], [0.0, c, -s], [0.0, s, c]])
+    turn = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
+    return tilt @ turn
+
+
+@pytest.mark.parametrize(
+    "name, madelung, stability, energy, max_charge, restarts, flagged",
+    ARTICLE_222_PINS, ids=[pin_id(entry) for entry in ARTICLE_222_PINS],
+)
+def test_seccm_article_222_state_is_input_invariant(
+    name, madelung, stability, energy, max_charge, restarts, flagged
+):
+    """1e-8 A noise, atom permutation plus origin shift, and a rigid rotation
+    reach the pinned state. Noise stays below the Wigner-Seitz tie tolerance:
+    a larger distortion of this exact-tie cluster is a different cyclic
+    cluster (#592/#593), not an SCF-uniqueness probe."""
+    Z, coords, translations = article_cluster(name, 2)
+    rng = np.random.default_rng(249)
+    order = rng.permutation(len(Z))
+    rot = _rotation()
+    variants = {
+        "noise": (Z, coords + 1e-8 * rng.uniform(-1.0, 1.0, size=coords.shape),
+                  translations),
+        "permuted-shifted": ([Z[i] for i in order],
+                             coords[order] + np.array([0.3, -1.1, 0.7]), translations),
+        "rotated": (Z, coords @ rot.T, [list(np.asarray(t) @ rot.T) for t in translations]),
+    }
+    for label, (Zv, coords_v, translations_v) in variants.items():
+        r = run_ccm(Zv, coords_v, translations_v, madelung=madelung,
+                    max_iter=400, conv_tol=1e-9, stability=stability)
+        assert r.converged and r.stability_checked, label
+        assert r.internal_instability == flagged, label
+        assert r.total_energy == pytest.approx(energy, abs=1e-8), label
+        charges = ccm.net_atomic_charges(Zv, r.density)
+        assert np.max(np.abs(charges)) == pytest.approx(max_charge, abs=1e-3), label
+
+
+# (system, madelung, policy): supported force routes on stable states. Bare
+# diamond 2x2x2 in its reference state is a flagged saddle, not a stable
+# minimum, so its forces are checked on the lowest-stable state only.
+# Ha/bohr. Measured analytic-FD errors on these routes: 1.5e-8 to 9.8e-8.
+_ARTICLE_FORCE_ATOL = 2e-6
+_ARTICLE_FORCE_ROUTES = (
+    ("MgO", False, "reference"),
+    ("MgO", True, "reference"),
+    ("diamond", True, "reference"),
+    ("diamond", False, "lowest"),
+)
+
+
+@pytest.mark.parametrize(
+    "name, madelung, stability", _ARTICLE_FORCE_ROUTES,
+    ids=[f"{n}-{'madelung' if m else 'bare'}-{p}" for n, m, p in _ARTICLE_FORCE_ROUTES],
+)
+def test_seccm_article_222_force_matches_fd(name, madelung, stability):
+    """3-D force acceptance: the analytic gradient of a displaced atom matches
+    a central difference (1e-3 A) of the energy on the same fixed WS
+    topology and state policy."""
+    from vibeqc.semiempirical.methods.msindo_ccm_gradient_analytic import (
+        ccm_gradient_analytic,
+    )
+
+    Z, coords, translations = article_cluster(name, 2)
+    coords = coords.copy()
+    coords[1] += np.array([0.02, -0.01, 0.015])
+    analytic = ccm_gradient_analytic(Z, coords, translations, madelung=madelung,
+                                     max_iter=400, conv_tol=1e-10,
+                                     stability=stability)
+    # Atom 0 is not displaced: its z-aligned image vectors carried the #443
+    # pole defect (y forces off by up to 3e-4 Ha/bohr). Every undisplaced MgO
+    # atom has such image vectors, so retain the original all-atom acceptance.
+    fd_atoms = list(range(len(Z))) if name == "MgO" else [0, 1]
+    fd = ccm_gradient_fd(Z, coords, translations, madelung=madelung, atoms=fd_atoms,
+                         max_iter=400, conv_tol=1e-10, step=1e-3,
+                         stability=stability)
+    assert np.linalg.norm(analytic[1]) > 1e-3, "the displaced atom must carry a force"
+    np.testing.assert_allclose(
+        analytic[fd_atoms], fd[fd_atoms], rtol=0, atol=_ARTICLE_FORCE_ATOL,
+    )
+
+
+def _multistart_densities(H, Z, blocks, nocc, nsto, cz):
+    yield "huckel", msindo._huckel_guess_density(H, Z, blocks, nocc)
+    atomic = np.zeros((nsto, nsto))
+    for i, (lo, hi) in enumerate(blocks):
+        for k in range(lo, hi):
+            atomic[k, k] = cz[i] / (hi - lo)
+    yield "atomic", atomic
+    q, _ = np.linalg.qr(np.random.default_rng(249).standard_normal((nsto, nsto)))
+    yield "random", 2.0 * q[:, :nocc] @ q[:, :nocc].T
+
+
+_LOWEST_222_PINS = [entry for entry in ARTICLE_222_PINS if not entry[6]]
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    "name, madelung, stability, energy, max_charge, restarts, flagged",
+    _LOWEST_222_PINS, ids=[pin_id(entry) for entry in _LOWEST_222_PINS],
+)
+def test_seccm_article_222_single_stable_minimum_from_multiple_starts(
+    name, madelung, stability, energy, max_charge, restarts, flagged
+):
+    """Extended-Hueckel, neutral-atom and random starting densities all reach
+    the pinned stable minimum under the lowest-stable policy (Python twin;
+    about a minute per start)."""
+    from vibeqc.semiempirical.methods.msindo import eff_core_charge
+
+    Z, coords, translations = article_cluster(name, 2)
+    blocks, nsto = ccm._atom_blocks(Z)
+    cz = [eff_core_charge(z) for z in Z]
+    nocc = sum(cz) // 2
+    # The engine's own Angstrom-to-bohr constant (the MSINDO program's), as
+    # run_ccm uses; vibeqc.molecule's differs by 8.8e-8 relative.
+    C = np.asarray(coords, float) * ccm.ANGSTROM_TO_BOHR
+    T = [np.asarray(t, float) * ccm.ANGSTROM_TO_BOHR for t in translations]
+    ws = ccm.build_wigner_seitz(C, T)
+    H, _G = ccm._build_core_and_gamma_ccm(Z, C, blocks, nsto, ws)
+    for label, start in _multistart_densities(H, Z, blocks, nocc, nsto, cz):
+        diagnostics = {}
+        total, *_rest = ccm._ccm_total_energy(
+            Z, C, blocks, nsto, cz, nocc, ws, T, madelung=madelung,
+            max_iter=600, conv_tol=1e-9, diagnostics=diagnostics,
+            initial_density=start, lowest_stable=True)
+        assert diagnostics["stability_checked"], label
+        assert not diagnostics["internal_instability"], label
+        assert total == pytest.approx(energy, abs=1e-8), label
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    "name, madelung, energy, restarts", ARTICLE_333_PINS,
+    ids=[f"{n}-{'madelung' if m else 'bare'}" for n, m, *_ in ARTICLE_333_PINS],
+)
+def test_seccm_article_333_clusters_pinned(name, madelung, energy, restarts):
+    """The 3x3x3 clusters are stable neutral minima; bare and embedded
+    diamond agree to 1e-9 because its charges vanish."""
+    Z, coords, translations = article_cluster(name, 3)
+    for stability in ("reference", "lowest"):
+        r = run_ccm(Z, coords, translations, madelung=madelung, max_iter=400,
+                    conv_tol=1e-9, stability=stability)
+        assert r.converged and r.stability_checked and r.stability_analysis_converged
+        assert not r.internal_instability
+        assert r.stability_eigenvalue > 1e-3
+        assert r.n_stability_restarts == restarts
+        assert r.total_energy == pytest.approx(energy, abs=1e-8)
+        if name == "diamond":
+            assert np.max(np.abs(ccm.net_atomic_charges(Z, r.density))) < 1e-6
+
+
+# --------------------------------------------------------------------------- #
+# Analytic strain derivative and stress (item 5 of the article brief)         #
+# --------------------------------------------------------------------------- #
+
+
+def _frozen_strained_energy(Z, C0, T0, ws0, eps, madelung, start, lowest):
+    """CCM energy after x -> (1 + eps) x of atoms, lattice and every frozen WS
+    displacement (the topology the analytic derivative is taken on). Python
+    twin, restarted from ``start`` so the strained SCF follows one state."""
+    from vibeqc.semiempirical.methods.msindo import eff_core_charge
+
+    F = np.eye(3) + eps
+    C = C0 @ F.T
+    T = [F @ t for t in T0]
+    cells = [[WSNeighbor(origin=nb.origin, weight=nb.weight, disp=F @ nb.disp)
+              for nb in cell] for cell in ws0.cells]
+    blocks, nsto = ccm._atom_blocks(Z)
+    cz = [eff_core_charge(z) for z in Z]
+    total, _e, _c, _eps, P, converged, _it = ccm._ccm_total_energy(
+        Z, C, blocks, nsto, cz, sum(cz) // 2,
+        WignerSeitzCells(cells=cells, translations=T), T, madelung=madelung,
+        max_iter=400, conv_tol=1e-11, initial_density=start, lowest_stable=lowest)
+    assert converged
+    return total, P
+
+
+def _strain_fd(Z, coords, translations, madelung, stability, components, h=1e-4):
+    C0 = np.asarray(coords, float) * ccm.ANGSTROM_TO_BOHR
+    T0 = [np.asarray(t, float) * ccm.ANGSTROM_TO_BOHR for t in translations]
+    ws0 = build_wigner_seitz(C0, T0)
+    lowest = stability == "lowest"
+    _e0, P0 = _frozen_strained_energy(Z, C0, T0, ws0, np.zeros((3, 3)),
+                                      madelung, None, lowest)
+    out = {}
+    for a, b in components:
+        eps = np.zeros((3, 3))
+        eps[a, b] = h
+        ep = _frozen_strained_energy(Z, C0, T0, ws0, eps, madelung, P0, lowest)[0]
+        em = _frozen_strained_energy(Z, C0, T0, ws0, -eps, madelung, P0, lowest)[0]
+        out[(a, b)] = (ep - em) / (2 * h)
+    return out
+
+
+_STRAIN_ALL = [(a, b) for a in range(3) for b in range(3)]
+_STRAIN_3D = [(0, 0), (0, 1), (1, 0), (2, 2), (1, 2)]
+
+
+@pytest.mark.parametrize("madelung", [False, True], ids=["bare", "madelung"])
+def test_ccm_strain_derivative_matches_fd_on_a_chain(madelung):
+    """1-D: every component of the analytic strain derivative matches a
+    frozen-topology central difference, truncated Madelung sum included."""
+    from vibeqc.semiempirical.methods.msindo_ccm_gradient_analytic import (
+        ccm_strain_derivative_analytic,
+    )
+
+    coords, translations = bent_c3_chain(5e-2)
+    W = ccm_strain_derivative_analytic([6, 6, 6], coords, translations,
+                                       madelung=madelung, max_iter=400,
+                                       conv_tol=1e-11, stability="lowest")
+    fd = _strain_fd([6, 6, 6], coords, translations, madelung, "lowest", _STRAIN_ALL)
+    for key, value in fd.items():
+        assert W[key] == pytest.approx(value, abs=_STRAIN_ATOL), key
+
+
+# Ha. Central-difference truncation dominates on the stiff diagonal components
+# (it scales as h^2): measured 2.0e-6 at h = 2e-4, 5e-7 at h = 1e-4.
+_STRAIN_ATOL = 2e-6
+
+_STRESS_ROUTES = (
+    ("MgO", False, "reference"),
+    ("MgO", True, "reference"),
+    ("diamond", True, "reference"),
+    ("diamond", False, "lowest"),
+)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    "name, madelung, stability", _STRESS_ROUTES,
+    ids=[f"{n}-{'madelung' if m else 'bare'}-{p}" for n, m, p in _STRESS_ROUTES],
+)
+def test_ccm_strain_derivative_matches_fd_on_article_clusters(name, madelung, stability):
+    """3-D, including shear on exact-tie clusters: the analytic strain
+    derivative (native) matches a central difference on the frozen topology.
+    One atom is displaced so no component vanishes by symmetry."""
+    from vibeqc.semiempirical.methods.msindo_ccm_gradient_analytic import (
+        ccm_strain_derivative_analytic,
+    )
+
+    Z, coords, translations = article_cluster(name, 2)
+    coords = coords.copy()
+    coords[1] += np.array([0.02, -0.01, 0.015])
+    W = ccm_strain_derivative_analytic(Z, coords, translations, madelung=madelung,
+                                       max_iter=400, conv_tol=1e-11,
+                                       stability=stability)
+    fd = _strain_fd(Z, coords, translations, madelung, stability, _STRAIN_3D)
+    for key, value in fd.items():
+        assert W[key] == pytest.approx(value, abs=_STRAIN_ATOL), key
+
+
+def test_ccm_strain_derivative_native_matches_python(monkeypatch):
+    from vibeqc.semiempirical.methods import msindo_ccm_gradient_analytic as ga
+
+    Z, coords, translations = article_cluster("MgO", 2)
+    coords = coords.copy()
+    coords[1] += np.array([0.02, -0.01, 0.015])
+    kwargs = dict(madelung=True, max_iter=400, conv_tol=1e-11)
+    native = ga.ccm_strain_derivative_analytic(Z, coords, translations, **kwargs)
+    monkeypatch.setattr(ga, "_cpp_ccm_strain_kernel", lambda: None)
+    monkeypatch.setattr(ccm, "_cpp_ccm_energy_kernel", lambda: None)
+    python = ga.ccm_strain_derivative_analytic(Z, coords, translations, **kwargs)
+    np.testing.assert_allclose(native, python, rtol=0, atol=1e-8)
+
+
+@pytest.mark.parametrize("name, madelung", [("MgO", True), ("diamond", False)])
+def test_ccm_pressure_is_the_eos_volume_derivative(name, madelung):
+    """A uniform scaling keeps every WS tie, so the analytic pressure equals
+    the derivative of the rebuilt-topology energy along the scan."""
+    from vibeqc.semiempirical.methods.msindo_ccm_gradient_analytic import (
+        ccm_stress_analytic,
+    )
+
+    Z, coords, translations = article_cluster(name, 2)
+    stability = "reference" if madelung else "lowest"
+    sigma = ccm_stress_analytic(Z, coords, translations, madelung=madelung,
+                                max_iter=400, conv_tol=1e-11, stability=stability)
+    h = 1e-4
+    energies = [
+        run_ccm(Z, coords * s, [np.asarray(t) * s for t in translations],
+                madelung=madelung, max_iter=400, conv_tol=1e-11,
+                stability=stability).total_energy
+        for s in (1.0 + h, 1.0 - h)
+    ]
+    volume = abs(np.linalg.det(np.asarray(translations) * ccm.ANGSTROM_TO_BOHR))
+    dE_dV = (energies[0] - energies[1]) / (volume * ((1 + h) ** 3 - (1 - h) ** 3))
+    assert -np.trace(sigma) / 3.0 == pytest.approx(-dE_dV, abs=1e-8)
+    np.testing.assert_allclose(sigma, np.diag(np.diag(sigma)), atol=1e-9)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("name, madelung", [("MgO", True), ("diamond", True)])
+def test_ccm_lattice_optimisation_reproduces_the_bm_minimum(name, madelung):
+    """Zero analytic pressure is the Birch-Murnaghan minimum of a scan."""
+    from vibeqc.eos import fit_birch_murnaghan
+
+    Z, coords, translations = article_cluster(name, 2)
+    opt = ccm.ccm_optimize_lattice_isotropic(Z, coords, translations,
+                                             madelung=madelung, conv_tol=1e-11)
+    assert opt.converged
+    volume1 = abs(np.linalg.det(np.asarray(translations) * ccm.ANGSTROM_TO_BOHR))
+    scales = opt.scale * np.linspace(0.97, 1.03, 7)
+    energies = [
+        run_ccm(Z, coords * s, [np.asarray(t) * s for t in translations],
+                madelung=madelung, max_iter=400, conv_tol=1e-11).total_energy
+        for s in scales
+    ]
+    fit = fit_birch_murnaghan(volume1 * scales**3, energies)
+    assert fit["status"] == "fit_succeeded" and fit["minimum_bracketed"], fit
+    scale_bm = (fit["v0_bohr3"] / volume1) ** (1.0 / 3.0)
+    assert opt.scale == pytest.approx(scale_bm, rel=1e-4)
+
+
+def test_ccm_stress_scope_fails_closed():
+    from vibeqc.semiempirical.methods.msindo_ccm_gradient_analytic import (
+        ccm_strain_derivative_analytic,
+        ccm_stress_analytic,
+    )
+
+    coords, translations = bent_c3_chain(0.0)
+    with pytest.raises(ValueError, match="3-D"):
+        ccm_stress_analytic([6, 6, 6], coords, translations)
+    slab = [[0.0, 0.0, 0.0], [1.6, 0.0, 0.0]]
+    with pytest.raises(NotImplementedError, match="2-D"):
+        ccm_strain_derivative_analytic(
+            [1, 9], slab, [[3.2, 0.0, 0.0], [0.0, 3.2, 0.0]], madelung=True)

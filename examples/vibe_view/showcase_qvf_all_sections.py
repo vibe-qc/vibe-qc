@@ -6,7 +6,7 @@ routine ``run_job`` emits, this script exercises **35 of the 37**
 viewer-renderable section kinds the QVF writer implements as of
 v1.2 (``basis.ao`` and ``scan.surface`` are exercised elsewhere —
 ``showcase_basis_functions.py`` and the viewer test fixtures) plus the
-QVF v2 periodic reaction-path extension — so that running it is a stress test
+periodic reaction path (its optional ``lattice`` member) — so that running it is a stress test
 of the whole writer surface, not just the common path.
 
 Why that matters: ``write_qvf`` runs the canonical schema validator on
@@ -47,7 +47,7 @@ It produces three coherent archives, which together cover all kinds:
                           bands plus illustrative DOS: structure
                           (lattice), bands, dos.total, dos.projected,
                           structure.symmetry, fermi_surface, phonon_bands,
-                          phonon_dos, and a periodic (QVF v2)
+                          phonon_dos, and a periodic
                           reaction.path carrying per-frame lattices.
 
 A note on honesty: the synthetic spectra / DOS / scalar fields in
@@ -79,7 +79,6 @@ import vibeqc as vq
 from vibeqc import Atom, Molecule, run_job
 from vibeqc.output.formats.qvf import (
     QVF_FORMAT_VERSION,
-    QVF_FORMAT_VERSION_V2,
     validate_qvf,
     write_qvf,
 )
@@ -457,7 +456,7 @@ def archive_spectroscopy() -> Path:
 
 
 # ---------------------------------------------------------------------------
-# Archive 3 — periodic: real bands + illustrative DOS + v2 reaction path.
+# Archive 3 — periodic: real bands + illustrative DOS + periodic reaction path.
 # ---------------------------------------------------------------------------
 
 
@@ -472,7 +471,7 @@ def _mgo(a_ang: float = 4.21):
 
 
 def archive_crystal() -> Path:
-    print("[3/3] crystal.qvf — MgO periodic: real bands + DOS + v2 path")
+    print("[3/3] crystal.qvf — MgO periodic: real bands + DOS + periodic path")
     mgo, a = _mgo()
     basis = vq.BasisSet(mgo.unit_cell_molecule(), "sto-3g")
 
@@ -498,7 +497,7 @@ def archive_crystal() -> Path:
     )
 
     # A two-frame periodic "reaction path" (a rigid shift of the O
-    # sublattice) forces the archive to QVF v2 with per-frame lattices.
+    # sublattice) carries per-frame lattices (still qvf_version 1).
     def mgo_frame(shift: float):
         sys = vq.PeriodicSystem(
             3,
@@ -641,7 +640,7 @@ def main() -> None:
         )
     if extra:
         print(f"  note: archives carry kinds not in ALL_KINDS: {sorted(extra)}")
-    assert QVF_FORMAT_VERSION == 1 and QVF_FORMAT_VERSION_V2 == 2
+    assert QVF_FORMAT_VERSION == 1
 
     print("\n" + "=" * 72)
     print(

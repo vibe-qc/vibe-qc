@@ -1478,11 +1478,27 @@ def test_direct_entry_point_warns_that_b_stream_is_experimental() -> None:
     assert bonds.finite_torus_convention.exchange_q0 == "bvk-ewald"
 
 
+@pytest.fixture
+def serial_native_threads():
+    previous = vq.get_num_threads()
+    vq.set_num_threads(1)
+    try:
+        yield
+    finally:
+        vq.set_num_threads(previous)
+
+
 @pytest.mark.parametrize("functional", ["pbe", "pbe0"])
 def test_rks_output_cell_farming_serial_matches_replicated_driver(
     functional: str,
+    serial_native_threads,
 ) -> None:
-    """The restricted KS scheduling seam changes no serial arithmetic."""
+    """The restricted KS scheduling seam changes no serial arithmetic.
+
+    Ewald nuclear energy contains OpenMP reductions even at one MPI rank.
+    Pin the actual serial scope so their unspecified parallel reduction order
+    cannot obscure the exact scheduling-seam comparison.
+    """
 
     system, basis = _h2_system(dim=3)
     mesh = (2, 1, 1)
@@ -1660,6 +1676,88 @@ def test_pair_offset_changes_the_minimum_image_without_changing_class_weight() -
     assert len(residue_two) == 1
     assert residue_two[0].translation == (-2, 0, 0)
     assert residue_two[0].weight == pytest.approx(1.0)
+
+
+def _cyclic_count_result(system, control, counts):
+    if control == "gamma_mesh":
+        return cyclic_gamma_mesh(system, counts).mesh
+    keyword = {"mesh": "mesh", "extension": "lattice_extension",
+               "shells": "wigner_seitz_shells"}[control]
+    return cyclic_lattice_extension(system, **{keyword: counts}).repetitions
+
+
+@pytest.mark.parametrize("control", ["gamma_mesh", "mesh", "extension", "shells"])
+@pytest.mark.parametrize("counts", [
+    True, False, np.bool_(True), 2.9, 2.0, np.float64(2.0),
+    "211", b"2", 2+0j, (2.9,), (2.0,), (-0.5,), (True,), (np.bool_(True),),
+    ("2",), ((2,),), np.array([2.0]), np.array([True]),
+    (float("nan"),), (float("inf"),), (2, 1.5, 1),
+])
+def test_cyclic_counts_reject_coercion_before_geometry(control, counts, monkeypatch):
+    from vibeqc.periodic.chi import scf as chi
+    def forbidden(*args, **kwargs):
+        pytest.fail("invalid cyclic counts reached reciprocal mesh construction")
+    monkeypatch.setattr(chi.KPoints, "gamma_centred", forbidden)
+    # No lattice: invalid input must be rejected before supercell construction.
+    with pytest.raises(ValueError, match="must contain integers"):
+        _cyclic_count_result(SimpleNamespace(dim=1), control, counts)
+
+
+@pytest.mark.parametrize("control", ["gamma_mesh", "mesh", "extension", "shells"])
+@pytest.mark.parametrize("dim", [1, 2, 3])
+@pytest.mark.parametrize("form", ["scalar", "numpy_scalar", "active", "full", "array"])
+def test_cyclic_counts_preserve_exact_integer_conventions(control, dim, form):
+    system = vq.PeriodicSystem(dim, np.eye(3)*8.0, [vq.Atom(2, [0., 0., 0.])])
+    active = (2, 3, 2)[:dim]
+    inactive = 0 if control == "shells" else 1
+    if form in ("scalar", "numpy_scalar"):
+        counts = 2 if form == "scalar" else np.int64(2)
+        active = (2,)*dim
+    elif form == "active":
+        counts = tuple(np.int64(x) for x in active)
+    elif form == "full":
+        counts = active + (inactive,)*(3-dim)
+    else:
+        counts = np.array(active + (inactive,)*(3-dim), dtype=np.uint32)
+    expected = tuple(2*x+1 if control == "shells" else x for x in active)
+    expected += (1,)*(3-dim)
+    assert _cyclic_count_result(system, control, counts) == expected
+
+
+@pytest.mark.parametrize("control", ["gamma_mesh", "mesh", "extension", "shells"])
+@pytest.mark.parametrize("counts", [(-1,), (), (1, 1, 1, 1), (2, 2, 1)])
+def test_cyclic_counts_keep_range_length_and_inactive_axis_guards(control, counts):
+    with pytest.raises(ValueError):
+        _cyclic_count_result(SimpleNamespace(dim=1), control, counts)
+
+
+def test_cyclic_counts_keep_default_zero_shells_and_exclusivity():
+    system = vq.PeriodicSystem(2, np.eye(3)*8.0, [vq.Atom(2, [0., 0., 0.])])
+    assert cyclic_lattice_extension(system).repetitions == (1, 1, 1)
+    assert cyclic_lattice_extension(system, wigner_seitz_shells=0).repetitions == (1, 1, 1)
+    assert cyclic_lattice_extension(system, wigner_seitz_shells=(0, 1)).repetitions == (1, 3, 1)
+    for left, right in [("mesh", "lattice_extension"), ("mesh", "wigner_seitz_shells"),
+                        ("lattice_extension", "wigner_seitz_shells")]:
+        with pytest.raises(ValueError, match="choose exactly one"):
+            cyclic_lattice_extension(system, **{left: 2, right: 2})
+
+
+@pytest.mark.parametrize("method", ["rhf", "rks", "uhf", "uks"])
+@pytest.mark.parametrize("control", ["mesh", "lattice_extension", "wigner_seitz_shells"])
+@pytest.mark.parametrize("counts", [(2.9, 1, 1), True, "211"])
+def test_cyclic_counts_fail_before_scf_backend(method, control, counts, monkeypatch):
+    from vibeqc.periodic.chi import scf as chi
+    def forbidden(*args, **kwargs):
+        pytest.fail("invalid cyclic counts reached SCF backend selection")
+    monkeypatch.setattr(chi, "_resolve_backend", forbidden)
+    monkeypatch.setattr(chi, "_warn_experimental", lambda: None)
+    kwargs = {control: counts}
+    if method.endswith("ks"):
+        kwargs["functional"] = "PBE"
+    with pytest.raises(ValueError, match="must contain integers"):
+        getattr(chi, f"run_aiccm2026dev_b_{method}")(
+            SimpleNamespace(dim=3), None, **kwargs
+        )
 
 
 def test_cyclic_mesh_is_unreduced_and_gamma_centred() -> None:
@@ -1978,7 +2076,7 @@ def test_residue_inverse_transform_rejects_nondual_character_net() -> None:
     kfrac = np.asarray(kpoints.kpoints_frac).copy()
     kfrac[1, 0] += 0.01
 
-    with pytest.raises(ValueError, match="not on the declared dual"):
+    with pytest.raises(ValueError, match="not finite-group characters"):
         _distributed_residue_inverse_bloch_transform(
             [np.asarray([[float(index)]]) for index in range(4)],
             kfrac,
@@ -2569,11 +2667,15 @@ def test_inactive_quadratic_fallback_reaches_backend(monkeypatch) -> None:
     ],
 )
 @pytest.mark.parametrize("physical_pairs", [False, True])
+@pytest.mark.parametrize("executed_physical_pairs", [False, True])
+@pytest.mark.parametrize("reported_extent", [27.5, 28.5, None])
 def test_four_center_records_executed_m5_domain_provenance(
     monkeypatch,
     method: str,
     backend_symbol: str,
     physical_pairs: bool,
+    executed_physical_pairs: bool,
+    reported_extent: float | None,
 ) -> None:
     if method in ("RHF", "RKS"):
         system, basis = _h2_system(dim=3)
@@ -2615,7 +2717,17 @@ def test_four_center_records_executed_m5_domain_provenance(
                 runtime_backend="pbc-bipole",
             )
         )
-        result.sr_image_extent_bohr = 27.5
+        from vibeqc.bipole_domain import capture_bipole_domain
+        executed = vq.LatticeSumOptions()
+        executed.pair_complete_1e = executed_physical_pairs
+        result.resolved_domain = capture_bipole_domain(
+            lattice_1e=executed, lattice_2e=executed, ewald_options=None,
+            alpha=0.5, reciprocal_cutoff=5., ewald_precision=1e-8,
+            sr_image_extent=27.5, use_ewald_j_split=True,
+            exchange_ewald_split=True, exchange_exxdiv="ewald", exact_zone=None,
+            requested_lattice=options.lattice_opts,
+        )
+        result.sr_image_extent_bohr = reported_extent
         return result
 
     monkeypatch.setattr(
@@ -2648,16 +2760,36 @@ def test_four_center_records_executed_m5_domain_provenance(
     assert result.runtime_backend == "pbc-bipole"
     expected_policy = (
         "m5-physical-pair-midpoint-erfc/v1"
-        if physical_pairs else "m5-qqr-padded-erfc/v1"
+        if executed_physical_pairs else "m5-qqr-padded-erfc/v1"
     )
-    assert result.sr_image_domain_policy == expected_policy
-    assert result.sr_image_precision == pytest.approx(1.0e-6)
+    if reported_extent == 27.5:
+        assert result.sr_image_domain_policy == expected_policy
+        assert result.sr_image_precision == pytest.approx(1.0e-6)
+    else:
+        assert not hasattr(result, "sr_image_domain_policy")
+        assert not hasattr(result, "sr_image_precision")
     assembly = result.exact_exchange_assembly
     assert result.aiccm2026dev_b.exact_exchange_assembly is assembly
     expected_c_full = 1.0 if method in ("RHF", "UHF") else 0.0
     assert assembly.c_full == pytest.approx(expected_c_full)
     assert assembly.c_sr == pytest.approx(0.0)
     assert assembly.omega_screen_bohr_inv == pytest.approx(0.0)
+
+
+
+def test_four_center_native_default_domain_provenance_matches_execution() -> None:
+    system, basis = _h2_system(dim=3)
+    options = vq.PeriodicRHFOptions()
+    assert options.lattice_opts.pair_complete_1e is False
+    with pytest.warns(AICCM2026DevBExperimentalWarning):
+        result = run_aiccm2026dev_b_rhf(
+            system, basis, (2, 1, 1), options, backend="four_center", progress=False,
+        )
+    assert result.converged
+    assert options.lattice_opts.pair_complete_1e is False
+    assert result.resolved_domain.policy == "physical_pairs"
+    assert result.sr_image_domain_policy == "m5-physical-pair-midpoint-erfc/v1"
+    assert result.sr_image_extent_bohr == result.resolved_domain.sr_image_extent_bohr
 
 
 def test_four_center_inherits_critical_fold_fail_close(monkeypatch) -> None:
@@ -2691,14 +2823,19 @@ def test_four_center_inherits_critical_fold_fail_close(monkeypatch) -> None:
             )
 
 
-def test_four_center_omits_domain_attestation_without_resolved_extent(
-    monkeypatch,
+@pytest.mark.parametrize("extent", [None, 27.5])
+@pytest.mark.parametrize("unbound_record", [None, SimpleNamespace(policy="physical_pairs")])
+def test_four_center_omits_domain_attestation_without_resolved_domain(
+    monkeypatch, extent, unbound_record,
 ) -> None:
     system, basis = _h2_system(dim=3)
     kpoints = cyclic_gamma_mesh(system, (2, 1, 1))
 
     def fake_backend(*_args, **_kwargs):
-        return _fake_result(kpoints, runtime_backend="pbc-bipole")
+        result = _fake_result(kpoints, runtime_backend="pbc-bipole")
+        result.sr_image_extent_bohr = extent
+        result.resolved_domain = unbound_record
+        return result
 
     monkeypatch.setattr(
         "vibeqc.periodic.chi.scf.run_pbc_bipole_rhf",
@@ -2982,7 +3119,7 @@ def test_rsgdf_tail_requires_finite_shell_above_base(
             )
 
 
-def test_gamma_dense_core_rsgdf_tail_must_be_explicit_before_scf(
+def test_gamma_sr_does_not_admit_by_inactive_classic_auto_tail(
     monkeypatch,
 ) -> None:
     conventional_a = 4.211 * 1.8897259886
@@ -3013,15 +3150,9 @@ def test_gamma_dense_core_rsgdf_tail_must_be_explicit_before_scf(
         fake_gdf,
     )
     with pytest.warns(AICCM2026DevBExperimentalWarning):
-        with pytest.raises(NotImplementedError, match="auto-resolve.*explicit"):
-            run_aiccm2026dev_b_rhf(
-                system,
-                basis,
-                (1, 1, 1),
-                backend="ri",
-                progress=False,
-            )
-    assert captured == {}
+        run_aiccm2026dev_b_rhf(system, basis, (1, 1, 1), backend="ri", progress=False)
+    assert captured["fit_source"] == "auto"
+    assert captured["rsgdf_tail_ke_cutoff"] is None
 
     with pytest.warns(AICCM2026DevBExperimentalWarning):
         result = run_aiccm2026dev_b_rhf(
@@ -3049,8 +3180,9 @@ def test_gamma_dense_core_rsgdf_tail_must_be_explicit_before_scf(
     assert result.aiccm_resolved_rsgdf_tail_ke_cutoff is None
 
 
+@pytest.mark.parametrize("fit_source", ["auto", "classic", "sr"])
 def test_gamma_ri_rhf_uses_converged_3d_ewald_nuclear_repulsion(
-    monkeypatch,
+    monkeypatch, fit_source,
 ) -> None:
     """The fitted Gamma limit must not revive the truncated Ewald sum."""
 
@@ -3064,11 +3196,11 @@ def test_gamma_ri_rhf_uses_converged_3d_ewald_nuclear_repulsion(
         raise AssertionError("Gamma RI used nuclear_repulsion_per_cell")
 
     monkeypatch.setattr(
-        "vibeqc.pbc_gdf.ewald_nuclear_repulsion",
+        "vibeqc.periodic_k_gdf.ewald_nuclear_repulsion",
         converged_ewald,
     )
     monkeypatch.setattr(
-        "vibeqc.pbc_gdf.nuclear_repulsion_per_cell",
+        "vibeqc.periodic_k_gdf.nuclear_repulsion_per_cell",
         truncated_ewald,
     )
     system, basis = _h2_system(dim=3)
@@ -3080,6 +3212,7 @@ def test_gamma_ri_rhf_uses_converged_3d_ewald_nuclear_repulsion(
                 basis,
                 (1, 1, 1),
                 backend="ri",
+                fit_source=fit_source,
                 fock_mixing=0.0,
                 progress=False,
             )
@@ -3139,10 +3272,25 @@ def test_fitted_multik_routes_use_converged_3d_ewald_nuclear_repulsion(
 
 
 @pytest.mark.parametrize("method", ["RHF", "UHF"])
-def test_compact_dense_core_mdf_fails_closed_through_chi_selector(
-    method: str,
+def test_compact_dense_core_mdf_reaches_the_fit_through_chi_selector(
+    method: str, monkeypatch,
 ) -> None:
-    """χ-B propagates the shared compact-cell MDF safety boundary."""
+    """χ-B inherits the shared compact-cell MDF boundary, lifted with #172.
+
+    The shared GDF layer refused this class from ``6ce142339`` until the
+    Gaussian 3c block summed its auxiliary images (2026-09-29); χ-B now
+    reaches the MDF fit (stubbed here, no SCF). Rows stay D93
+    ``not-qualified``.
+    """
+    import vibeqc.periodic_k_gdf as kgdf
+
+    class ReachedFit(Exception):
+        pass
+
+    def stub(*args, **kwargs):
+        raise ReachedFit
+
+    monkeypatch.setattr(kgdf, "build_lpq_bloch_mdf", stub)
 
     angstrom_to_bohr = 1.8897259886
     conventional_a = 4.211 * angstrom_to_bohr
@@ -3166,7 +3314,7 @@ def test_compact_dense_core_mdf_fails_closed_through_chi_selector(
     options.lattice_opts.nuclear_cutoff_bohr = 18.0
 
     with pytest.warns(AICCM2026DevBExperimentalWarning):
-        with pytest.raises(NotImplementedError, match="dense-core"):
+        with pytest.raises(ReachedFit):
             if method == "RHF":
                 run_aiccm2026dev_b_rhf(
                     system,
@@ -3281,46 +3429,30 @@ def test_fock_mixing_keyword_overrides_options_on_restricted_routes(
     assert result.aiccm2026dev_b.fock_mixing == pytest.approx(0.25)
 
 
-def test_gamma_ri_rhf_zero_keyword_controls_gdf_route_gate(monkeypatch) -> None:
-    """The resolved override, not stale options, selects the Γ RI operator."""
+@pytest.mark.parametrize("fit_source", ["auto", "classic", "sr"])
+def test_gamma_ri_rhf_zero_keyword_controls_gdf_route_gate(monkeypatch, fit_source) -> None:
+    """The resolved zero reaches the shared Gamma engine for each fit source."""
     system, basis = _h2_system(dim=3)
     options = vq.PeriodicRHFOptions()
     options.fock_mixing = 0.10
     options.level_shift_schedule = [0.0, 0.0]
     calls: list[str] = []
 
-    def fake_pure_gamma(_system, _basis, passed_options, **kwargs):
-        calls.append("pure-gdf-ewald")
+    def fake_shared_gdf(_system, _basis, _kpoints, passed_options, **kwargs):
+        calls.append("shared-gdf")
         assert passed_options is options
-        assert kwargs["exxdiv"] == "ewald"
-        zeros = np.zeros((2, 2), dtype=complex)
-        return SimpleNamespace(
-            energy=-1.0,
-            e_electronic=-1.5,
-            e_nuclear=0.5,
-            n_iter=2,
-            converged=True,
-            mo_energies=np.array([-0.5, 0.5]),
-            mo_coeffs=np.eye(2, dtype=complex),
-            fock=zeros,
-            overlap=np.eye(2, dtype=complex),
-            hcore=zeros,
-            density=np.diag([2.0, 0.0]).astype(complex),
-            scf_trace=[],
-            fock_mixing=0.0,
-        )
+        assert kwargs["fock_mixing"] == 0.0
+        assert kwargs["fit_source"] == fit_source
+        result = _fake_result(_kpoints)
+        result.fock_mixing = 0.0
+        return result
 
-    def fail_legacy_gamma(*_args, **_kwargs):
-        calls.append("legacy-gamma")
-        raise AssertionError("explicit zero reached the legacy Γ GDF route")
-
+    # Both explicit sources and auto use the shared engine at Gamma (#387).
+    # Intercept that boundary to check the resolved controls, independent of
+    # the engine-specific numerical reference acceptance.
     monkeypatch.setattr(
-        "vibeqc.pbc_gdf.run_pbc_gdf_rhf",
-        fake_pure_gamma,
-    )
-    monkeypatch.setattr(
-        "vibeqc.periodic_k_gdf.run_rhf_periodic_gamma_gdf",
-        fail_legacy_gamma,
+        "vibeqc.periodic.chi.scf.run_krhf_periodic_gdf",
+        fake_shared_gdf,
     )
 
     with pytest.warns(AICCM2026DevBExperimentalWarning):
@@ -3330,11 +3462,12 @@ def test_gamma_ri_rhf_zero_keyword_controls_gdf_route_gate(monkeypatch) -> None:
             (1, 1, 1),
             options,
             backend="ri",
+            fit_source=fit_source,
             fock_mixing=0.0,
             progress=False,
         )
 
-    assert calls == ["pure-gdf-ewald"]
+    assert calls == ["shared-gdf"]
     assert options.fock_mixing == pytest.approx(0.10)
     assert result.aiccm2026dev_b.fock_mixing == pytest.approx(0.0)
     assert result.finite_torus_convention.exchange_q0 == "bvk-ewald"
@@ -3642,10 +3775,22 @@ def test_restricted_four_center_level_shift_warmup_reaches_backend(
         nonlocal executed_trajectory
         assert passed_options is options
         schedule = kwargs["level_shift_schedule"]
-        assert schedule is not None
-        executed_trajectory = [
-            schedule.at(iteration) for iteration in range(1, max_iter + 1)
-        ]
+        if method == "RHF":
+            # Direct HF now consumes the original options through the shared
+            # native policy; KS still receives a lowered Python schedule.
+            assert schedule is None
+            executed_trajectory = [
+                vq.level_shift_at_iter(
+                    passed_options.level_shift,
+                    passed_options.level_shift_warmup_cycles,
+                    passed_options.level_shift_schedule, max_iter, iteration,
+                ) for iteration in range(1, max_iter + 1)
+            ]
+        else:
+            assert schedule is not None
+            executed_trajectory = [
+                schedule.at(iteration) for iteration in range(1, max_iter + 1)
+            ]
         return _fake_result(kpoints, runtime_backend="pbc-bipole")
 
     monkeypatch.setattr(
@@ -3690,7 +3835,7 @@ def test_restricted_four_center_level_shift_warmup_reaches_backend(
     ],
 )
 @pytest.mark.parametrize("requested_warmup", [-1, 1])
-def test_restricted_four_center_active_warmup_requires_unshifted_tail(
+def test_restricted_four_center_single_iteration_warmup_policy(
     monkeypatch,
     method: str,
     backend_symbol: str,
@@ -3706,41 +3851,38 @@ def test_restricted_four_center_active_warmup_requires_unshifted_tail(
     options.level_shift_warmup_cycles = requested_warmup
     options.level_shift_schedule = []
     options.max_iter = 1
-    options.quadratic_fallback_iter = 3
+    options.quadratic_fallback_iter = 0
     called = False
 
-    def fail_backend(*_args, **_kwargs):
+    def checked_backend(_system, _basis, _kpoints, passed_options, **kwargs):
         nonlocal called
         called = True
-        raise AssertionError("tail-less warm-up request reached BIPOLE")
+        assert method == "RHF"
+        assert passed_options is options
+        assert kwargs["level_shift_schedule"] is None
+        # The shared HF policy disables automatic warm-up at max_iter=1.
+        assert vq.level_shift_at_iter(.3, requested_warmup, [], 1, 1) == 0.
+        return _fake_result(cyclic_gamma_mesh(system, (1, 1, 1)),
+                            runtime_backend="pbc-bipole")
 
     monkeypatch.setattr(
         f"vibeqc.periodic.chi.scf.{backend_symbol}",
-        fail_backend,
+        checked_backend,
     )
     with pytest.warns(AICCM2026DevBExperimentalWarning):
-        with pytest.raises(ValueError, match="requires max_iter >= 2"):
-            if method == "RHF":
-                run_aiccm2026dev_b_rhf(
-                    system,
-                    basis,
-                    (1, 1, 1),
-                    options,
-                    backend="four_center",
-                    progress=False,
-                )
-            else:
+        if method == "RHF":
+            result = run_aiccm2026dev_b_rhf(
+                system, basis, (1, 1, 1), options,
+                backend="four_center", progress=False,
+            )
+            assert result.aiccm2026dev_b.level_shift_warmup_cycles == 0
+        else:
+            with pytest.raises(ValueError, match="requires max_iter >= 2"):
                 run_aiccm2026dev_b_rks(
-                    system,
-                    basis,
-                    "pbe",
-                    (1, 1, 1),
-                    options,
-                    backend="four_center",
-                    progress=False,
+                    system, basis, "pbe", (1, 1, 1), options,
+                    backend="four_center", progress=False,
                 )
-
-    assert called is False
+    assert called is (method == "RHF")
 
 
 def test_restricted_four_center_rhf_executes_resolved_warmup_trajectory(
@@ -3753,14 +3895,14 @@ def test_restricted_four_center_rhf_executes_resolved_warmup_trajectory(
     options.level_shift_schedule = []
     options.max_iter = 3
     observed: list[tuple[int, float]] = []
-    original_at = LevelShiftSchedule.at
+    original_at = vq.level_shift_at_iter
 
-    def recording_at(self, iteration: int) -> float:
-        value = original_at(self, iteration)
+    def recording_at(static, warmup, schedule, max_iter, iteration):
+        value = original_at(static, warmup, schedule, max_iter, iteration)
         observed.append((iteration, value))
         return value
 
-    monkeypatch.setattr(LevelShiftSchedule, "at", recording_at)
+    monkeypatch.setattr("vibeqc.pbc_bipole.level_shift_at_iter", recording_at)
     with pytest.warns(AICCM2026DevBExperimentalWarning):
         result = run_aiccm2026dev_b_rhf(
             system,
@@ -3840,8 +3982,8 @@ def test_restricted_four_center_zero_shift_keeps_warmup_dormant(
 @pytest.mark.parametrize(
     ("field_name", "invalid_value", "message"),
     [
-        ("level_shift", -0.1, "level_shift must be non-negative"),
-        ("level_shift", np.inf, "level_shift must be a finite scalar"),
+        ("level_shift", -0.1, "finite non-negative scalars"),
+        ("level_shift", np.inf, "finite non-negative scalars"),
         (
             "level_shift_warmup_cycles",
             -2,
@@ -3850,7 +3992,6 @@ def test_restricted_four_center_zero_shift_keeps_warmup_dormant(
     ],
 )
 def test_restricted_four_center_level_shift_warmup_validation(
-    monkeypatch,
     field_name: str,
     invalid_value: float | int,
     message: str,
@@ -3860,18 +4001,7 @@ def test_restricted_four_center_level_shift_warmup_validation(
     options.level_shift = 0.3
     options.level_shift_schedule = []
     setattr(options, field_name, invalid_value)
-    options.quadratic_fallback_iter = 3
-    called = False
-
-    def fail_backend(*_args, **_kwargs):
-        nonlocal called
-        called = True
-        raise AssertionError("invalid warm-up request reached BIPOLE")
-
-    monkeypatch.setattr(
-        "vibeqc.periodic.chi.scf.run_pbc_bipole_rhf",
-        fail_backend,
-    )
+    options.quadratic_fallback_iter = 0
     with pytest.warns(AICCM2026DevBExperimentalWarning):
         with pytest.raises(ValueError, match=message):
             run_aiccm2026dev_b_rhf(
@@ -3882,8 +4012,6 @@ def test_restricted_four_center_level_shift_warmup_validation(
                 backend="four_center",
                 progress=False,
             )
-
-    assert called is False
 
 
 @pytest.mark.parametrize(
@@ -3901,7 +4029,7 @@ def test_restricted_four_center_level_shift_warmup_validation(
     ],
     ids=("nonzero-schedule", "all-zero-schedule-supersedes-static"),
 )
-def test_restricted_four_center_level_shift_schedule_fails_closed(
+def test_restricted_four_center_level_shift_schedule_admission(
     monkeypatch,
     method: str,
     backend_symbol: str,
@@ -3912,50 +4040,44 @@ def test_restricted_four_center_level_shift_schedule_fails_closed(
     options = vq.PeriodicRHFOptions() if method == "RHF" else vq.PeriodicKSOptions()
     options.level_shift = static_shift
     options.level_shift_schedule = schedule
-    options.quadratic_fallback_iter = 3
+    options.quadratic_fallback_iter = 0
     called = False
 
-    def fail_backend(*_args, **_kwargs):
+    def checked_backend(_system, _basis, _kpoints, passed_options, **kwargs):
         nonlocal called
         called = True
-        raise AssertionError("unsupported four-center schedule reached BIPOLE")
+        assert method == "RHF"
+        assert passed_options is options
+        assert list(passed_options.level_shift_schedule) == schedule
+        assert kwargs["level_shift_schedule"] is None
+        assert vq.level_shift_at_iter(
+            static_shift, options.level_shift_warmup_cycles, schedule, 3, 1,
+        ) == schedule[0]
+        return _fake_result(cyclic_gamma_mesh(system, (1, 1, 1)),
+                            runtime_backend="pbc-bipole")
 
-    monkeypatch.setattr(
-        f"vibeqc.periodic.chi.scf.{backend_symbol}",
-        fail_backend,
-    )
+    monkeypatch.setattr(f"vibeqc.periodic.chi.scf.{backend_symbol}", checked_backend)
     with pytest.warns(AICCM2026DevBExperimentalWarning):
-        with pytest.raises(
-            NotImplementedError,
-            match="restricted four_center does not transport",
-        ):
-            if method == "RHF":
-                run_aiccm2026dev_b_rhf(
-                    system,
-                    basis,
-                    (1, 1, 1),
-                    options,
-                    backend="four_center",
-                    progress=False,
-                )
-            else:
+        if method == "RHF":
+            result = run_aiccm2026dev_b_rhf(
+                system, basis, (1, 1, 1), options,
+                backend="four_center", progress=False,
+            )
+            assert result.aiccm2026dev_b.level_shift_warmup_cycles == 0
+        else:
+            with pytest.raises(NotImplementedError,
+                               match="restricted four_center does not transport"):
                 run_aiccm2026dev_b_rks(
-                    system,
-                    basis,
-                    "pbe",
-                    (1, 1, 1),
-                    options,
-                    backend="four_center",
-                    progress=False,
+                    system, basis, "pbe", (1, 1, 1), options,
+                    backend="four_center", progress=False,
                 )
-
-    assert called is False
+    assert called is (method == "RHF")
 
 
 @pytest.mark.parametrize(
     ("schedule", "message"),
     [
-        ([np.inf], "finite scalars"),
+        ([np.inf], "finite.*scalars"),
         ([-0.1], "non-negative"),
     ],
 )
@@ -4180,7 +4302,7 @@ def test_zero_keyword_overrides_nonzero_options_on_fitted_open_shell(
     ],
     ids=("static", "schedule"),
 )
-def test_unrestricted_level_shift_fails_closed_before_backend_dispatch(
+def test_unrestricted_level_shift_admission_before_backend_dispatch(
     monkeypatch,
     method: str,
     backend: str,
@@ -4192,32 +4314,31 @@ def test_unrestricted_level_shift_fails_closed_before_backend_dispatch(
     options = vq.PeriodicRHFOptions() if method == "UHF" else vq.PeriodicKSOptions()
     options.level_shift = static_shift
     options.level_shift_schedule = schedule
-    options.quadratic_fallback_iter = 3
+    options.quadratic_fallback_iter = 0
     called = False
 
-    def fail_backend(*_args, **_kwargs):
+    supported = method == "UHF" and backend == "four_center"
+
+    def checked_backend(_system, _basis, _kpoints, passed_options, **kwargs):
         nonlocal called
         called = True
-        raise AssertionError("unsupported unrestricted level shift reached backend")
+        assert supported
+        assert passed_options is options
+        assert passed_options.level_shift == static_shift
+        assert list(passed_options.level_shift_schedule) == schedule
+        return _fake_unrestricted_result(cyclic_gamma_mesh(system, (2, 1, 1)),
+                                         runtime_backend="pbc-bipole")
 
-    monkeypatch.setattr(
-        f"vibeqc.periodic.chi.scf.{backend_symbol}",
-        fail_backend,
-    )
+    monkeypatch.setattr(f"vibeqc.periodic.chi.scf.{backend_symbol}", checked_backend)
     with pytest.warns(AICCM2026DevBExperimentalWarning):
-        with pytest.raises(
-            NotImplementedError,
-            match="unrestricted level shifting is not validated",
-        ):
-            _run_fock_mixing_route(
-                method,
-                system,
-                basis,
-                options,
-                backend,
-            )
-
-    assert called is False
+        if supported:
+            result = _run_fock_mixing_route(method, system, basis, options, backend)
+            assert result.aiccm2026dev_b.level_shift == static_shift
+        else:
+            with pytest.raises(NotImplementedError,
+                               match="unrestricted level shifting is not validated"):
+                _run_fock_mixing_route(method, system, basis, options, backend)
+    assert called is supported
 
 
 @pytest.mark.parametrize(
@@ -4286,7 +4407,7 @@ def test_unrestricted_all_zero_level_shift_schedule_reaches_backend(
         ("UKS", "rijcosx", "run_kuks_periodic_gdf"),
     ],
 )
-def test_runner_unrestricted_level_shift_fails_closed(
+def test_runner_unrestricted_level_shift_admission(
     monkeypatch,
     tmp_path: Path,
     method: str,
@@ -4296,10 +4417,17 @@ def test_runner_unrestricted_level_shift_fails_closed(
     system, basis = _open_shell_h_system()
     called = False
 
-    def fail_backend(*_args, **_kwargs):
+    supported = method == "UHF" and backend == "four_center"
+
+    class ReachedSupportedBackend(RuntimeError):
+        pass
+
+    def fail_backend(_system, _basis, _kpoints, options, **_kwargs):
         nonlocal called
         called = True
-        raise AssertionError("public level-shift request reached backend")
+        assert supported
+        assert options.level_shift == .2
+        raise ReachedSupportedBackend("supported direct UHF shift transported")
 
     monkeypatch.setattr(
         f"vibeqc.periodic.chi.scf.{backend_symbol}",
@@ -4308,8 +4436,9 @@ def test_runner_unrestricted_level_shift_fails_closed(
     functional = {"functional": "pbe"} if method == "UKS" else {}
     with pytest.warns(AICCM2026DevBExperimentalWarning):
         with pytest.raises(
-            NotImplementedError,
-            match="unrestricted level shifting is not validated",
+            ReachedSupportedBackend if supported else NotImplementedError,
+            match=("supported direct UHF shift transported" if supported
+                   else "unrestricted level shifting is not validated"),
         ):
             vq.run_periodic_job(
                 system,
@@ -4333,7 +4462,7 @@ def test_runner_unrestricted_level_shift_fails_closed(
                 **functional,
             )
 
-    assert called is False
+    assert called is supported
 
 
 def test_driver_passes_exact_cyclic_mesh_and_attaches_invariants(monkeypatch) -> None:
@@ -5540,11 +5669,7 @@ def test_small_end_to_end_rhf_is_idempotent() -> None:
     assert np.all(np.isfinite(bands.energies))
 
 
-@pytest.mark.slow
-def test_alternating_h4_two_cell_benchmark_against_existing_ccm() -> None:
-    from vibeqc.periodic.ccm import CCMSystem
-    from vibeqc.periodic.ccm.scf import run_ccm_rhf
-
+def _alternating_h4_benchmark_inputs():
     angstrom_to_bohr = 1.0 / 0.529177210903
     positions = [
         [x * angstrom_to_bohr, 0.0, 0.0] for x in (0.0, 0.8, 2.0, 2.8)
@@ -5559,7 +5684,47 @@ def test_alternating_h4_two_cell_benchmark_against_existing_ccm() -> None:
     options.max_iter = 40
     options.conv_tol_energy = 1e-8
     options.damping = 0.0
-    independent = run_aiccm2026dev_b_rhf(
+    return system, basis, options
+
+
+@pytest.mark.slow
+def test_alternating_h4_historical_classic_flat_energy() -> None:
+    from vibeqc.periodic_k_gdf import run_krhf_periodic_gdf
+
+    system, basis, options = _alternating_h4_benchmark_inputs()
+    options.lattice_opts.cutoff_bohr = 15.0
+    options.lattice_opts.nuclear_cutoff_bohr = 25.0
+    options.lattice_opts.pair_complete_1e = False
+    # The original public H4 pin used classic fitting on the historical
+    # index ball and a flat 15-bohr one-electron domain. It is a historical finite-support regression,
+    # not an absolute-energy reference for today's chi SR/LR default.
+    historical = run_krhf_periodic_gdf(
+        system, basis, cyclic_gamma_mesh(system, (2, 1, 1)), options,
+        fit_source="classic", rcut_strategy="flat", rsgdf_ke_cutoff=200.0,
+        rsgdf_tail_ke_cutoff=200.0, classic_support_policy="historical_index_ball",
+        fock_mixing=0.0, progress=False,
+    )
+    assert historical.converged
+    assert historical.energy == pytest.approx(-2.1648043358, abs=5e-8, rel=0.0)
+    source = historical.executed_fit_source
+    assert source.source == "classic"
+    assert source.base_reciprocal_cutoff_ha == 200.0
+    assert source.executed_tail_reciprocal_cutoff_ha == 200.0
+    support = dict(source.numerical_support)
+    assert dict(support["one_electron_lattice"])["cutoff_bohr"] == 15.0
+    assert dict(support["fit_lattice"])["cutoff_bohr"] == 15.0
+    # The pin predates the physical-pair classic default (#466).
+    assert support["classic_support_policy"] == "historical_index_ball"
+
+
+@pytest.mark.slow
+def test_alternating_h4_two_cell_benchmark_against_existing_ccm() -> None:
+    from vibeqc.periodic.ccm import CCMSystem
+    from vibeqc.periodic.ccm.scf import run_ccm_rhf
+    from vibeqc.periodic_k_gdf import run_krhf_periodic_gdf
+
+    system, basis, options = _alternating_h4_benchmark_inputs()
+    chi_result = run_aiccm2026dev_b_rhf(
         system,
         basis,
         (2, 1, 1),
@@ -5567,6 +5732,27 @@ def test_alternating_h4_two_cell_benchmark_against_existing_ccm() -> None:
         backend="ri",
         progress=False,
     )
+    # Check current chi transport against the same executed source and
+    # domain. This shared-engine comparison is not an independent energy
+    # oracle and does not numerically qualify either fitted source.
+    shared = run_krhf_periodic_gdf(
+        system, basis, cyclic_gamma_mesh(system, (2, 1, 1)), options,
+        fit_source="auto", rsgdf_ke_cutoff=200.0,
+        fock_mixing=0.0, progress=False,
+    )
+    assert shared.converged
+    assert chi_result.converged
+    assert chi_result.executed_fit_source.source == "sr"
+    assert chi_result.executed_fit_source == shared.executed_fit_source
+    assert chi_result.quantitative_status == "not-qualified"
+    support = dict(chi_result.executed_fit_source.numerical_support)
+    assert dict(support["one_electron_lattice"])["cutoff_bohr"] > 15.0
+    assert chi_result.energy == pytest.approx(shared.energy, abs=5e-12, rel=0.0)
+    for field in ("overlap", "hcore", "density", "fock"):
+        np.testing.assert_allclose(
+            getattr(chi_result, field), getattr(shared, field),
+            atol=1e-11, rtol=0.0,
+        )
     historical = run_ccm_rhf(
         CCMSystem(system, (2, 1, 1), "sto-3g"),
         method="union12",
@@ -5582,12 +5768,11 @@ def test_alternating_h4_two_cell_benchmark_against_existing_ccm() -> None:
     historical_energy_per_cell = historical.energy_per_atom * len(system.unit_cell)
     peer_energy_per_cell = peer.energy_per_atom * len(system.unit_cell)
 
-    assert independent.converged
+    assert chi_result.converged
     assert historical.converged
     assert peer.converged
-    assert independent.energy == pytest.approx(-2.1648043358, abs=5e-8)
-    assert independent.aiccm2026dev_b.density_idempotency_error < 1e-7
+    assert chi_result.aiccm2026dev_b.density_idempotency_error < 1e-7
     # Agreement is intentionally a weak comparison signal, not the theory
     # gate. It is nevertheless useful for catching a gross head-to-head drift.
-    assert abs(independent.energy - historical_energy_per_cell) < 5e-3
-    assert abs(independent.energy - peer_energy_per_cell) < 5e-3
+    assert abs(chi_result.energy - historical_energy_per_cell) < 5e-3
+    assert abs(chi_result.energy - peer_energy_per_cell) < 5e-3

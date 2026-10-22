@@ -520,13 +520,12 @@ _CROSSING_WEIGHTS = [0.5, 0.5]
 
 
 def _band_edges_from_occupations(eps_per_k, occ_per_k, max_occ=2.0):
-    """VBM / CBM / indirect gap exactly as ``_band_summary`` reads them.
+    """VBM / CBM / "gap" by occupation class alone (the pre-#176 reporter).
 
-    ``periodic_runner._band_summary`` calls a state occupied when its
-    occupation exceeds 1e-8 and virtual when it is below ``max_occ - 1e-8``,
-    takes the VBM as the maximum occupied energy over the whole mesh and the
-    CBM as the minimum virtual one, and reports ``CBM - VBM`` unclamped.
-    Reproduced here so this test measures the reported observable.
+    A state is occupied when its occupation exceeds 1e-8 and virtual when it
+    is below ``max_occ - 1e-8``; VBM and CBM are the extrema of those two
+    sets over the whole mesh. This is the reading ``_band_summary`` used
+    until #176, reproduced so a test can name what it replaced.
     """
     occupied = [
         float(e)
@@ -572,15 +571,23 @@ def test_apply_smearing_t_zero_multi_k_uses_one_global_fermi_level():
     ) == pytest.approx(2.0)
 
 
-def test_apply_smearing_t_zero_multi_k_never_reports_a_negative_indirect_gap():
-    """#85's reported symptom, measured on the reporting observable.
+def test_apply_smearing_t_zero_multi_k_reports_the_band_overlap_of_a_metal():
+    """#85's symptom and #176's correction, on the shared classifier.
 
-    At the parent this returns VBM = -0.200000, CBM = -0.500000 and an
-    indirect gap of -0.300000 Ha: an occupied state 0.3 Ha ABOVE the state
-    called the conduction-band minimum. The archived production instance is
-    Si/def2-SVP/PBE at 6x6x6 -- a -0.080825-Ha indirect gap with exactly 14
-    occupied bands forced at every k point.
+    Under the per-k fill (the parent of #85) the edges came out at VBM -0.20,
+    CBM -0.50: an occupied state above the state called the CBM, read as a
+    "negative gap" with no word about why. The global fill fixed the
+    occupations; the reporter then classified states by occupation and
+    printed +0.30 Ha, because under one Fermi level every occupied sampled
+    level lies below every empty one. That is the spacing of the sampled
+    levels around the Fermi level, not a band gap: this mesh is a band-overlap
+    metal. The shared classifier (:mod:`vibeqc.band_edges`) detects the
+    crossing and reports the band pair at the Fermi filling: a -0.30 Ha
+    overlap, ``is_metallic``. The +0.30 Ha spacing survives only under its
+    own name, ``gap_above_fermi_manifold``.
     """
+    from vibeqc.band_edges import BandChannel, kpoint_band_edges
+
     res = vq.apply_smearing(
         _CROSSING_EPS,
         weights=_CROSSING_WEIGHTS,
@@ -588,16 +595,23 @@ def test_apply_smearing_t_zero_multi_k_never_reports_a_negative_indirect_gap():
         n_occ_each=1,
         smearing=None,
     )
-
-    vbm, cbm, gap = _band_edges_from_occupations(
+    edges = kpoint_band_edges(
+        [BandChannel(None, tuple(_CROSSING_EPS), tuple(res.occupations_per_k))],
+        weights=_CROSSING_WEIGHTS,
+    )
+    assert edges.fermi_level_crosses_band
+    assert edges.is_metallic
+    assert edges.valence_band_max == pytest.approx(-0.20)
+    assert edges.conduction_band_min == pytest.approx(-0.50)
+    assert edges.indirect_gap == pytest.approx(-0.30)
+    assert edges.gap_above_fermi_manifold == pytest.approx(0.30)
+    # The occupancy-partition reading this replaced, kept as a named
+    # regression surface: it can never be negative under the global fill.
+    vbm, cbm, partition = _band_edges_from_occupations(
         _CROSSING_EPS, res.occupations_per_k
     )
-    assert vbm == pytest.approx(-0.50)
-    assert cbm == pytest.approx(-0.20)
-    assert gap == pytest.approx(0.30)
-    # The classification is self-consistent: every occupied state lies at or
-    # below every virtual one, which is what makes the gap non-negative.
-    assert gap >= 0.0
+    assert (vbm, cbm) == (pytest.approx(-0.50), pytest.approx(-0.20))
+    assert partition == pytest.approx(edges.gap_above_fermi_manifold)
 
 
 def test_apply_smearing_t_zero_multi_k_drops_the_equal_band_count_signature():

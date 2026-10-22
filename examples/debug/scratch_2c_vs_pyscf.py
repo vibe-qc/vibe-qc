@@ -1,3 +1,9 @@
+# HISTORICAL DIAGNOSTIC, NO LONGER RUNNABLE.
+# This script imports vibeqc.aux_basis.modrho_renormalise,
+# which no longer exists in vibeqc (the PySCF-backed GDF spike it
+# probed was retired). It is retained unchanged as a record of the
+# diagnostic; see examples/debug/README.md, "Historical, no longer
+# runnable".
 """Compare vibe-qc's compute_2c_eri_lattice against PySCF's
 auxcell.pbc_intor('int2c2e') element-by-element.
 

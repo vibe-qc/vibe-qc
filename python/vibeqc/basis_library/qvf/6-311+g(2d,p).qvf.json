@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
+  "schema_version": "1.1.0",
+  "name": "6-311+g(2d,p)",
+  "description": "vibeqc-fetched from Basis Set Exchange on 2026-05-08.\nBSE name: 6-311+G(2d,p)\nCanonical name in vibe-qc: 6-311+g_2d_p\nOriginating publication: Ditchfield, Hehre, Pople, J. Chem. Phys. 54, 724 (1971); Frisch, Pople, Binkley, J. Chem. Phys. 80, 3265 (1984)\nNote:\nBasis Set Exchange\nVersion 0.12\nhttps://www.basissetexchange.org\n  Basis set: 6-311+G(2d,p)\nDescription: 6-311+G(2d,p)\n       Role: orbital\n    Version: 0  (Data from the Original Basis Set Exchange)",
   "role": "orbital",
   "elements": {
     "H": {
@@ -173,20 +173,20 @@
               "coefficient": 0.0933293
             },
             {
+              "exponent": 0.856924,
+              "coefficient": 0.943045
+            },
+            {
+              "exponent": 0.243227,
+              "coefficient": -0.00279827
+            },
+            {
               "exponent": 4.8689,
               "coefficient": 0.0327661
             },
             {
               "exponent": 0.856924,
-              "coefficient": 0.943045
-            },
-            {
-              "exponent": 0.856924,
               "coefficient": 0.159792
-            },
-            {
-              "exponent": 0.243227,
-              "coefficient": -0.00279827
             },
             {
               "exponent": 0.243227,
@@ -318,20 +318,20 @@
               "coefficient": 0.108621
             },
             {
+              "exponent": 1.74075,
+              "coefficient": 0.927301
+            },
+            {
+              "exponent": 0.485816,
+              "coefficient": -0.00297169
+            },
+            {
               "exponent": 8.30938,
               "coefficient": 0.0361344
             },
             {
               "exponent": 1.74075,
-              "coefficient": 0.927301
-            },
-            {
-              "exponent": 1.74075,
               "coefficient": 0.216958
-            },
-            {
-              "exponent": 0.485816,
-              "coefficient": -0.00297169
             },
             {
               "exponent": 0.485816,
@@ -463,20 +463,20 @@
               "coefficient": 0.117443
             },
             {
+              "exponent": 3.00166,
+              "coefficient": 0.918002
+            },
+            {
+              "exponent": 0.912856,
+              "coefficient": -0.00265105
+            },
+            {
               "exponent": 13.2415,
               "coefficient": 0.04181
             },
             {
               "exponent": 3.00166,
-              "coefficient": 0.918002
-            },
-            {
-              "exponent": 3.00166,
               "coefficient": 0.236575
-            },
-            {
-              "exponent": 0.912856,
-              "coefficient": -0.00265105
             },
             {
               "exponent": 0.912856,
@@ -608,20 +608,20 @@
               "coefficient": 0.11466
             },
             {
+              "exponent": 4.80331,
+              "coefficient": 0.919999
+            },
+            {
+              "exponent": 1.45933,
+              "coefficient": -0.00303068
+            },
+            {
               "exponent": 20.9642,
               "coefficient": 0.0402487
             },
             {
               "exponent": 4.80331,
-              "coefficient": 0.919999
-            },
-            {
-              "exponent": 4.80331,
               "coefficient": 0.237594
-            },
-            {
-              "exponent": 1.45933,
-              "coefficient": -0.00303068
             },
             {
               "exponent": 1.45933,
@@ -753,20 +753,20 @@
               "coefficient": 0.111906
             },
             {
+              "exponent": 7.02614,
+              "coefficient": 0.921666
+            },
+            {
+              "exponent": 2.11205,
+              "coefficient": -0.00256919
+            },
+            {
               "exponent": 30.6331,
               "coefficient": 0.0383119
             },
             {
               "exponent": 7.02614,
-              "coefficient": 0.921666
-            },
-            {
-              "exponent": 7.02614,
               "coefficient": 0.237403
-            },
-            {
-              "exponent": 2.11205,
-              "coefficient": -0.00256919
             },
             {
               "exponent": 2.11205,
@@ -898,20 +898,20 @@
               "coefficient": 0.113889
             },
             {
+              "exponent": 9.62837,
+              "coefficient": 0.920811
+            },
+            {
+              "exponent": 2.85332,
+              "coefficient": -0.00327447
+            },
+            {
               "exponent": 42.1175,
               "coefficient": 0.0365114
             },
             {
               "exponent": 9.62837,
-              "coefficient": 0.920811
-            },
-            {
-              "exponent": 9.62837,
               "coefficient": 0.237153
-            },
-            {
-              "exponent": 2.85332,
-              "coefficient": -0.00327447
             },
             {
               "exponent": 2.85332,
@@ -1043,20 +1043,20 @@
               "coefficient": 0.114536
             },
             {
+              "exponent": 12.6323,
+              "coefficient": 0.920512
+            },
+            {
+              "exponent": 3.71756,
+              "coefficient": -0.00337804
+            },
+            {
               "exponent": 55.4441,
               "coefficient": 0.0354609
             },
             {
               "exponent": 12.6323,
-              "coefficient": 0.920512
-            },
-            {
-              "exponent": 12.6323,
               "coefficient": 0.237451
-            },
-            {
-              "exponent": 3.71756,
-              "coefficient": -0.00337804
             },
             {
               "exponent": 3.71756,
@@ -1188,20 +1188,20 @@
               "coefficient": 0.119149
             },
             {
+              "exponent": 15.835,
+              "coefficient": 0.917375
+            },
+            {
+              "exponent": 4.67326,
+              "coefficient": -0.00405839
+            },
+            {
               "exponent": 69.1211,
               "coefficient": 0.0356574
             },
             {
               "exponent": 15.835,
-              "coefficient": 0.917375
-            },
-            {
-              "exponent": 15.835,
               "coefficient": 0.239477
-            },
-            {
-              "exponent": 4.67326,
-              "coefficient": -0.00405839
             },
             {
               "exponent": 4.67326,
@@ -3643,7 +3643,19 @@
       ]
     }
   },
+  "basis_family": "pople",
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "bse",
+    "upstream": [
+      {
+        "name": "basis-set-exchange",
+        "version": "0.12",
+        "url": "https://www.basissetexchange.org",
+        "identifier": "6-311+G(2d,p)"
+      }
+    ],
+    "retrieval_date": "2026-05-08",
+    "content_sha256": "66b59d146ccd21428d8d2cce26d4dcd33f3d67f6d0a76b72b18c041b124aea92"
   }
 }

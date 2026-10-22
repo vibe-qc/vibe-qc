@@ -32,6 +32,9 @@
 
 #pragma once
 
+#include <memory>
+#include <mutex>
+
 #include <Eigen/Dense>
 
 #include <utility>
@@ -40,6 +43,7 @@
 
 #include "basis.hpp"
 #include "lattice_sum.hpp"
+#include "periodic_jk_trace.hpp"
 #include "periodic.hpp"
 
 namespace vibeqc {
@@ -66,11 +70,40 @@ struct JKMatrices {
 // for 3D bulk; the matching long-range erf piece is evaluated via the
 // reciprocal-space / grid machinery in Phase 12e-c-3 and combined with
 // this function's output.
+//
+// ``adjoint_symmetric`` (#534). Without ``opts.pair_complete_1e`` the density
+// pair (λ, σ) sits in one image cell while the output pair (μ_0, ν_g) spans
+// cells, so neither map P -> J[P], P -> K[P] is self-adjoint once images
+// overlap: tr(A K[B]) != tr(B K[A]). Then -K[P]/2 is not the derivative of
+// E_x = -tr(P K[P])/4; the derivative is -(K[P] + K^+[P])/4 with K^+ the
+// adjoint map (not the matrix transpose). With the flag the same quartets also
+// accumulate J^+ and K^+, screened on the larger of the two density envelopes,
+// and the build returns (J + J^+)/2 and (K + K^+)/2: the same energy at every
+// density, and a Fock that is its derivative. The pair-complete branch is
+// self-adjoint by domain closure and ignores the flag. Default false: the
+// historical maps, with unchanged arithmetic (a single-threaded build is
+// bit-identical to the previous core).
 JKMatrices build_jk_gamma_molecular_limit(const BasisSet& basis,
                                           const PeriodicSystem& system,
                                           const LatticeSumOptions& opts,
                                           const Eigen::MatrixXd& P_gamma,
-                                          double omega = 0.0);
+                                          double omega = 0.0,
+                                          bool adjoint_symmetric = false);
+
+// Full single-point Gamma density, P(h) = P_gamma on every image. Resolves
+// physical pair support on a copy of options: each ERI product separation
+// <= cutoff_bohr and their midpoint separation <= eri_interaction_cutoff
+// (or cutoff_bohr when unset). The enclosure contains all four centers and
+// the density differences. Product swaps, pair interchange and a common
+// translation preserve this finite domain. Therefore the raw folded J/K
+// are Hermitian and reciprocal on real symmetric densities, without an
+// output symmetrization or a missing density-adjoint correction.
+// This is a finite direct sum, not an infinite-lattice electrostatic limit.
+JKMatrices build_jk_gamma_physical(const BasisSet& basis,
+                                 const PeriodicSystem& system,
+                                 const LatticeSumOptions& opts,
+                                 const Eigen::MatrixXd& P_gamma,
+                                 double omega = 0.0);
 
 // Phase SYM3b — explicit cell list variant.  Same kernel, but accepts a
 // caller-supplied cell list instead of computing one internally.
@@ -160,6 +193,33 @@ LatticeMatrixSet build_fock_2e_real_space(const BasisSet& basis,
                                           double exchange_scale = 1.0,
                                           double omega = 0.0);
 
+// Explicit, caller-owned geometry cache. Density-dependent screening and
+// integral engines remain local to each build. Changing geometry replaces
+// retained state; in-flight builds retain their snapshot.
+// Two kernel states share one geometry, covering the Ewald and screened-hybrid
+// parameters without retaining duplicate shifted shells or product trees.
+class PeriodicJKWorkspace {
+public:
+    struct Data;
+    std::shared_ptr<const Data> prepare(const BasisSet& basis,
+        const PeriodicSystem& system, const std::vector<LatticeCell>& cells,
+        double omega, bool screen, bool range_screening);
+    std::size_t preparation_count() const {
+        std::lock_guard<std::mutex> guard(mutex_);
+        return preparation_count_;
+    }
+    std::size_t geometry_preparation_count() const {
+        std::lock_guard<std::mutex> guard(mutex_);
+        return geometry_preparation_count_;
+    }
+private:
+    mutable std::mutex mutex_;
+    std::shared_ptr<const Data> data_;
+    std::shared_ptr<const Data> alternate_;
+    std::size_t preparation_count_ = 0;
+    std::size_t geometry_preparation_count_ = 0;
+};
+
 struct JKLatticeMatrixSets {
     LatticeMatrixSet J;  // direct Coulomb blocks J(g)
     LatticeMatrixSet K;  // full exchange blocks K(g), no -1/2 prefactor
@@ -189,6 +249,9 @@ struct JKLatticeMatrixSets {
     // Availability is distinct from a request or an actual discarded term.
     bool charge_screening_available = false;
     bool product_screening_available = false;
+    // Actual integral evaluations in this invocation. Both paired results
+    // report the same shared count; do not add them together.
+    std::uint64_t integral_evaluations = 0;
 };
 
 // Same cell-triple traversal as build_fock_2e_real_space, but returns
@@ -202,6 +265,19 @@ JKLatticeMatrixSets build_jk_2e_real_space(const BasisSet& basis,
                                            double omega = 0.0);
 
 // Phase SYM3b — explicit cell list variant.
+// Opt-in bounded observation of the ordinary shell-pair path. No masks,
+// companion/adjoint density, fallback traversal or numerical policy changes.
+// Refuses unsupported traversal or an exhausted cap instead of returning a
+// partial record. The ordinary builders allocate no trace storage.
+struct PeriodicJKTraceResult {
+    JKLatticeMatrixSets matrices;
+    std::vector<PeriodicJKTraceRecord> records;
+};
+PeriodicJKTraceResult trace_jk_2e_real_space(
+        const BasisSet& basis, const PeriodicSystem& system,
+        const LatticeSumOptions& opts, const LatticeMatrixSet& density,
+        std::size_t max_records, double omega = 0.0);
+
 JKLatticeMatrixSets build_jk_2e_real_space_explicit(
         const BasisSet& basis,
         const PeriodicSystem& system,
@@ -274,7 +350,8 @@ JKLatticeMatrixSets build_jk_2e_real_space_bipolar_dispatch(
 // pair). The third domain, the density support, is data-level: P(h) lookups
 // follow P_real_space's own cell list. Each emitted (sub-)block is the exact
 // sum over `cells`. `compute_exchange = false` skips the K contraction
-// (pure-functional J-only builds; K blocks return zero).
+// (pure-functional J-only builds; K blocks return zero). Conversely,
+// `compute_coulomb = false` skips J for dedicated screened exchange.
 JKLatticeMatrixSets build_jk_2e_real_space_domains(
         const BasisSet& basis,
         const PeriodicSystem& system,
@@ -284,7 +361,21 @@ JKLatticeMatrixSets build_jk_2e_real_space_domains(
         const std::vector<int>& output_indices,
         const std::vector<std::vector<uint8_t>>& output_shell_masks,
         double omega = 0.0,
-        bool compute_exchange = true);
+        bool compute_exchange = true,
+        PeriodicJKWorkspace* workspace = nullptr,
+        bool compute_coulomb = true);
+
+// Two independent densities on the same cell template, sharing ERI evaluation.
+// Each result retains its own screening and summation order. Work counters
+// describe the shared invocation, not two separate traversals.
+std::pair<JKLatticeMatrixSets, JKLatticeMatrixSets> build_jk_2e_real_space_domains_pair(
+        const BasisSet& basis, const PeriodicSystem& system,
+        const LatticeSumOptions& opts, const LatticeMatrixSet& first,
+        const LatticeMatrixSet& second, const std::vector<LatticeCell>& cells,
+        const std::vector<int>& output_indices,
+        const std::vector<std::vector<uint8_t>>& output_shell_masks,
+        double omega = 0.0, bool compute_exchange = true,
+        PeriodicJKWorkspace* workspace = nullptr, bool compute_coulomb = true);
 
 // Gamma-only finite-domain density adjoint. Uses the same internal/output/
 // density-support traversal and screening decisions as the ordinary domain

@@ -25,6 +25,95 @@ _ROHF_GPW_TEST_CUTOFF_HA = 50.0
 _ROKS_GPW_TEST_CUTOFF_HA = 10.0
 
 
+@pytest.mark.parametrize("route,family,use_davidson", [
+    (route, family, False)
+    for route in ("gpw", "gapw")
+    for family in ("rhf", "rks", "uhf", "uks")
+] + [("gpw", family, True) for family in ("rhf", "rks")]
+  + [("gpw", family, False) for family in ("rohf", "roks")])
+def test_gamma_grid_shared_fock_solve_matches_legacy(
+    monkeypatch, route, family, use_davidson,
+):
+    """Physical SCF parity plus an independent generalized solve at every step."""
+    import scipy.linalg as sla
+    from vibeqc import periodic_gapw_augment as gapw
+    from vibeqc import periodic_gapw_j as gpw
+    from vibeqc import periodic_gapw_open_shell as gpw_open
+    from vibeqc.periodic_gapw_grid import PlaneWaveGrid
+    from vibeqc.solvers._scf import FockDiagonalizer
+
+    restricted_open = family.startswith("ro")
+    open_shell = family.startswith("u") or restricted_open
+    if open_shell:
+        # The asymmetric H3 doublet also exercises unequal occupied subspaces.
+        system = vq.PeriodicSystem(
+            3, np.eye(3) * 12.,
+            [vq.Atom(1, xyz) for xyz in ([5.1, 6., 6.], [6.9, 6., 6.], [6., 7.4, 6.])],
+            multiplicity=2,
+        )
+    else:
+        system = _h2_system(12.0)
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    grid = PlaneWaveGrid(system.lattice, 18, 18, 18)
+    module = gapw if route == "gapw" else (gpw_open if open_shell else gpw)
+    driver = getattr(module, f"run_periodic_{family}_{route}")
+    kwargs = dict(grid=grid, quiet=True, max_iter=60)
+    if family.endswith("ks"):
+        kwargs["functional"] = "lda"
+    if route == "gapw":
+        kwargs.update(one_centre="block", n_radial=24, lebedev_order=17)
+    elif not open_shell:
+        kwargs.update(use_davidson=use_davidson, davidson_min_dim=0)
+
+    original_call = FockDiagonalizer.__call__
+    channels = {}
+
+    def checked_call(diagonalizer, fock):
+        c, e = original_call(diagonalizer, fock)
+        result = diagonalizer.last_result
+        metadata = result.operator_metadata
+        assert metadata.kind == ("ks" if family.endswith("ks") else "fock")
+        assert metadata.kpoint == (0., 0., 0.)
+        assert diagonalizer.iterative == use_davidson
+        generations = channels.setdefault(metadata.spin, [])
+        assert metadata.generation == len(generations)
+        generations.append(metadata.generation)
+        # LAPACK's direct generalized problem is independent of the driver's X.
+        reference = sla.eigh(getattr(fock, "matrix", fock), diagonalizer.overlap, eigvals_only=True)
+        np.testing.assert_allclose(e, reference, atol=1e-9, rtol=0)
+        np.testing.assert_allclose(
+            c.T @ diagonalizer.overlap @ c, np.eye(len(e)), atol=1e-10, rtol=0,
+        )
+        assert max(result.residuals) < 1e-7
+        return c, e
+
+    monkeypatch.setattr(FockDiagonalizer, "__call__", checked_call)
+    result = driver(system, basis, **kwargs)
+    assert result.converged
+    expected_channels = ({"restricted-open"} if restricted_open else
+                         ({"alpha", "beta"} if open_shell else {"restricted"}))
+    assert set(channels) == expected_channels
+    assert all(len(generations) >= 2 for generations in channels.values())
+
+    # Re-run the physical loop with the historical symmetrized dense solve.
+    def legacy_call(diagonalizer, fock):
+        projected = diagonalizer.X.T @ getattr(fock, "matrix", fock) @ diagonalizer.X
+        e, y = np.linalg.eigh(0.5 * (projected + projected.T))
+        return diagonalizer.X @ y, e
+
+    monkeypatch.setattr(FockDiagonalizer, "__call__", legacy_call)
+    reference = driver(system, basis, **kwargs)
+    assert reference.converged
+    assert result.energy == pytest.approx(reference.energy, abs=1e-10)
+    overlap = gpw._overlap_lattice_gamma(basis, system)
+    fields = ("density_alpha", "density_beta") if open_shell else ("density",)
+    populations = (2, 1) if open_shell else (2,)
+    for field, electrons in zip(fields, populations):
+        density = np.asarray(getattr(result, field))
+        np.testing.assert_allclose(density, getattr(reference, field), atol=1e-9, rtol=0)
+        assert np.trace(density @ overlap) == pytest.approx(electrons, abs=1e-10)
+
+
 def _he_system(L: float = 16.0):
     sys = core.PeriodicSystem()
     sys.dim = 3
@@ -1002,43 +1091,9 @@ def test_gamma_open_shell_gpw_density_guesses_use_shared_adapter(
     assert seen == [(effective, system)]
 
 
-@pytest.mark.parametrize(
-    ("driver_name", "args", "kwargs"),
-    [
-        (
-            "run_periodic_uks_gpw_multi_k",
-            (None, None, None),
-            {"functional": "lda"},
-        ),
-        (
-            "run_periodic_roks_gpw_multi_k",
-            (None, None, None),
-            {"functional": "lda"},
-        ),
-    ],
-    ids=["uks-multik", "roks-multik"],
-)
-def test_direct_open_shell_gpw_guess_selectors_fail_closed_for_patom(
-    driver_name,
-    args,
-    kwargs,
-):
-    """Pure-DFT multi-k GPW has no exact exchange for the PATOM step."""
-    import vibeqc.periodic_gapw_open_shell as gpw_open
-
-    system = vq.PeriodicSystem(3, 10 * np.eye(3), [vq.Atom(1, [5., 5., 5.])], multiplicity=2)
-    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
-    args = (system, basis, vq.monkhorst_pack(system, [3, 1, 1]))
-
-    with pytest.raises(
-        NotImplementedError,
-        match="initial_guess=PATOM.*not implemented by this route",
-    ):
-        getattr(gpw_open, driver_name)(
-            *args,
-            initial_guess=core.InitialGuess.PATOM,
-            **kwargs,
-        )
+# Multi-k PATOM uses a full-HF seed even for pure DFT. Its supported
+# GPW/GAPW routes are covered together, including normalized seed input
+# and seed-only exchange, in test_periodic_patom.py.
 
 
 @pytest.mark.parametrize(
@@ -1097,6 +1152,16 @@ def test_gamma_patom_routes_execute_normalized_hf_seed(
 
     monkeypatch.setattr(guess_module, 'patom_spin_density_step', observed_step)
     closed_gpw = route == 'gpw' and family in ('rhf', 'rks')
+    evaluated_spin_gpw = route == 'gpw' and family in ('uhf', 'uks')
+    spin_seeds = []
+    if evaluated_spin_gpw:
+        from vibeqc import periodic_gpw_fock as gf
+        original_uhf = gf._GpwUHFBuilder.__call__
+        def observed_uhf(builder, *densities):
+            state = original_uhf(builder, *densities)
+            spin_seeds.append(state)
+            return state
+        monkeypatch.setattr(gf._GpwUHFBuilder, '__call__', observed_uhf)
     j_densities, k_densities = [], []
     if closed_gpw:
         original_j = gpw.GpwJBuilder.build_J
@@ -1106,9 +1171,9 @@ def test_gamma_patom_routes_execute_normalized_hf_seed(
             j_densities.append(np.asarray(density).copy())
             return original_j(builder, density)
 
-        def observed_k(basis_arg, system_arg, options_arg, density):
+        def observed_k(basis_arg, system_arg, options_arg, density, **kwargs):
             k_densities.append(np.asarray(density).copy())
-            return original_k(basis_arg, system_arg, options_arg, density)
+            return original_k(basis_arg, system_arg, options_arg, density, **kwargs)
 
         monkeypatch.setattr(gpw.GpwJBuilder, 'build_J', observed_j)
         monkeypatch.setattr(gpw._core, 'build_jk_gamma_molecular_limit', observed_k)
@@ -1134,6 +1199,12 @@ def test_gamma_patom_routes_execute_normalized_hf_seed(
         )
         np.testing.assert_allclose(j_densities[0], seed, atol=1e-12, rtol=0)
         assert_density(j_densities[1], sum(targets))
+    elif evaluated_spin_gpw:
+        seed = spin_seeds[0]
+        assert seed.method == 'UHF'
+        assert seed.metric_electron_counts == pytest.approx(targets, abs=1e-11)
+        for channel, electrons in zip(seed.channels, targets):
+            assert_density(channel.density, electrons)
     else:
         assert len(seed_pairs) == 1
 
@@ -1173,3 +1244,555 @@ def test_grid_routes_execute_atomic_spin_seed(monkeypatch,name):
     assert r.guess_selection.effective==vq.InitialGuess.SAD
     with pytest.raises(ValueError,match='requires SAD'):
         getattr(mod,name)(*args,**dict(kw,initial_guess='HCORE'))
+
+
+def _uhf_fock_state_case(length=16.):
+    from vibeqc.periodic_gapw_grid import PlaneWaveGrid
+    lattice = np.eye(3) * length
+    shift = (length - 16.) / 2.
+    system = vq.PeriodicSystem(3, lattice, [vq.Atom(1, np.array(xyz) + shift) for xyz in
+        ([7.1, 8., 8.], [8.9, 8., 8.], [8., 9.4, 8.])], multiplicity=2)
+    basis = vq.BasisSet(system.unit_cell_molecule(), 'sto-3g')
+    n = 48 if length == 16. else 24
+    return system, basis, PlaneWaveGrid(lattice, n, n, n)
+
+
+@pytest.mark.parametrize('iterations,damping,guess,convention', [
+    (60, 0., 'HCORE', 'ewald'), (60, .2, 'PATOM', 'ewald'),
+    (1, .35, 'HCORE', 'ewald'), (0, 0., 'HCORE', 'ewald'),
+    (1, .2, 'HCORE', 'smeared_erfc'),
+])
+def test_gpw_uhf_evaluated_state(monkeypatch, iterations, damping, guess, convention):
+    from vibeqc import periodic_gapw_open_shell as driver
+    from vibeqc import periodic_gapw_j as gj
+    from vibeqc import periodic_gapw_runner_adapter as adapter
+    from vibeqc import periodic_gpw_fock as gf
+    from vibeqc.solvers._scf import FockDiagonalizer
+    system, basis, grid = _uhf_fock_state_case()
+    states, solves = {}, []
+    original_build, original_solve = gf._GpwUHFBuilder.__call__, FockDiagonalizer.__call__
+
+    def build(self, *d):
+        state = original_build(self, *d)
+        states[state.identity] = state
+        return state
+
+    def solve(self, operator):
+        meta = operator.metadata
+        state = states[meta.build_id]
+        assert meta.density_id == state.density_id
+        assert meta.spin in ('alpha', 'beta')
+        solves.append(meta)
+        return original_solve(self, operator)
+
+    monkeypatch.setattr(gf._GpwUHFBuilder, '__call__', build)
+    monkeypatch.setattr(FockDiagonalizer, '__call__', solve)
+    # Mixed restart also exercises capped and zero-iteration density orbitals.
+    kw = {} if guess == 'PATOM' else dict(initial_density=(np.eye(basis.nbasis), np.eye(basis.nbasis)))
+    r = driver.run_periodic_uhf_gpw(system, basis, grid=grid, max_iter=iterations,
+        damping=damping, initial_guess=guess, v_ne_convention=convention,
+        smearing_alpha=.7 if convention == 'smeared_erfc' else None, quiet=True, **kw)
+    state = r.fock_build
+    assert state.method == 'UHF'
+    assert r.energy == state.energy.total == r.breakdown.e_total
+    assert r.converged == (iterations == 60)
+    assert state.metric_electron_counts == pytest.approx((2., 1.), abs=1e-11)
+    assert r.run_fields['fock_build_id'] == state.identity
+    assert r.evaluated_build_history[-1]['terminal']
+    assert r.evaluated_build_history[-1]['build_id'] == state.identity
+    if r.scf_trace:
+        assert r.scf_trace[-1]['energy'] == r.energy
+    assert {m.spin for m in solves} == {'alpha', 'beta'}
+    if iterations == 60:
+        assert any(m.role == 'solver' and m.modification == 'pulay-diis' for m in solves)
+        assert state.commutator_norm < 1e-7
+        assert r.density_fixed_point_residual < 1e-7
+    if guess == 'PATOM':
+        assert solves[0].role == solves[1].role == 'physical'
+        assert solves[0].build_id == solves[1].build_id
+        assert solves[0].generation == 0
+        from vibeqc.guess import _canonical_orthogonalizer
+        seed_frame = states[solves[0].build_id].channels[0].operator.frame
+        expected_x = _canonical_orthogonalizer(r.overlap, 1e-7)
+        np.testing.assert_allclose(seed_frame.X, expected_x, atol=2e-12, rtol=0)
+    s = r.overlap
+    for i, spin in enumerate(('alpha', 'beta')):
+        d, f, c, eps, occ = (np.asarray(getattr(r, name+'_'+spin)) for name in
+                             ('density', 'fock', 'mo_coeffs', 'mo_energies', 'occupations'))
+        np.testing.assert_array_equal(d, state.channels[i].density)
+        np.testing.assert_array_equal(f, state.channels[i].operator.matrix)
+        np.testing.assert_allclose((c*occ)@c.T, d, atol=2e-12, rtol=0)
+        np.testing.assert_allclose(c.T@s@c, np.eye(len(occ)), atol=2e-12, rtol=0)
+        np.testing.assert_allclose(eps, np.diag(c.T@f@c), atol=2e-12, rtol=0)
+        assert not state.channels[i].density.flags.writeable
+        assert not state.channels[i].operator.matrix.flags.writeable
+    t = gj._kinetic_lattice_gamma(basis, system)
+    v = driver._build_v_ne(basis, system, convention, .7 if convention == 'smeared_erfc' else None, grid)
+    lo = core.LatticeSumOptions(); lo.cutoff_bohr = 25.
+    j = gj.GpwJBuilder(basis, grid).build_J(r.density_alpha+r.density_beta)
+    ks = [driver._k_per_spin(basis, system, ch.density, lo, adjoint_symmetric=True)
+          for ch in state.channels]
+    expected = 0.
+    for ch, k in zip(state.channels, ks):
+        np.testing.assert_allclose(ch.operator.matrix, t+v+j-k, atol=2e-12, rtol=0)
+        expected += np.sum(ch.density*(t+v+.5*j-.5*k))
+    assert state.energy.electronic == pytest.approx(expected, abs=2e-12)
+
+    # Output must carry the evaluated state without a second integral build.
+    def no_rebuild(*args, **kwargs):
+        raise AssertionError('adapter rebuilt evaluated integrals')
+    monkeypatch.setattr(gj.GpwJBuilder, 'build_J', no_rebuild)
+    adapted = adapter.gpw_uhf_result_to_runner_shape(r, system, basis)
+    assert adapted.fock_build is state
+    assert adapted.run_fields == r.run_fields
+    assert adapted.orbital_kind == 'natural'
+    for spin in ('alpha', 'beta'):
+        for name in ('density', 'fock', 'occupations'):
+            np.testing.assert_array_equal(getattr(adapted, name+'_'+spin), getattr(r, name+'_'+spin))
+
+
+@pytest.mark.parametrize('length', [16., 9.])
+def test_gpw_uhf_derivative_and_source(record_property, length):
+    """The 9-bohr cell overlaps its images, where the exchange map is not
+    self-adjoint unless the kernel symmetrises it (#534)."""
+    from vibeqc import periodic_gapw_j as gj
+    from vibeqc import periodic_gpw_fock as gf
+    from vibeqc.solvers.operators import OperatorFrame
+    system, basis, grid = _uhf_fock_state_case(length)
+    s = gj._overlap_lattice_gamma(basis, system)
+    w, u = np.linalg.eigh(s); x = (u / np.sqrt(w)) @ u.T
+    frame = OperatorFrame(basis_id='test-gpw-uhf', n=basis.nbasis, overlap=s, X=x,
+                          ordering='libint-standard', image_gauge='gamma-periodic-ao')
+    lo = core.LatticeSumOptions(); lo.cutoff_bohr = 25.
+    hf = gf._GpwRHFBuilder(basis, system, lo, gj.GpwJBuilder(basis, grid),
+        gj._kinetic_lattice_gamma(basis, system), gj._ewald_v_ne_gamma(basis, system),
+        frame, core.ewald_nuclear_repulsion(system, core.EwaldOptions()),
+        nuclear_convention='ewald', smearing_alpha=None)
+    builder = gf._GpwUHFBuilder(hf)
+    da, db = .6*x@x.T, .3*x@x.T
+    state = builder(da, db)
+    rng = np.random.default_rng(472)
+    perturbations = []
+    for _ in range(2):
+        p = rng.normal(size=da.shape); perturbations.append((p+p.T)/2)
+    for active in (0, 1, None):
+        direction = tuple(p if active is None or i == active else np.zeros_like(p)
+                          for i, p in enumerate(perturbations))
+        h = 2e-5
+        plus = builder(*(d+h*p for d, p in zip((da, db), direction))).energy.total
+        minus = builder(*(d-h*p for d, p in zip((da, db), direction))).energy.total
+        expected = sum(np.sum(c.operator.matrix*p) for c, p in zip(state.channels, direction))
+        record_property(f'derivative_error_{active}', abs((plus-minus)/(2*h)-expected))
+        assert (plus-minus)/(2*h) == pytest.approx(expected, abs=2e-8)
+    swapped = builder(db, da)
+    assert swapped.energy.total == pytest.approx(state.energy.total, abs=2e-12)
+    assert swapped.density_id != state.density_id
+    assert swapped.source == state.source
+    np.testing.assert_allclose(swapped.channels[1].operator.matrix, state.channels[0].operator.matrix, atol=2e-12)
+    da[:] = 0.
+    assert np.linalg.norm(state.channels[0].density) > 0
+    with pytest.raises(NotImplementedError, match='real spin'):
+        builder(db.astype(complex), db)
+    with pytest.raises(ValueError, match='dimensions'):
+        builder(np.eye(1), db)
+    lo.cutoff_bohr = 24.
+    with pytest.raises(ValueError, match='source changed'):
+        builder(db, db)
+    lo.cutoff_bohr = 25.
+    chi = hf.gpw.chi(); original = chi.flat[0]; chi.flat[0] += .01
+    with pytest.raises(ValueError, match='source changed'):
+        builder(db, db)
+    chi.flat[0] = original
+    assert builder(db, db).source == state.source
+
+
+@pytest.mark.parametrize('guess', ['HCORE', 'PATOM'])
+def test_gpw_uhf_closed_and_empty_spin_limits(guess):
+    from vibeqc.periodic_gapw_grid import PlaneWaveGrid
+    for system, populations in ((_h2_system(16.), (1, 1)), (_h_atom_system(16.), (1, 0))):
+        basis = vq.BasisSet(system.unit_cell_molecule(), 'sto-3g')
+        grid = PlaneWaveGrid(system.lattice, 48, 48, 48)
+        r = vq.run_periodic_uhf_gpw(system, basis, grid=grid, initial_guess=guess, quiet=True)
+        assert r.converged
+        assert r.fock_build.metric_electron_counts == pytest.approx(populations, abs=2e-12)
+        if populations[1]:
+            restricted = vq.run_periodic_rhf_gpw(system, basis, grid=grid, initial_guess=guess, quiet=True)
+            assert r.energy == pytest.approx(restricted.energy, abs=2e-10)
+            np.testing.assert_allclose(r.density_alpha+r.density_beta, restricted.density, atol=2e-9, rtol=0)
+            np.testing.assert_allclose(r.fock_alpha, restricted.fock, atol=2e-10, rtol=0)
+        else:
+            np.testing.assert_allclose(r.density_beta, 0., atol=1e-14, rtol=0)
+            np.testing.assert_allclose(r.occupations_beta, 0., atol=1e-14, rtol=0)
+
+
+def test_gpw_uhf_patom_retains_overlap_cutoff(monkeypatch):
+    from vibeqc import periodic_gapw_open_shell as driver
+    from vibeqc import periodic_gapw_j as gj
+    from vibeqc import periodic_gpw_fock as gf
+    system, basis, grid = _uhf_fock_state_case()
+    from vibeqc import guess
+    # This positive unit-diagonal metric leaves the SCF inverse defined,
+    # but only one PATOM direction survives its normalized 1e-7 cutoff.
+    metric = (1.-5e-8)*np.ones((3, 3)) + 5e-8*np.eye(3)
+    monkeypatch.setattr(driver, '_overlap_lattice_gamma', lambda *args: metric)
+    monkeypatch.setattr(guess, 'initial_densities_open_shell',
+                        lambda *args, **kwargs: (np.eye(3), np.eye(3)))
+    def no_integrals(*args, **kwargs):
+        raise AssertionError('PATOM built integrals before checking retained rank')
+    monkeypatch.setattr(gf._GpwUHFBuilder, '__call__', no_integrals)
+    with pytest.raises(ValueError, match='PATOM: insufficient independent orbitals'):
+        driver.run_periodic_uhf_gpw(system, basis, grid=grid, initial_guess='PATOM',
+            max_iter=0, quiet=True)
+
+
+def _gpw_spin_dftu_terms(density, overlap, basis, sites):
+    """Independent per-spin energy and derivative for the existing AO block."""
+    from vibeqc.dft_plus_u import ao_group_indices
+    groups = ao_group_indices(basis)
+    energy, potential = 0., np.zeros_like(density)
+    for site in sites:
+        b = overlap[:, groups[(site.atom_index, site.l)]]
+        n = b.T @ density @ b
+        energy += .5 * site.U_eff_hartree * (np.trace(n) - np.trace(n @ n))
+        potential += site.U_eff_hartree * b @ (.5*np.eye(len(n)) - n) @ b.T
+    return energy, potential
+
+
+@pytest.mark.parametrize('iterations,damping,guess,convention', [
+    (60, 0., 'HCORE', 'ewald'), (60, .2, 'PATOM', 'ewald'),
+    (1, .35, 'HCORE', 'ewald'), (0, 0., 'HCORE', 'ewald'),
+    (1, .2, 'HCORE', 'smeared_erfc'),
+])
+def test_gpw_uhf_dftu_evaluated_state(iterations, damping, guess, convention):
+    from vibeqc import periodic_gapw_open_shell as driver
+    from vibeqc.periodic_gapw_runner_adapter import gpw_uhf_result_to_runner_shape
+    from vibeqc.output.formats.qvf import qvf_wf_data
+    system, basis, grid = _uhf_fock_state_case()
+    sites = [vq.HubbardSite(0, 0, U_ev=4., J_ev=.5), vq.HubbardSite(1, 0, U_ev=1.)]
+    kw = {} if guess == 'PATOM' else dict(initial_density=(np.eye(basis.nbasis), np.eye(basis.nbasis)))
+    alpha = .7 if convention == 'smeared_erfc' else None
+    r = driver.run_periodic_uhf_gpw(system, basis, grid=grid, max_iter=iterations,
+        damping=damping, initial_guess=guess, v_ne_convention=convention,
+        smearing_alpha=alpha, dft_plus_u_sites=sites, quiet=True, **kw)
+    build = r.fock_build
+    assert build.method == 'UHF' and r.converged == (iterations == 60)
+    assert tuple(c.operator.metadata.spin for c in build.channels) == ('alpha', 'beta')
+    assert all(c.operator.metadata.role == 'physical' for c in build.channels)
+    assert build.metric_electron_counts == pytest.approx((2., 1.), abs=2e-11)
+    assert r.energy == build.energy.total == r.breakdown.e_total
+    assert r.e_dft_plus_u == r.breakdown.e_dft_plus_u == dict(build.energy.corrections)['dft_plus_u']
+    assert r.dft_plus_u_sites == tuple(sites)
+    bare = driver.run_periodic_uhf_gpw(system, basis, grid=grid, max_iter=0,
+        initial_density=(r.density_alpha, r.density_beta), quiet=True,
+        v_ne_convention=convention, smearing_alpha=alpha)
+    correction = 0.
+    for channel, spin in zip(build.channels, ('alpha', 'beta')):
+        d, f, c, eps, occ = (np.asarray(getattr(r, name+'_'+spin)) for name in
+                             ('density', 'fock', 'mo_coeffs', 'mo_energies', 'occupations'))
+        eu, vu = _gpw_spin_dftu_terms(d, r.overlap, basis, sites)
+        correction += eu
+        np.testing.assert_array_equal(channel.density, d)
+        np.testing.assert_array_equal(channel.operator.matrix, f)
+        np.testing.assert_allclose(f, getattr(bare, 'fock_'+spin)+vu, atol=2e-11, rtol=0)
+        np.testing.assert_allclose((c*occ)@c.T, d, atol=3e-12, rtol=0)
+        np.testing.assert_allclose(c.T@r.overlap@c, np.eye(len(occ)), atol=3e-12, rtol=0)
+        np.testing.assert_allclose(eps, np.diag(c.T@f@c), atol=2e-12, rtol=0)
+    assert r.e_dft_plus_u == pytest.approx(correction, abs=2e-13)
+    assert r.energy == pytest.approx(bare.energy+correction, abs=2e-11)
+    assert build.energy.electronic == pytest.approx(bare.fock_build.energy.electronic, abs=2e-11)
+    if r.scf_trace:
+        assert r.scf_trace[-1]['energy'] == r.energy
+        assert r.scf_trace[-1]['e_dft_plus_u'] == r.e_dft_plus_u
+    adapted = gpw_uhf_result_to_runner_shape(r, system, basis)
+    assert adapted.fock_build is build and adapted.e_dft_plus_u == r.e_dft_plus_u
+    assert adapted.energy == pytest.approx(adapted.e_electronic+adapted.e_nuclear+correction, abs=2e-12)
+    assert adapted.run_fields == r.run_fields
+    meta = qvf_wf_data(adapted, basis, system.unit_cell_molecule())['mo_metadata']
+    assert meta['orbital_kind'] == 'natural'
+    for spin in ('alpha', 'beta'):
+        np.testing.assert_array_equal(meta[spin]['occupations'], getattr(r, 'occupations_'+spin))
+
+
+def test_gpw_uhf_dftu_derivative_and_source(monkeypatch, record_property):
+    from vibeqc import periodic_gpw_fock as gf
+    from vibeqc import periodic_gapw_open_shell as driver
+    system, _, grid = _uhf_fock_state_case()
+    basis = vq.BasisSet(system.unit_cell_molecule(), '6-31g')
+    builders = []
+    original = gf._GpwUHFUBuilder
+    class Capture(original):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            builders.append(self)
+    monkeypatch.setattr(gf, '_GpwUHFUBuilder', Capture)
+    sites = [vq.HubbardSite(0, 0, U_ev=4., J_ev=.5), vq.HubbardSite(1, 0, U_ev=1.)]
+    r = driver.run_periodic_uhf_gpw(system, basis, grid=grid, max_iter=0,
+        initial_density=(np.eye(basis.nbasis), np.eye(basis.nbasis)), dft_plus_u_sites=sites, quiet=True)
+    builder = builders[0]
+    sites.clear()
+    densities = (r.density_alpha, r.density_beta)
+    state = builder(*densities)
+    assert state.source == r.fock_build.source
+    rng = np.random.default_rng(472)
+    directions = []
+    for d in densities:
+        p = rng.normal(size=d.shape); directions.append(.5*(p+p.T))
+    for active in (0, 1, None):
+        direction = tuple(p if active is None or active == i else np.zeros_like(p)
+                          for i, p in enumerate(directions))
+        h = 2e-5
+        plus = builder(*(d+h*p for d,p in zip(densities,direction))).energy.total
+        minus = builder(*(d-h*p for d,p in zip(densities,direction))).energy.total
+        expected = sum(np.sum(c.operator.matrix*p) for c,p in zip(state.channels,direction))
+        error = abs((plus-minus)/(2*h)-expected)
+        record_property(f'dftu_derivative_error_{active}', error)
+        assert error < 2e-8
+    swapped = builder(*densities[::-1])
+    assert swapped.source == state.source and swapped.density_id != state.density_id
+    assert swapped.energy.total == pytest.approx(state.energy.total, abs=2e-12)
+    np.testing.assert_allclose(swapped.channels[1].operator.matrix, state.channels[0].operator.matrix, atol=2e-12)
+    generation = builder.uhf_builder.generation
+    saved = builder.dftu_sites
+    builder.dftu_sites = (vq.HubbardSite(0, 0, U_ev=4., J_ev=.4),)
+    with pytest.raises(ValueError, match='source changed'): builder(*densities)
+    builder.dftu_sites = saved
+    indices = builder.dftu_groups[(0, 0)]
+    builder.dftu_groups[(0, 0)] = indices[::-1]
+    with pytest.raises(ValueError, match='source changed'): builder(*densities)
+    builder.dftu_groups[(0, 0)] = indices
+    builder.dftu_sites = (vq.HubbardSite(2, 0, U_ev=3.5),)
+    with pytest.raises(ValueError, match='source changed'): builder(*densities)
+    builder.dftu_sites = saved
+    assert builder.uhf_builder.generation == generation  # Reject before doing integral work.
+    lo = builder.uhf_builder.hf_builder.lattice_options
+    lo.cutoff_bohr = 24.
+    with pytest.raises(ValueError, match='source changed'): builder(*densities)
+    lo.cutoff_bohr = 25.
+    assert builder(*densities).source == state.source
+    with pytest.raises(ValueError, match='no AOs'):
+        original(builder.uhf_builder, [vq.HubbardSite(0, 2, U_ev=4.)])
+
+
+@pytest.mark.parametrize('guess', ['HCORE', 'PATOM'])
+def test_gpw_uhf_dftu_zero_limit_and_seed(monkeypatch, guess):
+    from vibeqc import periodic_gpw_fock as gf
+    from vibeqc import periodic_gapw_open_shell as driver
+    from vibeqc.solvers._scf import FockDiagonalizer
+    system, basis, grid = _uhf_fock_state_case()
+    bare = driver.run_periodic_uhf_gpw(system, basis, grid=grid, initial_guess=guess, quiet=True)
+    states, solves = {}, []
+    for cls in (gf._GpwUHFBuilder, gf._GpwUHFUBuilder):
+        original = cls.__call__
+        def capture(self, *densities, original=original):
+            state = original(self, *densities); states[state.identity] = state; return state
+        monkeypatch.setattr(cls, '__call__', capture)
+    original_solve = FockDiagonalizer.__call__
+    def solve(self, operator):
+        solves.append(states[operator.metadata.build_id])
+        return original_solve(self, operator)
+    monkeypatch.setattr(FockDiagonalizer, '__call__', solve)
+    zero = driver.run_periodic_uhf_gpw(system, basis, grid=grid, initial_guess=guess,
+        dft_plus_u_sites=[vq.HubbardSite(0, 0, U_ev=4., J_ev=4.)], quiet=True)
+    assert zero.converged and zero.e_dft_plus_u == 0.
+    assert zero.energy == pytest.approx(bare.energy, abs=2e-12)
+    assert zero.fock_build.source != bare.fock_build.source
+    for spin in ('alpha', 'beta'):
+        for name in ('density', 'fock'):
+            np.testing.assert_allclose(getattr(zero,name+'_'+spin),getattr(bare,name+'_'+spin),atol=2e-11,rtol=0)
+    if guess == 'PATOM':
+        assert solves[0].identity == solves[1].identity
+        assert solves[0].source.provider == 'gpw-grid+libint2'
+        assert 'dft_plus_u' not in dict(solves[0].energy.corrections)
+        assert solves[2].source.provider == 'gpw-grid+libint2+dudarev'
+    # Finite U must also leave the physical seed unchanged.
+    prior_seed = solves[0]
+    solves.clear()
+    finite = driver.run_periodic_uhf_gpw(system, basis, grid=grid, initial_guess=guess,
+        dft_plus_u_sites=[vq.HubbardSite(0, 0, U_ev=4.)], max_iter=1, quiet=True)
+    assert finite.e_dft_plus_u != 0.
+    if guess == 'PATOM':
+        seed = solves[0]
+        assert seed.source == prior_seed.source and seed.density_id == prior_seed.density_id
+        assert seed.generation == prior_seed.generation
+        assert seed.energy.total == pytest.approx(prior_seed.energy.total, abs=2e-13)
+        # Parallel integral reductions may change the last bit and build digest.
+        for channel, prior in zip(seed.channels, prior_seed.channels):
+            np.testing.assert_allclose(channel.operator.matrix, prior.operator.matrix,
+                                       atol=2e-13, rtol=0)
+
+
+def test_gpw_uhf_dftu_closed_and_empty_spin_limits():
+    from vibeqc.periodic_gapw_grid import PlaneWaveGrid
+    for system, populations in ((_h2_system(16.),(1,1)),(_h_atom_system(16.),(1,0))):
+        basis = vq.BasisSet(system.unit_cell_molecule(), 'sto-3g')
+        grid = PlaneWaveGrid(system.lattice,48,48,48)
+        sites = [vq.HubbardSite(0,0,U_ev=4.)]
+        r = vq.run_periodic_uhf_gpw(system,basis,grid=grid,dft_plus_u_sites=sites,initial_guess='HCORE',quiet=True)
+        assert r.converged
+        assert r.fock_build.metric_electron_counts == pytest.approx(populations, abs=2e-12)
+        if populations[1]:
+            restricted = vq.run_periodic_rhf_gpw(system,basis,grid=grid,dft_plus_u_sites=sites,initial_guess='HCORE',quiet=True)
+            assert r.energy == pytest.approx(restricted.energy,abs=2e-10)
+            assert r.e_dft_plus_u == pytest.approx(restricted.e_dft_plus_u,abs=2e-10)
+            np.testing.assert_allclose(r.fock_alpha, restricted.fock, atol=2e-9,rtol=0)
+        else:
+            np.testing.assert_allclose(r.density_beta,0.,atol=1e-14,rtol=0)
+            empty_e, empty_v = _gpw_spin_dftu_terms(r.density_beta,r.overlap,basis,sites)
+            assert empty_e == 0. and np.linalg.norm(empty_v)>0.
+
+
+@pytest.mark.parametrize('functional,iterations,damping,guess,convention', [
+    ('lda',60,0.,'HCORE','ewald'), ('pbe',60,.2,'PATOM','ewald'),
+    ('pbe0',60,0.,'HCORE','ewald'), ('r2scan',60,0.,'HCORE','ewald'),
+    ('pbe',1,.35,'HCORE','ewald'), ('pbe0',0,0.,'HCORE','ewald'),
+    ('pbe',1,.2,'HCORE','smeared_erfc'),
+])
+def test_gpw_uks_fock_evaluated_state(functional, iterations, damping, guess, convention):
+    from vibeqc import periodic_gapw_open_shell as driver
+    from vibeqc.periodic_gapw_runner_adapter import gpw_uks_result_to_runner_shape
+    from vibeqc.output.formats.qvf import qvf_wf_data
+    system, basis, grid = _uhf_fock_state_case()
+    kw = {} if guess == 'PATOM' else dict(initial_density=(np.eye(basis.nbasis),np.eye(basis.nbasis)))
+    r = driver.run_periodic_uks_gpw(system,basis,functional=functional,grid=grid,
+        max_iter=iterations,damping=damping,initial_guess=guess,v_ne_convention=convention,
+        smearing_alpha=.7 if convention=='smeared_erfc' else None,quiet=True,**kw)
+    build = r.fock_build
+    assert build.method == 'UKS' and r.converged == (iterations==60)
+    assert all(c.operator.metadata.kind=='ks' and c.operator.metadata.role=='physical' for c in build.channels)
+    assert tuple(c.operator.metadata.spin for c in build.channels)==('alpha','beta')
+    assert r.energy == build.energy.total == r.breakdown.e_total
+    assert dict(build.energy.components)['xc'] == r.breakdown.e_xc
+    assert build.metric_electron_counts == pytest.approx((2.,1.),abs=2e-11)
+    for channel,spin in zip(build.channels,('alpha','beta')):
+        d,f,c,eps,occ=(np.asarray(getattr(r,name+'_'+spin)) for name in
+                       ('density','fock','mo_coeffs','mo_energies','occupations'))
+        np.testing.assert_array_equal(channel.density,d)
+        np.testing.assert_array_equal(channel.operator.matrix,f)
+        np.testing.assert_allclose((c*occ)@c.T,d,atol=3e-12,rtol=0)
+        np.testing.assert_allclose(c.T@r.overlap@c,np.eye(len(occ)),atol=3e-12,rtol=0)
+        np.testing.assert_allclose(eps,np.diag(c.T@f@c),atol=2e-12,rtol=0)
+    adapted = gpw_uks_result_to_runner_shape(r,system,basis)
+    assert adapted.fock_build is build and adapted.run_fields==r.run_fields
+    assert adapted.e_xc==r.breakdown.e_xc
+    assert adapted.energy==pytest.approx(adapted.e_electronic+adapted.e_nuclear,abs=2e-12)
+    meta=qvf_wf_data(adapted,basis,system.unit_cell_molecule())['mo_metadata']
+    assert meta['orbital_kind']=='natural'
+    for spin in ('alpha','beta'):np.testing.assert_array_equal(meta[spin]['occupations'],getattr(r,'occupations_'+spin))
+    if r.scf_trace:
+        assert r.scf_trace[-1]['energy']==r.energy
+        assert r.scf_trace[-1]['e_xc']==r.breakdown.e_xc
+    original=build.channels[0].operator.matrix.copy()
+    r.fock_alpha[:]=23.
+    np.testing.assert_array_equal(build.channels[0].operator.matrix,original)
+
+
+@pytest.mark.parametrize('functional,length', [
+    ('lda',16.),('pbe',16.),('pbe0',16.),('r2scan',16.),
+    ('pbe0',9.),  # #534, independently perturb each spin in a compact cell
+])
+def test_gpw_uks_fock_derivative_and_source(functional,length,monkeypatch,record_property):
+    from vibeqc import periodic_gpw_fock as gf, periodic_gapw_open_shell as driver
+    from vibeqc import periodic_gapw_j as gj
+    system,_,grid=_uhf_fock_state_case(length)
+    basis=vq.BasisSet(system.unit_cell_molecule(),'6-31g')
+    builders=[]; original=gf._GpwUKSBuilder
+    class Capture(original):
+        def __init__(self,*args,**kwargs):
+            super().__init__(*args,**kwargs);builders.append(self)
+    monkeypatch.setattr(gf,'_GpwUKSBuilder',Capture)
+    r=driver.run_periodic_uks_gpw(system,basis,grid=grid,functional=functional,max_iter=0,
+        initial_density=(np.eye(basis.nbasis),np.eye(basis.nbasis)),quiet=True)
+    builder=builders[0]; densities=(r.density_alpha,r.density_beta); state=r.fock_build
+    rng=np.random.default_rng(472)
+    directions=[]
+    for d in densities:
+        p=rng.normal(size=d.shape);directions.append(.5*(p+p.T))
+    for active in (0,1,None):
+        direction=tuple(p if active is None or active==i else np.zeros_like(p) for i,p in enumerate(directions))
+        h=2e-5
+        numerical=(builder(*(d+h*p for d,p in zip(densities,direction))).energy.total
+                  -builder(*(d-h*p for d,p in zip(densities,direction))).energy.total)/(2*h)
+        expected=sum(np.sum(c.operator.matrix*p) for c,p in zip(state.channels,direction))
+        record_property(f'uks_derivative_error_{active}',abs(numerical-expected))
+        assert numerical==pytest.approx(expected,abs=2e-7)
+    half_trace=sum(.5*np.sum(d*(builder.hf_builder.hcore+c.operator.matrix))
+                   for d,c in zip(densities,state.channels))+state.energy.nuclear
+    assert abs(half_trace-state.energy.total)>1e-3
+    swapped=builder(*densities[::-1])
+    assert swapped.source==state.source and swapped.density_id!=state.density_id
+    assert swapped.energy.total==pytest.approx(state.energy.total,abs=2e-12)
+    for a,b in zip(swapped.channels,state.channels[::-1]):
+        np.testing.assert_allclose(a.operator.matrix,b.operator.matrix,atol=2e-12,rtol=0)
+    for array in (builder.cache.chi,builder.cache.recip):
+        saved=array.flat[0];array.flat[0]+=.01
+        with pytest.raises(ValueError,match='source changed'):builder(*densities)
+        array.flat[0]=saved
+    func=builder.functional
+    builder.functional=core.Functional('blyp' if functional=='pbe' else 'pbe',2)
+    with pytest.raises(ValueError,match='source changed'):builder(*densities)
+    builder.functional=func
+    lo=builder.hf_builder.lattice_options; cutoff=lo.cutoff_bohr;lo.cutoff_bohr=cutoff-1
+    with pytest.raises(ValueError,match='source changed'):builder(*densities)
+    lo.cutoff_bohr=cutoff
+    if functional=='r2scan':
+        monkeypatch.setattr(gj,'_MGGA_DENSITY_SCREEN',2*gj._MGGA_DENSITY_SCREEN)
+        with pytest.raises(ValueError,match='source changed'):builder(*densities)
+    with pytest.raises(ValueError,match='polarized'):
+        original(builder.hf_builder,core.Functional('pbe',1),builder.cache)
+    with pytest.raises(NotImplementedError,match='range-separated|screened'):
+        original(builder.hf_builder,core.Functional('hse06',2),builder.cache)
+
+
+@pytest.mark.parametrize('guess',['HCORE','PATOM'])
+def test_gpw_uks_fock_seed_roles_and_exchange_skip(monkeypatch,guess):
+    from vibeqc import periodic_gpw_fock as gf, periodic_gapw_open_shell as driver
+    from vibeqc.solvers._scf import FockDiagonalizer
+    system,basis,grid=_uhf_fock_state_case()
+    states,solves,calls={},[],[]
+    for cls in (gf._GpwUHFBuilder,gf._GpwUKSBuilder):
+        original=cls.__call__
+        def capture(self,*densities,original=original):
+            b=original(self,*densities);states[b.identity]=b;return b
+        monkeypatch.setattr(cls,'__call__',capture)
+    original_solve=FockDiagonalizer.__call__
+    def solve(self,operator):
+        solves.append(operator.metadata);return original_solve(self,operator)
+    monkeypatch.setattr(FockDiagonalizer,'__call__',solve)
+    exchange=core.build_jk_gamma_molecular_limit
+    def k(*args,**kw):calls.append(np.asarray(args[-1]).copy());return exchange(*args,**kw)
+    monkeypatch.setattr(core,'build_jk_gamma_molecular_limit',k)
+    r=driver.run_periodic_uks_gpw(system,basis,grid=grid,functional='pbe',initial_guess=guess,
+                                 max_iter=3,damping=.2,quiet=True)
+    offset=2 if guess=='PATOM' else 0
+    assert len(calls)==offset  # Full-HF exchange only for the PATOM seed.
+    if offset:
+        assert solves[0].build_id==solves[1].build_id
+        seed=states[solves[0].build_id]
+        assert seed.method=='UHF' and solves[0].kind=='fock'
+        assert 'xc' not in dict(seed.energy.components)
+        for d,c in zip(calls,seed.channels):np.testing.assert_array_equal(d,2*c.density)
+    assert all(meta.kind=='ks' for meta in solves[offset:])
+    modified=[m for m in solves[offset:] if m.role=='solver']
+    assert modified and all(m.modification=='pulay-diis' for m in modified)
+    for meta in modified:
+        assert states[meta.build_id].density_id==meta.density_id
+        assert states[meta.build_id].method=='UKS'
+    assert r.evaluated_build_history[-1]['build_id']==r.fock_build.identity
+
+
+@pytest.mark.parametrize('functional',['pbe','pbe0','r2scan'])
+def test_gpw_uks_fock_closed_and_empty_spin_limits(functional):
+    from vibeqc.periodic_gapw_grid import PlaneWaveGrid
+    for system,populations in ((_h2_system(16.),(1,1)),(_h_atom_system(16.),(1,0))):
+        basis=vq.BasisSet(system.unit_cell_molecule(),'sto-3g');grid=PlaneWaveGrid(system.lattice,48,48,48)
+        r=vq.run_periodic_uks_gpw(system,basis,grid=grid,functional=functional,initial_guess='HCORE',quiet=True)
+        assert r.converged and r.fock_build.metric_electron_counts==pytest.approx(populations,abs=2e-12)
+        if populations[1]:
+            restricted=vq.run_periodic_rks_gpw(system,basis,grid=grid,functional=functional,initial_guess='HCORE',quiet=True)
+            # Retain the sub-nanohartree polarized/unpolarized r2SCAN grid difference.
+            energy_tol=1e-9 if functional=='r2scan' else 2e-10
+            assert r.energy==pytest.approx(restricted.energy,abs=energy_tol)
+            np.testing.assert_allclose(r.fock_alpha,restricted.fock,atol=2e-9,rtol=0)
+        else:
+            np.testing.assert_array_equal(r.density_beta,np.zeros_like(r.density_beta))
+            assert r.breakdown.e_xc!=0. and np.all(np.isfinite(r.fock_beta))

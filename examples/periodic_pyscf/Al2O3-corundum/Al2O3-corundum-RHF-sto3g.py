@@ -3,7 +3,7 @@
 ``../../periodic/Al2O3-corundum-RHF-sto3g/Al2O3-corundum-RHF-sto3g.py``.
 
 Run::
-    .venv/bin/python examples/periodic_pyscf/Al2O3-corundum-RHF-sto3g/Al2O3-corundum-RHF-sto3g.py
+    .venv/bin/python examples/periodic_pyscf/Al2O3-corundum/Al2O3-corundum-RHF-sto3g.py
 
 Produces:
     {stem}.out  — full PySCF log + final energy

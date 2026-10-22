@@ -4,6 +4,7 @@
 #include <cmath>
 #include <complex>
 #include <limits>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -65,7 +66,7 @@ DFTB0LatticeBlocks build_h0_s_per_cell(
                 if (S_g(mu, nu) == 0.0) continue;
                 if (!is_zero || a_mu != a_nu) {
                     double h_avg = 0.5 * (hbar[a_mu] + hbar[a_nu]);
-                    H_g(mu, nu) = 0.5 * kappa * S_g(mu, nu) * h_avg;
+                    H_g(mu, nu) = kappa * S_g(mu, nu) * h_avg;
                 }
             }
         }
@@ -89,6 +90,32 @@ DFTB0LatticeBlocks build_h0_s_per_cell(
     result.h0 = std::move(H_blocks);
     result.overlap = std::move(S_blocks);
     return result;
+}
+
+void require_positive_definite_bloch_overlap(
+    const Eigen::MatrixXcd& S_k,
+    const Eigen::Vector3d& kpoint,
+    double cutoff_bohr,
+    const char* caller) {
+    // The same floor diagonalize_bloch applies before S^{-1/2}.
+    constexpr double kOverlapFloor = 1.0e-9;
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXcd> solver(
+        S_k, Eigen::EigenvaluesOnly);
+    if (solver.info() != Eigen::Success) {
+        throw std::runtime_error(
+            std::string(caller) + ": S(k) eigensolver failed");
+    }
+    const double s_min = solver.eigenvalues().minCoeff();
+    if (s_min >= kOverlapFloor) return;
+    std::ostringstream message;
+    message << caller << ": the Bloch overlap S(k) at k = (" << kpoint(0)
+            << ", " << kpoint(1) << ", " << kpoint(2)
+            << ") 1/bohr is not positive definite (smallest eigenvalue "
+            << s_min << "). The pair cutoff cutoff_bohr = " << cutoff_bohr
+            << " bohr drops overlaps the DFTB basis still carries; raise "
+               "cutoff_bohr until S(k) is positive definite and the energy "
+               "no longer changes with it.";
+    throw std::runtime_error(message.str());
 }
 
 int validate_dftb_kpoint_request(
@@ -245,6 +272,8 @@ KPointDFTB0Result run_dftb0_kpoints_impl(
 
         Hk = 0.5 * (Hk + Hk.adjoint().eval());
         Sk = 0.5 * (Sk + Sk.adjoint().eval());
+        require_positive_definite_bloch_overlap(
+            Sk, k, cutoff_bohr, "run_dftb0_kpoints");
         const auto bands = diagonalize_bloch(Hk, Sk);
         const Eigen::VectorXd& eps = bands.energies;
         result.eps_per_k.push_back(eps);
@@ -314,7 +343,9 @@ KPointDFTB0Result run_dftb0_kpoints_impl(
     // (issue #426; convention documented on KPointBandEdges).
     store_kpoint_band_edges(
         result,
-        compute_kpoint_band_edges(result.eps_per_k, result.occupations_per_k));
+        compute_kpoint_band_edges(
+            result.eps_per_k, result.occupations_per_k, 1.0e-8,
+            kmesh.weights));
     return result;
 }
 

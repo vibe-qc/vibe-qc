@@ -170,8 +170,13 @@ def compute_dos_from_result(
       otherwise (n_occ derived from ``result.density`` .
       ``result.overlap`` when present, falling back to
       ``S Z`` // 2 if the system is on the result).
-    * Multi-k: ``weights[i, k] = w_k . 2`` for occupied,
-      ``w_k . 0`` for virtual. The result is the integrated
+    * Multi-k: ``weights[i, k] = w_k . n_ik`` with ``n_ik`` the result's
+      own ``occupations_k`` when it carries them, else the
+      zero-temperature fill with ONE Fermi level over the mesh
+      (:func:`vibeqc.smearing.apply_smearing`). Until #176 this path
+      re-filled the lowest ``n_occ`` bands at every k independently, which
+      on a band-overlap mesh weights a state above the Fermi level at one k
+      and drops one below it at another. The result is the integrated
       density of states summed over the BZ sample.
 
     Any extra ``**kwargs`` are forwarded to :func:`gaussian_dos`
@@ -200,20 +205,23 @@ def compute_dos_from_result(
             # Uniform fallback if no kmesh attached.
             k_weights = np.full(len(eigs_k), 1.0 / len(eigs_k))
 
-        n_occ = _infer_n_occ(result, system=system, n_elec=n_elec)
+        blocks = [np.asarray(e, dtype=float).ravel() for e in eigs_k]
+        occ_k = _matching_occupations(
+            getattr(result, "occupations_k", None), blocks
+        )
+        if occ_k is None:
+            n_occ = _infer_n_occ(result, system=system, n_elec=n_elec)
+            occ_k = _zero_temperature_mesh_occupations(
+                blocks, k_weights, 2 * n_occ
+            )
 
         flat_eps = []
         flat_w = []
-        for ik, eps_k in enumerate(eigs_k):
-            eps_k = np.asarray(eps_k, dtype=float).ravel()
-            n_basis = eps_k.size
-            w = np.zeros(n_basis, dtype=float)
-            # Closed shell: occupied carry 2 electrons. The k-weight
-            # captures the BZ-integration measure so summing across
-            # k reproduces 2 . n_occ electrons.
-            w[:n_occ] = 2.0 * k_weights[ik]
+        for ik, eps_k in enumerate(blocks):
+            # The k-weight captures the BZ-integration measure, so summing
+            # across k reproduces the electron count.
             flat_eps.append(eps_k)
-            flat_w.append(w)
+            flat_w.append(np.asarray(occ_k[ik], dtype=float) * k_weights[ik])
         eps_all = np.concatenate(flat_eps)
         w_all = np.concatenate(flat_w)
         return gaussian_dos(eps_all, weights=w_all, **kwargs)
@@ -236,6 +244,30 @@ def compute_dos_from_result(
         w[:n_occ] = 2.0
 
     return gaussian_dos(eps, weights=w, **kwargs)
+
+
+def _matching_occupations(occupations, blocks):
+    """Per-k occupations shaped like ``blocks``, or ``None``."""
+    if occupations is None or len(occupations) != len(blocks):
+        return None
+    out = [np.asarray(o, dtype=float).ravel() for o in occupations]
+    if any(o.shape != b.shape for o, b in zip(out, blocks)):
+        return None
+    return out
+
+
+def _zero_temperature_mesh_occupations(blocks, k_weights, n_electrons):
+    """Closed-shell T = 0 occupations with one Fermi level over the mesh."""
+    from .smearing import apply_smearing
+
+    w = np.asarray(k_weights, dtype=float)
+    w = w / float(np.sum(w))
+    return apply_smearing(
+        blocks,
+        weights=w,
+        n_electrons_per_cell=float(n_electrons),
+        n_occ_each=int(n_electrons) // 2,
+    ).occupations_per_k
 
 
 def _infer_n_occ(result, *, system=None, n_elec: Optional[int] = None) -> int:
@@ -573,6 +605,8 @@ def band_path_eigenvalues(
             stacklevel=2,
         )
 
+    from .solvers._scf import solve_dense_fock
+
     # Per-k diagonalisation loop.
     n_k = k_path_arr.shape[0]
     n_basis = basis.nbasis
@@ -592,6 +626,9 @@ def band_path_eigenvalues(
         # Canonical orthogonalisation via S^{-1/2}.
         s_eigs, U = np.linalg.eigh(S_k)
         X = U @ np.diag(1.0 / np.sqrt(np.maximum(s_eigs, 1e-12))) @ U.conj().T
-        eps, _ = np.linalg.eigh(X.conj().T @ F_k @ X)
-        eigs[ik, :] = np.real(eps)
+        eig = solve_dense_fock(
+            F_k, X=X, overlap=S_k, kind="ks" if functional is not None else "fock",
+            kpoint=k,
+        )
+        eigs[ik, :] = eig.eigenvalues
     return eigs

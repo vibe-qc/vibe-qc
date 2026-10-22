@@ -208,7 +208,7 @@ examples/regression/
 ├── run_suite.py                          # CLI entry — autonomous runner
 ├── core/
 │   ├── output_paths.py                   # shared ~/vibeqc-runs resolution
-│   ├── spec.py                           # PeriodicSpec / MoleculeSpec / MethodSpec / ExpectedRef
+│   ├── spec.py                           # re-exports PeriodicSpec / MoleculeSpec / MethodSpec / ExpectedRef from vibeqc_spec
 │   ├── case.py                           # CodeRow / CSV io / env snapshot
 │   ├── compare.py                        # ΔE classification (pass / marginal / fail)
 │   ├── runner_vibeqc.py                  # vibe-qc periodic + molecular SCF + verbose log
@@ -231,6 +231,7 @@ examples/regression/
 │   └── catalog.py                        # MethodSpec dict
 ├── expected/                             # one .json per (system, basis, method)
 │   └── <system_id>__<basis>__<method_id>.json
+├── parity_periodic_dlpno_vs_pyscf.py     # DLPNO-CCSD(T) on crystals vs PySCF KRCCSD(T)
 ├── parity_matrix_orca/                   # standalone ORCA diagnostics/fixtures
 ├── crystal_parity/ bipole_parity/ gapw_parity/
 │                                           # standalone bug-hunt diagnostics

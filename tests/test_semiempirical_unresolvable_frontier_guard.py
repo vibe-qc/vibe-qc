@@ -16,16 +16,24 @@ forbids treating as a convergence nuisance.
 
 THE FIXTURE IS CONSTRUCTED, DELIBERATELY.  The issue records that the class
 has no natural system, and a scan confirms it: over Z = 5 and Z = 31 zigzag
-chains at a = 3-9 bohr and meshes 2/4/6, the smallest cut frontier gap
-reachable is 1.44e-5 Ha, an order of magnitude ABOVE the 1e-6 default.  Real
-systems therefore do not trip this guard, which is the point of the margin
-tests below.  Widening the chain drives the gap down smoothly and lands it
-inside the window, which is what makes a behavioural fail-first possible:
+chains at a = 3-9 bohr, meshes 2/4/6 and a 30-bohr cutoff, the smallest cut
+frontier gap
+reachable is 2.0e-3 Ha (B, a = 9, mesh 2), three orders of magnitude ABOVE
+the 1e-6 default.  Real systems therefore do not trip this guard, which is
+the point of the margin tests below.  Widening the chain drives the gap down
+smoothly and lands it inside the window, which is what makes a behavioural
+fail-first possible:
 
-    Z31 zigzag, mesh 2, T = 0, measured pooled frontier gap
-        a =  9.0 bohr -> 1.4417e-05 Ha     a = 14.0 -> 1.1764e-06
-        a = 15.0      -> 6.9133e-07        a = 16.0 -> 3.9896e-07
-        a = 20.0      -> 3.7803e-08        offset 0 -> exactly degenerate
+    Z31 zigzag, mesh 2, T = 0, 30-bohr cutoff, measured pooled frontier gap
+        a = 36.0 bohr -> 1.2145e-05 Ha     a = 45.0 -> 1.1614e-06
+        a = 47.0      -> 6.7763e-07        a = 50.0 -> 2.9718e-07
+        offset 0      -> exactly degenerate
+
+The family and the scan were measured again under the #373 basis and the
+#478 hopping (#565).  The earlier family ran at a = 9-16 bohr with a 12-bohr
+cutoff.  There the Ga S(k) is now indefinite, and at a = 14-20 bohr with a
+30-bohr cutoff the gap is 0.04-0.07 Ha.  The gaps above are the same at a
+40-bohr cutoff to four digits.
 """
 
 from __future__ import annotations
@@ -37,14 +45,14 @@ from vibeqc._vibeqc_core import Atom, PeriodicSystem, monkhorst_pack
 from vibeqc._vibeqc_core import semiempirical as _se
 from vibeqc.semiempirical.parameters import default_parameters
 
-_CUTOFF = 12.0
+_CUTOFF = 30.0  # positive-definite Ga S(k); 12 bohr is not since #373
 _Z = 31  # Ga: the #424 wave-flip element
 
 # Measured on this fixture family (see the module docstring).
-_GAP_WELL_ABOVE = 9.0    # 1.44e-05 Ha -- 14x above the 1e-6 default
-_GAP_JUST_ABOVE = 14.0   # 1.18e-06 Ha -- above by 18 %
-_GAP_JUST_BELOW = 15.0   # 6.91e-07 Ha -- below by 31 %
-_GAP_WELL_BELOW = 16.0   # 3.99e-07 Ha
+_GAP_WELL_ABOVE = 36.0   # 1.21e-05 Ha -- 12x above the 1e-6 default
+_GAP_JUST_ABOVE = 45.0   # 1.16e-06 Ha -- above by 16 %
+_GAP_JUST_BELOW = 47.0   # 6.78e-07 Ha -- below by 32 %
+_GAP_WELL_BELOW = 50.0   # 2.97e-07 Ha
 
 
 def _chain(a: float, offset: float = 0.35) -> PeriodicSystem:
@@ -128,10 +136,10 @@ def test_the_guard_can_be_disabled_explicitly():
 # --------------------------------------------------------------------------
 
 def test_a_real_frontier_gap_is_untouched():
-    """1.44e-05 Ha is the smallest cut gap any natural chain in the scanned
-    family reaches -- 14x the default.  It must run exactly as before."""
+    """1.21e-05 Ha, 12x the default: a cut the fill resolves must run
+    exactly as before."""
     result = _dftb0(_GAP_WELL_ABOVE)
-    assert _frontier_gap(result) == pytest.approx(1.4417e-05, rel=1e-3)
+    assert _frontier_gap(result) == pytest.approx(1.2145e-05, rel=1e-3)
 
 
 def test_an_exactly_degenerate_frontier_is_shared_not_refused():
@@ -144,8 +152,8 @@ def test_an_exactly_degenerate_frontier_is_shared_not_refused():
 
 
 @pytest.mark.parametrize("a,expect_refusal", [
-    (_GAP_JUST_ABOVE, False),  # 1.18e-06: above threshold by 18 %
-    (_GAP_JUST_BELOW, True),   # 6.91e-07: below threshold by 31 %
+    (_GAP_JUST_ABOVE, False),  # 1.16e-06: above threshold by 16 %
+    (_GAP_JUST_BELOW, True),   # 6.78e-07: below threshold by 32 %
 ])
 def test_the_threshold_is_where_it_claims_to_be(a, expect_refusal):
     """Straddle 1e-6 from both sides with one fixture family, so the boundary

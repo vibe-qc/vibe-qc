@@ -6,21 +6,14 @@ GitLab decides whether to create a job before that job can run, so the
 This module is the testable policy surface: its pattern lists are compared
 byte-for-byte with named YAML anchors by :func:`verify_gitlab_policy`.
 
-CI policy (maintainer decision, 2026-07-26): CI runs once per release, on
-the exact release tree. An ordinary ``main`` push selects **no** jobs — the
-``main`` context below selects nothing, and the ``workflow:`` rules in
-``.gitlab-ci.yml`` refuse to create the pipeline at all — except for the
-decoupled ``website/**`` lane, which does carry one test gate:
-``website-test``, which both website deploys ``needs:``. That lane
-publishes to the public root on every matching push, so it cannot wait for
-release-candidate evidence. Test evidence for day-to-day commits is produced
-locally before landing; release evidence comes from the single
-release-candidate pipeline, which runs every component gate. The immutable
-tag reuses that exact-SHA evidence and creates no duplicate test pipeline.
+CI runs native release tests once on the exact candidate tree. Ordinary main
+pushes run the fast source-privacy gate; website changes additionally run their
+own verification gate. Tags reuse candidate evidence without duplicate builds.
 
 The path-gated selection logic survives for the ``merge_request`` context.
-Any shared build/test surface must still be added to ``NATIVE_PATHS`` in
-the same commit that introduces it.
+Native builds on merge requests are opt-in compile/import checks; they do not
+execute pytest. Python/test/CI-only changes use cheap policy/syntax checks instead.
+Release candidates still run the complete blocking T1 gate on a clean build.
 """
 
 from __future__ import annotations
@@ -38,65 +31,87 @@ from typing import Final
 REPO_ROOT: Final = Path(__file__).resolve().parents[2]
 
 NATIVE_PATHS: Final = (
-    ".gitlab-ci.yml",
     "CMakeLists.txt",
     "MANIFEST.in",
     "pyproject.toml",
     "cpp/**/*",
-    "python/vibeqc/**/*",
-    "python/vibeqc_naming/**/*",
-    "tests/**/*",
+    "tests/native/**/*",
+    "tests/test_trah_noncanonical.cpp",
     "scripts/_build_lock.sh",
     "scripts/_lifecycle_lock.sh",
     "scripts/_safe_build_env.sh",
     "scripts/_setup_helpers.sh",
     "scripts/_venv_helpers.sh",
     "scripts/build_*.sh",
-    "scripts/gen_qvf_v2_schema.py",
     "scripts/install.sh",
     "scripts/setup_basis_library.sh",
     "scripts/setup_native_deps.sh",
-    "scripts/test_gate/**/*",
     "scripts/update.sh",
     "scripts/update_native_deps.sh",
 )
 
-VIBE_BASIS_PATHS: Final = (
+NATIVE_REGRESSION_PATHS: Final = (
     ".gitlab-ci.yml",
+    "cpp/src/trah.cpp",
+    "cpp/src/quadratic_scf.cpp",
+    "cpp/include/vibeqc/**/*",
+    "tests/native/**/*",
+    "tests/test_trah_noncanonical.cpp",
+)
+
+VIBE_BASIS_PATHS: Final = (
     "pyproject.toml",
     "scripts/_build_lock.sh",
     "scripts/_lifecycle_lock.sh",
     "vibe-basis/**/*",
 )
 
+# The standalone naming distribution (#536) packages python/vibeqc_naming,
+# so both the source and the packaging gate it.
+VIBEQC_NAMING_PATHS: Final = (
+    "python/vibeqc_naming/**/*",
+    "vibeqc-naming/**/*",
+)
+
 WEBSITE_PATHS: Final = ("website/**/*",)
 
 DOCS_PATHS: Final = (
     ".gitlab-ci.yml",
-    "CHANGELOG.md",
-    "CITATION.cff",
-    "CONTRIBUTING.md",
-    "README.md",
-    "docs/**/*",
+    "docs/conf.py",
+    "docs/Makefile",
+    "docs/_static/**/*",
+    "docs/_templates/**/*",
     "scripts/build_site.sh",
+)
+QVF_PATHS: Final = (
+    ".gitlab-ci.yml",
+    "scripts/ci/check_qvf_schema.py",
+    "python/vibeqc/output/formats/*schema*.json",
+    "docs/qvf/_vendored/**/*",
 )
 
 # vq_paths and vibe_view_paths are gone: those components are separate
 # repositories with their own pipelines. vibe-basis stays in this one.
 ANCHOR_POLICIES: Final = {
     "native_paths": NATIVE_PATHS,
+    "native_regression_paths": NATIVE_REGRESSION_PATHS,
     "vibe_basis_paths": VIBE_BASIS_PATHS,
+    "vibeqc_naming_paths": VIBEQC_NAMING_PATHS,
     "docs_paths": DOCS_PATHS,
     "website_paths": WEBSITE_PATHS,
+    "qvf_paths": QVF_PATHS,
 }
 
-ALWAYS_JOBS: Final = ("ci-path-policy",)
+ALWAYS_JOBS: Final = ("ci-path-policy", "source-privacy")
 RELEASE_JOBS: Final = (
     "build-test",
+    "changelog-audit",
     "ci-path-policy",
     "docs-build",
     "qvf-conformance",
+    "source-privacy",
     "vibe-basis-test",
+    "vibeqc-naming-test",
 )
 NATIVE_CACHE_KEY: Final = (
     "vibeqc-core-debian12-gcc12-python313-cp313-linux-x86_64-release-v1"
@@ -120,32 +135,35 @@ def matches_any(paths: Iterable[str], patterns: Sequence[str]) -> bool:
     return any(_matches(path, pattern) for path in paths for pattern in patterns)
 
 
-def select_jobs(paths: Sequence[str], *, context: str = "main") -> tuple[str, ...]:
+def select_jobs(
+    paths: Sequence[str], *, context: str = "main", full_validation: bool = False, build_native: bool = False,
+) -> tuple[str, ...]:
     """Return the sorted CI jobs required for ``paths`` and pipeline context."""
 
-    if context == "release_candidate":
+    if full_validation or context == "release_candidate":
         return RELEASE_JOBS
     if context == "tag":
         return ()
     if context == "release":
-        return ("ci-path-policy", "docs-build")
+        return ("ci-path-policy", "docs-build", "source-privacy")
     if context == "web":
-        return ("ci-path-policy", "docs-build")
+        return ("ci-path-policy", "docs-build", "qvf-conformance", "source-privacy")
     if context == "main":
-        # Ordinary main commits run no CI test jobs: evidence is local
-        # (scripts/test_gate/ + component suites) and the release-gate
-        # pipeline. The website lane is the single exception, because it
-        # publishes on the push rather than on the release: its deploys
-        # gate on website-test, so that job is the one main selection.
         if matches_any(paths, WEBSITE_PATHS):
-            return ("website-test",)
-        return ()
+            return ("source-privacy", "website-test")
+        return ("source-privacy",)
 
     jobs = set(ALWAYS_JOBS)
-    if matches_any(paths, NATIVE_PATHS):
+    if matches_any(paths, NATIVE_REGRESSION_PATHS):
+        jobs.add("native-regressions")
+    if build_native and matches_any(paths, NATIVE_PATHS):
         jobs.add("build-test")
     if matches_any(paths, VIBE_BASIS_PATHS):
         jobs.add("vibe-basis-test")
+    if matches_any(paths, VIBEQC_NAMING_PATHS):
+        jobs.add("vibeqc-naming-test")
+    if matches_any(paths, QVF_PATHS):
+        jobs.add("qvf-conformance")
     if matches_any(paths, DOCS_PATHS):
         jobs.add("docs-build")
     return tuple(sorted(jobs))
@@ -251,13 +269,14 @@ REPRESENTATIVE_CASES: Final = (
     ("cpp-core", "main", ("cpp/src/rhf.cpp",)),
     ("website-only", "main", ("website/src/pages/index.astro",)),
     ("basis-only-mr", "merge_request", ("vibe-basis/src/vibe_basis/cli.py",)),
+    ("naming-only-mr", "merge_request", ("vibeqc-naming/README.md",)),
     ("docs-only-mr", "merge_request", ("docs/quickstart.md",)),
-    ("handover-only-mr", "merge_request", ("handovers/HANDOVER_TEST_HEALTH.md",)),
+    ("study-only-mr", "merge_request", ("studies/skala-showcase/README.md",)),
     ("python-core-mr", "merge_request", ("python/vibeqc/runner.py",)),
     ("cpp-core-mr", "merge_request", ("cpp/src/rhf.cpp",)),
     ("build-config-mr", "merge_request", (".gitlab-ci.yml",)),
-    ("release-candidate", "release_candidate", ("handovers/NOTE.md",)),
-    ("tag", "tag", ("handovers/NOTE.md",)),
+    ("release-candidate", "release_candidate", ("studies/skala-showcase/README.md",)),
+    ("tag", "tag", ("studies/skala-showcase/README.md",)),
 )
 
 
@@ -291,6 +310,8 @@ def main() -> int:
         default="main",
     )
     parser.add_argument("--paths", nargs="*")
+    parser.add_argument("--full-validation", action="store_true")
+    parser.add_argument("--build-native", action="store_true")
     parser.add_argument("--base")
     parser.add_argument("--head")
     parser.add_argument("--verify-gitlab", action="store_true")
@@ -319,7 +340,7 @@ def main() -> int:
             {
                 "context": args.context,
                 "paths": paths,
-                "jobs": list(select_jobs(paths, context=args.context)),
+                "jobs": list(select_jobs(paths, context=args.context, full_validation=args.full_validation, build_native=args.build_native)),
             },
             indent=2,
             sort_keys=True,

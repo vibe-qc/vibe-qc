@@ -85,6 +85,20 @@ def _weighted_band_energy(kmesh, result) -> float:
     )
 
 
+def _metallic_si(repeats: int = 1) -> PeriodicSystem:
+    """Diamond Si with two electrons removed per primitive cell.
+
+    Neutral diamond Si is gapped under DFTB0 since #373 and #478 (pooled
+    HOMO -0.063 Ha, LUMO 0.170 Ha on 3x3x3); it was metallic only on the
+    earlier basis and hopping. A charge of +2 leaves four electrons for the
+    threefold valence-band top, so the 3x3x3 fill shares a 12-state Fermi
+    group at 2/3, as in the #561 fixtures (#565).
+    """
+    system = _diamond_si(repeats)
+    system.charge = 2 * repeats**3
+    return system
+
+
 def _assert_si_global_aufbau(kmesh, result) -> None:
     per_k_electrons = np.array(
         [
@@ -98,19 +112,17 @@ def _assert_si_global_aufbau(kmesh, result) -> None:
     homo = max(float(energies[result.n_occ - 1]) for energies in result.eps_per_k)
     lumo = min(float(energies[result.n_occ]) for energies in result.eps_per_k)
 
+    # Measured: the lowest band-4 state lies 0.182 Ha below the highest
+    # band-3 state, and per-point counts span 2 to 8 electrons.
     assert lumo - homo < -5.0e-5
     assert _weighted_electron_count(kmesh, result.occupations_per_k) == (
-        pytest.approx(8.0, abs=1.0e-12)
+        pytest.approx(6.0, abs=1.0e-12)
     )
     assert np.ptp(per_k_electrons) > 4.0
-    at_fermi = np.isclose(occupations, 0.5, atol=1.0e-13, rtol=0.0)
-    assert np.count_nonzero(at_fermi) == 8
-    np.testing.assert_allclose(
-        occupations[at_fermi],
-        0.5,
-        atol=1.0e-13,
-        rtol=0.0,
-    )
+    at_fermi = np.isclose(occupations, 2.0 / 3.0, atol=1.0e-13, rtol=0.0)
+    assert np.count_nonzero(at_fermi) == 12
+    fractional = (occupations > 1.0e-13) & (occupations < 2.0 - 1.0e-13)
+    assert np.array_equal(fractional, at_fermi)
 
 
 @pytest.fixture(scope="module")
@@ -137,7 +149,7 @@ def test_dftb0_complex_bloch_matches_gamma_supercell(parameters):
 
 def test_dftb0_wide_gamma_supercell_folds_beyond_translation_ball(parameters):
     primitive = _hli_chain()
-    repeats = 4
+    repeats = 5
     supercell = _hli_chain(repeats)
     kmesh = monkhorst_pack(primitive, (repeats, 1, 1))
 
@@ -147,8 +159,9 @@ def test_dftb0_wide_gamma_supercell_folds_beyond_translation_ball(parameters):
     # selection (issue #316 root cause,
     # tests/test_semiempirical_pair_image_selection.py) now retains
     # every image pair within the cutoff, so the run WORKS and folds
-    # exactly onto the matched mesh.
-    narrow_cutoff = 15.0
+    # exactly onto the matched mesh.  20 bohr is the shortest cutoff at
+    # which the #373 Li overlaps leave S(k) positive definite (#565).
+    narrow_cutoff = 20.0
     assert len(direct_lattice_cells(supercell, narrow_cutoff)) == 1
     primitive_result = _se.run_dftb0_kpoints(
         primitive,
@@ -179,8 +192,41 @@ def test_dftb0_wide_gamma_supercell_folds_beyond_translation_ball(parameters):
     assert kpoint.e_repulsive == pytest.approx(gamma.e_repulsive / repeats, abs=1.0e-12)
 
 
+def _rock_salt_lih() -> PeriodicSystem:
+    a = 7.72  # bohr
+    lattice = 0.5 * a * np.array([[0.0, 1.0, 1.0], [1.0, 0.0, 1.0], [1.0, 1.0, 0.0]])
+    return PeriodicSystem(
+        3, lattice, [Atom(3, [0.0, 0.0, 0.0]), Atom(1, [0.5 * a, 0.0, 0.0])], 0, 1
+    )
+
+
+@pytest.mark.parametrize("method", ["dftb0", "scc_dftb"])
+def test_truncated_bloch_overlap_is_refused_with_its_remedy(parameters, method):
+    """#565: the default 15-bohr pair cutoff drops Li overlaps the #373 basis
+    still carries, and S(k) of rock-salt LiH is indefinite (smallest
+    eigenvalue -0.105; -0.0095 at 20 bohr; positive from 25 bohr). The
+    k-point drivers refuse before the SCF and name the cutoff."""
+    system = _rock_salt_lih()
+    kmesh = monkhorst_pack(system, (4, 4, 4))
+
+    def run(cutoff):
+        if method == "dftb0":
+            return _se.run_dftb0_kpoints(system, parameters, kmesh, cutoff)
+        return _se.run_scc_dftb_kpoints(system, parameters, kmesh, _se.SCCOptions(), cutoff)
+
+    entry = "run_dftb0_kpoints" if method == "dftb0" else "run_scc_dftb_kpoints"
+    with pytest.raises(RuntimeError) as excinfo:
+        run(15.0)
+    message = str(excinfo.value)
+    assert message.startswith(entry + ": the Bloch overlap S(k)")
+    assert "not positive definite" in message
+    assert "cutoff_bohr = 15 bohr" in message
+    assert "raise cutoff_bohr" in message
+    assert np.isfinite(run(25.0).energy)
+
+
 def test_dftb0_metallic_si_uses_one_global_aufbau_fill(parameters):
-    primitive = _diamond_si()
+    primitive = _metallic_si()
     kmesh = monkhorst_pack(
         primitive,
         (_SI_REPEATS, _SI_REPEATS, _SI_REPEATS),
@@ -195,7 +241,7 @@ def test_dftb0_metallic_si_uses_one_global_aufbau_fill(parameters):
     gamma_options = _se.PeriodicDFTB0Options()
     gamma_options.cutoff_bohr = _SI_CUTOFF
     gamma = _se.run_dftb0_gamma(
-        _diamond_si(_SI_REPEATS),
+        _metallic_si(_SI_REPEATS),
         parameters,
         gamma_options,
     )
@@ -209,8 +255,10 @@ def test_dftb0_metallic_si_uses_one_global_aufbau_fill(parameters):
         weight * 2.0 * float(np.asarray(energies)[: result.n_occ].sum())
         for weight, energies in zip(kmesh.weights, result.eps_per_k)
     )
+    # Per-point Aufbau would fill three bands everywhere; the global fill
+    # moves electrons between points. Measured 0.0736910666 Ha on 3x3x3.
     assert legacy_band_energy - result.e_electronic == pytest.approx(
-        8.4220683e-6,
+        0.0736910666400643,
         abs=1.0e-10,
     )
     assert result.e_electronic == pytest.approx(
@@ -242,34 +290,37 @@ def _graphene_gamma_supercell(n: int, *, rows: bool = False) -> PeriodicSystem:
     return PeriodicSystem(2, lattice, atoms, 0, 1)
 
 
-def test_graphene_gamma_supercell_ladder_is_flat_per_primitive_cell(parameters):
+def test_graphene_gamma_supercell_ladder_folds_onto_the_matching_mesh(parameters):
     """Issue #319: the 2-D repulsive lattice sum does not explode with n.
 
     The filed +783.76 Ha/cell at n=2 (and the non-monotone 5.42 / 1.12 /
     20.51 Ha/cell at n=3..5) came from a transposed lattice, not from the
     lattice sum: with the documented column convention E_rep per primitive
-    cell is bit-identical at 0.001292104 Ha for every n, and the electronic
-    energy per primitive cell moves by well under 1 mHa.  A single n would
+    cell is bit-identical at 0.001292104 Ha for every n.  A single n would
     miss the spike; the ladder pins n = 1..5 as the issue asked.
+
+    The electronic energy per primitive cell is not flat in n: the Gamma
+    n x n supercell samples the graphene zone on an n x n mesh, and the
+    semimetal converges with it (-2.612, -2.995, -3.079, -3.115, -3.115 Ha
+    since #373 and #478; it moved by under 1 mHa on the earlier basis and
+    hopping).  Each rung must instead equal the primitive cell on that
+    mesh, which an exploding image sum would break (#565; measured 1e-14).
     """
-    per_primitive = []
+    primitive = _graphene_gamma_supercell(1)
+    cutoff = _se.PeriodicDFTB0Options().cutoff_bohr
+    repulsive = []
     for n in range(1, 6):
         result = _se.run_dftb0_gamma(_graphene_gamma_supercell(n), parameters)
-        per_primitive.append(
-            (
-                float(result.e_repulsive) / n**2,
-                float(result.e_electronic) / n**2,
-                float(result.energy) / n**2,
-            )
+        folded = _se.run_dftb0_kpoints(
+            primitive, parameters, monkhorst_pack(primitive, (n, n, 1)), cutoff
         )
-    repulsive = np.array([row[0] for row in per_primitive])
-    electronic = np.array([row[1] for row in per_primitive])
-    total = np.array([row[2] for row in per_primitive])
+        repulsive.append(float(result.e_repulsive) / n**2)
+        assert float(result.e_electronic) / n**2 == pytest.approx(
+            folded.e_electronic, abs=1.0e-10
+        )
+        assert float(result.energy) / n**2 == pytest.approx(folded.energy, abs=1.0e-10)
     np.testing.assert_allclose(repulsive, repulsive[0], rtol=1.0e-12, atol=0.0)
     assert repulsive[0] == pytest.approx(0.001292104, abs=5.0e-9)
-    assert np.ptp(electronic) < 1.0e-3
-    assert np.ptp(total) < 1.0e-3
-    assert np.all(total < -2.83)
 
     # The same constructor with the transposed (row-fed) lattice is a sheared
     # oblique cell whose n=2 image sum is the filed explosion.  Pinning the
@@ -348,7 +399,7 @@ def test_scc_dftb_weighted_complex_population_matches_supercell(parameters):
 
 
 def test_scc_dftb_metallic_si_density_consumes_global_occupations(parameters):
-    primitive = _diamond_si()
+    primitive = _metallic_si()
     kmesh = monkhorst_pack(
         primitive,
         (_SI_REPEATS, _SI_REPEATS, _SI_REPEATS),
@@ -356,6 +407,11 @@ def test_scc_dftb_metallic_si_density_consumes_global_occupations(parameters):
     options = _se.SCCOptions()
     options.max_iter = 100
     options.conv_tol_charge = 1.0e-10
+    # The two sites are equivalent, so each carries +1 and the SCC
+    # potential shifts both equally: H0 - V S has the DFTB0 eigenvectors.
+    # Undamped mixing reaches that fixed point on the second pass; the
+    # default 0.2 needs about 100 (#565).
+    options.charge_mixing = 1.0
     result = _se.run_scc_dftb_kpoints(
         primitive,
         parameters,
@@ -363,16 +419,26 @@ def test_scc_dftb_metallic_si_density_consumes_global_occupations(parameters):
         options,
         _SI_CUTOFF,
     )
+    reference = _se.run_dftb0_kpoints(primitive, parameters, kmesh, _SI_CUTOFF)
 
     assert result.converged
-    assert result.n_iter == 1
+    assert result.n_iter == 2
     _assert_si_global_aufbau(kmesh, result)
+    np.testing.assert_allclose(result.charges, [1.0, 1.0], rtol=0.0, atol=1.0e-12)
+    # The density is built from the global fill: the same occupations as
+    # DFTB0 at every point, on a spectrum shifted uniformly by V.
+    for occupation, expected in zip(result.occupations_per_k, reference.occupations_per_k):
+        np.testing.assert_array_equal(np.asarray(occupation), np.asarray(expected))
+    shift = np.concatenate(
+        [np.asarray(e) - np.asarray(e0) for e, e0 in zip(result.eps_per_k, reference.eps_per_k)]
+    )
+    assert np.ptp(shift) < 1.0e-11  # measured 2.5e-13
+    # e_electronic is tr(D H0): the band energy without the n_e V shift.
     assert result.e_electronic == pytest.approx(
-        _weighted_band_energy(kmesh, result),
+        _weighted_band_energy(kmesh, result) - 6.0 * float(shift.mean()),
         abs=1.0e-12,
     )
-    assert np.max(np.abs(result.charges)) < 1.0e-12
-    assert abs(result.e_scc) < 1.0e-24
+    assert result.e_electronic == pytest.approx(reference.e_electronic, abs=1.0e-12)
 
 
 @pytest.mark.parametrize(

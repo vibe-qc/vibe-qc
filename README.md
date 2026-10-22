@@ -78,8 +78,10 @@ full milestone ladder lives in [docs/roadmap.md](docs/roadmap.md).
 - **Møller–Plesset 2** — RMP2 and UMP2, with SCS / SOS decomposition,
   RI-MP2 with optional auxiliary-fit residual diagnostic.
 - **Double hybrids** — **B2PLYP**, **DSD-PBEP86** (Grimme 2006,
-  Kozuch-Martin 2011) via `run_b2plyp` / `run_dsd_pbep86` /
-  `run_double_hybrid`.
+  Kozuch-Martin 2011) via `method="b2plyp"` and friends, the
+  `run_b2plyp` / `run_dsd_pbep86` wrappers, or `run_double_hybrid`.
+  Open shell runs a spin-pure ROKS SCF with a semicanonical RI-ROHF-MP2
+  correction.
 - **MACE ML interatomic potential** — `method="mace"` drives
   [ACEsuit MACE](https://github.com/ACEsuit/mace) pre-trained
   *E(3)*-equivariant GNN potentials for fast geometry optimization,
@@ -481,3 +483,9 @@ point took place in a private monorepo, which is retained privately;
 the history was deliberately not transferred.
 
 Copyright (c) 2026 Michael F. Peintinger and vibe-qc contributors.
+
+## Self-contained macOS package
+
+The [Apple Silicon package](packaging/macos/README.md) includes Python,
+the native QC engine, basis data and the naming, fetch and dispersion
+dependencies. Installed commands need no separate Python or Homebrew setup.

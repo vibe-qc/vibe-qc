@@ -731,7 +731,7 @@ def dynamic_polarizability_rhf(
     :math:`C_6 = \\tfrac{3}{\\pi}\\int_0^\\infty \\alpha_A(i\\omega)\\,
     \\alpha_B(i\\omega)\\,d\\omega`, and :math:`\\alpha(i\\omega)` is
     smooth, real and monotone-decaying there (no poles) -- milestone
-    D4b-1 of ``handovers/HANDOVER_D4_NATIVE.md``.
+    D4b-1 of the original investigation.
 
     Parameters
     ----------

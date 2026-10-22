@@ -1,16 +1,26 @@
-"""Run every periodic example sequentially.
+"""Run every script of the GDF parity grid sequentially.
 
-Each example lives in ``examples/periodic/<stem>/<stem>.py`` (the
-script's name = its parent directory's name = the shared filename
-stem; outputs are written as ``<stem>.{out,system,molden,xsf}``
-alongside the script). The naming convention is
-``Formula-CrystalLattice-Method-Basis[-options]``, e.g.
-``MgO-rocksalt-RHF-sto3g``.
+The grid lives in the per-system subdirectories
+``examples/periodic/<System>/`` (``Al2O3-corundum``, ``C-diamond``,
+``LiH-rocksalt``, ``MgO-rocksalt``, ``NaCl-rocksalt``, ``Ne-fcc``,
+``Si-diamond``, ``SiO2-alpha-quartz``, ``TiO2-rutile``, ``ZnO-wurtzite``)
+and their PySCF twins under ``examples/periodic_pyscf/<System>/``. One
+system directory holds several scripts named
+``<System>-<Method>-<Basis>[-options].py`` (for example
+``MgO-rocksalt-RHF-sto3g.py`` and ``MgO-rocksalt-RKS-PBE-pobtzvp.py``);
+``_gen.py`` regenerates them from the registry in ``_systems.py``. Each
+script writes ``<stem>.{out,system,molden,xsf}`` beside itself.
 
-This script discovers every such pair under ``examples/periodic/``
-and ``examples/periodic_pyscf/``, runs each in its own directory,
-parses the final energy out of the ``.out``, and prints a one-line
-summary plus a vibe-qc vs PySCF parity table.
+The flat ``input-*.py``, ``gpw-*.py``, ``gapw-*.py`` and ``aiccm*.py``
+inputs directly under ``examples/periodic/`` are not part of this grid
+and are skipped.
+
+This script discovers every script in the grid directories (helpers
+prefixed with ``_`` are skipped), runs each in its own directory, parses
+the final energy out of the ``.out``, and prints a one-line summary plus
+a vibe-qc vs PySCF parity table. The PySCF half only runs when PySCF is
+installed; it is an external reference, never a vibe-qc runtime
+dependency.
 
 Run::
     .venv/bin/python examples/periodic/run_all.py

@@ -1,13 +1,13 @@
 """Production-readiness guards for the BIPOLE route.
 
 Three previously silent hazards now warn (2026-07-12 bug batch from the
-route audit; see handovers/HANDOVER_BIPOLE_PRODUCTION.md):
+route audit):
 
 1. The 3-D legacy (non-exchange-split) gauge at multi-k reports a total
    energy that is NOT stationary — the spheropole enters the energy but
    never the Fock operator (documented Ha-scale wrong-sign k-mesh
-   dependence). It stays reachable on purpose (ad-hoc k-lists / band
-   paths auto-fall back to it), so it must announce itself.
+   dependence). Explicit historical-domain replay keeps this diagnostic
+   reachable, including ad-hoc k-list fallback, so it must announce itself.
 2. Odd-electron cells at (default) multiplicity=1 are silently promoted
    to the minimum open shell (the deliberate 7991ae58 behavior for
    Al/Cu primitive cells); a user who *meant* a singlet must be told.
@@ -128,6 +128,7 @@ def test_legacy_multik_gauge_warns_through_driver(tmp_path):
                 basis,
                 kmesh,
                 opts,
+                historical_domain=True,
                 use_exchange_ewald_split=False,
                 progress=False,
             ),
@@ -393,7 +394,7 @@ def test_legacy_gauge_result_records_overlap_fold_drift(monkeypatch, method):
 
     Historically the guard sat inside ``if exchange_split_active:`` in
     all four drivers, so legacy-gauge runs skipped the reliability check
-    entirely (the fold-guard hole, HANDOVER_OPEN_BUGS_V015.md) — and
+    entirely (the fold-guard hole, the original investigation) — and
     this test pinned that hole as intended behavior. The k-fold
     eigenproblem consumes S(k) in BOTH gauges, so the guard now runs
     unconditionally and legacy results record the measured drift."""
@@ -419,6 +420,7 @@ def test_legacy_gauge_result_records_overlap_fold_drift(monkeypatch, method):
         basis,
         kmesh,
         opts,
+        historical_domain=True,
         use_exchange_ewald_split=False,
         progress=False,
         **kwargs,
@@ -456,6 +458,7 @@ def test_legacy_gauge_fold_guard_fails_closed(monkeypatch, method):
             basis,
             kmesh,
             opts,
+            historical_domain=True,
             use_exchange_ewald_split=False,
             progress=False,
             **kwargs,

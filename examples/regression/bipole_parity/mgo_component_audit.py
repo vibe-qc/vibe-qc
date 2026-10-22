@@ -1,7 +1,7 @@
 """MgO Γ fixed-density component audit: BIPOLE vs PySCF (out-of-process).
 
 The forensic tool that root-caused the BIPOLE ionic-crystal
-absolute-energy bug on 2026-06-10 (handovers/HANDOVER_BIPOLE_PRODUCTION.md §0a,
+absolute-energy bug on 2026-06-10 (the original investigation,
 late session): at PySCF's converged density, compare every BIPOLE
 energy component against PySCF's, in both a Γ-locality projected
 (home-cell-only) warm start and the full Bloch warm start.

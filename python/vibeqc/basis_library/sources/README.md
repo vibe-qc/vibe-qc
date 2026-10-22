@@ -8,7 +8,7 @@ These are the **canonical source** for the bundled `pob-*.g94` files.
 |-----------|------------|-----------|
 | `pob-TZVP/` | <https://www.chemie.uni-bonn.de/bredow/de/software/pob-tzvp-tar.gz> (H-Br); `pob-tzvp-rb-i-tar.gz` (`pob-TZVP-Rb-I.tar.gz`, 7280 bytes, sha256 `2b341b8f…d434bf194e`: the 16 ECP-bearing `Z+200` records, Laun 2018) | 2026-05-07 (H-Br), 2026-09-13 (Rb-I) |
 | `pob-TZVP-rev2/` | <https://www.chemie.uni-bonn.de/bredow/de/software/pob-tzvp-rev2-tar.gz> (H-Br); `pob-tzvp-ref2-rb-i-tar.gz`, `pob-tzvp-rev2-cs-po-tar.gz`, `pob-tzv-rev2-la-lu-tar.gz` (the 46 ECP-bearing `Z+200` records) | 2026-05-07 (H-Br), 2026-09-05 (Rb-Po, La-Lu) |
-| `pob-DZVP-rev2/` | <https://www.chemie.uni-bonn.de/bredow/de/software/pob-dzvp-rev2/{NN_x}> (per-element HTML pages, scraped) | 2026-05-07 |
+| `pob-DZVP-rev2/` | <https://www.chemie.uni-bonn.de/bredow/de/software/pob-dzvp-rev2/{NN_x}> (per-element HTML pages, scraped); `pob-dzvp-rb-i-tar.gz` (`pob-DZVP-Rb-I`, 9881 bytes, sha256 `4f10cea1aebfa6594a658229c5ae69cacdaaf6f1af504435f58c9a70d7fd144a`: the 16 ECP-bearing `Z+200` records, Laun 2018, #292) | 2026-05-07 (H-Br), 2026-10-13 (Rb-I) |
 
 The pob-TZVP source files have been spot-checked against the basis-set
 listings in **Section 2** of the supporting information of

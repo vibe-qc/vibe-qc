@@ -15,7 +15,7 @@ TESTS = [
     ("formic acid",     "O=CO"),
     ("benzene",         "c1ccccc1"),
     ("pyridine",        "n1ccccc1"),
-    ("acetic acid",     "CC=O(O)"),
+    ("acetic acid",     "CC(=O)O"),
 ]
 
 ok = fail = 0

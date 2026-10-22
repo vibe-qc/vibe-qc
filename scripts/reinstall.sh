@@ -11,8 +11,11 @@
 #                          existing virtualenv's recorded base interpreter.
 #     --extras GROUP       Pip extras profile (default: test). Supports the
 #                          same profiles as install.sh, including mpi,
-#                          dispersion,mpi, and the co-located profiles.
+#                          combinations such as dispersion,mpi,test, and
+#                          the co-located profiles.
 #     --with-openblas      Build/retain vendored OpenBLAS.
+#     --with-opentrustregion Fetch/build the pinned orbital optimizer.
+#     --without-opentrustregion Disable it; otherwise preserve the selection.
 #     --skip-native-deps   Reuse already-built native dependency installs.
 #     --adopt-legacy       Permit an unmarked legacy venv only when trusted
 #                          PEP 610 metadata links it to this exact checkout.
@@ -30,6 +33,7 @@ EXPLICIT_VENV=""
 PYTHON_BIN=""
 EXTRAS_GROUP="test"
 WITH_OPENBLAS=0
+OTR_ARGS=()
 SKIP_NATIVE_DEPS=0
 ADOPT_LEGACY=0
 DRY_RUN=0
@@ -69,6 +73,7 @@ while [ $# -gt 0 ]; do
             shift 2
             ;;
         --with-openblas) WITH_OPENBLAS=1; shift ;;
+        --with-opentrustregion|--without-opentrustregion) OTR_ARGS+=("$1"); shift ;;
         --skip-native-deps) SKIP_NATIVE_DEPS=1; shift ;;
         --adopt-legacy) ADOPT_LEGACY=1; shift ;;
         --dry-run) DRY_RUN=1; shift ;;
@@ -134,6 +139,10 @@ INSTALL_ARGS=(
     --extras "$EXTRAS_GROUP"
 )
 [ "$WITH_OPENBLAS" = "1" ] && INSTALL_ARGS+=(--with-openblas)
+# Bash 3.2 treats an empty array expansion as unset under nounset.
+if [ ${#OTR_ARGS[@]} -gt 0 ]; then
+    INSTALL_ARGS+=("${OTR_ARGS[@]}")
+fi
 [ "$SKIP_NATIVE_DEPS" = "1" ] && INSTALL_ARGS+=(--skip-native-deps)
 [ "$ADOPT_LEGACY" = "1" ] && INSTALL_ARGS+=(--adopt-legacy)
 [ "$DRY_RUN" = "1" ] && INSTALL_ARGS+=(--dry-run)

@@ -3,7 +3,7 @@ and PySCF (libcint) on MgO sto-3g, Γ-only.
 
 Why
 ---
-The handover says vibe-qc S/T/V_ne match PySCF to <1e-5 Ha (basis-
+the original investigation says vibe-qc S/T/V_ne match PySCF to <1e-5 Ha (basis-
 independent traces). To use PySCF's J/K matrices as a reference for
 vibe-qc's SCF iter-1 parity check, we need a per-element comparison —
 that requires knowing the permutation P such that

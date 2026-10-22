@@ -7,7 +7,7 @@ CONCLUDED BY MECHANISM (2026-08-26, without finishing the sweep): the
 4x4x4 map has no sane fixed point for any (T, alpha) - its neutral-point
 Jacobian has 63 eigenvalues below -1 (min -22) and every fixed-point
 hunt diverges into the charge-density-wave basin. See
-probe_wall_fixed_point_hunt.py and handovers/HANDOVER_SECCM_BULK3D.md.
+probe_wall_fixed_point_hunt.py and the original investigation.
 Kept for the record; running it only reproduces fail-closed exits.
 """
 

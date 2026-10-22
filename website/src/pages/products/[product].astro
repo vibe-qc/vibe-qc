@@ -3,17 +3,15 @@ import Base from '../../layouts/Base.astro';
 import Nav from '../../components/Nav.astro';
 import ProductWordmark from '../../components/ProductWordmark.astro';
 import Footer from '../../components/Footer.astro';
-import OrbitalField from '../../components/OrbitalField.astro';
 import { products } from '../../data/products.mjs';
-import { repositories } from '../../data/repositories.mjs';
 
 export function getStaticPaths() {
   return products.map(product => ({ params: { product: product.id }, props: { product } }));
 }
 const { product } = Astro.props;
-const repository = repositories.find(item => item.id === product.id);
 const base = import.meta.env.BASE_URL;
 const artwork = {
+  'vibe-sketch': { social: 'vibe-sketch-social.png', alt: 'vibe-sketch: Structures, reactions and calculation inputs. Testing version.' },
   'vibe-qc': { social: 'vibe-qc-product-social.png', alt: 'vibe-qc: Quantum chemistry. Molecules to solids.' },
   'vibe-view': { social: 'vibe-view-social.png', alt: 'vibe-view: See the structure. Understand the result.' },
   'vibe-queue': { social: 'vibe-queue-social.png', alt: 'vq: Queue the work. Keep the results.' },
@@ -23,19 +21,19 @@ const artwork = {
 <Base title={`${product.name} - ${product.action} | vibe-qc`} description={product.summary}
   socialImage={artwork.social} socialImageAlt={artwork.alt}>
   <Nav />
-  <main>
+  <main id="main-content">
     <section class="hero product-hero">
-      <OrbitalField />
       <div class="wrap hero-inner">
         <div class="product-identity">
           <ProductWordmark product={product.id} label={product.name} large />
-          <span class="eyebrow">{product.action}</span>
+          <span class="eyebrow">{product.action}{product.status ? ` / ${product.status}` : ""}</span>
         </div>
         <h1>{product.headline}</h1>
         <p class="lede">{product.summary}</p>
         <div class="cta-row">
-          <a class="btn primary" href="#install">Install {product.name} <span class="arrow">→</span></a>
-          <a class="btn ghost" href={`${product.repository}/releases`}>Releases ↗</a>
+          <a class="btn primary" href="#install">{`Install ${product.name}`} <span class="arrow">→</span></a>
+          {product.repository && <a class="btn ghost" href={`${product.repository}/releases`}>Releases ↗</a>}
+          {product.desktopDownload && <a class="btn ghost" href={`${base}download/#published-packages`}>Download for Linux ↗</a>}
         </div>
       </div>
     </section>
@@ -59,20 +57,19 @@ const artwork = {
           <p>{product.requirements}</p>
           <p>{product.installation}</p>
           {product.command && <pre class="product-code"><code>{product.command}</code></pre>}
-          <p class="access-note">The GitHub mirror provides public source snapshots; GitLab requires authorized access.
+          {product.repository && <p class="access-note">The GitHub mirror provides public source snapshots; GitLab requires authorized access.
             Public snapshots can lag GitLab, so check the desired ref on your chosen host.
-            <a href="/docs/installation.html#repositories-and-downloads"> Source and access details</a>.</p>
+            <a href="/docs/installation.html#repositories-and-downloads"> Source and access details</a>.</p>}
         </div>
         <aside class="card resource-card" aria-label={`${product.name} resources`}>
           <h3>Go further</h3>
-          <a href={product.installGuide}>Installation guide ↗</a>
-          <a href={product.docs}>Documentation {product.docsPending ? '(publishing soon)' : '↗'}</a>
-          {product.docsPending && <p>The companion documentation site is being brought online. Its source README has the installation instructions available today.</p>}
+          <a href={product.licenseGuide}>{product.license} license &amp; notices ↗</a>
+          {product.installGuide && <a href={product.installGuide}>Installation guide ↗</a>}
+          {product.docs && <a href={product.docs}>Documentation ↗</a>}
+          {product.docsPending && <p>Public documentation and source downloads are not available yet. The setup instructions here apply to an authorized checkout. Ask the maintainer for access and the corresponding manual.</p>}
           {product.guides.map(([label, href]) => <a href={href}>{label} ↗</a>)}
-          <a href={`${product.repository}/releases`}>Independent releases ↗</a>
-          <a href={product.repository}>GitHub source ↗</a>
-          <a href={repository.github}>GitHub mirror ↗</a>
-          <a href={`${product.repository}/tags`}>Tagged source downloads ↗</a>
+          {product.id === 'vibe-qc' && <a href={`${base}methods/`}>Methods and status →</a>}
+          {product.repository ? <><a href={`${product.repository}/releases`}>Independent releases ↗</a><a href={product.repository}>GitHub source ↗</a><a href={`${product.repository}/tags`}>Tagged source downloads ↗</a></> : <a href={`${base}download/#published-packages`}>Linux desktop &amp; corresponding source ↗</a>}
         </aside>
       </div>
     </section>
@@ -80,7 +77,7 @@ const artwork = {
       <div class="wrap">
         <div class="sec-head"><span class="eyebrow">works together, installs separately</span>
           <h2>Build the workflow you need.</h2>
-          <p>QVF connects calculation and visualization through a published file format. The QVF specification and reference implementations live in their own Apache-2.0 project; vibe-qc implements the format independently.</p>
+          <p>QVF connects supported documents and results through a published file format. A sketch document and a calculated wavefunction carry different data; inspect the file contents and the consumer’s supported features. The QVF specification and reference implementations live in their own Apache-2.0 project; vibe-qc implements the format independently.</p>
           <p><a href="https://github.com/vibe-qc/qvf">Explore the QVF format ↗</a></p>
         </div>
         <div class="stacks">

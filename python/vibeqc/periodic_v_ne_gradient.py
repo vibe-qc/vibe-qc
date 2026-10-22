@@ -141,18 +141,20 @@ def compute_v_ne_ewald_3d_ft_gamma_gradient(
 
     from ._aopair_ft import ao_pair_fourier_transform_bloch
 
-    # The AO-pair filter depends on the cell. Contract each supported
-    # cell with its masked density when the physical support is enabled.
+    # With the physical support the AO-pair filter depends on the cell. The
+    # density-contracted FT takes the filter natively (``pair_cutoff_bohr``);
+    # the derivative kernel does not, so it runs once per group of cells that
+    # share a supported pair set, with the other pairs' density zeroed.
     groups = [(cell_vectors, weighted_density)]
+    pair_support = {}
     if lat_opts.pair_complete_1e:
-        from .lattice_screening import ao_pair_support_mask
+        from .aux_basis import _physical_pair_cell_groups
 
+        pair_support = {"pair_cutoff_bohr": float(lat_opts.cutoff_bohr)}
         groups = [
-            (cell_vectors[c:c + 1], np.where(
-                ao_pair_support_mask(basis, shift, lat_opts.cutoff_bohr),
-                weighted_density, 0.0,
-            ))
-            for c, shift in enumerate(cell_vectors)
+            (vectors, np.where(mask, weighted_density, 0.0))
+            for vectors, mask in _physical_pair_cell_groups(
+                basis, cell_vectors, float(lat_opts.cutoff_bohr))
         ]
 
     k_gamma = np.zeros(3, dtype=np.float64)
@@ -163,24 +165,17 @@ def compute_v_ne_ewald_3d_ft_gamma_gradient(
         phases_chunk = phases[:, start:stop]
         v_long_chunk = v_long[start:stop]
 
-        density_pair_ft = np.zeros(stop - start, dtype=np.complex128)
+        pair_ft = ao_pair_fourier_transform_bloch(
+            basis, G_chunk, cell_vectors, k_cart=k_gamma, **pair_support
+        )
+        density_pair_ft = np.einsum(
+            "mn,mng->g", weighted_density, pair_ft.conj(), optimize=True,
+        )
+        del pair_ft
         pair_gradient = np.zeros_like(gradient)
         for vectors, cell_density in groups:
             if not np.any(cell_density):
                 continue
-            pair_ft = ao_pair_fourier_transform_bloch(
-                basis, G_chunk, vectors, k_cart=k_gamma
-            )
-            if lat_opts.pair_complete_1e:
-                density_pair_ft += np.einsum(
-                    "mn,mng->g", cell_density, pair_ft.conj(), optimize=True,
-                )
-            else:
-                density_pair_ft = np.einsum(
-                    "mn,mng,mn->g", density, pair_ft.conj(), pair_scales,
-                    optimize=True,
-                )
-            del pair_ft
             pair_gradient += np.asarray(
                 ao_pair_fourier_transform_gamma_gradient_weighted(
                     basis, G_chunk, vectors, cell_density,

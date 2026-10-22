@@ -17,7 +17,7 @@ whole matrix. A naive whole-matrix cell-orbit version of this module
 primitive (O off the rotation centre) it scattered Mg-O cross blocks
 into wrong cells and shifted the converged RHF energy by ~0.5 Ha.
 Regression: ``tests/test_bipole_symmetry_fock.py``
-(MgO energy-invariance) -- see handovers/HANDOVER_BIPOLE_PRODUCTION.md Sec.0a
+(MgO energy-invariance),
 2026-06-10.
 """
 
@@ -62,6 +62,8 @@ __all__ = [
     "build_jk_reduced_symmetrized",
     "build_jk_pair_resolved",
 ]
+
+_DENSE_SCATTER_MAX_BYTES = 64 * 1024**2
 
 
 class _BlockSetView:
@@ -108,6 +110,9 @@ class FockSymmetryMapping:
     density_domain: Optional[PairResolvedDomain] = field(
         default=None, repr=False
     )
+    # Physical support retains the original operator and density templates.
+    # Its density-qualified reduction is separate from historical projection.
+    physical_plan: Optional[object] = field(default=None, repr=False)
 
     @property
     def pair_resolved(self) -> bool:
@@ -166,7 +171,7 @@ def pair_resolved_fock_mapping(
     """Build the pair-resolved (group-invariant) Fock-symmetry mapping.
 
     M2 of the pair-resolved truncation workstream
-    (HANDOVER_BIPOLE_PRODUCTION.md Sec. 0a 2026-07-12): the output
+    (the original investigation 2026-07-12): the output
     triple set is ``{(a, b, h): |r_b + L.h - r_a| <= cutoff}``, which
     the triple action preserves, so the orbit partition runs with
     ``require_closed=True`` -- no silently skipped partners, every
@@ -301,8 +306,20 @@ def symmetrize_fock_blocks(
     # Fresh writable copies: the scatter mutates entries in place, and
     # caller blocks may be read-only pybind views. (The pre-M2 version
     # also replaced every list entry with a fresh array.)
-    for i in range(len(fock_blocks)):
-        fock_blocks[i] = np.array(fock_blocks[i], dtype=float, copy=True)
+    shape = (mapping.basis.nbasis, mapping.basis.nbasis)
+    if (isinstance(fock_blocks, list) and len(fock_blocks)
+            and len(fock_blocks) * shape[0] * shape[1] * 8 <= _DENSE_SCATTER_MAX_BYTES
+            and all(isinstance(b, np.ndarray) and b.shape == shape for b in fock_blocks)):
+        # One owned output buffer replaces the per-cell copies. List entries
+        # remain writable matrices, while reconstruction can scatter a whole
+        # rotation batch without a Python assignment for every atom pair.
+        # Bound the transient extra copy before the original entries are freed.
+        target = np.array(fock_blocks, dtype=float, copy=True)
+        fock_blocks[:] = list(target)
+    else:
+        for i in range(len(fock_blocks)):
+            fock_blocks[i] = np.array(fock_blocks[i], dtype=float, copy=True)
+        target = fock_blocks
     view = _BlockSetView(fock_blocks, cells_t)
     reps = compress_lattice_matrix_set_c(view, mapping.orbits, mapping.basis)
     reconstruct_lattice_matrix_set_c(
@@ -312,7 +329,7 @@ def symmetrize_fock_blocks(
         mapping.system,
         mapping.sym_ops,
         cells=cells_t,
-        into_blocks=fock_blocks,
+        into_blocks=target,
     )
 
 
@@ -404,6 +421,9 @@ def build_jk_reduced_symmetrized(
     internal_extent_bohr: Optional[float] = None,
     output_cell_farming_task_kind: Optional[str] = None,
     output_cell_farming_strategy: str = "cyclic",
+    workspace=None,
+    compute_coulomb: bool = True,
+    compute_exchange: bool = True,
 ):
     """SYM3b: point-group-reduced direct-ERI build of J(g) and K(g).
 
@@ -419,6 +439,8 @@ def build_jk_reduced_symmetrized(
     Returns the same ``JKLatticeMatrixSets``-shaped object as the full
     builder, so callers (incl. the incremental-Fock ΔD path, since
     reconstruction is linear) are drop-in.
+    ``compute_exchange=False`` selects J only and returns ``K=None``, as
+    required by the pure-functional incremental accumulator.
 
     Under a pair-resolved mapping (M2) the output template is
     ``mapping.cells`` (the pair-resolved cell list) and the build runs
@@ -434,6 +456,15 @@ def build_jk_reduced_symmetrized(
     (charge-pair Schwarz screening with angular and contraction
     envelopes; the threshold applies per quartet, not to the total error).
     """
+    if mapping.physical_plan is not None:
+        return mapping.physical_plan.build(
+            mapping, opts, density, omega,
+            internal_extent_bohr=internal_extent_bohr,
+            output_cell_farming_task_kind=output_cell_farming_task_kind,
+            output_cell_farming_strategy=output_cell_farming_strategy,
+            workspace=workspace, compute_coulomb=compute_coulomb,
+            compute_exchange=compute_exchange,
+        )
     masks = representative_shell_masks(mapping, rep_cell_indices)
     if mapping.pair_resolved or internal_extent_bohr is not None:
         if internal_extent_bohr is not None:
@@ -461,34 +492,45 @@ def build_jk_reduced_symmetrized(
             omega=float(omega),
             task_kind=output_cell_farming_task_kind,
             strategy=output_cell_farming_strategy,
+            workspace=workspace,
+            compute_coulomb=compute_coulomb,
+            compute_exchange=compute_exchange,
         )
+        j_source_blocks = jk.J.blocks
         j_blocks = [
-            np.array(jk.J.blocks[p], dtype=float, copy=True)
-            for p in output_positions
-        ]
-        k_blocks = [
-            np.array(jk.K.blocks[p], dtype=float, copy=True)
+            np.array(j_source_blocks[p], dtype=float, copy=True)
             for p in output_positions
         ]
         symmetrize_fock_blocks(j_blocks, mapping)
-        symmetrize_fock_blocks(k_blocks, mapping)
+        if compute_exchange:
+            k_source_blocks = jk.K.blocks
+            k_blocks = [
+                np.array(k_source_blocks[p], dtype=float, copy=True)
+                for p in output_positions
+            ]
+            symmetrize_fock_blocks(k_blocks, mapping)
         from types import SimpleNamespace
 
         nbf = int(basis.nbasis)
         return SimpleNamespace(
             J=make_lattice_matrix_set(nbf, mapping.cells, j_blocks),
-            K=make_lattice_matrix_set(nbf, mapping.cells, k_blocks),
+            K=(make_lattice_matrix_set(nbf, mapping.cells, k_blocks)
+               if compute_exchange else None),
             output_cell_farming_execution=getattr(
                 jk, "output_cell_farming_execution", None
             ),
         )
-    if output_cell_farming_task_kind is not None:
+    if output_cell_farming_task_kind is not None or not compute_coulomb or not compute_exchange:
         from ._vibeqc_core import direct_lattice_cells
         from .pbc_bipole_fock import _build_jk_domains_output_cells_mpi
 
         cells_internal = list(
             direct_lattice_cells(system, float(opts.cutoff_bohr))
         )
+        if (not compute_coulomb or not compute_exchange) and opts.pair_complete_1e:
+            from .lattice_screening import physical_eri_cells
+
+            cells_internal = physical_eri_cells(basis, system, opts, None)
         jk = _build_jk_domains_output_cells_mpi(
             basis,
             system,
@@ -500,22 +542,34 @@ def build_jk_reduced_symmetrized(
             omega=float(omega),
             task_kind=output_cell_farming_task_kind,
             strategy=output_cell_farming_strategy,
+            workspace=workspace,
+            compute_coulomb=compute_coulomb,
+            compute_exchange=compute_exchange,
         )
         n = len(jk.J.cells)
-        j_blocks = [np.asarray(jk.J.blocks[c], dtype=float) for c in range(n)]
-        k_blocks = [np.asarray(jk.K.blocks[c], dtype=float) for c in range(n)]
+        j_blocks = [np.asarray(block, dtype=float) for block in jk.J.blocks]
         symmetrize_fock_blocks(j_blocks, mapping)
-        symmetrize_fock_blocks(k_blocks, mapping)
+        if compute_exchange:
+            k_blocks = [np.asarray(block, dtype=float) for block in jk.K.blocks]
+            symmetrize_fock_blocks(k_blocks, mapping)
         for c in range(n):
             jk.J.set_block(c, j_blocks[c])
-            jk.K.set_block(c, k_blocks[c])
+            if compute_exchange:
+                jk.K.set_block(c, k_blocks[c])
+        if not compute_exchange:
+            from types import SimpleNamespace
+
+            return SimpleNamespace(
+                J=jk.J, K=None,
+                output_cell_farming_execution=getattr(jk, "output_cell_farming_execution", None),
+            )
         return jk
     jk = build_jk_2e_real_space_output_subset_masked(
         basis, system, opts, density, rep_cell_indices, masks, float(omega)
     )
     n = len(jk.J.cells)
-    j_blocks = [np.asarray(jk.J.blocks[c], dtype=float) for c in range(n)]
-    k_blocks = [np.asarray(jk.K.blocks[c], dtype=float) for c in range(n)]
+    j_blocks = [np.asarray(block, dtype=float) for block in jk.J.blocks]
+    k_blocks = [np.asarray(block, dtype=float) for block in jk.K.blocks]
     symmetrize_fock_blocks(j_blocks, mapping)
     symmetrize_fock_blocks(k_blocks, mapping)
     for c in range(n):
@@ -536,6 +590,7 @@ def build_jk_pair_resolved(
     internal_extent_bohr: Optional[float] = None,
     output_cell_farming_task_kind: Optional[str] = None,
     output_cell_farming_strategy: str = "cyclic",
+    workspace=None,
 ):
     """FULL (non-reduced) J/K build on the pair-resolved domains (M2).
 
@@ -582,19 +637,22 @@ def build_jk_pair_resolved(
         compute_exchange=compute_exchange,
         task_kind=output_cell_farming_task_kind,
         strategy=output_cell_farming_strategy,
+        workspace=workspace,
     )
     from types import SimpleNamespace
 
     nbf = int(basis.nbasis)
+    j_source_blocks = jk.J.blocks
     j_blocks = [
-        np.array(jk.J.blocks[p], dtype=float, copy=True)
+        np.array(j_source_blocks[p], dtype=float, copy=True)
         for p in output_positions
     ]
     J = make_lattice_matrix_set(nbf, mapping.cells, j_blocks)
     K = None
     if compute_exchange:
+        k_source_blocks = jk.K.blocks
         k_blocks = [
-            np.array(jk.K.blocks[p], dtype=float, copy=True)
+            np.array(k_source_blocks[p], dtype=float, copy=True)
             for p in output_positions
         ]
         K = make_lattice_matrix_set(nbf, mapping.cells, k_blocks)

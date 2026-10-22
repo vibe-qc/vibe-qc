@@ -1,7 +1,7 @@
 """MR6b: a charge-neutral, boundary-corrected finite point-charge array whose
 OFF-SITE potential over the QM cluster matches the Ewald Madelung target
 defined in MR6a (madelung_array.py). Embedded-cluster CASSCF path
-(HANDOVER_PERIODIC_MULTIREF.md, MR6).
+(the original investigation, MR6).
 
 MR6a defined the target V_target(r) = V(infinite lattice) - V(QM-region formal
 charges) at off-site probes, anchored it to the textbook NaCl Madelung

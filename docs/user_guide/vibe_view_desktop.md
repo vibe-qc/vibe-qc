@@ -16,7 +16,8 @@ targets for macOS, Windows, and Linux.
 | Route | Best for | Python environment |
 |---|---|---|
 | `vibe-view desktop` from a source checkout | current supported development and user route | created by `scripts/install.sh` |
-| Packaged `.app`, `.dmg`, `.deb`, AppImage, or NSIS build | native menus and file association without a source tree | requires a qualified package and its bundled or discovered runtime |
+| Apple Silicon `.app`, `.dmg` or ZIP (macOS 14+) | self-contained local package | includes Python, PyVista, VTK, Trame and RDKit |
+| Other platform desktop shells | platform-specific source builds | require an external Python environment |
 
 For a first installation, follow the viewer's
 [installation guide](https://vibe-qc.com/vibe-view/docs/installation.html) and
@@ -25,36 +26,29 @@ track its current source-install and desktop requirements. This core page
 provides integration context and packaging design details.
 
 ```{note}
-The desktop app is a thin native shell around vibe-view's Python server:
-it launches `vibe-view serve` in the background and shows it in a window.
-So it needs **Python and vibe-view installed** on the machine (see
-Prerequisites).
+The desktop shell runs the same Python server as the browser viewer. Current
+Apple Silicon packages include that interpreter and the viewing, editing and
+image-capture dependencies; normal use does not require installing Python,
+pip, Homebrew or Node.js. External calculation engines and companion apps
+remain separate installations.
 
-If you launch the app and it can't find a suitable Python, it no longer
-fails with a dead-end error; it shows a **setup screen** that names exactly
-what is missing (Python, vibe-view, or the `[viewer]` extra) and lets you press
-**recheck** after installing it (see [First run](#first-run-setup-screen)
-below). Until the distribution is published, the screen installs the
-same-version wheel URL recorded by that viewer release. This legacy
-bootstrap URL is a companion release-maintenance concern after the split;
-use the source setup below until its artifact has been verified.
+Source-checkout launches and the other platform shells still use an external
+Python environment. The setup-screen instructions below apply to those
+routes. A missing or damaged bundled runtime must be repaired by reinstalling
+the matching app package.
 
-**What is available today:** desktop mode runs from a source checkout. Python
-wheels contain browser, terminal, and headless features. Wheels do not contain
-the Electron source. Old viewer downloads under the core documentation are
-legacy monorepo artifacts; use the viewer's own installation and release
-information to choose a current artifact. Signed, notarized standalone desktop artifacts have not
-landed yet. An older ad-hoc-signed macOS arm64 2.10.0 package remains on the
-update feed for testing; it can detect an update and open a replacement DMG,
-but it cannot self-install and is older than the supported source route.
-Locally built desktop packages are also **not** a self-contained Python
-bundle: they need the `vibeview` Python distribution with its `[viewer]`
-extra. Bundling a full Python + VTK runtime into the installer was
-evaluated and deferred (see
-[`docs/desktop_packaging_design.md`](https://github.com/vibe-qc/vibe-view/blob/main/docs/desktop_packaging_design.md)).
+Source tags, local builds and public installer availability are separate.
+Developer ID signing and notarization remain release work. Use the viewer's
+[desktop manual](https://vibe-qc.com/vibe-view/docs/desktop.html) for current
+package availability and its
+[packaging design](https://vibe-qc.com/vibe-view/docs/desktop_packaging_design.html)
+for build instructions. Historical downloads under the core manual are not
+current viewer releases.
 ```
 
-## Prerequisites (all platforms)
+(prerequisites-all-platforms)=
+
+## Prerequisites for source and external-runtime shells
 
 | Requirement | Version | Notes |
 |-------------|---------|-------|
@@ -266,9 +260,10 @@ Two ways to open files:
    on Intel Macs.
 
    This creates a local development artifact, not a signed downloadable
-   release. Then run `vibe-view desktop` once from your virtualenv so the app knows
-   which Python to use. After that, double-clicking a `.qvf` opens it in the
-   app.
+   release. Apple Silicon packages use their included interpreter. For a
+   shell that uses external Python, run `vibe-view desktop` once from the
+   viewer environment so the app records its interpreter. Double-clicking
+   a `.qvf` then opens it in the associated app.
 
 The branded app declares every format it can read: `.qvf`, `.py`
 (vibe-qc inputs), and the loose structure/volume formats (`xyz`, `cif`,

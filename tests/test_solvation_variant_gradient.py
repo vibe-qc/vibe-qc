@@ -108,8 +108,7 @@ def _assert_cavity_topology_stable(vq, mol, h, n_points_per_sphere):
     ``build_cavity`` drops segments below ``drop_threshold``, so a stencil
     can straddle a topology change and compare two different energy
     surfaces. A tolerance failure would then be blamed on the gradient.
-    Required by the acceptance gates in
-    ``handovers/HANDOVER_COSMO_COSMORS.md``.
+    Required to distinguish a stable cavity from a topology change.
     """
     from vibeqc.solvation.cavity import build_cavity
 

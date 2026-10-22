@@ -24,6 +24,8 @@ import numpy as np
 import pytest
 import vibeqc as vq
 
+from tests.refusal_receipt import assert_preflight_refusal
+
 
 @pytest.fixture()
 def h2_mol():
@@ -176,13 +178,76 @@ def test_run_periodic_job_forwards_bipole_cutoffs(monkeypatch, tmp_path):
     }
 
 
+@pytest.fixture()
+def controlled_gdf_memory_plan(monkeypatch):
+    """Declare allocator inputs, retaining the actual runner and estimators.
+
+    Native planner declarations are fixed so the byte contract is independent
+    of machine resources. The reciprocal box and all category arithmetic still
+    execute in production code; no estimator or reported total is replaced.
+    """
+    from types import SimpleNamespace
+
+    import scipy.linalg.lapack as lapack
+    import vibeqc.aux_basis as auxiliary
+    import vibeqc.memory as memory
+    import vibeqc.periodic_k_gdf as gdf
+    import vibeqc.periodic_runner as runner
+    from vibeqc import _vibeqc_core as core
+
+    monkeypatch.setenv("VIBEQC_MEMORY_HEADROOM", "1.5")
+    monkeypatch.setenv("VIBEQC_VNE_EWALD3D_FT_CHUNK_MIB", "256")
+    monkeypatch.setattr(core, "get_num_threads", lambda: 2)
+    monkeypatch.setattr(core, "gdf_short_range_workspace_bytes", lambda *args: 80 * 1024**2)
+    monkeypatch.setattr(core, "periodic_xc_gradient_batch_size", lambda *args: 31)
+    monkeypatch.setattr(core, "periodic_xc_domain_counts", lambda *args: (5, 3))
+    monkeypatch.setattr(memory, "_grid_points", lambda *args: 31)
+    monkeypatch.setattr(
+        lapack, "get_lapack_funcs",
+        lambda *args, **kwargs: (
+            SimpleNamespace(int_dtype=SimpleNamespace(itemsize=4)),
+            lambda *args, **kwargs: (32.0, 0, 64, 0),
+        ),
+    )
+    seen = {}
+
+    def cutoff_plan(*args, **kwargs):
+        seen["cutoff_plan_called"] = True
+        return SimpleNamespace(ke_cutoff=2.0)
+
+    monkeypatch.setattr(auxiliary, "_plan_range_separated_gdf_cutoffs", cutoff_plan)
+    monkeypatch.setattr(
+        gdf, "_oneel_lattice_opts",
+        lambda *args, **kwargs: SimpleNamespace(
+            cutoff_bohr=4.0, nuclear_cutoff_bohr=3.0, pair_complete_1e=False,
+        ),
+    )
+    density_cells = [np.zeros(3) for _ in range(5)]
+    monkeypatch.setattr(runner, "direct_lattice_cells", lambda *args: density_cells)
+    monkeypatch.setattr(gdf, "_xc_density_cells_for_domain", lambda *args: density_cells)
+    original = runner._periodic_gdf_estimate
+
+    def record_estimate(*args, **kwargs):
+        result = original(*args, **kwargs)
+        seen["categories"] = dict(result.estimate.by_category)
+        seen["compute_gradient"] = kwargs.get("compute_gradient", False)
+        return result
+
+    monkeypatch.setattr(runner, "_periodic_gdf_estimate", record_estimate)
+    return seen
+
+
 def test_periodic_dry_run_estimate_writes_rks_gradient_memory(
     tmp_path,
     monkeypatch,
+    controlled_gdf_memory_plan,
 ):
     import tomllib
 
-    from vibeqc.memory import estimate_periodic_xc_gradient
+    from tests.periodic_memory_contract import (
+        RUNTIME, controlled_gdf_inventory, headline, xc_gradient_inventory,
+        xc_value_inventory,
+    )
 
     L = 8.0
     sysp = vq.PeriodicSystem(
@@ -204,6 +269,8 @@ def test_periodic_dry_run_estimate_writes_rks_gradient_memory(
         method="RKS",
         functional="PBE",
         optimize=True,
+        jk_method="gdf",
+        kpoints=(2, 1, 1),
         output=stem,
         progress=False,
     )
@@ -212,27 +279,30 @@ def test_periodic_dry_run_estimate_writes_rks_gradient_memory(
     with stem.with_suffix(".system").open("rb") as fh:
         body = tomllib.load(fh)
 
-    expected = estimate_periodic_xc_gradient(
-        n_basis=basis.nbasis,
-        n_atoms=len(sysp.unit_cell),
-        n_grid_points=len(sysp.unit_cell) * 75 * 17 * 36,
-        n_cells=len(vq.direct_lattice_cells(sysp, 18.0)),
-        functional_kind="GGA",
-        open_shell=False,
-    ).total_bytes
+    categories = controlled_gdf_inventory(
+        2, 36, 2, L, exchange=False, open_shell=False, gradient=True,
+    )
+    assert basis.nbasis == 2
+    assert controlled_gdf_memory_plan["cutoff_plan_called"]
+    assert controlled_gdf_memory_plan["compute_gradient"] is True
+    assert controlled_gdf_memory_plan["categories"] == categories
+    value_bytes = sum(xc_value_inventory(2, 2, 31, 5, 5, 3, 2).values())
+    assert categories["Periodic-XC retained data and phase workspace"] > value_bytes
+    standalone_gradient = xc_gradient_inventory(2, 2, 31, 5, 5, 5, 2, 31)
+    standalone_gradient[RUNTIME] = 100 * 1024**2
+    expected = max(headline(categories), headline(standalone_gradient))
     assert body["outputs"]["status"] == "dry_run"
     assert body["memory"]["estimate_bytes"] == expected
-    assert body["memory"]["estimate_bytes"] > 0
 
 
 def test_periodic_dry_run_estimate_writes_gdf_memory(
     tmp_path,
     monkeypatch,
+    controlled_gdf_memory_plan,
 ):
     import tomllib
 
-    from vibeqc.memory import estimate_periodic_multik_gdf
-    from vibeqc.periodic_runner import _periodic_gdf_aux_basis_size
+    from tests.periodic_memory_contract import controlled_gdf_inventory, headline
 
     L = 8.0
     sysp = vq.PeriodicSystem(
@@ -263,36 +333,14 @@ def test_periodic_dry_run_estimate_writes_gdf_memory(
     with stem.with_suffix(".system").open("rb") as fh:
         body = tomllib.load(fh)
 
-    # #92 (3d6ed3130) made the preflight size the auxiliary set the GDF driver
-    # will actually allocate -- ``aux_basis or default_aux_for(basis.name)``,
-    # here def2-svp-jk -- instead of the old ``3 x n_ao`` fallback, which had
-    # printed 452 GB for a 1096 GB cache on the NaCl conventional cell. #561:
-    # this expectation had kept the fallback, so it under-charged the Lpq
-    # factor cache and disagreed with the runner. Resolve it the same way the
-    # runner does rather than restating a literal.
-    n_aux = _periodic_gdf_aux_basis_size(sysp, basis, None)
-    assert n_aux == 36  # def2-svp-jk over 2 H; the fallback would be 3 x 2 = 6
-
-    expected_est = estimate_periodic_multik_gdf(
-        n_basis=basis.nbasis,
-        n_aux=n_aux,
-        n_kpoints=2,
-        need_k_pairs=False,
-        open_shell=False,
-    )
-    # Since 2026-08-13 the GDF preflight also counts the dense rsgdf
-    # AO-pair FT bundle (handovers/HANDOVER_GDF_FIT_SCREENING.md; the
-    # Al2O3/def2-SVP 41-GiB-vs-0.4-GB underestimate incident).
-    from vibeqc.aux_basis import rsgdf_dense_g_mesh
-
-    _n_g = int(rsgdf_dense_g_mesh(sysp, 200.0).shape[0])
-    expected_est.by_category["GDF dense AO-pair FT bundle"] = (
-        basis.nbasis * basis.nbasis * _n_g * 16
-    )
-    expected = expected_est.total_bytes
+    assert basis.nbasis == 2
+    categories = controlled_gdf_inventory(2, 36, 2, L, exchange=False, open_shell=False)
+    assert controlled_gdf_memory_plan["cutoff_plan_called"]
+    assert controlled_gdf_memory_plan["categories"] == categories
+    assert "GDF dense AO-pair FT bundle" not in categories
     assert body["outputs"]["status"] == "dry_run"
-    assert body["memory"]["estimate_bytes"] == expected
-    assert body["memory"]["estimate_bytes"] > 0
+    assert body["memory"]["estimate_bytes"] == headline(categories)
+
 
 
 def test_periodic_skala_dry_run_records_model_memory_and_provenance(
@@ -389,7 +437,7 @@ def test_periodic_skala_dispersion_guard_preserves_disable_spellings(
             match="dispersion is not yet supported with periodic SKALA",
         ):
             vq.run_periodic_job(system, basis, **kwargs)
-        assert not stem.with_suffix(".system").exists()
+        assert_preflight_refusal(stem)
     else:
         assert vq.run_periodic_job(system, basis, **kwargs) is None
         assert stem.with_suffix(".system").exists()
@@ -466,7 +514,7 @@ def test_periodic_skala_rejects_neutral_bloch_before_dry_run(
             progress=False,
         )
 
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 @pytest.mark.parametrize(
@@ -509,17 +557,17 @@ def test_periodic_skala_rejects_surrogate_hamiltonian_properties_before_scf(
             **property_kwargs,
         )
 
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 def test_periodic_rohf_gdf_dry_run_charges_open_shell_pair_memory(
     tmp_path,
     monkeypatch,
+    controlled_gdf_memory_plan,
 ):
     import tomllib
 
-    from vibeqc.memory import estimate_periodic_multik_gdf
-    from vibeqc.periodic_runner import _periodic_gdf_aux_basis_size
+    from tests.periodic_memory_contract import controlled_gdf_inventory, headline
 
     lattice = np.eye(3) * 10.0
     sysp = vq.PeriodicSystem(
@@ -547,34 +595,13 @@ def test_periodic_rohf_gdf_dry_run_charges_open_shell_pair_memory(
     with stem.with_suffix(".system").open("rb") as fh:
         body = tomllib.load(fh)
 
-    # #92 (3d6ed3130) made the preflight size the auxiliary set the GDF driver
-    # will actually allocate -- ``aux_basis or default_aux_for(basis.name)``,
-    # here def2-svp-jk -- instead of the old ``3 x n_ao`` fallback, which had
-    # printed 452 GB for a 1096 GB cache on the NaCl conventional cell. #561:
-    # this expectation had kept the fallback, so it under-charged the Lpq
-    # factor cache and disagreed with the runner. Resolve it the same way the
-    # runner does rather than restating a literal.
-    n_aux = _periodic_gdf_aux_basis_size(sysp, basis, None)
-    assert n_aux == 18  # def2-svp-jk over 1 H; the fallback would be 3 x 1 = 3
-
-    expected_est = estimate_periodic_multik_gdf(
-        n_basis=basis.nbasis,
-        n_aux=n_aux,
-        n_kpoints=2,
-        need_k_pairs=True,
-        open_shell=True,
-    )
-    # Since 2026-08-13 the GDF preflight also counts the dense rsgdf
-    # AO-pair FT bundle (handovers/HANDOVER_GDF_FIT_SCREENING.md).
-    from vibeqc.aux_basis import rsgdf_dense_g_mesh
-
-    _n_g = int(rsgdf_dense_g_mesh(sysp, 200.0).shape[0])
-    expected_est.by_category["GDF dense AO-pair FT bundle"] = (
-        basis.nbasis * basis.nbasis * _n_g * 16
-    )
-    expected = expected_est.total_bytes
+    assert basis.nbasis == 1
+    categories = controlled_gdf_inventory(1, 18, 1, 10.0, exchange=True, open_shell=True)
+    assert controlled_gdf_memory_plan["cutoff_plan_called"]
+    assert controlled_gdf_memory_plan["categories"] == categories
+    assert "GDF dense AO-pair FT bundle" not in categories
     assert body["outputs"]["status"] == "dry_run"
-    assert body["memory"]["estimate_bytes"] == expected
+    assert body["memory"]["estimate_bytes"] == headline(categories)
 
 
 @pytest.mark.parametrize("jk_method", ["gpw", "gapw"])
@@ -744,7 +771,6 @@ def _h2_periodic():
     )
     return sysp, vq.BasisSet(mol, "sto-3g")
 
-
 @pytest.mark.parametrize("jk_method", ["gpw", "gapw"])
 @pytest.mark.parametrize("extra", [{}, {"smearing_temperature": 0.01}])
 def test_gpw_gapw_refuse_gilat_rather_than_dropping_it(
@@ -765,7 +791,6 @@ def test_gpw_gapw_refuse_gilat_rather_than_dropping_it(
             progress=False,
             **extra,
         )
-
 
 @pytest.mark.parametrize("jk_method", ["gpw", "gapw"])
 def test_gilat_refusal_writes_no_gilat_citation(jk_method, tmp_path):
@@ -792,7 +817,6 @@ def test_gilat_refusal_writes_no_gilat_citation(jk_method, tmp_path):
                 f"{path.name} cites Gilat-Raubenheimer for a run that was "
                 f"refused before it could perform it"
             )
-
 
 @pytest.mark.parametrize("jk_method", ["gpw", "gapw"])
 def test_gpw_gapw_without_bz_integration_still_run(jk_method, tmp_path):
@@ -881,7 +905,7 @@ def test_run_periodic_job_closed_shell_even_count_still_runs(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# AICCM front door M0 (handovers/HANDOVER_AICCM_STANDARD_METHOD.md, D-8): the
+# AICCM front door M0 (the original investigation, D-8): the
 # selector and manifest contracts live in this T2 consumer file, reached
 # through the public runner surface only.
 # ---------------------------------------------------------------------------
@@ -1002,7 +1026,7 @@ def test_periodic_manifest_stamps_method_status_only_for_aiccm_routes(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# AICCM front door M1 (handovers/HANDOVER_AICCM_STANDARD_METHOD.md, D-2, D-3,
+# AICCM front door M1 (the original investigation, D-2, D-3,
 # D-8): method="aiccm", variant=... through the public runner surface only;
 # nothing here imports vibeqc.periodic.ccm.
 # ---------------------------------------------------------------------------
@@ -1169,7 +1193,11 @@ def test_aiccm_front_door_restricted_open_shell_fails_closed(
 ):
     """scf_reference='rohf' / 'roks' select the references explicitly; no
     wired variant implements them, so the request fails closed naming the
-    reference rather than being downgraded to UHF/UKS."""
+    reference rather than being downgraded to UHF/UKS.
+
+    'rhf' / 'uhf' have been explicit references too since #455 (33e5a36f),
+    and the resolver accepts them for every variant: 'uhf' runs as UHF,
+    'rhf' on this odd-electron cell is refused by the closed-shell check."""
     system, basis = _aiccm_h2(2)
     stem = tmp_path / f"ro-{variant}-{scf_reference}"
     with pytest.raises(NotImplementedError, match=scf_reference.upper()):
@@ -1180,7 +1208,7 @@ def test_aiccm_front_door_restricted_open_shell_fails_closed(
             progress=False,
             initial_guess=("HCORE" if variant == "real-gamma" else "SAD"),
         )
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
     # The two explicit references check their functional consistency first.
     with pytest.raises(ValueError, match="scf_reference='rohf'"):
         vq.run_periodic_job(
@@ -1192,9 +1220,27 @@ def test_aiccm_front_door_restricted_open_shell_fails_closed(
             system, basis, method="aiccm", variant=variant, scf_reference="roks",
             output=stem, dry_run=True, progress=False,
         )
-    with pytest.raises(ValueError, match="unknown scf_reference"):
+    # RKS/UKS are chosen through functional=, never spelled as a reference.
+    with pytest.raises(ValueError, match="unknown scf_reference='rks'"):
+        vq.run_periodic_job(
+            system, basis, method="aiccm", variant=variant, scf_reference="rks",
+            output=stem, dry_run=True, progress=False,
+        )
+    # Explicit 'uhf' on this doublet is the reference the parity rule infers.
+    m = _aiccm_dry(
+        tmp_path, f"uhf-{variant}-{scf_reference}", multiplicity=2,
+        method="aiccm", variant=variant, scf_reference="uhf",
+        aiccm_lattice_extension=(2, 1, 1),
+    )
+    assert m["plan"]["method"] == "UHF"
+    with pytest.raises(ValueError, match="does not accept a functional"):
         vq.run_periodic_job(
             system, basis, method="aiccm", variant=variant, scf_reference="uhf",
+            functional="pbe", output=stem, dry_run=True, progress=False,
+        )
+    with pytest.raises(ValueError, match="odd electron count"):
+        vq.run_periodic_job(
+            system, basis, method="aiccm", variant=variant, scf_reference="rhf",
             output=stem, dry_run=True, progress=False,
         )
 
@@ -1431,7 +1477,7 @@ def test_aiccm_real_gamma_rejects_a_criterion_it_cannot_honour(tmp_path, unsuppo
         )
     (name, value), = unsupported.items()
     assert f"{name}={value!r}" in str(exc.value)
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 def test_aiccm_variant_is_explicit_for_the_dftu_auto_fallback(tmp_path):
@@ -1448,7 +1494,7 @@ def test_aiccm_variant_is_explicit_for_the_dftu_auto_fallback(tmp_path):
             dft_plus_u=[HubbardSite(0, 0, 1.0)], aiccm_lattice_extension=(2, 1, 1),
             output=stem, dry_run=True, progress=False, initial_guess="HCORE",
         )
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 # ---------------------------------------------------------------------------
@@ -1524,7 +1570,13 @@ def test_real_gamma_supercell_orbitals_never_reach_a_unit_cell_artefact(tmp_path
     pairs orbitals with the unit-cell basis must refuse them above a
     one-cell torus: the Molden sidecar already did, through its own
     capability gate, and an explicit request fails closed; the QVF
-    wavefunction section now does too."""
+    wavefunction section now does too.
+
+    The population sidecar is not such an artefact. Since M5 (84af5e3) it is
+    written from ``compute_ccm_population_summary``, which reduces the
+    supercell to per-cell charges and bond orders, so it is a supported
+    output on this route (#304). This test pins only that it describes the
+    unit cell; ``tests/test_ccm_properties.py`` owns its contents."""
     import warnings
 
     system, basis = _aiccm_h2()
@@ -1542,7 +1594,12 @@ def test_real_gamma_supercell_orbitals_never_reach_a_unit_cell_artefact(tmp_path
     assert _sidecar_mo_ao_dimension(result) == 2 * int(basis.nbasis)
     assert _qvf_wavefunction_shapes(stem.with_suffix(".qvf")) is None
     assert not stem.with_suffix(".molden").exists()
-    assert not stem.with_suffix(".population.txt").exists()
+    population = stem.with_suffix(".population.txt").read_text(encoding="utf-8")
+    mulliken = population.split("# === Mulliken atomic charges ===", 1)[1]
+    mulliken = mulliken.split("# ===", 1)[0]
+    rows = [line for line in mulliken.splitlines()
+            if line.strip() and not line.startswith("#")]
+    assert len(rows) == len(system.unit_cell), rows
     # An explicit sidecar request is refused rather than silently dropped.
     with pytest.raises(NotImplementedError, match="write_molden_file"):
         vq.run_periodic_job(

@@ -14,6 +14,7 @@ ASE, numpy, scipy) are explicitly allowed; full QC programs are not.
 """
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -104,10 +105,22 @@ def _cpp_runtime_files() -> list[Path]:
     return sorted(files)
 
 
-_PY_IMPORT_RE = re.compile(
-    r"^\s*(?:import|from)\s+([a-zA-Z_][\w\.]*)",
-    re.MULTILINE,
-)
+def _python_import_hits(text: str, filename: str = "<source>") -> list[tuple[int, str]]:
+    """(line_number, module) for every absolute import statement in ``text``.
+
+    Parsed, not pattern-matched, so a docstring or comment line that starts
+    with "from PySCF ..." is prose, not an import (#542), while lazy imports
+    inside functions are still found. Relative imports are vibe-qc's own.
+    """
+    found: list[tuple[int, str]] = []
+    for node in ast.walk(ast.parse(text, filename=filename)):
+        if isinstance(node, ast.Import):
+            found.extend((node.lineno, alias.name) for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            found.append((node.lineno, node.module))
+    return found
+
+
 _CPP_INCLUDE_RE = re.compile(
     r'^\s*#\s*include\s+[<"]([^>"]+)[>"]',
     re.MULTILINE,
@@ -141,7 +154,7 @@ def test_no_forbidden_qc_imports_in_python_runtime() -> None:
     offenders: list[str] = []
     for path in _python_runtime_files():
         text = path.read_text(encoding="utf-8")
-        for line_no, ident in _hits(text, _PY_IMPORT_RE):
+        for line_no, ident in _python_import_hits(text, str(path)):
             if _is_forbidden(ident):
                 rel = path.relative_to(_REPO_ROOT)
                 offenders.append(f"{rel}:{line_no}: import {ident}")
@@ -153,6 +166,32 @@ def test_no_forbidden_qc_imports_in_python_runtime() -> None:
         "CLAUDE.md § 10 / AGENTS.md project rule 2.\n\n"
         + "\n".join(offenders)
     )
+
+
+def test_python_import_scan_ignores_prose_and_finds_real_imports() -> None:
+    """The scan behind the runtime guard (#542): prose that begins with
+    "from PySCF" or "import pyscf" is not an import; real import
+    statements are found wherever they sit."""
+    source = '''"""Agrees to 3.4 uHa
+from PySCF MDF at the default mesh.
+import pyscf is what a reference process does.
+"""
+# from pyscf import gto, in a comment
+import numpy
+import pyscf.pbc.gto as cell_gto
+
+
+def reference():
+    from pyscf.pbc import scf
+    import ase.calculators.orca
+    from . import sibling
+    return scf
+'''
+    hits = _python_import_hits(source)
+    forbidden = [(line, ident) for line, ident in hits if _is_forbidden(ident)]
+    assert forbidden == [(7, "pyscf.pbc.gto"), (11, "pyscf.pbc")]
+    assert (12, "ase.calculators.orca") in hits
+    assert all(ident != "PySCF" for _, ident in hits)
 
 
 def test_no_forbidden_qc_includes_in_cpp_runtime() -> None:

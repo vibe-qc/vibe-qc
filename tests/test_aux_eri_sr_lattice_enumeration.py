@@ -561,6 +561,59 @@ def test_sr_shell_envelope_screen_bounds_accumulated_raw_integral_error(angular,
     assert differences[0] > 1e-14  # exercise actual skipped contributions
 
 
+def test_sr_diffuse_p_cancellation_matches_independent_fourier_series():
+    """A primitive epsilon screen must not add an unbudgeted image omission.
+
+    The periodized p Gaussian has a tiny Gamma norm. Its SR integral is an
+    independently converged Fourier series, including the finite zero mode
+    (Ye/Berkelbach 2021 Eq. 12), not another real-space integral build.
+    """
+    from itertools import product
+    from scipy.signal import fftconvolve
+
+    core = vq._vibeqc_core
+    lattice = 10.65 / 2 * (np.ones((3, 3)) - np.eye(3))
+    system = vq.PeriodicSystem(3, lattice, [vq.Atom(1, [0., 0., 0.])])
+    mol = system.unit_cell_molecule()
+    alpha, beta, omega = .0204, .0451232, .4
+    cp = (2*alpha/np.pi)**.75 * 2*np.sqrt(alpha)
+    cs = (2*beta/np.pi)**.75
+    orbital = core.BasisSet(mol, [
+        core.ShellInfo(0, 1, True, [alpha], [cp], [0., 0., 0.]),
+    ], 'diffuse-p', coefficients_pre_normalized=True)
+    aux = core.BasisSet(mol, [
+        core.ShellInfo(0, 0, True, [beta], [cs], [0., 0., 0.]),
+    ], 'diffuse-s', coefficients_pre_normalized=True)
+    volume = abs(np.linalg.det(lattice))
+    reciprocal = 2*np.pi*np.linalg.inv(lattice).T
+
+    def reference(n):
+        g = np.array(list(product(range(-n, n+1), repeat=3))) @ reciprocal.T
+        h = np.array(list(product(range(-2*n, 2*n+1), repeat=3))) @ reciprocal.T
+        g2, h2 = np.sum(g*g, axis=1), np.sum(h*h, axis=1)
+        weights = np.full(len(h), np.pi/(volume*omega**2))
+        nonzero = h2 > 0
+        weights[nonzero] = (
+            4*np.pi*(-np.expm1(-h2[nonzero]/(4*omega**2)))
+            / (volume*h2[nonzero])
+        )
+        auxiliary = cs*(np.pi/beta)**1.5*np.exp(-h2/(4*beta))
+        values = []
+        for axis in (1, 2, 0):  # Libint's pure-p order
+            phi = (-1j*g[:, axis]/(2*alpha))*cp*(np.pi/alpha)**1.5*np.exp(-g2/(4*alpha))
+            density = fftconvolve(phi.reshape((2*n+1,)*3), phi.reshape((2*n+1,)*3)).ravel()/volume
+            values.append(np.sum(weights*auxiliary*density))
+        return np.array(values)
+
+    expected = reference(4)
+    np.testing.assert_allclose(reference(3), expected, rtol=0, atol=1e-20)
+    actual = core.compute_gdf_sr_three_center(
+        orbital, aux, system, np.zeros(3), np.zeros((1, 3)), omega,
+        125., 80., 4096, 10000000, 2**26, integral_screen_error=1e-12,
+    )[0, 0].diagonal()
+    np.testing.assert_allclose(actual, expected, rtol=0, atol=1e-11)
+
+
 def test_sr_envelope_screen_preserves_dense_core_compact_mesh_oracle():
     core = vq._vibeqc_core
     from vibeqc.aux_basis import _rsgdf_shifted_dense_g_mesh

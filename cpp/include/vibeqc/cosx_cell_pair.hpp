@@ -38,7 +38,7 @@
 // is what bounds the per-point (p, g) work for tight cells.
 //
 // This kernel is the M3b-1 building block for multi-k periodic COSX
-// (handovers/HANDOVER_RIJCOSX_M3A.md § "M3b direction"): the multi-k exchange
+// (M3b direction): the multi-k exchange
 // consumes the same machinery with per-cell-separation density blocks
 // D(g) in place of the cell-diagonal density, and emits per-cell K(h)
 // blocks instead of the Γ-folded sum.
@@ -191,8 +191,7 @@ Eigen::MatrixXd compute_cosx_k_cell_pair(
 // decay with |c_σ − c_λ|, so the (c_λ, c_σ) work per grid point is
 // bounded by the density decay range × AO-pair overlap — independent
 // of the k-mesh size. This is the property that makes real-space
-// exchange the production route at multi-k (handovers/HANDOVER_RIJCOSX_M3A.md
-// § "M3b direction" — scope block).
+// exchange the production route at multi-k.
 //
 // ``q_cached`` semantics (differs from the Γ-folded wrapper!):
 //   * empty (default): return the RAW quadrature blocks — what the

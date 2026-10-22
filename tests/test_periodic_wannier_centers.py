@@ -12,7 +12,7 @@ of the Γ crystalline orbital and clip wherever an orbital straddles a cell
 face (``periodic_runner.py``, the Molden note), and a Wannier function is
 *defined* by its image sum -- Zicovich-Wilson, J. Chem. Phys. 115, 9708
 (2001), doi:10.1063/1.1415745, eq 1. Centres and spreads carry no such
-problem. See handovers/HANDOVER_IBO.md § Milestone 3.
+problem.
 """
 
 from __future__ import annotations

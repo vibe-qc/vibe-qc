@@ -6,8 +6,7 @@ all separable from the SCF. So they are tested against a **scripted
 energy surface** and against **analytic Hessians** whose frequencies are
 known in closed form, at zero SCF cost. The one thing that cannot be
 faked, agreement with the GAPW route on a real solid, is the milestone
-gate and lives in ``examples/basisset_dev/`` (see
-``handovers/HANDOVER_BASISOPT.md`` § M1).
+gate and lives in ``examples/basisset_dev/``.
 """
 
 from __future__ import annotations
@@ -79,7 +78,7 @@ def test_energy_route_costs_18n2_plus_one_scf():
         n_dof = 3 * n
         expected = 1 + 2 * n_dof + 2 * n_dof * (n_dof - 1)
         assert estimate_scf_count(n, "energy") == expected
-    # The number the handover quotes for a 2-atom primitive cell.
+    # The number the original investigation quotes for a 2-atom primitive cell.
     assert estimate_scf_count(2, "energy") == 73
 
 

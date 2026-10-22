@@ -2,7 +2,7 @@
 catalogue (``vibeqc.dispersion_d4_reference_systems``).
 
 These tests do not run any SCF — they pin the *catalogue*: that every
-reference system is internally consistent, builds a valid closed-shell
+reference system is internally consistent, builds a valid spin-labelled
 :class:`Molecule`, has a sane geometry, and that the registry helpers
 behave. The reference-C6 *values* are Phase D4b-4's concern.
 """
@@ -80,10 +80,11 @@ class TestEverySystem:
     def test_target_atom_matches_element(self, rs):
         assert rs.atoms_angstrom[rs.target_index][0] == rs.element
 
-    def test_closed_shell_even_electrons(self, rs):
+    def test_catalogue_spin_matches_electron_count(self, rs):
         n_elec = sum(z for z, *_ in rs.atoms_angstrom) - rs.charge
-        assert n_elec % 2 == 0
-        assert rs.multiplicity == 1
+        expected_multiplicity = 2 if rs.label == "C/CH-doublet" else 1
+        assert rs.multiplicity == expected_multiplicity
+        assert (n_elec - (expected_multiplicity - 1)) % 2 == 0
 
     def test_builds_a_molecule(self, rs):
         mol = build_molecule(rs)
@@ -187,3 +188,84 @@ def test_build_molecule_converts_to_bohr():
     p1 = mol.atoms[1].xyz
     bond_bohr = math.sqrt(sum((p0[i] - p1[i]) ** 2 for i in range(3)))
     assert bond_bohr == pytest.approx(0.7414 * ANGSTROM_TO_BOHR, abs=1e-6)
+
+
+def test_custom_reference_spin_and_charge_validation():
+    ref = ReferenceSystem(
+        element=2, label="He+/atom", atoms_angstrom=((2, 0., 0., 0.),),
+        target_index=0, nominal_cn=0., charge=1, multiplicity=2,
+        geometry_source="free atom",
+    )
+    assert build_molecule(ref).n_electrons() == 1
+    for multiplicity in (0, 1, 3):
+        with pytest.raises(ValueError, match="inconsistent"):
+            ReferenceSystem(
+                element=2, label="invalid", atoms_angstrom=ref.atoms_angstrom,
+                target_index=0, nominal_cn=0., charge=1,
+                multiplicity=multiplicity,
+            )
+
+
+def test_generate_custom_open_shell_charged_reference():
+    from vibeqc.dispersion_d4_reference_data import generate_reference_dataset
+
+    ref = ReferenceSystem(
+        element=2, label="He+/atom", atoms_angstrom=((2, 0., 0., 0.),),
+        target_index=0, nominal_cn=0., charge=1, multiplicity=2,
+        geometry_source="free atom",
+    )
+    data = generate_reference_dataset(
+        "cc-pvdz", reference_systems=[ref], n_grid=8, verbose=False,
+    )
+    assert data.supported_z == [2]
+    assert data.get_qs(2) == pytest.approx([1.])
+    assert data.get_cns(2) == [0.]
+    assert data.get_c6_ref(2, 0, 2, 0) > 0
+    alpha = data.elements[2].alpha_iw[0]
+    assert all(value > 0 for value in alpha)
+    assert all(a > b for a, b in zip(alpha[:-1], alpha[1:]))
+    with pytest.raises(ValueError, match="unique"):
+        generate_reference_dataset(reference_systems=[ref, ref], verbose=False)
+    with pytest.raises(ValueError, match="ReferenceSystem"):
+        generate_reference_dataset(reference_systems=[], verbose=False)
+
+
+def test_canonical_free_atom_precedes_hydride_when_both_are_present():
+    """Adding a coordination host must not replace the free-atom canonical."""
+    import numpy as np
+    from vibeqc.dispersion_d4_reference_data import _build_canonical_references
+
+    hydrogen = next(r for r in reference_systems_for(1) if r.label == "H/H2")
+    helium = reference_systems_for(2)[0]
+    hydride = ReferenceSystem(
+        element=2, label="He/HeH+", atoms_angstrom=((2, 0., 0., 0.), (1, 0., 0., .8)),
+        target_index=0, nominal_cn=1., charge=1,
+    )
+    # Controlled spectra test extraction precedence, not measured chemistry.
+    def record(ref, alpha, charges):
+        return dict(ref=ref, zs=[a[0] for a in ref.atoms_angstrom],
+                    alpha=np.asarray(alpha), charges=np.asarray(charges))
+    records = [record(hydrogen, [8., 4.], [0., 0.]),
+               record(hydride, [6., 3.], [.5, .5]),
+               record(helium, [1.4, .7], [0.])]
+    for ordered in (records, list(reversed(records))):
+        canonical = _build_canonical_references(ordered)
+        np.testing.assert_array_equal(canonical[2][0], [1.4, .7])
+        assert canonical[2][1] == 0.
+
+
+def test_carbon_canonical_host_remains_methane_with_ch_doublet():
+    """Adding a low-CN reference must not change partner subtraction hosts."""
+    import numpy as np
+    from vibeqc.dispersion_d4_reference_data import _build_canonical_references
+
+    host_alpha = {"H/H2": 4., "C/CH4-sp3": 16., "C/CH-doublet": 8.}
+    systems = []
+    for ref in all_reference_systems():
+        if ref.label in host_alpha:
+            systems.append({"ref": ref, "zs": [a[0] for a in ref.atoms_angstrom],
+                            "alpha": np.array([host_alpha[ref.label]]),
+                            "charges": np.zeros(ref.n_atoms)})
+    assert len(systems) == 3
+    canonical = _build_canonical_references(systems)
+    np.testing.assert_allclose(canonical[6][0], [8.], atol=1e-14)

@@ -11,7 +11,7 @@ Output:
 Run:
     .venv/bin/python examples/plots/water-dimer-d3-curve.py
 
-Takes ~2 min on 4 OpenMP threads (12 distances × 2 dimer SCFs +
+Takes ~2 min on 4 OpenMP threads (14 distances × 2 dimer SCFs +
 2 monomer references).
 """
 
@@ -59,10 +59,16 @@ def make_dimer(r_oo_ang: float) -> Molecule:
 
 
 def run_one(mol: Molecule, dispersion):
-    """Single-point energy in Hartree."""
+    """Single-point energy in Hartree.
+
+    Every point writes through the same stem next to this script, so a
+    repeated run overwrites ``water-dimer-d3-curve.*`` here rather than
+    ``./output.*`` in whatever directory the script was launched from.
+    """
     r = run_job(
         mol, basis="6-31g*", method="rks", functional="pbe",
         dispersion=dispersion,
+        output=str(HERE / "water-dimer-d3-curve"),
         write_molden_file=False,
     )
     if dispersion is None:

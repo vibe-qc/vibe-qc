@@ -24,7 +24,7 @@ Status by method:
                             programs, not in-process vibe-qc backends.
   AICCM (four members)    Selected through the front door
                             run_periodic_job(method="aiccm", variant=...)
-                            (handovers/HANDOVER_AICCM_STANDARD_METHOD.md);
+                            (the original investigation);
                             every member stamps [run].method_status =
                             "experimental" and keeps its experimental warning.
     AICCM2026DEV_A          variant="four-center": union-and-weight/
@@ -139,7 +139,7 @@ __all__ = [
     "describe_jk_method",
     "is_orthorhombic",
     "resolve_jk_method_string",
-    # AICCM front door (handovers/HANDOVER_AICCM_STANDARD_METHOD.md, M1):
+    # AICCM front door (the original investigation, M1):
     # method="aiccm", variant=... is resolved here so the runner, the docs
     # and the T2 selector tests share one table without importing
     # vibeqc.periodic.ccm. Module-level names only; vibeqc.__all__ is
@@ -176,7 +176,7 @@ class PeriodicJKMethod(enum.Enum):
     # lineage; chi is a separate construction.
     AICCM2026DEV_A = "aiccm2026dev-a"  # variant="four-center" (2014 lineage)
     # Value is the front-door variant name (M0 of
-    # handovers/HANDOVER_AICCM_STANDARD_METHOD.md): what the .system manifest
+    # the original investigation): what the .system manifest
     # records. The A-prefixed spelling is a rejected input (D89/D90).
     AICCM2026DEV_A_REAL_GAMMA = "real-gamma"  # variant="real-gamma"
     # The neutral Γ-CCM Bloch producer (periodic.ccm.ri), wired into the
@@ -220,7 +220,7 @@ _UNWIRED_CCM_ROUTES: frozenset[PeriodicJKMethod] = frozenset()
 # Every selector that dispatches an AICCM formulation through
 # ``run_periodic_job``. Membership drives the ``[run].method_status =
 # "experimental"`` stamp the periodic runner writes into the ``.system``
-# manifest at job start (handovers/HANDOVER_AICCM_STANDARD_METHOD.md, M0).
+# manifest at job start (the original investigation, M0).
 # This set equals set(AICCM_VARIANT_ROUTES.values()); pinned by
 # tests/test_periodic_feature_input_guards.py.
 _AICCM_JK_METHODS: frozenset[PeriodicJKMethod] = frozenset(
@@ -330,6 +330,17 @@ _RETIRED_GDF_CONTROL_STRINGS: frozenset[str] = frozenset(
 )
 
 
+# The remedy every dim=1 refusal names. A wire is modelled as a 3-D crystal
+# of wires separated by transverse vacuum; the vacuum is part of that model,
+# so nothing converts a dim=1 system to dim=3 on the user's behalf.
+_WIRE_VACUUM_BOX_HINT = (
+    "Model the wire as a dim=3 cell with vacuum on the two transverse axes, "
+    "for example PeriodicSystem(dim=3, lattice=np.diag([a, 15.0, 15.0]), "
+    "unit_cell=...) with kpoints=(nk, 1, 1), and converge the energy per "
+    "cell with respect to that vacuum."
+)
+
+
 def _r1_bare_gamma_message(name: object, *, surface: str = "jk_method") -> str:
     return (
         f"{surface}={name!r} is retired (ruling R1, 2026-08-21): Paper-1 "
@@ -354,8 +365,7 @@ def _retired_gdf_control_message(
         "while here it selected plain unit-cell GDF, and one word must not "
         "mean two Hamiltonians. Use jk_method='gdf' for plain unit-cell GDF, "
         "or method='aiccm', variant='neutral-bloch' for the neutral producer "
-        "(its runner arm is milestone M1b of "
-        "handovers/HANDOVER_AICCM_STANDARD_METHOD.md; until then the library "
+        "(its runner arm is milestone M1b; until then the library "
         "entry above runs it)."
     )
 
@@ -636,10 +646,12 @@ def pick_jk_method(
     would treat the slab as a 3-D crystal of sheets ``a3`` apart, giving
     ``a3``-/k-mesh-dependent energies (CLAUDE.md Sec. 7). The bounded explicit
     ``jk_method='gdf'`` route is available for closed-shell RHF/RKS on a full
-    Gamma-centered slab mesh. For ``dim == 1``, AUTO selects GDF for
-    RHF/RKS/UHF/UKS and fails closed for ROHF. For ``dim == 3``, AUTO selects
-    GDF for closed-shell RHF/RKS and BIPOLE for UHF/UKS/ROHF; explicit
-    open-shell GDF remains available for UHF/UKS.
+    Gamma-centered slab mesh. For ``dim == 1``, AUTO raises
+    ``NotImplementedError`` for every method, naming the ``dim=3``
+    vacuum-box model instead: no public J/K builder has a consistent 1-D
+    Coulomb gauge. For ``dim == 3``, AUTO selects GDF for closed-shell
+    RHF/RKS and BIPOLE for UHF/UKS/ROHF; explicit open-shell GDF remains
+    available for UHF/UKS.
     """
     if isinstance(method, str):
         # The deprecation is attributed to the first frame outside the
@@ -696,16 +708,19 @@ def pick_jk_method(
     if method != PeriodicJKMethod.AUTO:
         return method
 
-    # The public BIPOLE route is 3D-only. Open-shell GDF is maintained for
-    # dim=1, so AUTO must not select a backend that the runner immediately
-    # rejects. There is no maintained dim=1 ROHF backend yet.
+    # No public route has a consistent 1-D Coulomb gauge: the k-point GDF
+    # drivers fail closed for dim=1 (_gauge_lat_opts_for_v_ne_and_e_nuc),
+    # the open-shell GDF drivers accept only dim=3, and BIPOLE is 3-D only.
+    # AUTO refuses here, before any setup, rather than selecting GDF and
+    # failing deep inside it. It never rewrites the system to dim=3: the
+    # transverse vacuum is part of the model, so the user chooses it.
     if dim == 1:
-        if spin == "ROHF":
-            raise NotImplementedError(
-                "AUTO has no maintained dim=1 ROHF route. Use UHF with "
-                "jk_method='gdf', or provide a validated 3D periodic model."
-            )
-        return PeriodicJKMethod.GDF
+        raise NotImplementedError(
+            "jk_method='auto' has no route for a dim=1 (wire) system "
+            f"(scf_method={scf_method!r}): no public J/K builder has a "
+            "consistent 1-D Coulomb gauge, and BIPOLE is 3-D only. "
+            + _WIRE_VACUUM_BOX_HINT
+        )
 
     # In 3D, ROHF rides the open-shell arm: its public multi-k-capable
     # backend is the BIPOLE-route corrected-Ewald-exchange engine (ROKS stays

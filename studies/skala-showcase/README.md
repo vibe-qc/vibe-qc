@@ -205,6 +205,38 @@ report the additive correction. D3 does not change the orbitals or density.
 
 ## Bulk reference context
 
+### Select BIPOLE for the LiF inputs
+
+Both `lif_gamma.py` and `lif_k222.py` accept `--jk-method bipole` with an
+explicit positive finite `--bipole-cutoff-bohr`. GDF remains the default.
+The BIPOLE cutoff is forwarded to both the electronic and nuclear lattice
+sums. The normal BIPOLE density-reach default follows that cutoff, while the
+Becke partition retains its separate default. Record the effective settings
+from the output when comparing runs.
+
+For example, these commands plan BIPOLE inputs without loading the checkpoint:
+
+```sh
+python studies/skala-showcase/lif_gamma.py \
+  --jk-method bipole --bipole-cutoff-bohr 12 --dry-run
+python studies/skala-showcase/lif_k222.py \
+  --jk-method bipole --bipole-cutoff-bohr 12 --dry-run
+```
+
+The 12-bohr value is illustrative, not a converged setting. Use separately
+named `--output` stems for a cutoff series; the default BIPOLE result directory
+is distinct from the GDF directory and refuses reuse. Removing `--dry-run`
+requires the supported real-checkpoint runtime described above. Validate the
+Gamma case before the complete 2x2x2 case, converge the cutoff, and assess the
+remaining periodic-partition error before interpreting energies. GDF/BIPOLE
+agreement is a representation check, not an independent chemical-accuracy
+reference.
+
+These LiF inputs cover restricted spin only. The separate BeH input below
+exercises unequal spin populations; both require real-checkpoint validation.
+No force, optimization, dispersion, or band-analysis capability is enabled
+by selecting BIPOLE.
+
 Both LiF scripts use the two-atom rocksalt primitive cell from
 `qc-input-library/scripts/_geometries.py`, with a = 4.03 Angstrom and STO-3G.
 Neither input requests a population sidecar. The current non-BIPOLE periodic
@@ -221,8 +253,42 @@ vibe-qc context values:
 
 They are not SKALA targets. Use them only to catch an obviously impossible
 energy scale and to put the cost of the new run in context. Report the
-executed GDF route, grid provenance, k-point convention, and experimental
+selected GDF or BIPOLE route, grid provenance, k-point convention, and experimental
 periodic status with any LiF number.
+
+## BIPOLE UKS spin check
+
+`beh_bipole_uks.py` provides a five-electron BeH doublet with three alpha and
+two beta electrons. It reuses the asymmetric 12-bohr cubic cell and 2.5-bohr
+Be-H distance from the periodic gradient tests, with an all-electron STO-3G
+basis. This periodic molecular cell is a spin and route check, not a bulk BeH
+model, chemical-accuracy benchmark, or force validation.
+
+Plan Gamma first, then a complete multi-k mesh:
+
+```sh
+python studies/skala-showcase/beh_bipole_uks.py \
+  --bipole-cutoff-bohr 12 --dry-run
+python studies/skala-showcase/beh_bipole_uks.py \
+  --bipole-cutoff-bohr 12 --kpoints 2 1 1 --dry-run
+```
+
+The mesh dimensions must be positive integers. The cutoff is required,
+positive and finite; 12 bohr is illustrative and requires convergence checks.
+The input fixes UKS, BIPOLE, the corrected Ewald gauge, zero temperature, and
+the normal pinned SKALA grid. It requests neither dispersion nor derivatives
+nor Hamiltonian-derived periodic properties. Default output directories
+include the mesh and refuse reuse; use distinct `--output` stems for cutoff
+or translation studies.
+
+A real run requires the supported Linux checkpoint runtime and a converged
+finite energy. It also checks the returned k-weighted occupations against
+3 alpha and 2 beta electrons, with an absolute bookkeeping tolerance of
+1e-8 electrons and no relative tolerance. It rejects invalid weights,
+occupations outside [0,1], missing spin arrays, and symmetric or swapped spin
+populations. This checks occupation metadata, not the real-space density or
+chemical accuracy. Independent grid-density, translation and cutoff checks
+remain required before accepting periodic SKALA results.
 
 ## Surface model and interpretation limits
 

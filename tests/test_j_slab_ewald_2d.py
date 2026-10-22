@@ -1,7 +1,7 @@
 """Rigorous 2D (slab) Ewald Hartree ``J``.
 
 Increment 3 of the ``CoulombMethod.SLAB_EWALD_2D`` workstream
-(``handovers/HANDOVER_SLAB_EWALD_2D.md``). ``J(D)`` is the electron–electron
+(the original investigation). ``J(D)`` is the electron–electron
 partner of the slab ``V_ne``, built by the reciprocal-space FT
 (``vibeqc.ewald_composed_slab``): the full periodic Hartree directly in
 reciprocal space (in-plane ``g ≠ 0`` × a 1D ``G_z`` integral of ``4π/G²``,
@@ -374,3 +374,102 @@ def test_j_carbon_slab_l1_path():
     assert J.shape == (basc.nbasis, basc.nbasis)
     assert np.max(np.abs(J - J.T)) < 1e-10
     assert np.all(np.isfinite(J))
+
+
+@pytest.mark.parametrize("pair_complete", [False, True])
+def test_gamma_j_pair_domain_matches_overlap_and_profiles(monkeypatch, pair_complete):
+    """Analytic s-pair doubles exercise the complete cache and J contraction."""
+    from types import SimpleNamespace
+    from vibeqc import _aopair_ft, _vibeqc_core as core, aux_basis
+    from vibeqc import ewald_composed_slab as driver, periodic_v_ne_slab as slab
+    from vibeqc.lattice_screening import ao_pair_support_mask
+
+    class MatrixSet:
+        def __init__(self, cells, blocks):
+            self.cells, self.blocks = cells, blocks
+        def set_block(self, i, block):
+            self.blocks[i] = np.array(block, copy=True)
+    def cell(i, j):
+        return SimpleNamespace(index=(i, j, 0), r_cart=np.array([3.*i, 3.*j, 0.]))
+    ball = [cell(0, 0)]  # cutoff 2.2 is smaller than the 3-bohr cell.
+    pool = ball + [cell(i, j) for i in range(-4, 5) for j in range(-4, 5) if (i, j) != (0, 0)]
+    density = np.array([[.7, .2], [.2, .4]])
+    calls, short_calls = [], []
+
+    def pair_values(basis, G, shift):
+        centers = np.array([shell.origin for shell in basis.shells()])
+        right = centers + shift
+        delta = centers[:, None] - right[None, :]
+        middle = .5 * (centers[:, None] + right[None, :])
+        overlap = np.exp(-np.sum(delta**2, axis=2)/4.)
+        return overlap[:, :, None] * np.exp(-np.sum(G**2, axis=1)/4.) * np.exp(-1j*np.einsum("mnc,kc->mnk", middle, G))
+    def cells_for(basis, opts):
+        return [c for c in pool if ao_pair_support_mask(basis, c.r_cart, opts.cutoff_bohr).any()] if opts.pair_complete_1e else ball
+    def overlap(basis, system, opts):
+        cells = cells_for(basis, opts)
+        blocks = []
+        for c in cells:
+            block = pair_values(basis, np.zeros((1, 3)), c.r_cart)[:, :, 0].real
+            if opts.pair_complete_1e:
+                block *= ao_pair_support_mask(basis, c.r_cart, opts.cutoff_bohr)
+            blocks.append(block)
+        return MatrixSet(cells, blocks)
+    def bloch_sum(matrix_set, k):
+        return sum(matrix_set.blocks)
+    def pair_ft(basis, G, shifts, k, *, pair_cutoff_bohr=None):
+        calls.append((np.array(shifts), pair_cutoff_bohr))
+        value = np.zeros((2, 2, len(G)), complex)
+        for shift in shifts:
+            term = pair_values(basis, G, shift)
+            if pair_cutoff_bohr is not None:
+                term *= ao_pair_support_mask(basis, shift, pair_cutoff_bohr)[:, :, None]
+            value += term
+        return value
+    def short_range(basis, system, opts, dset, exchange, alpha):
+        expected = cells_for(basis, opts)
+        assert [c.index for c in dset.cells] == [c.index for c in expected]
+        for block in dset.blocks:
+            np.testing.assert_array_equal(block, density)
+        assert exchange == 0. and alpha == .4
+        short_calls.append(True)
+        return MatrixSet(dset.cells, [np.zeros((2, 2)) for c in dset.cells])
+    monkeypatch.setattr(core, "compute_overlap_lattice", overlap)
+    monkeypatch.setattr(core, "direct_lattice_cells", lambda *a: ball)
+    monkeypatch.setattr(core, "build_fock_2e_real_space", short_range)
+    monkeypatch.setattr(core, "bloch_sum", bloch_sum)
+    monkeypatch.setattr(slab, "compute_overlap_lattice", overlap)
+    monkeypatch.setattr(slab, "bloch_sum", bloch_sum)
+    monkeypatch.setattr(aux_basis, "_ao_scales_for_rsgdf", lambda basis: np.ones(2))
+    monkeypatch.setattr(_aopair_ft, "ao_pair_fourier_transform_bloch", pair_ft)
+    monkeypatch.setattr(driver, "_inplane_g_mesh", lambda b1, b2, gmax: np.array([b1, -b1]))
+    results = []
+    for move in (0., 3., -6.):
+        centers = np.array([[move, 0., 0.], [1., 0., 0.]])
+        shells = [SimpleNamespace(l=0, pure=True, origin=r, exponents=[.5]) for r in centers]
+        basis = SimpleNamespace(nbasis=2, shells=lambda: shells)
+        system = SimpleNamespace(dim=2, lattice=np.diag([3., 3., 20.]),
+                                 unit_cell=[SimpleNamespace(xyz=r) for r in centers])
+        opts = SimpleNamespace(cutoff_bohr=2.2, pair_complete_1e=pair_complete)
+        expected = overlap(basis, system, opts)
+        calls.clear()
+        cache = driver.build_j_slab_ewald_2d_gamma_cache(
+            basis, system, lattice_opts=opts, alpha=.4, n_gz=9,
+            z_pad=5., z_spacing=.2,
+        )
+        vectors = np.array([c.r_cart for c in expected.cells])
+        assert len(calls) == 2  # damped reciprocal and undamped profile FTs
+        for shifts, cutoff in calls:
+            np.testing.assert_array_equal(shifts, vectors)
+            assert cutoff == (opts.cutoff_bohr if pair_complete else None)
+        np.testing.assert_allclose(cache.n_prof.sum(axis=2)*.2, bloch_sum(expected, None), atol=1e-8)
+        assert cache.lat_opts is opts
+        value = driver.compute_j_slab_ewald_2d_gamma(basis, system, density, cache=cache)
+        np.testing.assert_allclose(value, value.T, atol=1e-12)
+        results.append(value)
+        assert opts.cutoff_bohr == 2.2 and opts.pair_complete_1e == pair_complete
+    assert len(short_calls) == 3
+    if pair_complete:
+        for value in results[1:]:
+            np.testing.assert_allclose(value, results[0], atol=1e-12)
+    else:
+        assert np.max(np.abs(results[1]-results[0])) > 1e-3

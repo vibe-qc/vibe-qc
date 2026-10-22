@@ -131,6 +131,7 @@ def test_gdf_result_reports_structured_parity_hold(monkeypatch):
         energy = -1.0
         n_iter = 7
         e_hf_exchange = -0.5
+        gdf_cderi_pairs = 4
         backend = "native-multi-k-gdf-gdf-rhf+PARITY_HELD"
 
     monkeypatch.setattr(
@@ -281,6 +282,55 @@ def test_gdf_route_records_exchange_q0_field():
     assert r.exchange_q0 == BVK_EWALD
     assert r.exchange_q0_applicability == "active"
 
-    k = run_ccm_rks_gdf(ccm, "pbe", options=o)   # pure DFT: no exact exchange
+    from vibeqc import PeriodicKSOptions
+
+    ks_options = PeriodicKSOptions()
+    ks_options.conv_tol_energy = o.conv_tol_energy
+    ks_options.max_iter = o.max_iter
+    ks_options.damping = o.damping
+    k = run_ccm_rks_gdf(ccm, "pbe", options=ks_options)  # pure DFT: no exact exchange
     assert k.exchange_q0_applicability == "inactive"
     assert k.exchange_q0 == ""
+
+
+def test_gdf_result_carries_the_inner_scf_trace_and_achieved_convergence():
+    """O29 (AICCM paper issue #17): the Bloch producer used to expose only
+    ``converged``/``n_iter``, so the convergence it actually reached could
+    not be read back. ``CCMGDFResult.scf_trace`` now carries the multi-k
+    driver's per-cycle records verbatim and ``achieved_convergence`` reads
+    the last energy step and gradient norm off them, naming the metric so it
+    is never compared with the real-Γ loop's max-abs commutator as if the
+    two were one quantity."""
+    cell = PeriodicSystem(3, np.diag([5.0, 5.0, 5.0]),
+                          [Atom(1, [0, 0, 0]), Atom(1, [1.4, 0, 0])], 0, 1)
+    ccm = CCMSystem(cell, (1, 1, 2), "sto-3g")
+    r = run_ccm_rhf_gdf(ccm)
+    assert r.converged
+    assert len(r.scf_trace) == len(r.raw.scf_trace) >= 2
+    ach = r.achieved_convergence
+    assert ach["cycles"] == len(r.scf_trace)
+    assert ach["grad_metric"].startswith("gradient_norm")
+    assert abs(ach["delta_e"]) < 1e-6
+    assert 0.0 <= ach["grad_max"] < 1e-3
+    # A measured-3-D cell records the vacuum opt-in negatively and
+    # affirmatively: absence of a flag is never a verdict (IID 291 / R6).
+    assert r.vacuum_padding_allowed is False
+    assert r.vacuum_padded_axes == ()
+
+
+def test_ri_neutral_and_direct_results_record_achieved_convergence():
+    """The real-Γ and lean neutral loops record a max-abs commutator; the
+    property reads the LAST cycle, which is the accepted state."""
+    from vibeqc.periodic.ccm.direct import run_ccm_rhf_direct
+
+    cell = PeriodicSystem(3, np.diag([6.0, 6.0, 6.0]),
+                          [Atom(1, [3.0, 3.0, 2.3]), Atom(1, [3.0, 3.0, 3.7])],
+                          0, 1)
+    ccm = CCMSystem(cell, (1, 1, 1), "sto-3g")
+    r = run_ccm_rhf_direct(ccm)
+    ach = r.achieved_convergence
+    assert ach["cycles"] == len(r.scf_trace) == r.n_iter
+    assert ach["grad_metric"] == "max_abs_orthonormalised_commutator"
+    assert abs(ach["delta_e"]) <= 1e-9          # the driver's conv_tol
+    assert ach["grad_max"] <= 1e-6              # the driver's conv_tol_grad
+    assert r.vacuum_padding_allowed is False and r.vacuum_padded_axes == ()

@@ -23,8 +23,7 @@ order it needs:
 
 The 4-RDM that the 3-active H₀ block would need is never built: it is
 pre-contracted with the diagonal generalized Fock into the intermediate
-``F3`` (same size as the 3-RDM).  See the milestone roadmap in
-``handovers/HANDOVER_CAS.md``.
+``F3`` (same size as the 3-RDM).
 
 This module is built incrementally against the dense engine as an exact
 oracle.  **M24 (this milestone)** is the case-classification +

@@ -1,6 +1,6 @@
 # BIPOLE Implementation Status
 
-Last updated: 2026-09-09
+Last updated: 2026-09-28
 
 ## Summary
 
@@ -21,8 +21,8 @@ shows 6.9e-2 Ha (14 bohr), 6.3e-2 Ha (18 bohr), and 5.9e-2 Ha (24 bohr)
 error that barely decays with separation, consistent with a domain
 mismatch rather than a truncation artefact.
 
-The opt-in `LatticeSumOptions.pair_complete_1e=True` contract uses physical
-AO-product separations for the one- and two-electron operators. Its
+RHF, UHF, RKS and UKS BIPOLE drivers now resolve physical AO-product
+separations for the one- and two-electron operators by default. Their
 `cutoff_bohr` controls pair separation; `eri_interaction_cutoff_bohr` controls
 the distance between product midpoints (zero uses `cutoff_bohr`). An explicit
 or automatically resolved BIPOLE SR extent supplies the latter distance.
@@ -30,7 +30,17 @@ Exchange may therefore need output cells beyond the one-electron support.
 Physical mode uses the full direct Fock build: the legacy symmetry projector
 does not cover that wider exchange support. Explicit projection requests,
 periodic COSX and the diagnostic grid Hartree backend refuse this combination.
-The global default remains off pending cutoff convergence and performance review.
+The explicit `historical_domain=True` replay option restores the index-ball
+domain; the public runner exposes it as `bipole_historical_domain=True`.
+The native `LatticeSumOptions` default remains unchanged for other consumers.
+See the [domain contract](bipole_domain_contract.md) for the migration and its
+outstanding numerical acceptance matrix. The default change does not establish
+cutoff convergence or performance acceptance.
+For nonzero momentum-transfer exchange channels, physical support now uses
+the production Fourier kernel one supplied cell at a time, with the same
+AO-product mask. This removes the dense all-cell temporary and the repeated
+Python Fourier recursion for supported native shells. Cached channel tensors
+remain resident; this does not establish the full-node performance target.
 Finite-domain agreement alone does not certify infinite-lattice convergence;
 pair support, interaction reach and reciprocal resolution must all converge.
 The [standalone continuation record](bipole_erfc_resume.md) distinguishes
@@ -38,8 +48,8 @@ completed local checks from remaining acceptance work.
 
 LiH and Si PBE cold starts at physical 20-bohr support agree with reference-density warm starts within 1e-8 Ha;
 20 fixed-density grid cases and the default-screening comparisons are
-recorded there. This does not certify the global default or a native
-fine-grid SCF limit.
+recorded there. Those earlier opt-in measurements do not certify the new
+production default or a native fine-grid SCF limit.
 
 > **⚠ Absolute energies on ionic crystals, FIXED at Γ (all four
 > drivers); multi-k corrected gauge available opt-in (2026-06-11).**
@@ -66,9 +76,10 @@ fine-grid SCF limit.
 > 0.013) and to +0.0001 mHa/cell against the explicitly-doubled
 > supercell at Γ (the supercell-unfolding identity, the rigorous
 > internal proof). The multi-k corrected gauge needs a Monkhorst-Pack
-> mesh; an ad-hoc k-list (band path / explicit list) at multi-k falls
-> back to the legacy gauge under the auto default. Pass
-> `use_exchange_ewald_split=False` for the legacy gauge.
+> mesh. Physical-domain BIPOLE refuses an ad-hoc multi-k list that would
+> fall back to the unsupported legacy gauge. Explicit legacy-gauge replay
+> requires `historical_domain=True` together with
+> `use_exchange_ewald_split=False`.
 > **Outstanding heavy confirmation:** the MgO [2,2,2] c12 RHF+RKS
 > parity run (`examples/regression/bipole_parity/mgo_multik_parity.py`)
 > is staged for the queue, belt-and-suspenders on top of the
@@ -82,7 +93,7 @@ fine-grid SCF limit.
 > SCF has multiple genuine solutions (PySCF itself lands on different
 > totals from different starts on MgO/STO-3G Γ), check the basin
 > against a reference density for absolute claims. Forensics + tables:
-> `handovers/HANDOVER_BIPOLE_PRODUCTION.md` §0a;
+> the measurements above;
 > `examples/regression/bipole_parity/mgo_exchange_split_probe.py`.
 
 > **Production forces use finite differences of a converged driver energy.**
@@ -142,9 +153,8 @@ fine-grid SCF limit.
 >   supported slices; FD remains the production force path.
 > * The **legacy multi-k KS-CPHF** remains a
 >   ratified deferral (2026-06-20), legacy-gauge-only, since the
->   corrected-gauge multi-k KS path is variational and needs no CPHF; see
->   `handovers/HANDOVER_BIPOLE_GRADIENT.md` Case 3.
-> * Space-group symmetry: attached symmetry auto-enables both the
+>   corrected-gauge multi-k KS path is variational and needs no CPHF.
+> * Historical-domain space-group symmetry: attached symmetry auto-enables both the
 >   bit-exact SYM2c one-electron S/T reduction and, on the corrected
 >   Ewald exchange split, the SYM3b pair-resolved Fock reduction. The
 >   M5 Fock default is safe because every erfc SR build now uses a
@@ -156,19 +166,28 @@ fine-grid SCF limit.
 >   `use_fock_symmetry_reduce=False` to disable the automatic reduction;
 >   explicit enforcement-only diagnostics use
 >   `use_fock_symmetry=True, use_fock_symmetry_reduce=False`.
+>   Physical-domain AUTO uses the full direct build; explicit Fock symmetry
+>   requests are refused until that projection covers the wider exchange support.
 > * The M5 erfc SR default is `sr_image_precision=1e-6`. It derives an
 >   absolute radius as `cutoff_bohr + bipole_sr_image_extent(...)` and
 >   enables `LatticeSumOptions.sr_range_screening`. Pass
->   `sr_image_precision=None` only to reproduce the historical truncated
->   domain; on an active erfc SR route this also suppresses automatic SYM3b
+>   `sr_image_precision=None` to disable automatic image padding while retaining
+>   the selected physical or historical pair policy. On a historical erfc SR
+>   route this also suppresses automatic SYM3b
 >   reduction unless it is explicitly requested. An explicit
 >   `sr_image_extent_bohr` remains the absolute-radius oracle and takes
 >   precedence. HSE screened exchange uses the same padded internal domain;
 >   the longer-ranged of its erfc K kernel and the Ewald erfc J kernel sets the
->   precision-derived radius. Periodic `run_neb` and `relax_atoms` expose and
+>   precision-derived radius. Under physical pair support that radius is also
+>   the exchange pair-interaction reach, so a Gamma-only run includes the
+>   screened exchange of its periodic images out to the resolved precision
+>   (1.7e-4 Ha on H2 in a 20-bohr box); the multi-k Ewald drivers reach the
+>   same image shells only once `cutoff_bohr` passes them.
+>   Periodic `run_neb` and `relax_atoms` expose and
 >   forward the same `sr_image_precision=1e-6` production default. Their
->   `None` setting is an explicit historical-domain diagnostic, not a hidden
->   cap on the production image domain.
+>   `None` setting explicitly disables automatic padding. `run_neb` retains
+>   physical pair support; `relax_atoms` also accepts `historical_domain=True`
+>   for explicit historical replay.
 > All production force paths default to the exact FD gradient
 > `compute_bipole_gradient_fd`.
 
@@ -207,7 +226,7 @@ virial = compute_stress_tensor(system, gradient)
 | G1 | Cell-level multipole far-pair | HIGH | **RETIRED / DRIVER-UNREACHABLE.** The G1 builder is retained only as a research artifact. No direct or public driver can activate it; explicit multipole requests fail before SCF. |
 | G2 | Spheropole higher-l terms | HIGH | **LANDED**, +4.112 Ha vs CRYSTAL +4.119 Ha |
 | G3 | Production force/stress coverage | MEDIUM | Finite-difference atomic forces differentiate the supported exact driver energy. Variable-cell optimization and the standalone far-field gradient prototypes are not certified and fail closed. |
-| G4 | Space-group symmetry for one- and two-electron integrals | MEDIUM | **LANDED**, bit-exact SYM2c S/T and pair-resolved SYM3b Fock reduction auto-enabled for attached-symmetry corrected-split crystals; reduce equals enforce to machine precision with the M5 padded SR domain |
-| G5 | Exact-zone / fold-range decoupling (BIPOLE-EXACT-ZONE-UNBOUNDED) | HIGH | **Increment 1 LANDED 2026-08-06** (`exact_zone_bohr`, RHF + RKS, opt-in): the exact erfc output zone is bounded independently of the operator/fold cutoff; far operator cells carry `J_LR` + background (the Ewald far-field model -- the Dovesi 1983 Eq. (24a) bielectronic/monoelectronic partition in the split gauge; NOT the retired G1 cell-level branch, which stays retired). Measured fixed-density tails: MgO/STO-3G 2.7e-3 Ha @ zone 10, 3.2e-4 @ 12; LiH-class diffuse bases keep mHa tails to ~14 bohr -- per-case ladder knob. Auto SYM3b reduction yields to a zone request; explicit reduction and analytic gradients fail closed. Next: UHF/UKS + auto-derived fold cutoff wired with the zone, then the quartet-level *screened* bipolar far field (pair-resolved, S92 Eq. (92) Boys-function radial ladder) as increment 2 -- the scaling fix proper. Any future quartet far-field increment must first preserve the common translation sum in Pisani-Dovesi-Roetti 1988 Eq. II.4.10; this exact-zone result is not evidence for that route. |
+| G4 | Space-group symmetry for one- and two-electron integrals | MEDIUM | Historical-domain SYM2c/SYM3b support is retained. Physical-domain BIPOLE uses the full direct Fock build; explicit legacy Fock projection requests fail closed because the projector does not cover the wider exchange support. |
+| G5 | Exact-zone / fold-range decoupling (BIPOLE-EXACT-ZONE-UNBOUNDED) | HIGH | **Increment 1 LANDED 2026-08-06** (`exact_zone_bohr`, now wired through RHF, RKS, UHF and UKS, opt-in): the exact erfc output zone is bounded independently of the operator/fold cutoff; far operator cells carry `J_LR` + background (the Ewald far-field model -- the Dovesi 1983 Eq. (24a) bielectronic/monoelectronic partition in the split gauge; NOT the retired G1 cell-level branch, which stays retired). Measured fixed-density tails: MgO/STO-3G 2.7e-3 Ha @ zone 10, 3.2e-4 @ 12; LiH-class diffuse bases keep mHa tails to ~14 bohr -- per-case ladder knob. Auto SYM3b reduction yields to a zone request; explicit reduction and analytic gradients fail closed. Unrestricted SCF/provenance and spin-schedule forwarding regressions cover the existing UHF/UKS wiring. Remaining: automatic fold-cutoff selection coupled to the zone, then the quartet-level *screened* bipolar far field (pair-resolved, S92 Eq. (92) Boys-function radial ladder) as increment 2 -- the scaling fix proper. Any future quartet far-field increment must first preserve the common translation sum in Pisani-Dovesi-Roetti 1988 Eq. II.4.10; this exact-zone result is not evidence for that route. |
 | G6 | Quartet-level bipolar far-field | **P0** | **FAIL-CLOSED 2026-08-13.** The driver gate was dormant, and enabling it directly would be unsafe: the exact Fock contraction spans three lattice translations and contracts density at their relative translation, while the dispatch, skip mask, and add-back span only two. Additional blockers include the penetration rule, screened kernel, total-order ceiling, Coulomb/exchange composition, symmetry reconstruction, and gradients. All four drivers default to `False`; explicit `True` raises before SCF. Independent exact-vs-far-field measurement corroborates the retirement: LiH/STO-3G shows 6.9e-2 Ha (14 bohr), 6.3e-2 Ha (18 bohr), 5.9e-2 Ha (24 bohr), barely decaying with separation -- a domain mismatch, not truncation. The restricted Fock builder's dormant G6 branch was also made internally consistent (skip-masked near-K for both the Fock and the exchange energy) so any future re-wiring starts from a coherent reference. |
 | G7 | Penetration dispatch and contractor prototypes | HIGH | **NOT ROUTE-CERTIFIED.** Isolated Python/C++ parity tests cover only internal representations. They do not establish a literature basis for the implemented classifier, do not validate the published penetration criterion or the exact/add-back periodic domain. Order zero is currently overloaded as an exact sentinel, the classifier omits the second pair width, and screened caches and symmetry reconstruction need independent equation-level oracles before reuse. |

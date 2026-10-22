@@ -22,7 +22,7 @@ from which K=(ia|jb), J=(ij|ab), the 3-external (ia|bc) and the
 4-external ladder (ab|cd) follow by contraction -- the last two kept
 *factored* (never materialised as n_pno^3/n_pno⁴ dense tensors larger
 than they must be). This module builds and validates that foundation;
-remaining production gates live in ``handovers/HANDOVER_GATED_ITEMS.md``.
+remaining production gates are outside this foundation.
 
 These integrals are the global RI in the pair's PNO basis (exact RI).
 Composing with `local_df`-style domain-restricted fitting is a later

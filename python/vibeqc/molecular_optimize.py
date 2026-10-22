@@ -33,7 +33,7 @@ through to ``write_qvf`` for vibe-view's animation player.
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Any, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Optional, Sequence
 
 import numpy as np
 
@@ -59,6 +59,9 @@ from .ecp_metadata import (
 )
 from .gradient_options import copy_ecp_fields, gradient_options_from_scf
 from .progress import ProgressLogger, resolve_progress
+
+if TYPE_CHECKING:
+    from .geomopt.state import GeomOptResult
 
 __all__ = [
     "MolecularOptimizeResult",
@@ -151,8 +154,33 @@ def _gradient_converged(
     return (bool(success) and grad_max <= conv_tol_grad), grad_max
 
 
+def _stop_message(
+    *,
+    converged: bool,
+    n_iter: int,
+    max_iter: int,
+    stopped_by: str = "",
+) -> str:
+    """One line saying why a native / Brent optimizer stopped.
+
+    ``stopped_by`` is the optimizer's own account of a stop that was not the
+    step limit (scipy's termination message for L-BFGS-B); it is only used for
+    a run that neither converged nor ran out of steps.
+    """
+    if converged:
+        return "the largest gradient component is within the threshold"
+    if n_iter >= max_iter:
+        return f"stopped at the step limit ({n_iter} of {max_iter} steps)"
+    reason = f": {stopped_by}" if stopped_by else ""
+    return f"stopped after {n_iter} of {max_iter} steps{reason}"
+
+
 class MolecularOptimizeResult:
-    """Container for molecular geometry optimization results."""
+    """Container for molecular geometry optimization results.
+
+    ``message`` says in words why the optimizer stopped; it is empty for a
+    result built without one.
+    """
 
     def __init__(
         self,
@@ -163,6 +191,7 @@ class MolecularOptimizeResult:
         converged: bool,
         trajectory_frames: Optional[list[Molecule]] = None,
         trajectory_energies: Optional[list[float]] = None,
+        message: str = "",
     ):
         self.system = system
         self.energy = energy
@@ -171,6 +200,39 @@ class MolecularOptimizeResult:
         self.converged = converged
         self.trajectory_frames = trajectory_frames or []
         self.trajectory_energies = trajectory_energies or []
+        self.message = message
+
+    def to_geomopt_result(
+        self,
+        optimizer: str,
+        *,
+        method: Optional[str] = None,
+        basis: Optional[str] = None,
+        functional: Optional[str] = None,
+    ) -> "GeomOptResult":
+        """The same outcome as a ``vibeqc.geomopt.GeomOptResult``.
+
+        ``GeomOptResult`` is the result type the ``geom_opt=`` optimizers
+        return and the one a ``vibeqc.geomopt.GeomOptFailedError`` carries,
+        so a caller handling a failed optimization sees one shape whichever
+        backend ran.
+        """
+        from .geomopt.state import GeomOptResult
+
+        return GeomOptResult(
+            system=self.system,
+            energy=float(self.energy),
+            gradient=np.asarray(self.gradient, dtype=float).ravel(),
+            converged=bool(self.converged),
+            n_iter=int(self.n_iter),
+            optimizer=optimizer,
+            method=method,
+            basis=basis,
+            functional=functional,
+            trajectory_frames=list(self.trajectory_frames),
+            trajectory_energies=list(self.trajectory_energies),
+            message=self.message,
+        )
 
     def __repr__(self) -> str:
         g = np.abs(np.asarray(self.gradient, dtype=float))
@@ -418,6 +480,16 @@ def _compute_molecular_gradient(
 
     When ``dispersion_params`` is provided, the D3-BJ gradient is
     folded in. Returns the energy gradient gradE (not the force).
+
+    **A solvated result is differentiated on its own surface.** When
+    ``scf_result`` carries a ``solvent_result`` -- which is what
+    :func:`_run_single_point` returns for ``solvent=...`` -- the gradient comes
+    from :func:`vibeqc.solvation.cpcm_gradient`, so the optimizer walks the
+    surface whose energy it reports. Before this, every caller here got the
+    gas-phase gradient while the energy included the reaction field: on
+    LiF/STO-3G in water the optimization stopped 0.011 bohr from the solvated
+    minimum with a solvated gradient of 1.8e-3 Ha/bohr, against its own
+    9.7e-4 Ha/bohr convergence threshold.
     """
     from vibeqc import (
         compute_gradient as _grad_rhf,
@@ -430,7 +502,32 @@ def _compute_molecular_gradient(
     gopt = gradient_options or GradientOptions()
     method_lower = method.lower()
 
-    if method_lower == "rhf":
+    # The reaction field first: a solvated result must not be handed to the
+    # gas-phase gradient routines below.
+    _solvent_result = getattr(scf_result, "solvent_result", None)
+    if _solvent_result is not None and method_lower in ("rhf", "uhf", "rks", "uks"):
+        from .solvation import cpcm_gradient
+
+        if method_lower in ("rks", "uks"):
+            require_complete_analytic_gradient(
+                scf_result,
+                route=f"_compute_molecular_gradient({method_lower}, solvated)",
+                spin=1 if method_lower == "rks" else 2,
+            )
+        grad = cpcm_gradient(
+            scf_result,
+            molecule,
+            basis,
+            _solvent_result,
+            method=method_lower,
+            options=gopt,
+            grid_options=(
+                (grid_options or GridOptions())
+                if method_lower in ("rks", "uks")
+                else None
+            ),
+        )
+    elif method_lower == "rhf":
         grad = _grad_rhf(molecule, basis, scf_result, gopt)
     elif method_lower == "uhf":
         grad = _grad_uhf(molecule, basis, scf_result, gopt)
@@ -498,9 +595,9 @@ def _compute_molecular_gradient(
 
     # Fold in dispersion gradient if requested.
     if dispersion_params is not None:
-        from .dispersion import compute_d3bj
+        from .dispersion import compute_dispersion
 
-        disp = compute_d3bj(molecule, dispersion_params, with_gradient=True)
+        disp = compute_dispersion(molecule, dispersion_params, with_gradient=True)
         grad = grad + np.asarray(disp.gradient, dtype=float)
 
     return grad
@@ -907,9 +1004,9 @@ def _evaluate_energy(
     e = float(getattr(result, "energy", 0.0))
 
     if dispersion_params is not None:
-        from .dispersion import compute_d3bj
+        from .dispersion import compute_dispersion
 
-        disp = compute_d3bj(molecule, dispersion_params)
+        disp = compute_dispersion(molecule, dispersion_params)
         e += float(disp.energy)
 
     return e
@@ -1299,9 +1396,9 @@ def optimize_molecule_brent(
                     dispersion_params=dispersion_params,
                 )
                 if dispersion_params is not None:
-                    from .dispersion import compute_d3bj
+                    from .dispersion import compute_dispersion
 
-                    disp = compute_d3bj(mol, dispersion_params)
+                    disp = compute_dispersion(mol, dispersion_params)
                     e += float(disp.energy)
             else:
                 # Wavefunction path (selected_ci / dmrg / v2rdm /
@@ -1447,6 +1544,11 @@ def optimize_molecule_brent(
         converged=converged,
         trajectory_frames=trajectory_frames if record_trajectory else None,
         trajectory_energies=trajectory_energies if record_trajectory else None,
+        message=_stop_message(
+            converged=converged,
+            n_iter=geo_step,
+            max_iter=max_iter,
+        ),
     )
 
 
@@ -1763,9 +1865,9 @@ def optimize_molecule(
                 grid_level=grid_level,
             )
             if dispersion_params is not None:
-                from .dispersion import compute_d3bj
+                from .dispersion import compute_dispersion
 
-                disp = compute_d3bj(mol, dispersion_params)
+                disp = compute_dispersion(mol, dispersion_params)
                 e += float(disp.energy)
             return e
 
@@ -1893,9 +1995,9 @@ def optimize_molecule(
             _cache["mol"] = mol
             _cache["basis"] = basis
             if dispersion_params is not None:
-                from .dispersion import compute_d3bj
+                from .dispersion import compute_dispersion
 
-                disp = compute_d3bj(mol, dispersion_params)
+                disp = compute_dispersion(mol, dispersion_params)
                 e += float(disp.energy)
             _cache["energy"] = e
             return e
@@ -2066,4 +2168,17 @@ def optimize_molecule(
         converged=converged,
         trajectory_frames=trajectory_frames if record_trajectory else None,
         trajectory_energies=trajectory_energies if record_trajectory else None,
+        message=_stop_message(
+            converged=converged,
+            n_iter=total_nit,
+            max_iter=max_iter,
+            stopped_by=(
+                # res.success without a passing gradient gate means scipy's
+                # relative-energy criterion (ftol) fired first.
+                "L-BFGS-B met its energy-change criterion before the "
+                "gradient threshold"
+                if bool(res.success)
+                else f"scipy L-BFGS-B reported: {str(res.message).strip()}"
+            ),
+        ),
     )

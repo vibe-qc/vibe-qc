@@ -10,11 +10,14 @@ import pytest
 
 import vibeqc as vq
 from vibeqc import _vibeqc_core as core
+from vibeqc import periodic_external_xc as external_xc
 from vibeqc.periodic_external_xc import (
     PeriodicExternalXC,
     _reject_reduced_kmesh,
 )
 from vibeqc.periodic_gapw_grid import PlaneWaveGrid
+
+from tests.refusal_receipt import assert_preflight_refusal
 
 
 _NAMES = itertools.count()
@@ -105,6 +108,109 @@ def _assert_generalized_eigenpairs(fock, overlap, coeffs, energies):
     energies = np.asarray(energies)
     residual = fock @ coeffs - (overlap @ coeffs) * energies[None, :]
     assert float(np.max(np.abs(residual), initial=0.0)) < 5.0e-10
+
+
+@pytest.mark.parametrize("bitmap_budget", [0, 1 << 20])
+@pytest.mark.parametrize("dimension", [0, 1, 2, 3])
+def test_lattice_difference_support_matches_explicit_pairs(
+    monkeypatch, bitmap_budget, dimension,
+):
+    monkeypatch.setattr(external_xc, "_DIFFERENCE_BITMAP_MAX_BYTES", bitmap_budget)
+    rng = np.random.default_rng(120 + dimension)
+    ket = rng.integers(-3, 4, size=(29, 3))
+    bra = rng.integers(-2, 3, size=(17, 3))
+    ket[:, dimension:] = 0
+    bra[:, dimension:] = 0
+    # Unequal, gapped supports, duplicates and independent large translations.
+    ket = [tuple(map(int, row)) for row in ket + [101, -31, 7]]
+    bra = [tuple(map(int, row)) for row in bra + [-23, 13, 91]]
+    expected = {
+        tuple(s[i] - a[i] for i in range(3)) for s in ket for a in bra
+    }
+    actual = external_xc._lattice_difference_set(ket, bra)
+    assert len(actual) == len(expected)
+    assert isinstance(actual, external_xc._LatticeDifferenceBitmap) == bool(
+        bitmap_budget
+    )
+    # Probe the whole box, holes and invalid coordinates that would alias if
+    # flattened without per-axis range checks.
+    axes = [
+        range(min(g[i] for g in expected) - 2, max(g[i] for g in expected) + 3)
+        for i in range(3)
+    ]
+    for index in itertools.product(*axes):
+        assert (index in actual) == (index in expected)
+
+
+@pytest.mark.parametrize(
+    "ket,bra", [([], []), ([], [(0, 0, 0)]), ([(0, 0, 0)], [])],
+)
+def test_lattice_difference_support_empty(ket, bra):
+    assert external_xc._lattice_difference_set(ket, bra) == frozenset()
+
+
+@pytest.mark.parametrize("spacing", [20, 10**30])
+def test_lattice_difference_support_sparse_fallback(spacing):
+    ket = [(0, 0, 0), (spacing, spacing, spacing)]
+    bra = [(0, 0, 0), (1, -2, 3)]
+    actual = external_xc._lattice_difference_set(ket, bra)
+    assert isinstance(actual, frozenset)
+    assert actual == {
+        (0, 0, 0), (-1, 2, -3),
+        (spacing, spacing, spacing), (spacing - 1, spacing + 2, spacing - 3),
+    }
+
+
+@pytest.mark.parametrize("dimension", [1, 2, 3])
+def test_external_xc_difference_domain_matches_explicit_order(dimension):
+    from vibeqc.pair_resolved_truncation import (
+        atom_pair_span, pair_resolved_domain,
+    )
+
+    lattice = np.array([[4.0, 0.0, 0.0], [1.2, 3.9, 0.0], [-0.6, 0.8, 4.1]])
+    system = vq.PeriodicSystem(dimension, lattice, [
+        vq.Atom(1, [0.1, 0.2, 0.3]), vq.Atom(1, [4.3, 0.4, 0.2]),
+    ])
+    cutoff, radius = 4.2, 2.3
+    ket = pair_resolved_domain(system, cutoff).cells
+    bra = pair_resolved_domain(system, radius).cells
+    required = {
+        tuple((np.asarray(s.index) - np.asarray(a.index)).tolist())
+        for s in ket for a in bra
+    }
+    candidates = core.direct_lattice_cells(
+        system, cutoff + radius + 2.0 * atom_pair_span(system) + 1.0e-9,
+    )
+    expected = [
+        tuple(cell.index) for cell in candidates if tuple(cell.index) in required
+    ]
+    actual = external_xc.periodic_xc_difference_closed_cells(system, cutoff, radius)
+    assert [tuple(cell.index) for cell in actual] == expected
+    assert set(expected) == required
+
+
+@pytest.mark.parametrize("bitmap_budget", [0, 1 << 20])
+def test_external_xc_difference_domain_counts_missing_unique_cells(
+    monkeypatch, bitmap_budget,
+):
+    from vibeqc import pair_resolved_truncation as domains
+
+    cells = [SimpleNamespace(index=(i, 0, 0)) for i in (0, 1)]
+    monkeypatch.setattr(external_xc, "_DIFFERENCE_BITMAP_MAX_BYTES", bitmap_budget)
+    monkeypatch.setattr(
+        domains, "pair_resolved_domain", lambda *args: SimpleNamespace(cells=cells),
+    )
+    monkeypatch.setattr(domains, "atom_pair_span", lambda *args: 0.0)
+    # Duplicate available candidates must not hide the two missing cells.
+    monkeypatch.setattr(
+        core, "direct_lattice_cells", lambda *args: [cells[0], cells[0]],
+    )
+    with pytest.raises(RuntimeError, match=r"2 lattice cells missing"):
+        external_xc.periodic_xc_difference_closed_cells(object(), 1.0, 1.0)
+    ordered = [cells[1], cells[0], cells[0], SimpleNamespace(index=(-1, 0, 0))]
+    monkeypatch.setattr(core, "direct_lattice_cells", lambda *args: ordered)
+    actual = external_xc.periodic_xc_difference_closed_cells(object(), 1.0, 1.0)
+    assert actual == tuple(ordered)
 
 
 def test_external_xc_adapter_domain_is_difference_closed_and_variational():
@@ -859,7 +965,7 @@ def test_high_level_external_gpw_gapw_reject_charged_cell_before_dry_run(
             progress=False,
         )
 
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 @pytest.mark.parametrize("route", ("gpw-gamma", "gpw-multik", "gapw-gamma"))

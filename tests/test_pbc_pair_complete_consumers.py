@@ -6,14 +6,16 @@ Independent Gaussian sums, image relabelling and finite differences check
 the physical nuclear/quartet predicates; coupled split tests separately
 check that the real-space and reciprocal terms describe the same operator.
 
-The switch stays off by default. Native regression anchors pin each finite
-operator convention; the independent periodic references below test its
-convergence separately.
+The native switch stays off by default; public BIPOLE uses physical support
+and requires an explicit historical replay. Native regression anchors pin
+each finite operator convention; the independent periodic references below
+test its convergence separately.
 """
 
 from __future__ import annotations
 
 from itertools import product
+import re
 
 from scipy.special import erf
 
@@ -452,8 +454,15 @@ def test_bipole_1d_direct_nuclear_route_runs_under_the_switch():
         opts.conv_tol_energy = 1.0e-10
         opts.lattice_opts.pair_complete_1e = on
         opts.lattice_opts.cutoff_bohr = 11.0
-        result = vq.run_pbc_bipole_rhf(system, basis, kmesh, opts, progress=False)
+        # Preserve both existing finite-operator anchors after the public
+        # default migration; a False native flag is not a historical request.
+        result = vq.run_pbc_bipole_rhf(
+            system, basis, kmesh, opts, historical_domain=not on, progress=False,
+        )
         assert result.converged
+        assert result.resolved_domain.policy == (
+            "physical_pairs" if on else "historical_index_ball"
+        )
         energies[on] = float(result.energy)
     assert energies[False] == pytest.approx(-1.839238747730, abs=_PIN_TOL)
     assert energies[True] == pytest.approx(-1.8152364308953906, rel=0, abs=_PIN_TOL)
@@ -644,7 +653,9 @@ def test_sap_finite_source_domain_matches_gaussian_difference():
     terms = []
     net = np.zeros(3)
     for symbol, atoms in [("H", [0, 1]), ("He", [2])]:
-        lines = text.split(symbol + " 0\n", 1)[1].splitlines()
+        lines = re.split(
+            rf"(?m)^{symbol}[ \t]+0[ \t]*\r?\n", text, maxsplit=1,
+        )[1].splitlines()
         count = int(lines[0].split()[1])
         for line in lines[1:1 + count]:
             alpha, coefficient = map(float, line.split())
@@ -739,10 +750,10 @@ def test_physical_fock_support_does_not_use_legacy_symmetry_projector():
     system = SimpleNamespace(symmetry=SimpleNamespace(operations=[object()]))
     logger = SimpleNamespace(info=lambda message: None)
     assert resolve_bipole_fock_symmetry(
-        system, basis, opts, None, None, logger, exchange_split_active=True,
+        system, basis, opts, None, False, logger, exchange_split_active=True,
     ) == (None, None)
     with pytest.raises(NotImplementedError, match="wider output support"):
-        resolve_bipole_fock_symmetry(system, basis, opts, False, True, logger)
+        resolve_bipole_fock_symmetry(system, basis, opts, True, False, logger)
 
 
 def _physical_quartet_reference(system, opts, omega, density):

@@ -9,7 +9,7 @@ import sitemap from '@astrojs/sitemap';
 // noindex flag in Base.astro key off import.meta.env.BASE_URL to match.
 const base = process.env.PREVIEW_BASE || '/';
 
-// vibe-qc marketing site.
+// vibe-qc technical site.
 //
 // This site owns the domain ROOT (https://vibe-qc.com/). The Sphinx
 // documentation is a *separate* static build that is deployed under
@@ -19,11 +19,11 @@ const base = process.env.PREVIEW_BASE || '/';
 export default defineConfig({
   site: 'https://vibe-qc.com',
   base,
-  // The marketing site lives at the domain root in production (base '/').
+  // The technical site lives at the domain root in production (base '/').
   // The docs live at /docs/ and are built by Sphinx (see docs/conf.py
   // html_baseurl). Staging overrides base to '/preview/' (see above).
   //
-  // Auto-generate the marketing sitemap on build (→ /sitemap-index.xml).
+  // Auto-generate the technical sitemap on build (→ /sitemap-index.xml).
   // The docs ship their own sitemap under /docs/; the root robots.txt
   // (public/robots.txt) lists both.
   integrations: [sitemap()],

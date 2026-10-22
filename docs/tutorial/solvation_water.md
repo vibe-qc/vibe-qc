@@ -25,6 +25,28 @@ This tutorial walks through three workflows you'll actually use:
 We use formaldehyde (H₂C=O) throughout, small enough to converge
 in seconds, polar enough that solvation is a non-trivial perturbation.
 
+CPCM and COSMO energies and analytic gradients are **production** for RHF, UHF,
+RKS and UKS (label vocabulary in
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels)).
+Two families of combinations are refused rather than run, and the
+[Theory](#theory) section at the end says why:
+
+```{admonition} Status: gated
+:class: caution
+
+Implicit solvation composes with the mean-field SCF reference only. Post-SCF
+correlation (`mp2`, `ccsd`, DLPNO and the coupled-pair variants) fails closed
+with `ValueError: Implicit solvation is not supported for method='mp2':
+CPCM composes with the mean-field SCF reference only; the post-SCF mp2
+treatment in solvent is not implemented`, because the correlation step's
+reported total would not be composed against the in-solvent reference.
+Restricted open-shell methods fail closed too: `method="rohf"` and
+`method="roks"` with a `solvent=` raise `NotImplementedError: Implicit
+solvation (CPCM) with method='rohf' is not yet supported`. Run these in gas
+phase, or use `rhf`, `uhf`, `rks` or `uks`. See
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+```
+
 ## 1. Single-point hydration energy
 
 The simplest CPCM calculation: gas-phase SCF, then in-solvent SCF,
@@ -54,22 +76,24 @@ sol = aqueous.solvent_result
 delta_g_solv_au = sol.energy - gas.energy
 delta_g_solv_kcal = delta_g_solv_au * 627.5094740631
 
-print(f"E(gas)         = {gas.energy:12.6f} Ha")
-print(f"E(in water)    = {sol.energy:12.6f} Ha")
-print(f"E_solv (½q·V)  = {sol.e_solv * 627.5094740631:+8.3f} kcal/mol")
-print(f"ΔG_solv total  = {delta_g_solv_kcal:+8.3f} kcal/mol")
-print(f"CPCM macro-iters: {sol.n_macro_iter}")
+print(f"E(gas)            = {gas.energy:12.6f} Ha")
+print(f"E(water, total)   = {sol.energy:12.6f} Ha")
+print(f"E_solv (½ q · V)  = {sol.e_solv:10.6f} Ha = {sol.e_solv * 627.5094740631:+8.3f} kcal/mol")
+print(f"ΔG_solv (total)   = {delta_g_solv_au:10.6f} Ha = {delta_g_solv_kcal:+8.3f} kcal/mol")
+print(f"CPCM macro-iters  = {sol.n_macro_iter}")
+print(f"Cavity points     = {sol.cavity.n_points}")
+print(f"Solvent           = {sol.solvent_name}  (ε = {sol.epsilon:.3f})")
 ```
 
-Real output (PBE0/def2-SVP, vibe-qc v0.9.0):
+Output (PBE0/def2-SVP, vibe-qc 0.17.10 development build):
 
 ```
-E(gas)            =    -114.283602 Ha
-E(water, total)   =    -114.290170 Ha
-E_solv (½ q · V)  =   -0.007985 Ha =   -5.011 kcal/mol
-ΔG_solv (total)   =   -0.006568 Ha =   -4.122 kcal/mol
+E(gas)            =  -114.283604 Ha
+E(water, total)   =  -114.290172 Ha
+E_solv (½ q · V)  =  -0.007985 Ha =   -5.011 kcal/mol
+ΔG_solv (total)   =  -0.006568 Ha =   -4.122 kcal/mol
 CPCM macro-iters  = 7
-Cavity points     = 1047 (after switching)
+Cavity points     = 1047
 Solvent           = water  (ε = 78.390)
 ```
 
@@ -104,8 +128,8 @@ contribution (cavitation + dispersion + repulsion), which a full
 SMD model adds on top. SMD-style non-electrostatic terms are
 typically positive for small neutral solutes (cavity-formation cost
 outpaces solute-solvent dispersion gain), shifting the CPCM-only
-overshoot back toward the experimental value. That's a v0.10+
-roadmap item; pure CPCM is the electrostatic backbone everyone
+overshoot back toward the experimental value. vibe-qc does not yet include
+those terms; pure CPCM is the electrostatic backbone everyone
 builds on.
 
 ## 2. Geometry optimisation in solvent
@@ -162,15 +186,17 @@ print(f"r(C=O) water  : {r_co(atoms_aq):.4f} Å")
 print(f"Δr(C=O)       : {r_co(atoms_aq) - r_co(atoms_gas):+.4f} Å")
 ```
 
-Real result (vibe-qc v0.9.0, PBE0/def2-SVP, BFGSLineSearch fmax=0.01):
+Result (PBE0/def2-SVP, BFGSLineSearch fmax=0.01). Re-run on the 0.17.10
+development build (the two optimisations together took over an hour on a
+heavily loaded shared machine):
 
 ```
 r(C=O) gas    : 1.1961 Å
-r(C=O) water  : 1.2027 Å
-Δr(C=O)       : +0.0066 Å
+r(C=O) water  : 1.2025 Å
+Δr(C=O)       : +0.0065 Å
 ```
 
-A ~0.7 pm elongation, small in absolute terms, but the right sign
+(The v0.9.0 run gave 1.2027 Å in water, a difference of 0.2 mÅ.) A ~0.65 pm elongation, small in absolute terms, but the right sign
 and a reproducible solvent effect that matches the literature
 (experimental gas-phase: 1.2078 Å; aqueous IR/Raman: ~1.21 Å). The
 solvent stabilises the carbonyl's polarisation, weakening the π
@@ -191,9 +217,9 @@ electronic-ESP derivative (one libint nuclear-attraction-gradient
 pass over the cavity points). No geometry rebuilds, no
 finite-difference step error.
 
-For routine work with `n_atoms < 50` and `n_pts_per_sphere = 110`
-(the PySCF default), CPCM-aware optimisations are very tractable
-on a laptop.
+For routine work with `n_atoms < 50` and a coarser tessellation than the
+default (`n_points_per_sphere = 110` instead of the default 302),
+CPCM-aware optimisations are tractable on a laptop.
 
 ## 3. Dielectric scan, water vs solvents you've heard of
 
@@ -232,7 +258,8 @@ for name, _eps in solvents:
     print(f"{name:<20} {sol.epsilon:>8.3f} {e_kcal:>18.3f}")
 ```
 
-Real scan (PBE0/def2-SVP, formaldehyde, vibe-qc v0.9.0):
+Scan (PBE0/def2-SVP, formaldehyde). A re-run on the 0.17.10 development
+build reproduced every row below to the last digit:
 
 ```
 solvent                     ε  E_solv (kcal/mol)
@@ -271,6 +298,7 @@ sm = vq.SolventModel(
     variant="cpcm",                 # (ε − 1)/ε factor (vs "cosmo": (ε − 1)/(ε + 0.5))
     radii_scale=1.20,               # Bondi vdW × 1.20 (PCM/GEPOL convention)
     solvent_probe_radius_ang=0.0,   # scaled-vdW cavity (not SAS)
+    cavity="lebedev",               # union of switched Lebedev spheres (default)
     n_points_per_sphere=302,        # Lebedev order 29 (Gaussian default)
     switching_sigma_bohr=0.5,       # Scalmani-Frisch CSC smoothing
     max_macro_iter=30,
@@ -310,6 +338,79 @@ You'll see ~900-1100 points draped over the four atomic spheres with
 the heavily-buried inter-atomic regions smoothly cut by the
 switching function.
 
+## Theory
+
+**Conductor-like screening.** A continuum model replaces the solvent by a
+dielectric of constant $\varepsilon$ outside a cavity that holds the solute.
+The conductor-like idea ({vibeqc-cite}`klamt_schuurmann_cosmo_1993`) is to
+solve the electrostatics for a perfect conductor ($\varepsilon\to\infty$), where
+the boundary condition is simple: the total potential vanishes on the cavity
+surface. The surface is cut into segments $i$, each carrying an apparent
+charge $q_i$, and the condition becomes a linear system,
+
+$$
+\mathbf A\,\mathbf q = -f(\varepsilon)\,\mathbf V ,
+\qquad
+f(\varepsilon) = \frac{\varepsilon - 1}{\varepsilon + x} ,
+\qquad
+E_\text{solv} = \tfrac12\,\mathbf q^{\mathsf T}\mathbf V ,
+$$
+
+where $V_i$ is the electrostatic potential of the solute (nuclei and electrons)
+at segment $i$, $A_{ij} = 1/|\mathbf r_i - \mathbf r_j|$ for $i \ne j$ with the
+diagonal $A_{ii} = 1.0694\sqrt{4\pi/a_i}$ set by the segment area $a_i$
+({vibeqc-cite}`scalmani_frisch_csc_2010`), and $f(\varepsilon)$ scales the
+conductor charges to the finite dielectric. The CPCM of
+{vibeqc-cite}`cossi_cpcm_2003` has $x = 0$, $f = (\varepsilon-1)/\varepsilon$; the
+original COSMO has $x = \tfrac12$, $f = (\varepsilon-1)/(\varepsilon+\tfrac12)$
+(`variant="cpcm"` or `"cosmo"`). For water the two factors are 0.9872 and
+0.9810, so the solvation energies differ by about 0.6 percent (the STO-3G
+formaldehyde runs give -1.609 and -1.597 kcal/mol). $f$ saturates quickly, which
+is why the dielectric scan above is nearly flat above $\varepsilon\approx20$.
+
+**The macro-iteration.** The potential $\mathbf V$ depends on the solute density
+$\mathbf D$, and the charges $\mathbf q$ act back on the electrons as a set of
+point charges, an extra one-electron term in the Fock matrix, so density and
+charges must be made consistent. vibe-qc solves a gas-phase SCF first, builds
+$\mathbf q$, runs an SCF with the charges held fixed, rebuilds $\mathbf V$ and
+$\mathbf q$, and repeats until the change in $E_\text{solv}$ falls below
+`tol_e_solv` (1e-6 Ha; at most `max_macro_iter` = 30 cycles). Seven cycles
+were needed for formaldehyde in water; `q_diis=True` extrapolates the charges
+if a charged solute needs many more.
+
+**The cavity.** By default the cavity is a union of atomic spheres
+(`cavity="lebedev"`): Bondi van der Waals radii scaled by `radii_scale = 1.20`,
+each sphere paved with a Lebedev grid of `n_points_per_sphere = 302`
+points, and points buried inside other spheres switched off by a smooth
+function of width `switching_sigma_bohr = 0.5` so that the energy and its
+gradient are continuous. This describes the convex outer surface and leaves the
+concave crevices between atoms unpaved. The alternative,
+`cavity="fine"`, is the COSMO FINE cavity of
+{vibeqc-cite}`klamt_fine_cavity_2018`: an iso-surface of a pseudo-density that
+also paves the concave regions. When you choose it, the construction runs by
+default in the molecule-fixed frame (`fine_frame="molecular"`), so that the
+cavity, the energy and the gradient rotate rigidly with the solute instead of
+depending on its orientation in the laboratory frame; `fine_frame="lab"`
+restores the older behaviour and is the right choice for a linear solute, whose
+molecule-fixed frame has no nuclear derivative. The two cavities give
+different segment sets and so different energies: for formaldehyde in water
+(STO-3G, PBE0) the union of spheres gave $E_\text{solv} = -1.609$ kcal/mol on
+1047 segments and the FINE cavity -1.292 kcal/mol on 392, so compare solvation
+energies only within one cavity choice.
+
+**Gradients and what is left out.** The nuclear gradient is analytic for both
+cavities. On top of the SCF gradient at the in-solvent density it adds three
+closed-form pieces, the derivative of the cavity matrix $\mathbf A$, the
+nuclear-potential derivative and the electronic-potential derivative (one
+nuclear-attraction gradient pass over the cavity points), which is why
+solvated optimisations converge like gas-phase ones. The model is purely
+electrostatic and linear-response: it has no cavitation, dispersion or
+repulsion terms, no specific hydrogen bonding, and it composes with the
+mean-field density only, which is the reason for the gated combinations at
+the top (post-SCF correlation and ROHF/ROKS). COSMO-RS, which turns the
+surface charge density into a statistical-thermodynamic model of the liquid,
+is a separate experimental route in `vibeqc.solvation.cosmors`.
+
 ## Next
 
 * **[User-guide chapter on solvation](../user_guide/solvation.md)**, 
@@ -323,5 +424,5 @@ switching function.
   `cosx`) on the method options and the CPCM SCF picks up RI-JK /
   RIJCOSX automatically; see the
   [user-guide § Density fitting and RIJCOSX](../user_guide/solvation.md).
-* **Roadmap v0.10+**, non-electrostatic terms (SMD-style cavitation
-  + dispersion + repulsion) and CPCM-in-periodic-systems.
+* **Not yet available**: non-electrostatic terms (SMD-style cavitation
+  + dispersion + repulsion) and CPCM in periodic systems.

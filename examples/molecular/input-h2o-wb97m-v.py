@@ -1,4 +1,4 @@
-"""Water — ωB97M-V, a complete range-separated meta-GGA hybrid.
+"""Water / cc-pVDZ: ωB97M-V, a complete range-separated meta-GGA hybrid.
 
 ωB97M-V (Mardirossian & Head-Gordon, *J. Chem. Phys.* **144**, 214110
 (2016)) composes three advanced pieces in one functional:

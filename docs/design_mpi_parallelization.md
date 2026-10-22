@@ -24,7 +24,7 @@ Status as of 2026-08-24 (updated; original audit below is from 2026-06-30):
   one partition/gather per SCF *setup* (`python/vibeqc/periodic_k_gdf.py`,
   `run_krhf_periodic_gdf` / `run_kuhf_periodic_gdf`, and
   `run_krohf_periodic_gdf` in `periodic_rohf_gdf.py`, which calls the
-  same builder). Second -- landed 2026-08-05, `HANDOVER_MPI.md` item
+  same builder). Second -- landed 2026-08-05, the original investigation item
   4c -- the **per-iteration** `n_k²` exchange contraction is farmed too,
   over the **bra** k-index: each rank computes complete `K(k_i)`
   matrices for its own share (exact, not a partial-sum approximation)
@@ -111,12 +111,21 @@ MP2 is the main exception where raising BLAS threads also helps.
 Installing `[mpi]` enables capability but does not activate MPI. In an
 ordinary process, `vibeqc.mpi` does not import `mpi4py.MPI`, so even calls to
 the serial identity helpers leave MPI uninitialized. Complete launcher-rank
-evidence from Open MPI, PMI/Intel/MPICH, MVAPICH, an actual Slurm task step, or
+evidence from Open MPI, PMI/Intel/MPICH, MVAPICH, a multi-task Slurm step, or
 PMIx admits native loading and `COMM_WORLD` binding; a wrapper may instead
 declare the generic required contract and its exact expected size.
 Communicator rank and size remain authoritative and must agree with the
 launcher. Detected launcher
 failures never fall back to multiple independent serial worlds.
+
+A normal numeric Slurm task step with `SLURM_PROCID=0` and
+`SLURM_STEP_NUM_TASKS=1` stays serial when Slurm is the only rank evidence
+and `VIBEQC_MPI_REQUIRED=1` is absent. The allocation's `SLURM_NTASKS`
+does not replace the step size. MPI-specific rank metadata, including
+singleton PMI, PMIx or Open MPI launches, still requires MPI; malformed,
+incomplete or conflicting rank metadata cannot enable this serial exception.
+This supports a Slurm-only one-task `srun` environment, rather than every
+MPI plugin configuration.
 
 The implemented call sites are narrow:
 
@@ -479,7 +488,7 @@ Recommended roadmap slot:
 
 1. Correct public feature docs to say the current MPI surface is a
    substrate plus experimental GPW overlay.
-2. Add `handovers/HANDOVER_MPI.md` as the workstream tracker.
+2. Keep workstream tracking outside the product repository.
 3. Add a real multi-rank smoke test for `vibeqc.mpi` and
    `GpwJBuilder(mpi_aware=True)`.
 4. Implement `KPointPartition` and rank-aware ordered gather helpers.

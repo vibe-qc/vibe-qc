@@ -285,3 +285,140 @@ def test_rohf_detection_tolerates_none_valued_orbital_fields():
     result.mo_energies_beta = None
     with pytest.raises(NotImplementedError, match='effective orbital operator'):
         gdf_properties_from_result(result, system, basis, coop_cohp=True)
+
+
+@pytest.mark.parametrize('spin', [False, True])
+def test_segmented_spectra_keep_remote_states_and_zero_gap_bridges(spin):
+    """Large virtual eigenvalues must not turn empty gaps into gigabytes."""
+    result, system, basis = _state(spin=spin)
+    suffixes = ('_alpha', '_beta') if spin else ('',)
+    for suffix in suffixes:
+        e = np.array([-1.2, 1.e5])
+        c = getattr(result, 'mo_coeffs' + suffix)[0]
+        setattr(result, 'mo_energies' + suffix, [e])
+        setattr(result, 'fock' + suffix, [c @ np.diag(e) @ c.T])
+    payload = gdf_properties_from_result(result, system, basis, coop_cohp=True)
+    dos, pdos, coop, cohp, _, reserved = payload
+    energies = dos['energies']
+    assert len(energies) < 200
+    assert reserved < 32 * 1024
+    assert np.all(np.diff(energies) > 0)
+    assert energies[-1] > 1.e5 * _HARTREE_TO_EV
+    gaps = np.flatnonzero(np.diff(energies) > 1.)
+    assert len(gaps) == 1
+    for data, field in ((dos, 'dos'), (pdos, 'projections'),
+                        (coop, 'projections'), (cohp, 'projections')):
+        values = data[field]
+        np.testing.assert_array_equal(values[..., gaps], 0.)
+        np.testing.assert_array_equal(values[..., gaps + 1], 0.)
+    expected_count = np.full(2, 2.) if spin else 2.
+    np.testing.assert_allclose(np.trapezoid(dos['dos'], energies, axis=-1),
+                               expected_count, atol=2e-8, rtol=0)
+    np.testing.assert_allclose(pdos['projections'].sum(axis=-2), dos['dos'], atol=1e-12)
+    # Occupied ICOHP still contracts the accepted density and complete Fock.
+    expected = .5 * (1.e5 + 1.2) * _HARTREE_TO_EV
+    np.testing.assert_allclose(np.sum(cohp['integrated']), expected, rtol=1e-12)
+
+
+@pytest.mark.parametrize('spin', [False, True])
+@pytest.mark.parametrize('multi_k', [False, True])
+def test_segmented_and_uniform_curves_have_the_same_gaussian_definition(spin, multi_k):
+    import vibeqc.periodic_gdf_properties as properties
+
+    result, system, basis = _state(spin=spin)
+    if multi_k:
+        result.overlap.append(np.eye(2))
+        result.kpoint_weights = np.array([.3, .7])
+        result.kpoints_cart = np.array([[0., 0., 0.], [.1, -.2, .3]])
+        for suffix in (('_alpha', '_beta') if spin else ('',)):
+            c = np.diag([1., 1j]) @ getattr(result, 'mo_coeffs' + suffix)[0]
+            e = getattr(result, 'mo_energies' + suffix)[0] + .003
+            getattr(result, 'mo_coeffs' + suffix).append(c)
+            getattr(result, 'mo_energies' + suffix).append(e)
+            getattr(result, 'fock' + suffix).append(c @ np.diag(e) @ c.conj().T)
+            getattr(result, 'density' + suffix).append(
+                (1. if spin else 2.) * np.outer(c[:, 0], c[:, 0].conj()))
+    dense = gdf_properties_from_result(result, system, basis, coop_cohp=True)
+    sparse = gdf_properties_from_result(
+        result, system, basis, coop_cohp=True, memory_byte_cap=24000,
+    )
+    assert len(sparse[0]['energies']) < len(dense[0]['energies'])
+    for index in (2, 3):
+        np.testing.assert_array_equal(sparse[index]['integrated'], dense[index]['integrated'])
+    np.testing.assert_array_equal(sparse[4], dense[4])
+    # Independently evaluate every curve on the selected coordinates, not
+    # an interpolation or a normalization of the implementation's result.
+    energy = sparse[0]['energies'] / _HARTREE_TO_EV - 1.
+    sigma = .05 / _HARTREE_TO_EV
+    expected = [np.zeros_like(sparse[i][key]) for i, key in
+                enumerate(('dos', 'projections', 'projections', 'projections'))]
+    for spin_index, (es, cs, fs, _, _) in enumerate(properties._accepted_channels(result)):
+        for e, c, f, weight in zip(es, cs, fs, result.kpoint_weights):
+            gaussian = np.exp(-.5 * ((energy[None, :] - e[:, None]) / sigma)**2)
+            gaussian *= weight / (sigma * np.sqrt(2 * np.pi))
+            gaussian[np.abs(energy[None, :] - e[:, None]) >= 8 * sigma] = 0
+            target = [array[spin_index] if spin else array for array in expected]
+            target[0][...] += gaussian.sum(axis=0) / _HARTREE_TO_EV
+            target[1][...] += np.abs(c)**2 @ gaussian / _HARTREE_TO_EV
+            target[2][...] = 0.  # Identity overlap has no cross-atom term.
+            capacity = 1. if spin else 2.
+            target[3][0, ...] -= capacity * (c[0].conj() * f[0, 1] * c[1]).real @ gaussian
+    for i, key in enumerate(('dos', 'projections', 'projections', 'projections')):
+        np.testing.assert_allclose(sparse[i][key], expected[i], rtol=2e-12, atol=1e-12)
+        np.testing.assert_allclose(
+            np.trapezoid(sparse[i][key], sparse[i]['energies'], axis=-1),
+            np.trapezoid(dense[i][key], dense[i]['energies'], axis=-1),
+            rtol=0, atol=1e-11,
+        )
+
+
+def test_segmented_spectrum_still_refuses_a_real_allocation_overrun(monkeypatch):
+    import vibeqc.periodic_gdf_properties as properties
+
+    result, system, basis = _state()
+    result.mo_energies = [np.array([-1.2, 1.e5])]
+    c = result.mo_coeffs[0]
+    result.fock = [c @ np.diag(result.mo_energies[0]) @ c.T]
+    allocations = []
+    original_empty = properties.np.empty
+    monkeypatch.setattr(properties.np, 'empty',
+                        lambda *args, **kwargs: allocations.append(args) or original_empty(*args, **kwargs))
+    with pytest.raises(MemoryError, match='spectral properties require'):
+        gdf_properties_from_result(result, system, basis, coop_cohp=True, memory_byte_cap=2000)
+    assert not allocations
+
+
+def test_segmented_spectrum_serializes_all_four_complete_qvf_payloads(tmp_path):
+    import json
+    import zipfile
+    from vibeqc.output.formats.qvf import validate_qvf, write_qvf
+    from vibeqc.output.plan import OutputPlan
+
+    result, system, basis = _state()
+    dos, pdos, coop, cohp, _, _ = gdf_properties_from_result(
+        result, system, basis, coop_cohp=True, memory_byte_cap=24000,
+    )
+    system.dim = 3
+    system.lattice = np.eye(3) * 10.
+    system.charge = 0
+    system.multiplicity = 1
+    result.energy = -2.
+    result.n_iter = 1
+    stem = tmp_path / 'segmented'
+    plan = OutputPlan.from_run_job_kwargs(
+        output=stem, method='rhf', basis='sto-3g', functional=None,
+        job_kind='periodic_scf', output_qvf=True,
+    )
+    archive = write_qvf(stem, plan, system=system, result=result, method='RHF',
+                        basis='sto-3g', dos_data=dos, pdos_data=pdos,
+                        coop_data=coop, cohp_data=cohp, raise_on_error=True)
+    assert validate_qvf(archive)['valid']
+    with zipfile.ZipFile(archive) as zf:
+        manifest = json.loads(zf.read('manifest.json'))
+        sections = {s['kind']: s for s in manifest['sections']}
+        for kind, data in zip(('dos.total', 'dos.projected', 'dos.coop', 'dos.cohp'),
+                              (dos, pdos, coop, cohp)):
+            for field, member in sections[kind]['members'].items():
+                if field in data:
+                    actual = np.frombuffer(zf.read(member['path']), dtype='<f8')
+                    np.testing.assert_array_equal(actual, np.asarray(data[field]).ravel())

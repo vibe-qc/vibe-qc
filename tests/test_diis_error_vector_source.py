@@ -60,6 +60,15 @@ def _short_run_opts(cls, **kw):
     return o
 
 
+def _cxx_opts(cls, **kw):
+    """Options for the native direct drivers: the 12-bohr cell's six nearest
+    images inside both balls (next shell 17.0 bohr). At cutoff 10 the ball
+    held only g = 0, which the #133 guard refuses on these drivers (#430)."""
+    o = _short_run_opts(cls, **kw)
+    o.lattice_opts.cutoff_bohr = 12.5
+    return o
+
+
 def _assert_error_vector_alive(result, driver: str):
     grads = [it.grad_norm for it in result.scf_trace][:3]
     assert max(grads) > 1e-8, (
@@ -74,7 +83,7 @@ def _assert_error_vector_alive(result, driver: str):
 def test_cxx_gamma_rhf_error_from_d_in():
     sysp, basis = _h2_631g_cell()
     r = vq.run_rhf_periodic_gamma(
-        sysp, basis, _short_run_opts(vq.PeriodicRHFOptions))
+        sysp, basis, _cxx_opts(vq.PeriodicRHFOptions))
     _assert_error_vector_alive(r, "run_rhf_periodic_gamma")
 
 
@@ -82,7 +91,7 @@ def test_cxx_multi_k_rhf_error_from_d_in():
     sysp, basis = _h2_631g_cell()
     km = vq.monkhorst_pack(sysp, [2, 1, 1])
     r = vq.run_rhf_periodic(
-        sysp, basis, km, _short_run_opts(vq.PeriodicSCFOptions))
+        sysp, basis, km, _cxx_opts(vq.PeriodicSCFOptions))
     _assert_error_vector_alive(r, "run_rhf_periodic")
 
 
@@ -90,7 +99,7 @@ def test_cxx_multi_k_rks_error_from_d_in():
     sysp, basis = _h2_631g_cell()
     km = vq.monkhorst_pack(sysp, [2, 1, 1])
     r = vq.run_rks_periodic(
-        sysp, basis, km, _short_run_opts(vq.PeriodicKSOptions, functional="pbe"))
+        sysp, basis, km, _cxx_opts(vq.PeriodicKSOptions, functional="pbe"))
     _assert_error_vector_alive(r, "run_rks_periodic")
 
 

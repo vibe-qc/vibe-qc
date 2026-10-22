@@ -147,6 +147,14 @@ LatticeMatrixSet real_space_density_from_kpoints_fractional(
     const BlochKMesh& kmesh,
     const std::vector<LatticeCell>& cells);
 
+// Fold already-formed per-k AO densities, including mixed/indefinite ones.
+// Uses their Hermitian parts and the same real inverse-Bloch projection as
+// the fractional-orbital API; no diagonalization or occupation clipping.
+LatticeMatrixSet real_space_density_from_density_matrices(
+    const std::vector<ComplexMatrix>& D_per_k,
+    const BlochKMesh& kmesh,
+    const std::vector<LatticeCell>& cells);
+
 LatticeMatrixSet real_space_density_from_kpoints(
     const std::vector<ComplexMatrix>& C_per_k,
     const std::vector<int>& n_occ_per_k,

@@ -1,6 +1,6 @@
 """Decode the iter-3 collapse dump from
 `diag_lih_multik_iter3_instrumented.py` and surface the three
-candidate bug signals listed in the brief / handover:
+candidate bug signals listed in the brief / historical design record:
 
   (1) D(k) eigenvalue rises above 2.0  → density loses idempotency,
       F gets corrupted.

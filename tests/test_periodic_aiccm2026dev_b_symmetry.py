@@ -42,6 +42,9 @@ def chi_snapshot_fixture(request):
 
 
 def _run_chi_snapshot(n_kpoints, *, physical_pairs=False):
+    from functools import partial
+    import vibeqc.periodic.chi.scf as scf_module
+
     # Two equivalent He atoms: two occupied and two virtual 6-31G bands.
     # The half-cell translation squares to a lattice translation at nonzero k.
     system = vq.PeriodicSystem(3, np.diag([8., 16., 16.]), [
@@ -53,11 +56,19 @@ def _run_chi_snapshot(n_kpoints, *, physical_pairs=False):
     options.conv_tol_grad = 1e-10
     options.lattice_opts.pair_complete_1e = physical_pairs
     mesh = (n_kpoints, 1, 1) if isinstance(n_kpoints, int) else n_kpoints
-    with pytest.warns(AICCM2026DevBExperimentalWarning):
-        result = run_aiccm2026dev_b_rhf(
-            system, basis, mesh, options=options, progress=False,
-        )
+    with pytest.MonkeyPatch.context() as patch:
+        if not physical_pairs:
+            patch.setattr(scf_module, "run_pbc_bipole_rhf", partial(
+                scf_module.run_pbc_bipole_rhf, historical_domain=True,
+            ))
+        with pytest.warns(AICCM2026DevBExperimentalWarning):
+            result = run_aiccm2026dev_b_rhf(
+                system, basis, mesh, options=options, progress=False,
+            )
     assert result.converged
+    assert result.resolved_domain.policy == (
+        "physical_pairs" if physical_pairs else "historical_index_ball"
+    )
     return system, basis, result
 
 
@@ -440,6 +451,118 @@ def test_half_translation_support_reuses_shared_atom_pair_domain(cutoff):
         assert (2, 0, 0) not in {tuple(cell.index) for cell in radial}
 
 
+def _finite_s_erfc_jk_element(basis, cells, density_k, omega, shift, mu, nu):
+    """Independent unscreened finite sum for the two-character s-shell case.
+
+    McMurchie/Davidson (1978), Secs. 2 and 3C: the Gaussian product
+    prefactor multiplies integral_eta^1 exp(-t*u*u) du for erfc, with
+    eta = omega/sqrt(omega**2 + rho). No native integral helper is used.
+    Public shell coefficients already contain primitive normalization.
+    """
+    import math
+    from scipy.special import erfc
+
+    def integral(a, b, c, d, A, B, C, D):
+        p, q = a + b, c + d
+        rho = p * q / (p + q)
+        P, Q = (a*A + b*B)/p, (c*C + d*D)/q
+        t = rho * np.sum((P-Q)**2, axis=-1)
+        eta = omega / math.sqrt(omega**2 + rho)
+        root = np.sqrt(np.maximum(t, 1e-16))
+        # erfc differences avoid subtracting two nearly unit erf values.
+        attenuation = math.sqrt(math.pi)/(2*root) * (
+            erfc(eta*root) - erfc(root))
+        small = (1-eta) - t*(1-eta**3)/3 + t*t*(1-eta**5)/10
+        attenuation = np.where(t < 1e-7, small, attenuation)
+        prefactor = 2*math.pi**2.5/(p*q*math.sqrt(p+q))
+        return prefactor * attenuation * np.exp(
+            -a*b/p*np.sum((A-B)**2, axis=-1)
+            -c*d/q*np.sum((C-D)**2, axis=-1))
+
+    shells = list(basis.shells())
+    assert all(shell.l == 0 for shell in shells)
+    cart = np.array([cell.r_cart for cell in cells])
+    labels = np.array([cell.index for cell in cells])
+    delta = labels[None, :, 0] - labels[:, None, 0]
+    weights = 0.5 * (density_k[0][None, None, :, :]
+                    + (-1.)**delta[:, :, None, None]
+                    * density_k[1][None, None, :, :])
+    bra, ket = shells[mu], shells[nu]
+    A, B = np.asarray(bra.origin), np.asarray(ket.origin) + shift
+    result = np.zeros(2)
+    for lam, left in enumerate(shells):
+        C = np.asarray(left.origin) + cart[:, None, :]
+        for sig, right in enumerate(shells):
+            D = np.asarray(right.origin) + cart[None, :, :]
+            density = weights[:, :, lam, sig]
+            if not np.any(density):
+                continue
+            for a, ca in zip(bra.exponents, bra.coefficients):
+                for b, cb in zip(ket.exponents, ket.coefficients):
+                    for c, cc in zip(left.exponents, left.coefficients):
+                        for d, cd in zip(right.exponents, right.coefficients):
+                            factor = ca * cb * cc * cd
+                            result[0] += factor * np.sum(density * integral(
+                                a, b, c, d, A, B, C, D))
+                            result[1] += factor * np.sum(density * integral(
+                                a, c, b, d, A, C, B, D))
+    # Spin-summed density; K has no RHF Fock factor of -1/2 here.
+    return result
+
+
+def test_half_translation_retained_and_omitted_erfc_contractions():
+    from vibeqc.pbc_bipole_common import default_ewald_alpha
+
+    core = vq._vibeqc_core
+    system = vq.PeriodicSystem(3, np.diag([8., 16., 16.]), [
+        vq.Atom(2, [0., 0., 0.]), vq.Atom(2, [4., 0., 0.]),
+    ])
+    basis = vq.BasisSet(system.unit_cell_molecule(), "6-31g")
+    # Check the AO normalization convention without an integral engine.
+    for shell in basis.shells():
+        norm = sum(ca*cb*(np.pi/(a+b))**1.5
+                   for a, ca in zip(shell.exponents, shell.coefficients)
+                   for b, cb in zip(shell.exponents, shell.coefficients))
+        assert norm == pytest.approx(1., rel=0., abs=5e-14)
+    a = np.array([[.8, .07], [.07, .3]])
+    b = np.array([[.04, .01], [.01, .02]])
+    z = np.zeros((2, 2))
+    trial = [np.block([[a, b], [b, a]]), np.block([[a, z], [z, a]])]
+    internal = list(core.direct_lattice_cells(system, 24.))
+    positions = {tuple(cell.index): i for i, cell in enumerate(internal)}
+    density_cells = list(core.direct_lattice_cells(system, 48.))
+    density = core.make_lattice_matrix_set(4, density_cells, [
+        .5*(trial[0] + (-1.)**int(cell.index[0])*trial[1])
+        for cell in density_cells])
+    alpha = default_ewald_alpha(2048., real_cutoff_bohr=15., tolerance=1e-8)
+    # The last two entries have the same 12-bohr AO separation. A 15-bohr
+    # cell-origin output ball retains g=1 but omits its g=2 partner.
+    selections = [((0, 0, 0), 1, 1), ((1, 0, 0), 1, 3), ((2, 0, 0), 3, 1)]
+    expected = [_finite_s_erfc_jk_element(
+        basis, internal, trial, alpha, np.asarray(system.lattice) @ g, mu, nu)
+        for g, mu, nu in selections]
+    options = vq.LatticeSumOptions()
+    options.cutoff_bohr = 24.
+    options.pair_complete_1e = False
+    subset = [positions[g] for g, _, _ in selections]
+    for screened in (False, True):
+        options.schwarz_threshold = 1e-12 if screened else 0.
+        options.sr_range_screening = screened
+        options.sr_sparse_traversal = screened
+        jk = core.build_jk_2e_real_space_domains(
+            basis, system, options, density, internal, subset, [], alpha)
+        actual = [[np.asarray(lattice.blocks[positions[g]])[mu, nu]
+                   for lattice in (jk.J, jk.K)] for g, mu, nu in selections]
+        # First compare the identical unscreened term sets tightly. Then
+        # quantify ordinary screening separately: it must contribute less
+        # than a tenth of the omitted J entry, not explain the defect.
+        budget = .1 * expected[2][0] if screened else 2e-14
+        np.testing.assert_allclose(actual, expected, rtol=0., atol=budget)
+    np.testing.assert_allclose(expected[1], expected[2], rtol=0., atol=2e-14)
+    assert expected[2][0] > 1e-10
+    assert expected[2][1] > 1e-8
+
+
 @pytest.mark.parametrize("internal_extent", [24., 32., 40.])
 @pytest.mark.parametrize("trial_kind", ["invariant", "general"])
 def test_half_translation_raw_exchange_requires_pair_output_support(
@@ -482,6 +605,7 @@ def test_half_translation_raw_exchange_requires_pair_output_support(
     density_cells = list(core.direct_lattice_cells(system, 2. * internal_extent))
     options = vq.LatticeSumOptions()
     options.cutoff_bohr = internal_extent
+    options.pair_complete_1e = False
     options.sr_range_screening = True
     for mode in ("radial", "pair"):
         if mode == "pair":
@@ -515,7 +639,19 @@ def test_half_translation_raw_exchange_requires_pair_output_support(
         if mode == "pair":
             assert max(residuals) < 1e-10
         elif trial_kind == "invariant":
-            assert residuals[0] < 1e-10
+            # Both J and K lose a nonzero symmetry partner. The two real
+            # off-diagonal partners contribute twice this omitted entry
+            # to the folded covariance defect. The separate analytic
+            # erfc contraction checks its magnitude without native ERIs.
+            missing_index = positions[(2, 0, 0)]
+            missing = core.build_jk_2e_real_space_domains(
+                basis, system, options, density, internal,
+                [missing_index], [], alpha,
+            )
+            expected = [2*np.asarray(lattice.blocks[missing_index])[3, 1]
+                        for lattice in (missing.J, missing.K)]
+            np.testing.assert_allclose(residuals, expected, rtol=0., atol=2e-14)
+            assert residuals[0] > 1e-10
             assert 1e-8 < residuals[1] < 1e-6
 
 
@@ -2191,6 +2327,64 @@ def test_occupied_group_refuses_nontranslation_closed_state(occupied_action_fixt
         build_aiccm2026dev_b_occupied_group_witness(group, localized)
 
 
+@pytest.mark.parametrize("mesh,cutoff,historical,closed", [
+    ((2, 1, 1), 15.0, True, False),
+    ((2, 1, 1), 24.0, True, True),
+    ((3, 1, 1), 24.0, True, True),
+    ((2, 1, 1), 15.0, False, True),
+    ((2, 1, 1), 24.0, False, True),
+    ((3, 1, 1), 24.0, False, True),
+])
+def test_occupied_closure_requires_converged_finite_support(
+    mesh, cutoff, historical, closed, monkeypatch,
+):
+    """The #332 refusal is removable truncation, not an arithmetic floor."""
+    from functools import partial
+    from vibeqc.periodic.chi.localization import localize_aiccm2026dev_b_occupied
+    import vibeqc.periodic.chi.scf as scf_module
+
+    if historical:
+        # Preserve the original index-ball reproduction explicitly after
+        # BIPOLE's physical-default migration; default cases use no override.
+        monkeypatch.setattr(scf_module, "run_pbc_bipole_rhf", partial(
+            scf_module.run_pbc_bipole_rhf, historical_domain=True,
+        ))
+
+    system = vq.PeriodicSystem(3, np.diag([8., 16., 16.]), [
+        vq.Atom(2, [0., 0., 0.]), vq.Atom(2, [4., 0., 0.]),
+    ])
+    basis = vq.BasisSet(system.unit_cell_molecule(), "6-31g")
+    options = vq.PeriodicRHFOptions()
+    options.conv_tol_energy = 1e-12
+    options.conv_tol_grad = 1e-10
+    options.lattice_opts.cutoff_bohr = cutoff
+    with pytest.warns(AICCM2026DevBExperimentalWarning):
+        scf = run_aiccm2026dev_b_rhf(
+            system, basis, mesh, options, backend="four_center", progress=False,
+        )
+    assert scf.converged
+    assert scf.resolved_domain.policy == (
+        "historical_index_ball" if historical else "physical_pairs"
+    )
+    localized = localize_aiccm2026dev_b_occupied(scf, system, basis)
+    plan = build_aiccm2026dev_b_symmetry_plan(system, mesh)
+    group = build_aiccm2026dev_b_torus_symmetry_group(system, basis, plan)
+    assert len(group.actions) == 32
+    if not closed:
+        # A small overlap-fold diagnostic is not a bound on occupied leakage.
+        assert scf.overlap_fold_drift < 1e-8
+        with pytest.raises(ValueError, match="does not close"):
+            build_aiccm2026dev_b_occupied_group_witness(group, localized)
+        return
+    assert scf.overlap_fold_drift < 1e-12
+    # No tolerance override: both even and odd meshes must pass the actual
+    # occupied-action, translation and group-law admission checks.
+    witness = build_aiccm2026dev_b_occupied_group_witness(group, localized)
+    assert max(a.closure_residual for a in witness.occupied_actions) < 1e-8
+    assert witness.maximum_translation_residual < 1e-8
+    assert witness.maximum_group_residual < 1e-8
+
+
 def test_occupied_group_physical_half_translation_cocycle() -> None:
     from vibeqc.periodic.chi.localization import localize_aiccm2026dev_b_occupied
 
@@ -2281,7 +2475,7 @@ def test_chi_snapshot_shared_state_bridge_and_whole_group(chi_snapshot_fixture,s
 def test_physical_chi_snapshot_half_translation_group(
     physical_chi_snapshot_fixture, subspace, record_property,
 ):
-    # The opt-in physical finite operator must pass the same sewing, Seitz
+    # The default physical finite operator must pass the same sewing, Seitz
     # cocycle, static-Fock and selected-space checks as the odd legacy mesh.
     # Keep the two-point legacy refusal as a separate negative control.
     case, _ = physical_chi_snapshot_fixture

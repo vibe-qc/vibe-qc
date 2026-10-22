@@ -141,6 +141,27 @@ def test_padded_jk_zone_rejects_zone_at_or_above_cutoff():
         )
 
 
+@pytest.mark.parametrize("zone", [float("nan"), float("inf"), -float("inf"), -1., 0.])
+@pytest.mark.parametrize("physical_pairs", [False, True])
+def test_padded_jk_rejects_invalid_zone_before_domain_build(
+    zone, physical_pairs, monkeypatch,
+):
+    import vibeqc.pbc_bipole_fock as fock
+
+    opts = LatticeSumOptions()
+    opts.cutoff_bohr = 8.0
+    opts.pair_complete_1e = physical_pairs
+
+    def unexpected_domain(*args, **kwargs):
+        pytest.fail("invalid exact zone reached domain construction")
+
+    monkeypatch.setattr(fock, "_sr_padded_lat_opts", unexpected_domain)
+    with pytest.raises(ValueError, match="finite and positive"):
+        fock._sr_image_padded_jk(
+            None, None, opts, None, .5, 12., exact_zone_bohr=zone,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Resolver validation
 # ---------------------------------------------------------------------------

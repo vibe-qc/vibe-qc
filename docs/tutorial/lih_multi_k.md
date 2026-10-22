@@ -1,16 +1,17 @@
 # LiH at multiple k-points: KRHF vs Peintinger 2013
 
 > **Status note (updated v0.12.0).** Native **multi-k GDF** now ships:
-> `run_krhf_periodic_gdf(..., use_compcell=True, exxdiv="ewald")`
+> `run_krhf_periodic_gdf(..., use_compcell=True)`
 > builds the k-dependent GDF `Lpq` via the symmetry-preserving all-FT
 > path resolved per `(k_i, k_j)` pair, reaching **PySCF µHa parity** on
 > the canonical light-atom case (LiH primitive FCC / sto-3g /
 > def2-svp-jk: −1.4 µHa vs `pyscf.pbc.scf.KRHF.density_fit()` at a
 > converged lattice cutoff; +1.6 mHa at the cheaper default cutoff;
 > re-measured 2026-08-05 against PySCF 2.13.1, run out of process).
-> Use `use_compcell=True` for multi-k GDF parity, the
-> `use_compcell=False` default routes multi-k through the Ewald-3D Fock
-> path, which is not yet at parity on tight cells. The pob-TZVP rocksalt
+> Multi-k GDF now always builds this fit: the `use_compcell=False`
+> default is promoted to `use_compcell=True` on every `gdf_method`
+> (since 2026-09-29 also for `"mdf"` and `"compcell"` with a pure
+> functional), so it no longer reaches the Ewald-3D Fock path. The pob-TZVP rocksalt
 > sweep numbers below are **illustrative convergence targets** (not yet
 > measured at this basis); the API and the LiH-FCC/sto-3g parity are
 > shipped.
@@ -35,6 +36,41 @@ SI Table 2.
 for the current GDF API boundary, external-reference policy, and
 native FFTDF/GDF roadmap.
 
+## Background: Bloch sums and k convergence
+
+The [k-point tutorial](kpoints_brillouin_bloch.md) explains what a k-point
+is; this paragraph says why a rocksalt insulator converges the way the sweep
+below shows. In a Gaussian-basis periodic SCF every atom-centred function
+$\chi_\mu$ of the reference cell is replaced by its Bloch sum
+$\phi_\mu^{\mathbf k}(\mathbf r) = \sum_{\mathbf T} e^{i\mathbf k\cdot\mathbf T}\chi_\mu(\mathbf r - \mathbf T)$,
+and the Fock, overlap and density matrices become independent problems at
+each $\mathbf k$ coupled only through the density, which is the
+Brillouin-zone average
+
+$$
+\mathbf D(\mathbf T) = \sum_{\mathbf k} w_{\mathbf k}\, e^{-i\mathbf k\cdot\mathbf T}\,\mathbf D(\mathbf k),
+\qquad \sum_{\mathbf k} w_{\mathbf k} = 1 .
+$$
+
+A Monkhorst-Pack mesh ({vibeqc-cite}`monkhorst_pack_1976`) replaces the
+integral by a uniform $N\times N\times N$ sum, and an $N^3$ mesh is exactly
+equivalent to Born-von Karman periodicity on an $N\times N\times N$ supercell:
+the mesh cannot resolve real-space correlations longer than $N$ cells. For an
+insulator the density matrix $\mathbf D(\mathbf T)$ decays exponentially with
+$|\mathbf T|$ (the decay length is set by the gap), so the error of the
+$N$-point sum also falls off exponentially and a modest $N$ suffices; LiH,
+with its wide gap, is a benign case, which is what makes the sweep from
+$1^3$ to $8^3$ such a clean convergence test. A metal has no gap, the density
+matrix decays only algebraically, and the same sweep would converge as a power
+law and need [smearing](fermi_dirac_smearing.md). The Coulomb term needs
+one extra ingredient at $\mathbf k \neq 0$: the exact-exchange
+$\mathbf q = 0$ singularity is removed with the Ewald probe-charge
+correction ({vibeqc-cite}`gygi_baldereschi_exx_1986`), which the driver
+applies automatically to HF and hybrid exchange (the `exxdiv='ewald'`
+convention of PySCF; the keyword is no longer an argument of
+`run_krhf_periodic_gdf`). Multi-k GDF is a production route
+(see [Methods: theory and status](../methods.md#how-to-read-the-status-labels)).
+
 ## Setup
 
 Build the LiH rocksalt primitive cell at the Peintinger 2013 lattice
@@ -44,7 +80,7 @@ every run on this page:
 ```python
 import vibeqc as vq
 
-# LiH rocksalt — primitive cell. Lattice constant a = 4.084 Å
+# LiH rocksalt, primitive cell. Lattice constant a = 4.084 Å
 # (experimental at 0 K; matches Peintinger 2013 SI).
 a = 4.084 / 0.529177  # Å → bohr
 lih = vq.PeriodicSystem(
@@ -98,8 +134,8 @@ for nk in (1, 2, 4, 8):
         kmesh=(nk, nk, nk),
         options=opts,
         aux_basis="def2-svp-jk",
-        use_compcell=True,        # k-dependent GDF Lpq (per-(k_i,k_j) FT)
-        exxdiv="ewald",           # k-mesh-aware Madelung exchange shift
+        use_compcell=True,        # k-dependent GDF Lpq (per-(k_i,k_j) FT); the
+                                  # k-mesh-aware Madelung exchange shift is automatic
     )
     results[nk] = res.energy_per_cell_ha
     print(f"  [{nk},{nk},{nk}]: E = {res.energy_per_cell_ha:.6f} Ha")
@@ -113,7 +149,7 @@ Illustrative convergence (pob-TZVP rocksalt, targets, not yet measured
 at this basis; the LiH-FCC/sto-3g case is the shipped µHa parity gate):
 
 ```
-  [1,1,1]: E = -8.121... Ha   (Γ-only — too coarse)
+  [1,1,1]: E = -8.121... Ha   (Γ-only, too coarse)
   [2,2,2]: E = -8.144... Ha
   [4,4,4]: E = -8.148... Ha
   [8,8,8]: E = -8.149... Ha   (matches SI to ~mHa)

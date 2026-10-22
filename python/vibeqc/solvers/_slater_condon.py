@@ -678,3 +678,139 @@ def build_hamiltonian_matrix_unrestricted(
                                 H[J, I] = val
 
     return H
+
+
+# -- Sparse assembly from alpha/beta string tables ---------------------------
+
+
+def _spin_string_tables(strings, norb, h1e, h2e_phys):
+    """Single- and double-excitation tables of one spin sector (#326).
+
+    For every string ``s`` of the sector: each single ``i -> a`` whose target
+    is a string of the space, with that target's index, the phase and ``f = h_ia + sum_{k in s} (g_ikak - g_ikka)``; each same-spin
+    double ``i<j -> a<b`` with its target and full element; and the matrix
+    ``C_s[i, a] = sum_{k in s} g_ikak`` an excitation of the *other* sector
+    adds. These are the terms of :func:`_unrestricted_single_excitation` and
+    :func:`double_excitation_matrix_element`, evaluated once per string
+    instead of once per determinant pair.
+    """
+    index = {s: n for n, s in enumerate(strings)}
+    singles = {k: [] for k in ("src", "tgt", "i", "a", "sign", "f")}
+    doubles = {k: [] for k in ("src", "tgt", "val")}
+    coulomb = np.zeros((len(strings), norb, norb))
+    for n, s in enumerate(strings):
+        occ = set(s)
+        arr = np.asarray(s, dtype=np.intp)
+        vir = sorted(set(range(norb)) - occ)
+        coulomb[n] = h2e_phys[:, arr, :, arr].sum(axis=0)
+        for i in s:
+            for a in vir:
+                tgt = index.get(tuple(sorted((occ - {i}) | {a})), -1)
+                if tgt < 0:
+                    continue
+                singles["src"].append(n)
+                singles["tgt"].append(tgt)
+                singles["i"].append(i)
+                singles["a"].append(a)
+                singles["sign"].append(_phase_factor(s, [(i, a)]))
+                singles["f"].append(h1e[i, a] + float(
+                    np.sum(h2e_phys[i, arr, a, arr] - h2e_phys[i, arr, arr, a])))
+        for x in range(len(s)):
+            for y in range(x + 1, len(s)):
+                i, j = s[x], s[y]
+                for p in range(len(vir)):
+                    for q in range(p + 1, len(vir)):
+                        a, b = vir[p], vir[q]
+                        tgt = index.get(tuple(sorted((occ - {i, j}) | {a, b})), -1)
+                        if tgt < 0:
+                            continue
+                        doubles["src"].append(n)
+                        doubles["tgt"].append(tgt)
+                        doubles["val"].append(
+                            _phase_factor(s, [(i, a), (j, b)])
+                            * (h2e_phys[i, j, a, b] - h2e_phys[i, j, b, a]))
+    singles = {k: np.asarray(v, dtype=float if k in ("sign", "f") else np.intp)
+               for k, v in singles.items()}
+    doubles = {k: np.asarray(v, dtype=float if k == "val" else np.intp)
+               for k, v in doubles.items()}
+    return singles, doubles, coulomb
+
+
+def build_hamiltonian_sparse_unrestricted(
+    det_list: list[SpinDet],
+    h1e: np.ndarray,
+    h2e_phys: np.ndarray,
+):
+    """The matrix of :func:`build_hamiltonian_matrix_unrestricted`, sparse (#326).
+
+    Same Slater-Condon elements, same phases and the same ket convention (the
+    lower-index determinant of each connected pair), assembled from per-string
+    excitation tables of the alpha and beta sectors (Helgaker, Jorgensen &
+    Olsen, Sec. 11.8.1) instead of a Python loop over every determinant and
+    its excitations, and returned as a ``scipy.sparse.csr_matrix``. The dense
+    builder needs ``ndet**2`` floats; a MR-CISD space of 2.6e4 determinants
+    is 5.4 GB dense and a few hundred MB here.
+    """
+    from scipy.sparse import coo_matrix
+
+    ndet = len(det_list)
+    norb = h1e.shape[0]
+    a_strings = sorted({a for a, _ in det_list})
+    b_strings = sorted({b for _, b in det_list})
+    a_index = {s: n for n, s in enumerate(a_strings)}
+    b_index = {s: n for n, s in enumerate(b_strings)}
+    lookup = np.full((len(a_strings), len(b_strings)), -1, dtype=np.intp)
+    for n, (a, b) in enumerate(det_list):
+        lookup[a_index[a], b_index[b]] = n
+    a1, a2, a_coul = _spin_string_tables(a_strings, norb, h1e, h2e_phys)
+    b1, b2, b_coul = _spin_string_tables(b_strings, norb, h1e, h2e_phys)
+
+    rows, cols, vals = [], [], []
+
+    def keep(ket, bra, val):
+        mask = (ket >= 0) & (bra > ket) & (np.abs(val) > 1e-16)
+        rows.append(ket[mask]); cols.append(bra[mask]); vals.append(val[mask])
+
+    a1_ok, a2_ok = a1["tgt"] >= 0, a2["tgt"] >= 0
+    b1_ok, b2_ok = b1["tgt"] >= 0, b2["tgt"] >= 0
+    # One sector excited, the other a spectator.
+    for nb in range(len(b_strings)):
+        column = lookup[:, nb]
+        src, tgt = a1["src"][a1_ok], a1["tgt"][a1_ok]
+        f = a1["f"][a1_ok] + b_coul[nb][a1["i"][a1_ok], a1["a"][a1_ok]]
+        keep(column[src], column[tgt], a1["sign"][a1_ok] * f)
+        keep(column[a2["src"][a2_ok]], column[a2["tgt"][a2_ok]], a2["val"][a2_ok])
+    for na in range(len(a_strings)):
+        row = lookup[na, :]
+        src, tgt = b1["src"][b1_ok], b1["tgt"][b1_ok]
+        f = b1["f"][b1_ok] + a_coul[na][b1["i"][b1_ok], b1["a"][b1_ok]]
+        keep(row[src], row[tgt], b1["sign"][b1_ok] * f)
+        keep(row[b2["src"][b2_ok]], row[b2["tgt"][b2_ok]], b2["val"][b2_ok])
+    # One alpha and one beta electron excited: sign_a sign_b g_{i j a b}.
+    b_by_src = np.flatnonzero(b1_ok)
+    b_by_src = b_by_src[np.argsort(b1["src"][b_by_src], kind="stable")]
+    b_starts = np.searchsorted(b1["src"][b_by_src], np.arange(len(b_strings) + 1))
+    for na in range(len(a_strings)):
+        ka = np.flatnonzero((a1["src"] == na) & a1_ok)
+        betas = np.flatnonzero(lookup[na, :] >= 0)
+        if not len(ka) or not len(betas):
+            continue
+        rb = np.concatenate([b_by_src[b_starts[u]:b_starts[u + 1]] for u in betas])
+        if not len(rb):
+            continue
+        ket = lookup[na, b1["src"][rb]][None, :].repeat(len(ka), axis=0)
+        bra = lookup[a1["tgt"][ka][:, None], b1["tgt"][rb][None, :]]
+        val = (a1["sign"][ka][:, None] * b1["sign"][rb][None, :]) * h2e_phys[
+            a1["i"][ka][:, None], b1["i"][rb][None, :],
+            a1["a"][ka][:, None], b1["a"][rb][None, :]]
+        keep(ket.ravel(), bra.ravel(), val.ravel())
+
+    upper_r = np.concatenate(rows) if rows else np.zeros(0, dtype=np.intp)
+    upper_c = np.concatenate(cols) if cols else np.zeros(0, dtype=np.intp)
+    upper_v = np.concatenate(vals) if vals else np.zeros(0)
+    diag = batch_diagonal_elements_unrestricted(det_list, h1e, h2e_phys)
+    idx = np.arange(ndet)
+    return coo_matrix(
+        (np.concatenate([upper_v, upper_v, diag]),
+         (np.concatenate([upper_r, upper_c, idx]), np.concatenate([upper_c, upper_r, idx]))),
+        shape=(ndet, ndet)).tocsr()

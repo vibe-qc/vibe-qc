@@ -500,7 +500,7 @@ class TestCapabilityFlags:
     def test_dense_capabilities(self) -> None:
         s = DenseSolver()
         assert s.supports_extremal is True
-        assert s.supports_interior is False
+        assert s.supports_interior is True
         assert s.supports_generalized is False
         assert s.supports_block is False
         assert s.supports_matrix_free is False
@@ -692,9 +692,9 @@ class TestErrorHandling:
     def test_interior_without_capable_solver_raises(self) -> None:
         inner = EigenProblem(matrix=np.eye(8), n=8)
         iep = InteriorEigenProblem(problem=inner, sigma=3.0)
-        # dense does not support interior
+        # Davidson does not support interior
         with pytest.raises(NotImplementedError, match="interior"):
-            solve_eigenproblem(iep, solver="dense")
+            solve_eigenproblem(iep, solver="davidson")
 
 
 # ===========================================================================
@@ -847,7 +847,7 @@ class TestEigenvectorRecycling:
         assert np.allclose(result_warm.eigenvalues, ref, atol=1e-8)
 
     def test_scf_step_prev_C_warm_start_dense(self) -> None:
-        """SCFStep with prev_C provides warm-start guess for dense solver."""
+        """SCFStep refuses a warm-start request that dense cannot use."""
         rng = np.random.default_rng(52)
         n = 10
         F = _fock_like(n, rng)
@@ -864,10 +864,8 @@ class TestEigenvectorRecycling:
 
         # SCFStep with prev_C
         step = SCFStep(fock=F, X=X, n_occ=4, prev_C=ref_C.copy())
-        result = solve_scf_step(
-            step, SolverOptions(n_roots=4, tol=1e-12), solver="dense"
-        )
-        assert np.allclose(result.eigenvalues, ref_eigs[:4], atol=1e-10)
+        with pytest.raises(NotImplementedError, match="warm starts"):
+            solve_scf_step(step, SolverOptions(n_roots=4, tol=1e-12), solver="dense")
 
     def test_lanczos_warm_start_reduces_iterations(self) -> None:
         """Warm-start with guess_vectors reduces Lanczos iterations."""
@@ -1202,8 +1200,76 @@ class TestInteriorEigenProblemDispatch:
     """InteriorEigenProblem correctly plumbs sigma to solvers."""
 
     N = 20
-    N_ROOTS = 5  # GPLHR needs enough subspace to find interior pairs
+    N_ROOTS = 5
     SIGMA = 50.0
+
+    @pytest.mark.parametrize("solver", ["jd", "gplhr"])
+    @pytest.mark.parametrize("coupling", [0.01, 0.05])
+    def test_single_interior_root_with_couplings(self, solver, coupling) -> None:
+        """One root must survive restarts and converge nearest the shift."""
+        pytest.importorskip("vibeqc._vibeqc_core")
+        n = 60
+        rng = np.random.default_rng(42)
+        upper = np.triu(rng.normal(scale=coupling, size=(n, n)), 1)
+        matrix = np.diag(np.linspace(-2.0, 3.0, n)) + upper + upper.T
+        sigma = 0.4248
+        spectrum = np.linalg.eigvalsh(matrix)
+        reference = spectrum[np.argmin(np.abs(spectrum - sigma))]
+        problem = InteriorEigenProblem(EigenProblem(matrix=matrix), sigma)
+        options = SolverOptions(n_roots=1, tol=1e-8, max_iter=500)
+
+        result = solve_eigenproblem(problem, options, solver=solver)
+
+        assert result.converged
+        assert result.eigenvalues.shape == (1,)
+        assert result.eigenvectors.shape == (n, 1)
+        np.testing.assert_allclose(result.eigenvalues, [reference], atol=1e-8, rtol=0)
+        np.testing.assert_allclose(
+            result.eigenvectors.T @ result.eigenvectors, np.eye(1), atol=1e-10
+        )
+        residual = matrix @ result.eigenvectors - result.eigenvectors * result.eigenvalues
+        assert np.linalg.norm(residual) < options.tol
+        if solver == "gplhr":
+            np.testing.assert_allclose(result.residuals, [np.linalg.norm(residual)])
+
+    def test_gplhr_nonconvergence_raises(self) -> None:
+        """Exhausting GPLHR must not return plausible but unconverged roots."""
+        pytest.importorskip("vibeqc._vibeqc_core")
+        rng = np.random.default_rng(42)
+        upper = np.triu(rng.normal(scale=0.01, size=(60, 60)), 1)
+        matrix = np.diag(np.linspace(-2.0, 3.0, 60)) + upper + upper.T
+        problem = InteriorEigenProblem(EigenProblem(matrix=matrix), sigma=0.4248)
+        with pytest.raises(RuntimeError, match="GPLHR did not converge.*solver='jd'"):
+            solve_eigenproblem(
+                problem,
+                SolverOptions(n_roots=1, tol=1e-8, max_iter=1),
+                solver="gplhr",
+            )
+
+    @pytest.mark.parametrize(
+        "overrides, message",
+        [
+            ({"n_roots": 21}, "n_eig"),
+            ({"max_iter": 0}, "max_iter"),
+            ({"max_subspace": 1}, "max_subspace"),
+            ({"preshift": -1.0}, "preshift"),
+        ],
+    )
+    def test_gplhr_invalid_dimensions_or_budget(self, overrides, message) -> None:
+        """Invalid requests must not reach uninitialized/out-of-bounds results."""
+        pytest.importorskip("vibeqc._vibeqc_core")
+        problem = InteriorEigenProblem(EigenProblem(matrix=np.eye(20)), sigma=0.4)
+        options = {"n_roots": 1, **overrides}
+        with pytest.raises(ValueError, match=message):
+            solve_eigenproblem(problem, SolverOptions(**options), solver="gplhr")
+
+    def test_gplhr_singular_shift_does_not_return_a_neighbour(self) -> None:
+        """Do not discard a 0/0 harmonic value and claim the next root."""
+        pytest.importorskip("vibeqc._vibeqc_core")
+        matrix = np.diag([-2.0, -1.0, 0.4248, 1.0, 2.0])
+        problem = InteriorEigenProblem(EigenProblem(matrix=matrix), sigma=0.4248)
+        with pytest.raises(RuntimeError, match="singular harmonic Ritz pencil"):
+            solve_eigenproblem(problem, SolverOptions(n_roots=1), solver="gplhr")
 
     @pytest.fixture(scope="class")
     @classmethod
@@ -1223,6 +1289,16 @@ class TestInteriorEigenProblemDispatch:
         result = solve_eigenproblem(iep, opts, solver="gplhr")
         assert result.converged
         assert len(result.eigenvalues) == self.N_ROOTS
+        spectrum = np.linalg.eigvalsh(fock_matrix)
+        nearest = spectrum[np.argsort(np.abs(spectrum - self.SIGMA))[: self.N_ROOTS]]
+        np.testing.assert_allclose(
+            np.sort(result.eigenvalues), np.sort(nearest), atol=1e-6, rtol=0
+        )
+        np.testing.assert_allclose(
+            result.eigenvectors.T @ result.eigenvectors,
+            np.eye(self.N_ROOTS),
+            atol=1e-6,
+        )
 
     def test_jd_via_interior_problem(self, fock_matrix) -> None:
         """JD invoked via InteriorEigenProblem finds eigenvalues near sigma."""
@@ -1243,4 +1319,4 @@ class TestInteriorEigenProblemDispatch:
         inner = EigenProblem(matrix=fock_matrix, n=8)
         iep = InteriorEigenProblem(problem=inner, sigma=3.0)
         with pytest.raises(NotImplementedError, match="interior"):
-            solve_eigenproblem(iep, solver="dense")
+            solve_eigenproblem(iep, solver="davidson")

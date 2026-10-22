@@ -7,9 +7,22 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <filesystem>
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+// <libint2/config.h> must belong to the libint that is linked, as xc.cpp
+// checks for libxc (vibe-qc #461).
+#if defined(VIBEQC_LINKED_LIBINT_VERSION_MAJOR)
+static_assert(LIBINT_MAJOR_VERSION == VIBEQC_LINKED_LIBINT_VERSION_MAJOR &&
+                  LIBINT_MINOR_VERSION == VIBEQC_LINKED_LIBINT_VERSION_MINOR &&
+                  LIBINT_MICRO_VERSION == VIBEQC_LINKED_LIBINT_VERSION_PATCH,
+              "<libint2/config.h> is not the header of the libint being "
+              "linked. Another libint precedes the selected one on the "
+              "include path: check CPATH and any -I in CXXFLAGS or "
+              "CMAKE_CXX_FLAGS.");
+#endif
 
 namespace {
 
@@ -18,6 +31,42 @@ std::string to_lower(std::string s) {
                    [](unsigned char c) { return std::tolower(c); });
     return s;
 }
+
+std::string trim(const std::string& s) {
+    const auto first = std::find_if_not(
+        s.begin(), s.end(), [](unsigned char c) { return std::isspace(c); });
+    const auto last = std::find_if_not(
+        s.rbegin(), s.rend(), [](unsigned char c) { return std::isspace(c); });
+    if (first == s.end()) return {};
+    return std::string(first, last.base());
+}
+
+// The directory libint2::BasisSet reads ``<name>.g94`` from. libint's own
+// resolver (BasisSet::data_path) is private, so this mirrors it for the one
+// case vibe-qc relies on: $LIBINT_DATA_PATH, trying ``<path>/basis`` first
+// and then ``<path>``. vibeqc/__init__.py always sets the variable to the
+// bundled library. Unset, this returns empty and callers leave the name to
+// libint unchanged.
+std::string libint_basis_dir() {
+    const char* env = std::getenv("LIBINT_DATA_PATH");
+    if (!env || !*env) return {};
+    std::error_code ec;
+    const std::filesystem::path root(env);
+    if (std::filesystem::is_directory(root / "basis", ec)) {
+        return (root / "basis").string();
+    }
+    if (std::filesystem::is_directory(root, ec)) return root.string();
+    return {};
+}
+
+bool is_regular_file(const std::string& path) {
+    std::error_code ec;
+    return std::filesystem::is_regular_file(path, ec);
+}
+
+}  // namespace
+
+namespace vibeqc {
 
 std::string basis_lookup_key(const std::string& name) {
     std::string key;
@@ -33,17 +82,18 @@ std::string basis_lookup_key(const std::string& name) {
 }
 
 std::string basis_data_name(const std::string& basis_name) {
-    // Alias resolution for the *file* libint opens. This must agree with
-    // vibeqc.basis_registry.canonical_basis_name, which resolves the same
-    // spellings for metadata; the two used to disagree, so a name the
-    // registry knew (``sto3g``) still failed in BasisSet because this
-    // returned it verbatim (#743). tests/test_basis_alias_parity.py pins
-    // the agreement, so an alias added to registry.toml without a line
-    // here fails rather than drifting.
+    // THE basis-name resolver. BasisSet, the SAD atomic guess and (through
+    // the binding) vibeqc.basis_registry.canonical_basis_name all call this
+    // one function, so the file libint opens and the name the registry keys
+    // its metadata on cannot drift apart. They used to be two
+    // implementations with different normalisation: first ``sto3g`` failed
+    // here while the registry knew it (#743), then ``631gd``, ``sto_3g`` and
+    // ``6-31G(d, p)`` loaded here while the registry called them "unknown"
+    // (#30). tests/test_basis_alias_parity.py pins the agreement.
     //
-    // basis_lookup_key strips punctuation and case, so one entry covers
-    // every spelling of a name: "6-311+G(3df,2p)", "6311+g3df2p" and
-    // "6-311+g3df2p" share a key.
+    // basis_lookup_key strips punctuation, whitespace and case, so one entry
+    // covers every spelling of a name: "6-311+G(3df,2p)", "6311+g3df2p" and
+    // "6-311+G(3df, 2p)" share a key.
     const std::string key = basis_lookup_key(basis_name);
 
     // Punctuated spellings whose file ships under a different stem.
@@ -63,8 +113,51 @@ std::string basis_data_name(const std::string& basis_name) {
     // missing stem would only relabel the failure. They keep the plain
     // lowercase path and fail naming what the user asked for.
 
-    return to_lower(basis_name);
+    return to_lower(trim(basis_name));
 }
+
+std::string basis_data_file(const std::string& data_name) {
+    const std::string dir = libint_basis_dir();
+    if (dir.empty() || data_name.empty()) return {};
+    const std::string path =
+        (std::filesystem::path(dir) / (data_name + ".g94")).string();
+    return is_regular_file(path) ? path : std::string{};
+}
+
+libint2::BasisSet load_named_libint_basis(
+    const std::string& data_name, const std::vector<libint2::Atom>& atoms) {
+    // libint2::BasisSet(name, atoms) splits every name that starts with
+    // "aug-cc-pv" (except the -cabs sets) into the parent set plus an
+    // "augmentation-<parent>" file (decompose_name_into_components in
+    // libint2/basis.h), and a missing component file reads as empty. The
+    // library ships augmentation- files only for aug-cc-pV{D..7}Z and their
+    // -jkfit / -ri fits. Every other aug-cc-pv* set ships whole under its
+    // own name (the 4 aug-cc-pVnZ-PP sets, their -PP-RIFIT fits, the
+    // aug-cc-pVnZ-RIFIT fits, aug-cc-pV(n+d)Z), and before #30 each of them
+    // silently loaded its parent set with no diffuse shells. "aug-" is the
+    // parent plus one diffuse shell per angular momentum (Kendall, Dunning,
+    // Harrison, J. Chem. Phys. 96, 6796 (1992)), so the whole file is the
+    // authority: when it exists, read it directly.
+    const bool libint_would_split =
+        data_name.rfind("aug-cc-pv", 0) == 0 &&
+        data_name.find("cabs") == std::string::npos;
+    if (libint_would_split) {
+        const std::string own = basis_data_file(data_name);
+        if (!own.empty()) {
+            // The Gaussian Cartesian-d convention libint applies by name is
+            // false for every aug-cc-* name, and vibe-qc forces pure shells
+            // afterwards regardless.
+            const auto per_element = libint2::BasisSet::read_g94_basis_library(
+                own, /*force_cartesian_d=*/false, /*throw_if_missing=*/true);
+            return libint2::BasisSet(atoms, per_element, data_name);
+        }
+    }
+    return libint2::BasisSet(data_name, atoms);
+}
+
+}  // namespace vibeqc
+
+namespace {
 
 std::vector<libint2::Atom> to_libint_atoms(const vibeqc::Molecule& mol) {
     std::vector<libint2::Atom> atoms;
@@ -101,7 +194,7 @@ libint2::BasisSet make_libint_basis(const std::string& name_lower,
                                     const std::string& original_name) {
     vibeqc::ensure_libint_initialized();
     try {
-        return libint2::BasisSet(name_lower, atoms);
+        return vibeqc::load_named_libint_basis(name_lower, atoms);
     } catch (const std::exception& e) {
         const char* env = std::getenv("LIBINT_DATA_PATH");
         throw std::runtime_error(
@@ -112,6 +205,23 @@ libint2::BasisSet make_libint_basis(const std::string& name_lower,
             "BSE-canonical form), or place a custom .g94 file under "
             "basis_library/custom/ and rerun scripts/setup_basis_library.sh.");
     }
+}
+
+[[noreturn]] void throw_uncovered_elements(const std::string& basis_name,
+                                           const std::vector<int>& zs) {
+    std::string listed;
+    for (int z : zs) {
+        if (!listed.empty()) listed += ", ";
+        listed += "Z=" + std::to_string(z);
+    }
+    throw std::runtime_error(
+        "BasisSet: basis '" + basis_name + "' has no functions for " +
+        listed + ": the bundled file carries no block for this "
+        "element, so the atom would enter the calculation with zero "
+        "basis functions. Choose a basis that covers every element "
+        "(see python/vibeqc/basis_library/basis/), or place a block "
+        "under basis_library/custom/ and rerun "
+        "scripts/setup_basis_library.sh.");
 }
 
 // Map each shell to its owning atom index by matching the shell's origin
@@ -150,7 +260,7 @@ namespace vibeqc {
 
 BasisSet::BasisSet(const Molecule& mol, const std::string& basis_name,
                    bool require_all_atoms)
-    : shells_(make_libint_basis(basis_data_name(basis_name),
+    : shells_(make_libint_basis(vibeqc::basis_data_name(basis_name),
                                 to_libint_atoms(mol),
                                 basis_name)),
       name_(basis_name) {
@@ -159,6 +269,20 @@ BasisSet::BasisSet(const Molecule& mol, const std::string& basis_name,
     // evaluators, SCF) then dereferences empty containers and segfaults.
     // Reject the empty case up front with a helpful message instead.
     if (shells_.size() == 0 || shells_.nbf() == 0) {
+        // The file exists but carries no block for any of these elements
+        // (one K atom in def2-SV, which ships H-Ar only). Say that, per
+        // element, as the coverage guard below does for a partly covered
+        // molecule, instead of claiming the file is missing (#30).
+        if (!basis_data_file(basis_data_name(basis_name)).empty()) {
+            std::vector<int> zs;
+            for (const auto& atom : mol.atoms()) {
+                if (atom.Z > 0 &&
+                    std::find(zs.begin(), zs.end(), atom.Z) == zs.end()) {
+                    zs.push_back(atom.Z);
+                }
+            }
+            if (!zs.empty()) throw_uncovered_elements(basis_name, zs);
+        }
         throw std::runtime_error(
             "BasisSet: no shells loaded for basis '" + basis_name +
             "'. libint2's data directory does not contain a matching "
@@ -214,21 +338,7 @@ BasisSet::BasisSet(const Molecule& mol, const std::string& basis_name,
                 missing_z.push_back(atoms[a].Z);
             }
         }
-        if (!missing_z.empty()) {
-            std::string listed;
-            for (int z : missing_z) {
-                if (!listed.empty()) listed += ", ";
-                listed += "Z=" + std::to_string(z);
-            }
-            throw std::runtime_error(
-                "BasisSet: basis '" + basis_name + "' has no functions for " +
-                listed + ": the bundled file carries no block for this "
-                "element, so the atom would enter the calculation with zero "
-                "basis functions. Choose a basis that covers every element "
-                "(see python/vibeqc/basis_library/basis/), or place a block "
-                "under basis_library/custom/ and rerun "
-                "scripts/setup_basis_library.sh.");
-        }
+        if (!missing_z.empty()) throw_uncovered_elements(basis_name, missing_z);
     }
 }
 

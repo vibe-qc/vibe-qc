@@ -28,8 +28,8 @@ at Γ-only sampling the density matrix couples *all* cell pairs, so the
 GDF K contains long-range exchange classes (triple lattice sum /
 Ewald-resummed) that no finite single sum reproduces.  Closing that gap
 needs the cell-pair double-sum COSX kernel (vs the direct-ERI
-reference) and/or the multi-k / divergence-corrected treatment — see
-handovers/HANDOVER_RIJCOSX_M3A.md § "M3a measured outcome" for the full analysis.
+reference) and/or the multi-k / divergence-corrected treatment.
+
 
 Status by test:
   test_rijcosx_pbc_molecular_limit_h2    — PASS: RIJCOSX vs GDF on
@@ -60,7 +60,7 @@ M3b-1 (cell-pair double-sum kernel, ``compute_cosx_k_cell_pair``):
   the direct-ERI ``build_jk_gamma_molecular_limit`` K — evaluated
   seminumerically with per-bra-cell shifted AOs and per-relative-shift
   (δ = g − p) analytic A-blocks. This is the engine for multi-k
-  periodic COSX (handovers/HANDOVER_RIJCOSX_M3A.md § "M3b direction").
+  periodic COSX (M3b direction).
 
   test_cosx_cell_pair_vacuum_reduces_to_molecular — PASS: home-only
     cell list reproduces the molecular ``compute_cosx_k``.
@@ -145,7 +145,7 @@ from vibeqc import (
     build_grid,
 )
 from vibeqc import _vibeqc_core as core
-from vibeqc.aux_basis import build_lpq_compcell, make_aux_basis_set
+from vibeqc.aux_basis import build_lpq_native_fft, make_aux_basis_set, make_modrho_aux_basis
 from vibeqc.pbc_gdf import _build_j_from_lpq, _build_k_from_lpq, run_pbc_gdf_rhf
 from vibeqc.periodic_rijcosx import run_periodic_rijcosx_rhf
 
@@ -472,6 +472,20 @@ def test_rijcosx_pbc_runner_single_k_rks_fails_closed(tmp_path):
         )
 
 
+def _tight_chain_lpq(sys, basis, mol):
+    """The Lpq the tight-cell RIJCOSX path builds by default.
+
+    These tests pin the J/K builders' contraction of a given Lpq, not the
+    fit. They used a compcell Lpq, whose single-image three-centre block
+    the 4-bohr chain violates, and which now refuses the cell (#172).
+    """
+    aux = make_aux_basis_set(mol, aux_name="def2-universal-jkfit")
+    return np.asarray(build_lpq_native_fft(
+        sys, basis, make_modrho_aux_basis(aux, mol), ke_cutoff=200.0,
+        lat_opts=LatticeSumOptions(), linear_dep_thr=1e-9,
+    ))
+
+
 def test_rijcosx_pbc_tight_j_parity():
     """M3: RIJCOSX J matches GDF J to machine precision on a tight cell.
 
@@ -482,15 +496,14 @@ def test_rijcosx_pbc_tight_j_parity():
     """
     sys, basis, mol = _h_chain()
 
-    aux = make_aux_basis_set(mol, aux_name="def2-universal-jkfit")
-    Lpq = build_lpq_compcell(sys, basis, aux, molecule=mol, linear_dep_thr=1e-9)
+    Lpq = _tight_chain_lpq(sys, basis, mol)
 
     # Get a converged density from the RIJCOSX SCF.
     result = run_periodic_rijcosx_rhf(
         sys,
         basis,
         aux_basis="def2-universal-jkfit",
-        gdf_method="compcell",
+        gdf_method="rsgdf",
         tight_cell=True,
     )
     assert result.converged
@@ -509,6 +522,82 @@ def test_rijcosx_pbc_tight_j_parity():
 
     delta = np.linalg.norm(J_py - J_cpp)
     assert delta < 1e-12, f"RIJCOSX J vs Python J: ||ΔJ|| = {delta:.3e} > 1e-12"
+
+
+def _mg_fcc() -> tuple:
+    """One-atom Mg fcc, a = 4.51 Angstrom (155 bohr^3): the #555 dense cell."""
+    a = 4.51 * 1.8897261246257702
+    lat = np.array([[0, a/2, a/2], [a/2, 0, a/2], [a/2, a/2, 0]])
+    cell = PeriodicSystem(3, lat, [Atom(12, [0, 0, 0])], 0, 1)
+    return cell, BasisSet(cell.unit_cell_molecule(), "sto-3g")
+
+
+def test_tight_cosx_exchange_has_no_cutoff_limit_in_a_dense_cell(record_property):
+    """#555: at one Gamma point the exchange hole meets its own images like
+    1/|g|, and the tight-cell K sums that class with no G=0 treatment, so in
+    a 3-D cell it grows like R^2 with the cutoff. Measured at the molecular
+    Mg/STO-3G density: -16.20 Ha with no image (6 bohr), -42.39 at 12 bohr,
+    -59.48 at the 15-bohr default."""
+    import vibeqc.periodic_rijcosx as rx
+
+    cell, basis = _mg_fcc()
+    mol = cell.unit_cell_molecule()
+    density = np.asarray(vq.run_rhf(mol, BasisSet(mol, "sto-3g"), vq.RHFOptions()).density)
+    lpq = np.zeros((1, basis.nbasis, basis.nbasis))
+    exchange = {}
+    for cutoff in (6.0, 12.0):
+        lo = rx._clone_lat_opts(LatticeSumOptions(), cutoff_bohr=cutoff)
+        jk = core.make_periodic_tight_cosx_jk_builder(basis, lpq, cell, lo, core.GridOptions())
+        exchange[cutoff] = -0.25 * float(np.sum(density * np.asarray(jk.build_K(density))))
+        record_property(f"exchange_energy_{cutoff:g}_bohr", exchange[cutoff])
+    assert rx._exchange_image_rank(cell, rx._clone_lat_opts(LatticeSumOptions(), cutoff_bohr=6.0)) == 0
+    assert exchange[6.0] == pytest.approx(-16.2, abs=0.1)
+    assert exchange[12.0] < exchange[6.0] - 20.0
+
+
+def test_rijcosx_gamma_dense_cell_refuses_divergent_exchange(tmp_path):
+    """#555: the issue's reproducer converged to -275.97 Ha (a free Mg atom is
+    about -199.6 Ha). The image cells span three directions, so the driver
+    and the one-point public route refuse before any integrals."""
+    import vibeqc.periodic_rijcosx as rx
+    from vibeqc.periodic_runner import run_periodic_job
+
+    cell, basis = _mg_fcc()
+    chain, _, _ = _h_chain()
+    assert rx._exchange_image_rank(cell, LatticeSumOptions()) == 3
+    assert rx._exchange_image_rank(chain, LatticeSumOptions()) == 1
+    with pytest.raises(NotImplementedError, match="grows without limit"):
+        run_periodic_rijcosx_rhf(cell, basis, PeriodicRHFOptions(),
+                                 aux_basis="def2-svp-jk", progress=False)
+    with pytest.raises(NotImplementedError, match="k mesh of at least two points"):
+        run_periodic_job(
+            cell, basis, method="RHF", jk_method="rijcosx", kpoints=(1, 1, 1),
+            aux_basis="def2-svp-jk", output=tmp_path / "mg_rijcosx_gamma",
+            write_molden_file=False, write_xyz_file=False,
+            write_xsf_structure_file=False, write_cif_file=False,
+            write_population_file=False, output_qvf=False, citations=False,
+        )
+
+
+@pytest.mark.parametrize("rank", [0, 1, 2, 3])
+def test_gamma_cosx_refusal_follows_image_rank(rank):
+    """#555 guards both planes and bulk, retaining the finite chain model.
+
+    All cells are nominally 3D: the image domain inside the cutoff, rather
+    than the system's periodicity flag, determines the refusal.
+    """
+    from vibeqc import periodic_rijcosx as rx
+
+    lattice = np.diag([4.0] * rank + [30.0] * (3 - rank))
+    cell = PeriodicSystem(3, lattice, [Atom(2, [0, 0, 0])], 0, 1)
+    lo = LatticeSumOptions()
+    lo.cutoff_bohr = 9.0
+    assert rx._exchange_image_rank(cell, lo) == rank
+    if rank >= 2:
+        with pytest.raises(NotImplementedError, match=f"span {rank} lattice directions"):
+            rx._refuse_divergent_gamma_cosx_exchange(cell, lo, driver="test")
+    else:
+        rx._refuse_divergent_gamma_cosx_exchange(cell, lo, driver="test")
 
 
 def test_rijcosx_pbc_tight_k_image_cells():
@@ -530,10 +619,7 @@ def test_rijcosx_pbc_tight_k_image_cells():
     sys, basis, mol = _h_chain()
     D = np.eye(basis.nbasis)
 
-    aux = make_aux_basis_set(mol, aux_name="def2-universal-jkfit")
-    Lpq = np.ascontiguousarray(
-        build_lpq_compcell(sys, basis, aux, molecule=mol, linear_dep_thr=1e-9)
-    )
+    Lpq = np.ascontiguousarray(_tight_chain_lpq(sys, basis, mol))
 
     assert len(core.direct_lattice_cells(sys, 3.5)) == 1
     assert len(core.direct_lattice_cells(sys, 15.0)) == 7
@@ -1030,15 +1116,11 @@ def test_cosx_k_composed_vs_rsgdf_and_compcell_flag():
        floor (measured ~1e-4 per k). ω-invariance of the composition
        was separately verified at 1e-4 during development.
 
-    2. **Characterisation of a flagged issue (NOT ours):** the
-       compcell Lpq exchange (``build_lpq_bloch_compcell`` — what the
-       ``k_exchange='gdf'`` backend contracts) deviates from BOTH
-       independent routes by ~1.4e-2 at Γ and ~1.5e-1 at the zone
-       edge on this vacuum-padded system (ω-invariant,
-       cell-list-cutoff-invariant). Escalated to the GDF route
-       (handovers/HANDOVER_RIJCOSX_M3A.md § M3b-4b); this assertion documents
-       the symptom per CLAUDE.md §7 and should be FLIPPED when the
-       compcell fix lands.
+    2. **The compcell exchange agrees too.** The compcell Lpq exchange
+       (``build_lpq_bloch_compcell``) deviated from BOTH independent
+       routes by ~1.4e-2 at Γ and ~1.5e-1 at the zone edge on this
+       vacuum-padded system (M3b-4b)
+       until the pair-resolved auxiliary-image sum of #172.
     """
     from vibeqc.aux_basis import (
         build_lpq_bloch_compcell,
@@ -1080,13 +1162,6 @@ def test_cosx_k_composed_vs_rsgdf_and_compcell_flag():
             ke_cutoff=200.0, linear_dep_thr=1e-9,
         )
     )
-    K_cc = k_from_lpq(
-        lambda i, j: build_lpq_bloch_compcell(
-            sys, basis, aux, kpts[j] - kpts[i], molecule=mol,
-            linear_dep_thr=1e-9,
-        )
-    )
-
     bridge = KPointCosxK(basis, sys, omega=0.7)
     K_comp = bridge.k_matrices(D_k, kpts, lr_complement=True)
 
@@ -1100,14 +1175,20 @@ def test_cosx_k_composed_vs_rsgdf_and_compcell_flag():
             f"(measured ~1e-3 at the COSX grid tier)"
         )
 
-    # 2. Flagged compcell deviation (zone-edge k) — documents the
-    #    symptom; flip when the GDF route fixes compcell.
-    zone_edge = np.linalg.norm(K_rs[1] - K_cc[1])
-    assert zone_edge > 0.05, (
-        f"compcell zone-edge deviation vanished ({zone_edge:.2e}) — "
-        "the GDF-route fix may have landed; update this test and the "
-        "k_exchange='cosx' warning + handover § M3b-4b."
+    # 2. The flagged compcell deviation (1.4e-2 at Gamma, 1.5e-1 at the
+    #    zone edge here) was the q-only, single-image compcell block: the
+    #    auxiliary function stayed in the home cell and the ket k point was
+    #    ignored. With the pair-resolved image sum (#172) compcell lands on
+    #    the independent RSGDF exchange.
+    K_cc = k_from_lpq(
+        lambda i, j: build_lpq_bloch_compcell(
+            sys, basis, aux, kpts[j] - kpts[i], molecule=mol,
+            linear_dep_thr=1e-9, k_ket=kpts[j],
+        )
     )
+    for i in range(n_k):
+        delta = np.linalg.norm(K_cc[i] - K_rs[i])
+        assert delta < 1e-4, f"compcell K vs RSGDF K at k[{i}]: {delta:.2e}"
 
 
 def test_cosx_sr_envelope_warning_lih():
@@ -1154,29 +1235,17 @@ def test_cosx_sr_envelope_warning_lih():
     assert bridge_c.sr_cell_cutoff_bohr >= 15.0
 
 
-def test_compcell_q_only_lih_flag():
-    """Characterisation of the flagged compcell q-only limitation on a
-    tight ionic crystal (LiH primitive FCC) — NOT a COSX issue.
+def test_compcell_pair_resolved_lih():
+    """compcell on a tight ionic crystal (LiH primitive FCC) at a q != 0 pair.
 
-    ``build_lpq_bloch_compcell`` is q-resolved only (signature takes
-    the momentum transfer, not (k_bra, k_ket)) — the architecture the
-    RSGDF builder's own docstring warns is "wrong by hundreds of Ha"
-    on tight ionic cells, exact only in the no-inter-cell-overlap
-    limit. Measured SCF consequences (2026-06-10, this is what the
-    ``k_exchange='gdf'`` default contracts):
-
-        LiH/sto-3g compcell (2,2,2): E = −64318 Ha, converged=True (!)
-        LiH/sto-3g compcell (1,1,2): E = +3461 Ha, not converged
-        (physical scale: ≈ −7.9 Ha; the padded-chain zone-edge
-        deviation flagged in § M3b-4b is the MILD form of the same
-        root cause)
-
-    This test pins the symptom at the Lpq level (no SCF): the
-    exchange contraction of the compcell q-only tensor at a q ≠ 0
-    pair deviates from the (k_bra, k_ket)-resolved RSGDF tensor at
-    O(1) relative on LiH. Escalated to the GDF route
-    (handovers/HANDOVER_RIJCOSX_M3A.md § M3b-5); FLIP this assertion when the
-    (k_bra, k_ket)-resolved compcell builder lands.
+    ``build_lpq_bloch_compcell`` used to be q-resolved only and to keep the
+    auxiliary function in the home cell. The measured consequences were
+    LiH/STO-3G compcell (2,2,2) at -64318 Ha with ``converged=True`` and
+    (1,1,2) at +3461 Ha (physical scale about -7.9 Ha), and an O(1)
+    relative deviation of its exchange contraction from the
+    (k_bra, k_ket)-resolved RSGDF tensor at a q != 0 pair. With
+    ``k_ket=`` and the auxiliary-image sum (#172) that deviation is at
+    the level of the two fits' different numerics.
     """
     from vibeqc.aux_basis import (
         build_lpq_bloch_compcell,
@@ -1198,15 +1267,14 @@ def test_compcell_q_only_lih_flag():
     aux_mr = make_modrho_aux_basis(aux, mol)
 
     k0 = np.zeros(3)
-    k1 = np.array([0.0, 0.0, 0.4])  # a generic q ≠ 0 transfer
+    k1 = np.array([0.0, 0.0, 0.4])  # a generic q != 0 transfer
     D = np.eye(basis.nbasis)
 
     L_cc = build_lpq_bloch_compcell(
-        sys_l, basis, aux, k1 - k0, molecule=mol, linear_dep_thr=1e-9
+        sys_l, basis, aux, k1 - k0, molecule=mol, linear_dep_thr=1e-9, k_ket=k1,
     )
     L_rs = build_lpq_bloch_native_fft(
-        sys_l, basis, aux_mr, k0, k1, ke_cutoff=100.0,
-        linear_dep_thr=1e-9,
+        sys_l, basis, aux_mr, k0, k1, ke_cutoff=100.0, linear_dep_thr=1e-9,
     )
 
     def k_contract(L):
@@ -1217,11 +1285,8 @@ def test_compcell_q_only_lih_flag():
     K_cc = k_contract(L_cc)
     K_rs = k_contract(L_rs)
     rel = np.linalg.norm(K_cc - K_rs) / np.linalg.norm(K_rs)
-    assert rel > 0.5, (
-        f"compcell q-only deviation on LiH vanished (rel = {rel:.2e}) "
-        "— the (k_bra, k_ket)-resolved compcell fix may have landed; "
-        "update this test, the k_exchange warning, and the handover."
-    )
+    # Was > 0.5 before #172; 9.0e-3 measured 2026-09-29.
+    assert rel < 2e-2, f"compcell vs RSGDF exchange at a q != 0 pair: rel = {rel:.2e}"
 
 
 # ---------------------------------------------------------------------------
@@ -1497,6 +1562,12 @@ def test_krhf_cosx_one_center_lifecycle(monkeypatch):
     assert res_corr.converged
     assert "C1" in recorded, "converged run never applied the correction"
     C1 = recorded["C1"]
+    assert res_corr.energy_operator == "iterated"
+    assert res_corr.returned_operator == "post-convergence-one-center-corrected"
+    for i in range(len(res_corr.fock)):
+        np.testing.assert_allclose(res_corr.iterated_fock[i], res_plain.fock[i], atol=1e-10, rtol=0)
+        np.testing.assert_allclose(res_corr.iterated_mo_energies[i], res_plain.mo_energies[i], atol=1e-10, rtol=0)
+        assert not np.shares_memory(res_corr.iterated_fock[i], res_corr.fock[i])
     assert np.linalg.norm(C1) > 1e-10
 
     # (1) The energy stays on the uncorrected iterated surface.
@@ -1863,6 +1934,258 @@ def test_rijcosx_gamma_rks_public_route(tmp_path):
         progress=False,
     )
     assert abs(r_pub.energy - r_drv.energy) < 1e-10
+
+
+@pytest.fixture
+def rijcosx_uhf_intent_boundary(monkeypatch):
+    """Exercise the real wrapper and native options, without integral/SCF work."""
+    from types import SimpleNamespace
+
+    import vibeqc.periodic_rijcosx as driver
+
+    record = {}
+    molecule, basis, jk = object(), object(), object()
+    densities = (np.eye(2), np.eye(2))
+    system = SimpleNamespace(unit_cell_molecule=lambda: molecule)
+
+    class NativeBoundaryReached(Exception):
+        pass
+
+    def setup(*args):
+        record["setup"] = True
+        return (
+            molecule, SimpleNamespace(name="boundary"), np.eye(2),
+            np.eye(2), 0.0, None,
+        )
+
+    def seed(*args, **kwargs):
+        record["seed_spins"] = kwargs["atomic_spins"]
+        return densities
+
+    def native(*args, **kwargs):
+        record["native_options"] = args[7]
+        assert args[8] is densities[0] and args[9] is densities[1]
+        raise NativeBoundaryReached
+
+    def selection(system, opts, **kwargs):
+        return SimpleNamespace(
+            requested=opts.initial_guess, effective=vq.InitialGuess.SAD
+        )
+
+    monkeypatch.setattr(driver, "_rijcosx_selection", selection)
+    monkeypatch.setattr(driver, "_spin_counts", lambda *args: (1, 1))
+    monkeypatch.setattr(driver, "_vacuum_envelope_setup", setup)
+    monkeypatch.setattr(driver, "make_periodic_gamma_cosx_jk_builder", lambda *args: jk)
+    monkeypatch.setattr(driver, "_initial_densities_open", seed)
+    monkeypatch.setattr(vq, "run_uhf_scf_with_jk", native)
+
+    def run(opts):
+        with pytest.raises(NativeBoundaryReached):
+            driver.run_periodic_rijcosx_uhf(system, basis, opts, progress=False)
+        return record["native_options"]
+
+    return SimpleNamespace(run=run, record=record)
+
+
+@pytest.mark.parametrize("legacy_options", [False, True], ids=["none", "missing-controls"])
+def test_rijcosx_uhf_spin_intent_defaults(rijcosx_uhf_intent_boundary, legacy_options):
+    """Absent intent controls preserve the ordinary UHF analysis path."""
+    from types import SimpleNamespace
+
+    opts = None
+    if legacy_options:
+        defaults = vq.PeriodicRHFOptions()
+        opts = SimpleNamespace(**{
+            name: getattr(defaults, name)
+            for name in (
+                "initial_guess", "lattice_opts", "max_iter", "conv_tol_energy",
+                "damping", "use_diis", "diis_start_iter", "diis_subspace_size",
+            )
+        })
+    native = rijcosx_uhf_intent_boundary.run(opts)
+    assert native.atomic_spins == []
+    assert native.spinlock_mode == vq.SpinlockMode.OFF
+    assert native.spinlock_iterations == 0
+    assert native.spinlock_value == 0
+    assert native.stability_check
+    assert rijcosx_uhf_intent_boundary.record["seed_spins"] is None
+
+
+@pytest.mark.parametrize("atomic_spins", [[], [1, -1]], ids=["empty", "atomspin"])
+@pytest.mark.parametrize(
+    "mode, iterations, value",
+    [
+        (vq.SpinlockMode.OFF, 0, 0),
+        (vq.SpinlockMode.OFF, 7, 2),
+        (vq.SpinlockMode.PATTERN_HOLD, 0, 2),
+        (vq.SpinlockMode.PATTERN_HOLD, 7, 2),
+        (vq.SpinlockMode.SPIN_SCHEDULE, 0, 2),
+    ],
+    ids=["default", "off", "hold-disabled", "hold", "schedule-disabled"],
+)
+def test_rijcosx_uhf_forwards_spin_intent(
+    rijcosx_uhf_intent_boundary, atomic_spins, mode, iterations, value
+):
+    """The seed and stability/MOM driver must see the same deliberate intent."""
+    opts = vq.PeriodicRHFOptions()
+    opts.atomic_spins = atomic_spins
+    opts.spinlock_mode = mode
+    opts.spinlock_iterations = iterations
+    opts.spinlock_value = value
+
+    native = rijcosx_uhf_intent_boundary.run(opts)
+    assert rijcosx_uhf_intent_boundary.record["seed_spins"] == (atomic_spins or None)
+    assert native.atomic_spins == atomic_spins
+    assert native.spinlock_mode == mode
+    assert native.spinlock_iterations == iterations
+    assert native.spinlock_value == value
+    assert native.initial_guess == opts.initial_guess
+    assert native.stability_check  # Preserve analysis, rather than hiding instability.
+    assert opts.atomic_spins == atomic_spins
+    assert (opts.spinlock_mode, opts.spinlock_iterations, opts.spinlock_value) == (
+        mode, iterations, value
+    )
+
+
+@pytest.mark.parametrize("atomic_spins", [[], [1, -1]], ids=["empty", "atomspin"])
+def test_rijcosx_uhf_rejects_active_spin_schedule_before_setup(
+    rijcosx_uhf_intent_boundary, atomic_spins
+):
+    """A single fixed-population driver cannot silently implement two phases."""
+    opts = vq.PeriodicRHFOptions()
+    opts.atomic_spins = atomic_spins
+    opts.spinlock_mode = vq.SpinlockMode.SPIN_SCHEDULE
+    opts.spinlock_iterations = 7
+    opts.spinlock_value = 2
+    with pytest.raises(NotImplementedError, match="SPIN_SCHEDULE"):
+        rijcosx_uhf_intent_boundary.run(opts)
+    assert not rijcosx_uhf_intent_boundary.record
+
+
+@pytest.fixture
+def rijcosx_uks_intent_boundary(monkeypatch):
+    """Exercise the real wrapper and native options, without integral/SCF work."""
+    from types import SimpleNamespace
+
+    import vibeqc.periodic_rijcosx as driver
+
+    record = {}
+    molecule, basis, jk, xc_grid = object(), object(), object(), object()
+    requested_grid = vq.GridOptions()
+    requested_grid.n_radial = 97
+    densities = (np.eye(2), np.eye(2))
+    system = SimpleNamespace(unit_cell_molecule=lambda: molecule)
+
+    class NativeBoundaryReached(Exception):
+        pass
+
+    def setup(*args):
+        record["setup"] = True
+        return (
+            molecule, SimpleNamespace(name="boundary"), np.eye(2),
+            np.eye(2), 0.0, None,
+        )
+
+    def seed(*args, **kwargs):
+        record["seed_spins"] = kwargs["atomic_spins"]
+        return densities
+
+    def native(*args, **kwargs):
+        record["native_options"] = args[8]
+        assert args[7] is xc_grid
+        assert args[9] is densities[0] and args[10] is densities[1]
+        assert args[1:3] == (1, 1)
+        raise NativeBoundaryReached
+
+    def grid(mol, options):
+        assert mol is molecule
+        record["grid_options"] = options
+        return xc_grid
+
+    def selection(system, opts, **kwargs):
+        return SimpleNamespace(
+            requested=opts.initial_guess, effective=vq.InitialGuess.SAD
+        )
+
+    monkeypatch.setattr(driver, "_rijcosx_selection", selection)
+    monkeypatch.setattr(driver, "_spin_counts", lambda *args: (1, 1))
+    monkeypatch.setattr(driver, "_vacuum_envelope_setup", setup)
+    monkeypatch.setattr(driver, "make_periodic_gamma_cosx_jk_builder", lambda *args: jk)
+    monkeypatch.setattr(driver, "_initial_densities_open", seed)
+    monkeypatch.setattr(vq, "run_uks_scf_with_jk", native)
+    monkeypatch.setattr(vq, "build_grid", grid)
+
+    def run(opts):
+        with pytest.raises(NativeBoundaryReached):
+            driver.run_periodic_rijcosx_uks(
+                system, basis, opts, functional="B3LYP",
+                grid_options=requested_grid, progress=False
+            )
+        assert record["grid_options"] is requested_grid
+        return record["native_options"]
+
+    return SimpleNamespace(run=run, record=record)
+
+
+@pytest.mark.parametrize("atomic_spins", [[], [1, -1]], ids=["empty", "atomspin"])
+@pytest.mark.parametrize(
+    "mode, iterations, value",
+    [
+        (vq.SpinlockMode.OFF, 0, 0),
+        (vq.SpinlockMode.OFF, 7, 2),
+        (vq.SpinlockMode.PATTERN_HOLD, 0, 2),
+        (vq.SpinlockMode.PATTERN_HOLD, 7, 2),
+        (vq.SpinlockMode.SPIN_SCHEDULE, 0, 2),
+    ],
+    ids=["default", "off", "hold-disabled", "hold", "schedule-disabled"],
+)
+def test_rijcosx_uks_forwards_spin_intent(
+    rijcosx_uks_intent_boundary, atomic_spins, mode, iterations, value
+):
+    """The seed and stability/MOM driver must see the same deliberate intent."""
+    opts = vq.PeriodicRHFOptions()
+    opts.atomic_spins = atomic_spins
+    opts.spinlock_mode = mode
+    opts.spinlock_iterations = iterations
+    opts.spinlock_value = value
+
+    opts.max_iter = 73
+    opts.conv_tol_energy = 1e-11
+    opts.conv_tol_grad = 2e-8
+    opts.damping = 0.21
+    opts.diis_start_iter = 3
+    opts.diis_subspace_size = 6
+    native = rijcosx_uks_intent_boundary.run(opts)
+    assert native.functional == "B3LYP"
+    for attr in ("max_iter", "conv_tol_energy", "conv_tol_grad", "damping",
+                 "use_diis", "diis_start_iter", "diis_subspace_size"):
+        assert getattr(native, attr) == getattr(opts, attr)
+    assert rijcosx_uks_intent_boundary.record["seed_spins"] == (atomic_spins or None)
+    assert native.atomic_spins == atomic_spins
+    assert native.spinlock_mode == mode
+    assert native.spinlock_iterations == iterations
+    assert native.spinlock_value == value
+    assert native.initial_guess == opts.initial_guess
+    assert native.stability_check  # Preserve analysis, rather than hiding instability.
+    assert opts.atomic_spins == atomic_spins
+    assert (opts.spinlock_mode, opts.spinlock_iterations, opts.spinlock_value) == (
+        mode, iterations, value
+    )
+
+
+@pytest.mark.parametrize("atomic_spins", [[], [1, -1]], ids=["empty", "atomspin"])
+def test_rijcosx_uks_rejects_active_spin_schedule_before_setup(
+    rijcosx_uks_intent_boundary, atomic_spins
+):
+    """A single fixed-population driver cannot silently implement two phases."""
+    opts = vq.PeriodicRHFOptions()
+    opts.atomic_spins = atomic_spins
+    opts.spinlock_mode = vq.SpinlockMode.SPIN_SCHEDULE
+    opts.spinlock_iterations = 7
+    opts.spinlock_value = 2
+    with pytest.raises(NotImplementedError, match="SPIN_SCHEDULE"):
+        rijcosx_uks_intent_boundary.run(opts)
+    assert not rijcosx_uks_intent_boundary.record
 
 
 def test_rijcosx_gamma_uhf_uks_molecular_limit():

@@ -214,6 +214,7 @@ def run_rhf_periodic_scf(
     linear_dep_threshold: float = 1e-7,
     progress: Union[bool, ProgressLogger, None] = None,
     bz_integration: Optional[str] = None,
+    exchange_exxdiv: Optional[str] = None,
 ):
     """Multi-k periodic closed-shell RHF with Coulomb-method dispatch.
 
@@ -240,6 +241,13 @@ def run_rhf_periodic_scf(
         Ewald-specific parameters. Forwarded to
         :func:`run_rhf_periodic_multi_k_ewald3d` when ``EWALD_3D`` is
         selected; ignored otherwise.
+    exchange_exxdiv
+        The exact-exchange ``q -> 0`` gauge, forwarded to
+        :func:`run_rhf_periodic_multi_k_ewald3d` on ``EWALD_3D``: ``None``
+        (default) is the corrected Ewald split at every mesh, a single Gamma
+        point included (GitLab #23), and ``'none'`` the molecular-limit
+        kernel at a single Gamma point. Refused on the other Coulomb
+        methods, whose exchange kernel it does not select.
 
     Returns
     -------
@@ -274,6 +282,13 @@ def run_rhf_periodic_scf(
         f"run_rhf_periodic_scf  coulomb={method.name if hasattr(method, 'name') else method}"
     )
     smearing_T = _smearing_temperature(options, "run_rhf_periodic_scf")
+    if exchange_exxdiv is not None and method != CoulombMethod.EWALD_3D:
+        raise NotImplementedError(
+            "run_rhf_periodic_scf: exchange_exxdiv selects the EWALD_3D "
+            "exact-exchange gauge; the "
+            f"{method.name if hasattr(method, 'name') else method} route "
+            "has its own kernel and does not take it."
+        )
 
     if method == CoulombMethod.DIRECT_TRUNCATED:
         if smearing_T > 0.0:
@@ -317,6 +332,7 @@ def run_rhf_periodic_scf(
             progress=plog,
             bz_integration=bz_integration,
             initial_density_k=initial_density_k,
+            exchange_exxdiv=exchange_exxdiv,
         )
 
     if method == CoulombMethod.SLAB_EWALD_2D:
@@ -416,6 +432,12 @@ def run_rhf_periodic_gamma_scf(
         if smearing_T > 0.0:
             plog.info("backend: multi-k Gamma EWALD_3D (honours Fermi-Dirac smearing)")
             gamma_mesh = monkhorst_pack(system, [1, 1, 1])
+            # Smearing picks the backend, not the gauge: keep the
+            # molecular-limit exchange of run_rhf_periodic_gamma_ewald3d
+            # below, which the multi-k default no longer is at a single
+            # Gamma point (GitLab #23). Pair-complete one-electron support
+            # needs the periodic density and has always taken the corrected
+            # split here.
             return run_rhf_periodic_multi_k_ewald3d(
                 system,
                 basis,
@@ -427,6 +449,9 @@ def run_rhf_periodic_gamma_scf(
                 spacing_bohr=spacing_bohr,
                 linear_dep_threshold=linear_dep_threshold,
                 progress=plog,
+                exchange_exxdiv=(
+                    None if rhf_opts.lattice_opts.pair_complete_1e else "none"
+                ),
             )
         return run_rhf_periodic_gamma_ewald3d(
             system,

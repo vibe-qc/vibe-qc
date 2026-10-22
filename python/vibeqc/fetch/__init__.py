@@ -20,35 +20,9 @@ from __future__ import annotations
 # Provenance record so downstream readers know which fetcher wrote it.
 __version__ = "0.1.0"
 
-
-def _bootstrap_examples_on_path() -> None:
-    """Add the repo root to ``sys.path`` if running from a dev checkout.
-
-    The fetcher imports schema dataclasses from
-    ``examples.regression.core.spec`` (the canonical home per the
-    design doc). When the user invokes ``vqfetch`` from outside the
-    repo root, ``examples`` won't be discoverable. This bootstrap
-    discovers the repo root by walking up from this file's location
-    and appends it to ``sys.path`` if ``examples/regression/core/spec.py``
-    is present alongside.
-
-    Pure development convenience -- when vibe-qc is eventually shipped
-    from a wheel without the ``examples/`` tree, this is a no-op and
-    the schema move out of ``examples/`` becomes a follow-up.
-    """
-    import sys
-    from pathlib import Path
-
-    here = Path(__file__).resolve()
-    # python/vibeqc/fetch/__init__.py -> repo root is parents[3].
-    repo_root = here.parents[3]
-    spec_module = repo_root / "examples" / "regression" / "core" / "spec.py"
-    if spec_module.is_file() and str(repo_root) not in sys.path:
-        sys.path.insert(0, str(repo_root))
-
-
-_bootstrap_examples_on_path()
-
+# The schema dataclasses come from the top-level ``vibeqc_spec`` package,
+# which the wheel ships, so the fetcher needs no ``examples/`` tree on
+# ``sys.path``.
 
 from .cache import FetchCache, FetchCacheMiss
 from .client_cod import fetch_cod

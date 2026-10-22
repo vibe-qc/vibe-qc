@@ -10,6 +10,7 @@ import pytest
 
 import vibeqc as vq
 from vibeqc import _vibeqc_core as core
+from tests.refusal_receipt import assert_preflight_refusal
 
 
 _NAMES = itertools.count()
@@ -413,13 +414,19 @@ def test_explicit_periodic_density_domain_rejects_unclosed_native_input():
         )
 
 
-def test_external_periodic_all_feature_projection_matches_finite_differences():
+@pytest.mark.parametrize(
+    "spin_channel", [None, "alpha", "beta"],
+    ids=["rks", "uks-alpha", "uks-beta"],
+)
+def test_external_periodic_all_feature_projection_matches_finite_differences(
+    spin_channel,
+):
     name = _external_name(_AllFeatureProvider())
     system, basis, grid, options, home, make_density = _h2_periodic_fixture(
         lattice_length=8.0,
         lattice_cutoff=8.1,
     )
-    func = vq.Functional(name, 1)
+    func = vq.Functional(name, 1 if spin_channel is None else 2)
     template = make_density(np.zeros((basis.nbasis, basis.nbasis)))
     cells = [tuple(np.asarray(cell.index, dtype=int)) for cell in template.cells]
     cell_position = {cell: index for index, cell in enumerate(cells)}
@@ -437,9 +444,27 @@ def test_external_periodic_all_feature_projection_matches_finite_differences():
         non_home: base_cross,
         opposite: base_cross.T,
     }
-    result = vq.build_xc_periodic(
-        basis, system, grid, func, make_density(base_blocks), options
-    )
+
+    def build(blocks):
+        if spin_channel is None:
+            return vq.build_xc_periodic(
+                basis, system, grid, func, make_density(blocks), options
+            )
+        # Unequal spin densities exercise both gradient/tau channels and
+        # the provider's cross-spin terms. Hold the other spin fixed while
+        # differentiating this spin's independent density variable.
+        other = make_density({index: 0.63 * value
+                              for index, value in base_blocks.items()})
+        varied = make_density(blocks)
+        alpha, beta = ((varied, other) if spin_channel == "alpha"
+                       else (other, varied))
+        return vq.build_xc_periodic_uks(
+            basis, system, grid, func, alpha, beta, options
+        )
+
+    result = build(base_blocks)
+    potential = (result.V_xc if spin_channel is None else
+                 result.V_alpha if spin_channel == "alpha" else result.V_beta)
 
     # Perturb only physical real-space density variables: the home block stays
     # symmetric and every +g element is paired with its transpose at -g.
@@ -455,15 +480,11 @@ def test_external_periodic_all_feature_projection_matches_finite_differences():
         for block_index, row, column in probe:
             plus_blocks[block_index][row, column] += step
             minus_blocks[block_index][row, column] -= step
-        e_plus = vq.build_xc_periodic(
-            basis, system, grid, func, make_density(plus_blocks), options
-        ).e_xc
-        e_minus = vq.build_xc_periodic(
-            basis, system, grid, func, make_density(minus_blocks), options
-        ).e_xc
+        e_plus = build(plus_blocks).e_xc
+        e_minus = build(minus_blocks).e_xc
         finite_difference = (e_plus - e_minus) / (2.0 * step)
         projected = sum(
-            np.asarray(result.V_xc.blocks[block_index])[row, column]
+            np.asarray(potential.blocks[block_index])[row, column]
             for block_index, row, column in probe
         )
         assert projected == pytest.approx(
@@ -849,7 +870,38 @@ def test_external_periodic_roks_single_point_fails_closed(tmp_path):
             progress=False,
         )
 
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
+
+
+@pytest.mark.parametrize("method", ["RKS", "UKS"])
+@pytest.mark.parametrize("mesh", [(1, 1, 1), (3, 1, 1)])
+def test_external_bipole_gradient_tolerance_reaches_driver(monkeypatch, tmp_path, method, mesh):
+    import importlib
+
+    provider = _QuadraticNonlocalProvider()
+    name = _external_name(provider)
+    system, basis = _h2_periodic_gate_fixture()
+
+    class ReachedDriver(Exception):
+        pass
+
+    def capture(system_arg, basis_arg, kmesh, options, **kwargs):
+        assert options.conv_tol_grad == 1e-8
+        assert kwargs["functional"] == name
+        assert kwargs["xc_density_domain"] == core.PeriodicXCDensityDomain.PERIODIC_LATTICE
+        assert len(kmesh.kpoints) == np.prod(mesh)
+        raise ReachedDriver
+
+    monkeypatch.setattr(importlib.import_module("vibeqc.pbc_bipole_" + method.lower()),
+                        "run_pbc_bipole_" + method.lower(), capture)
+    with pytest.raises(ReachedDriver):
+        vq.run_periodic_job(
+            system, basis, method=method, functional=name, jk_method="bipole",
+            kpoints=mesh, conv_tol_grad=1e-8, initial_guess="HCORE",
+            output=tmp_path / "external-gradient-control", output_qvf=False,
+            progress=False, citations=False, record_hostname=False,
+        )
+    assert provider.calls == []  # Dispatch control, not a checkpoint calculation.
 
 
 @pytest.mark.parametrize("method", ("RKS", "UKS"))
@@ -927,7 +979,7 @@ def test_external_periodic_gamma_rijcosx_fails_before_dry_run(
             progress=False,
         )
 
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 @pytest.mark.parametrize("method", ("RKS", "UKS"))
@@ -1041,7 +1093,7 @@ def test_external_periodic_chi_fitted_backend_stays_gated(
             **selector,
         )
 
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 @pytest.mark.parametrize(
@@ -1338,7 +1390,7 @@ def test_external_high_level_fitted_routes_reject_non_torus_mesh_before_dry_run(
             progress=False,
         )
 
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 @pytest.mark.parametrize("jk_method", ("gdf", "bipole", "gpw", "gapw"))
@@ -1365,7 +1417,7 @@ def test_external_high_level_positive_smearing_fails_before_dry_run(
         )
 
     assert provider.calls == []
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 @pytest.mark.parametrize("source", ("options", "kpoints"))
@@ -1399,7 +1451,7 @@ def test_external_high_level_effective_smearing_fails_before_dry_run(
         )
 
     assert provider.calls == []
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 @pytest.mark.parametrize("jk_method", ("gpw", "gapw"))
@@ -1528,7 +1580,7 @@ def test_external_selected_route_ecp_rejected_before_dry_run(
             progress=False,
         )
 
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 @pytest.mark.parametrize(
@@ -1568,7 +1620,7 @@ def test_external_ecp_paired_basis_name_rejected_before_dry_run(
             progress=False,
         )
 
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 @pytest.mark.parametrize("spin", (1, 2))
@@ -1623,7 +1675,7 @@ def test_external_periodic_two_dimensional_route_rejected_before_dry_run(
             progress=False,
         )
 
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 @pytest.mark.parametrize("spin", (1, 2))
@@ -2096,7 +2148,7 @@ def test_four_center_external_hybrid_rejected_before_dry_run(tmp_path):
         )
 
     assert provider.calls == []
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 def test_direct_gdf_external_pure_xc_reports_final_hartree_component(monkeypatch):
@@ -2364,4 +2416,100 @@ def test_external_periodic_gpw_rejects_explicit_weighted_list_before_dry_run(
             progress=False,
         )
 
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
+
+
+@pytest.mark.parametrize("spin,beta_scale", [(1, .3), (2, 0.), (2, .3)])
+@pytest.mark.parametrize("mesh,shift", [((1, 1, 1), (0, 0, 0)),
+                                        ((3, 1, 1), (1, 0, 0))])
+@pytest.mark.parametrize("multiple_batches", [False, True])
+def test_external_torus_projection_preserves_full_grid_and_adjoint(
+    spin, mesh, shift, multiple_batches, beta_scale,
+):
+    from vibeqc import _vibeqc_core as core
+
+    system, _, grid, opts, _, _ = _h2_periodic_fixture(
+        lattice_length=8., lattice_cutoff=12.)
+    if multiple_batches:
+        # Cross the 4096-point AO boundary and the bounded replay prefix.
+        # The nonlocal provider still receives one complete, ordered grid.
+        options = vq.GridOptions()
+        options.n_radial, options.n_theta, options.n_phi = 24, 12, 24
+        grid = vq.build_periodic_becke_grid(
+            system, grid_options=options, image_radius_bohr=12.,
+        )
+        assert len(grid.weights) == 13824
+    basis = vq.BasisSet(system.unit_cell_molecule(), "def2-svp")
+    cells = list(core.direct_lattice_cells(system, 48.))
+    km = vq.monkhorst_pack(system, list(mesh), is_shift=list(shift), use_symmetry=False)
+    k = np.asarray(km.kpoints)
+    rng = np.random.default_rng(186)
+    co = rng.normal(size=(3, basis.nbasis, 3)) * .1
+    dc = rng.normal(size=co.shape) * .03
+    phases = np.exp(1j * k @ (8. * np.eye(3)))
+    orbital = np.einsum("kr,rij->kij", phases, co)
+    change = np.einsum("kr,rij->kij", phases, dc)
+    d = orbital @ orbital.conj().transpose(0, 2, 1)
+    h = change @ orbital.conj().transpose(0, 2, 1) + orbital @ change.conj().transpose(0, 2, 1)
+    origins = np.asarray([c.r_cart for c in cells])
+
+    def fold(density):
+        blocks = np.einsum("k,gk,kij->gij", np.asarray(km.weights),
+                           np.exp(-1j * origins @ k.T), density, optimize=True).real
+        return core.make_lattice_matrix_set(basis.nbasis, cells, list(blocks))
+
+    class Capture(_AllFeatureProvider):
+        def __init__(self):
+            self.calls = []
+
+        def __call__(self, features):
+            self.calls.append({key: np.asarray(features[key]).copy() for key in (
+                "points", "grid_weights", "rho_alpha", "rho_beta",
+                "grad_alpha", "grad_beta", "tau_alpha", "tau_beta",
+            )})
+            return super().__call__(features)
+
+    provider = Capture()
+    fun = vq.Functional(_external_name(provider), spin)
+    domain = core.PeriodicXCDensityDomain.PERIODIC_LATTICE
+    base = (basis, system, grid, fun)
+    density = d if spin == 1 else .7 * d
+    beta_density = beta_scale * d[:, ::-1, ::-1]  # independently shaped spin density
+
+    def evaluate(value, grouped):
+        if spin == 1:
+            if grouped:
+                return core.build_xc_periodic_kpoints(*base, fold(value), km, opts, domain)
+            return core.build_xc_periodic(*base, fold(value), opts, domain)
+        if grouped:
+            return core.build_xc_periodic_uks_kpoints(*base, fold(value), fold(beta_density), km, opts, domain)
+        return core.build_xc_periodic_uks(*base, fold(value), fold(beta_density), opts, domain)
+
+    old = evaluate(density, False)
+    with vq.perf_log(native=True) as timing:
+        new = evaluate(density, True)
+    assert len(timing.native_phases) == 1
+    record = timing.native_phases[0]
+    assert record["kernel"] == ("periodic_xc.closed_shell" if spin == 1 else "periodic_xc.open_shell")
+    assert record["completed"]
+    assert {p["name"] for p in record["phases"]} == {"setup", "external_provider_route"}
+    assert len(provider.calls) == 2  # one complete callback per evaluation
+    assert new.torus_density_compatible and new.used_torus_grouping
+    assert new.e_xc == pytest.approx(old.e_xc, abs=2e-11, rel=0)
+    for key in provider.calls[0]:
+        np.testing.assert_allclose(provider.calls[1][key], provider.calls[0][key], atol=2e-12, rtol=2e-12)
+    assert np.array_equal(provider.calls[1]["points"], np.asarray(grid.points))
+    assert np.array_equal(provider.calls[1]["grid_weights"], np.asarray(grid.weights))
+    pairs = [(old.V_xc, new.V_xc)] if spin == 1 else [
+        (old.V_alpha, new.V_alpha), (old.V_beta, new.V_beta)]
+    for real, values in pairs:
+        for ki, value in zip(km.kpoints, values):
+            np.testing.assert_allclose(value, core.bloch_sum(real, ki), atol=2e-10, rtol=2e-11)
+    step = 1e-5
+    plus, minus = evaluate(density + step * h, True), evaluate(density - step * h, True)
+    assert plus.used_torus_grouping and minus.used_torus_grouping
+    assert len(provider.calls) == 4
+    finite_difference = (plus.e_xc - minus.e_xc) / (2 * step)
+    values = new.V_xc if spin == 1 else new.V_alpha
+    derivative = sum(w * np.trace(dh @ v).real for w, dh, v in zip(km.weights, h, values))
+    assert derivative == pytest.approx(finite_difference, abs=2e-8, rel=2e-7)

@@ -53,9 +53,17 @@ from vibeqc.pbc_bipole import run_pbc_bipole_rhf
 # reference; the accessor contract below is what the file tests.
 # #704/D131: displaced Gaussian-product nuclear support changes this
 # under-converged SCF by -7.3047944e-7 Ha, without changing band selection.
-E_REF_HA = -1.1944722349078716
-HOMO_REF_HA = -0.5958704285585078
-LUMO_REF_HA = 0.7875581932570849
+# 2026-10-12, #503: the physical pair domain, the ab initio default since
+# 3a7d097f (#316), bounds this oracle's 12-bohr extent by pair-centre
+# separation instead of the origin ball, which changes the exchange and
+# ket-image reach of this under-converged fixture: the total moved
+# -1.1944722349078716 -> -1.1943488768593902 Ha, the frontier
+# -0.5958704285585078 / 0.7875581932570849 -> -0.5964642054172992 /
+# 0.7770497140639391. ``historical_domain=True`` reproduces the previous
+# pins to 1e-8 on the same core. Band selection is unchanged.
+E_REF_HA = -1.1943488768593902
+HOMO_REF_HA = -0.5964642054172992
+LUMO_REF_HA = 0.7770497140639391
 TOL_HA = 1.0e-6
 
 
@@ -135,9 +143,11 @@ def test_the_flattening_route_reports_a_wrong_gap_and_does_not_crash(
     k-points into one list, so the second-lowest eigenvalue (an OCCUPIED
     band at the other k-point) is reported as the conduction band:
 
-        true      homo -0.5958704286  lumo  0.7875581933  gap 1.3834286218
-        flattened homo -0.6193343306  lumo -0.5958704286  gap 0.0234639021
-        (pre-#674: homo -0.6193305389  lumo -0.5958697315  gap 0.0234608073)
+        true      homo -0.5964642054  lumo  0.7770497141  gap 1.3735139195
+        flattened homo -0.6185892940  lumo -0.5964642054  gap 0.0221250886
+        (historical index ball, pre-#316 default:
+                  homo -0.6193343306  lumo -0.5958704286  gap 0.0234639021;
+         pre-#674: homo -0.6193305389  lumo -0.5958697315  gap 0.0234608073)
 
     A 1.3834 Ha insulator rendered as a 0.0235 Ha near-metal, on a
     converged SCF, with rc 0 and nothing in the log.
@@ -149,12 +159,14 @@ def test_the_flattening_route_reports_a_wrong_gap_and_does_not_crash(
     )
     flat_homo, flat_lumo = float(flat[n_occ - 1]), float(flat[n_occ])
 
-    # -0.6193335339190602 before the #704 nuclear-support repair.
-    assert flat_homo == pytest.approx(-0.6193343306336518, abs=TOL_HA)
+    # -0.6193335339190602 before the #704 nuclear-support repair,
+    # -0.6193343306336518 on the historical index ball (#503, see the
+    # E_REF_HA note).
+    assert flat_homo == pytest.approx(-0.6185892940225114, abs=TOL_HA)
     assert flat_lumo == pytest.approx(HOMO_REF_HA, abs=TOL_HA)
     # The reported "conduction band" is in fact an occupied band.
     assert flat_lumo == pytest.approx(true_homo, abs=TOL_HA)
-    assert (flat_lumo - flat_homo) == pytest.approx(0.02346390207514404, abs=1e-8)
+    assert (flat_lumo - flat_homo) == pytest.approx(0.02212508860521223, abs=1e-8)
     assert abs((flat_lumo - flat_homo) - (true_lumo - true_homo)) > 1.0
 
 

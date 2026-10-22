@@ -5,7 +5,7 @@ Plain Roothaan converges in 14 iters; DIIS in 9. We keep DIIS on for
 the canonical example.
 
 Run::
-    .venv/bin/python examples/periodic/MgO-rocksalt-RHF-sto3g/MgO-rocksalt-RHF-sto3g.py
+    .venv/bin/python examples/periodic/MgO-rocksalt/MgO-rocksalt-RHF-sto3g.py
 
 Produces (sibling files, sharing the script's stem):
     {stem}.out      — text log (banner, system, basis, SCF trace, energies)

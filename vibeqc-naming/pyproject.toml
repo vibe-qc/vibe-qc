@@ -1,0 +1,58 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vibeqc-naming"
+# Independent SemVer line, decoupled from vibe-qc's (#536). Bump it in the
+# same commit as the change that earns it, in lockstep with
+# python/vibeqc_naming/__init__.py __version__ (tests/test_distribution.py
+# pins the two together).
+version = "0.1.0"
+description = "vibe-qc's IUPAC naming engine: structure to name and name to structure, in pure Python"
+readme = "README.md"
+authors = [{name = "Michael F. Peintinger", email = "mpei@vibe-qc.com"}]
+license = "MPL-2.0"
+# vibe-qc's own floor; nothing here needs a newer interpreter.
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Chemistry",
+]
+
+[project.optional-dependencies]
+# Space-group analysis in name_solid_from_atoms. The import is soft: the
+# composition name needs no symmetry, so the engine runs without it.
+solids = ["spglib>=2.0"]
+# The distribution tests build wheels and sdists with hatchling itself.
+test = ["pytest>=8", "hatchling>=1.27"]
+
+[project.urls]
+Homepage = "https://vibe-qc.com"
+Repository = "https://github.com/vibe-qc/vibe-qc"
+Issues = "https://github.com/vibe-qc/vibe-qc/issues"
+
+# The package source stays at python/vibeqc_naming, where vibe-qc's own
+# wheel bundles it ([tool.scikit-build] wheel.packages in the root
+# pyproject.toml). hatch_build.py packages that directory from a checkout
+# and carries it into the sdist as src/vibeqc_naming, which the wheel
+# selection below picks up when building from the sdist.
+[tool.hatch.build.hooks.custom]
+path = "hatch_build.py"
+
+[tool.hatch.build.targets.wheel]
+only-include = ["src/vibeqc_naming"]
+sources = ["src"]
+# `pip install -e vibeqc-naming` puts the checkout's python/ directory on
+# sys.path, so the engine is imported live instead of copied.
+dev-mode-dirs = ["../python"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

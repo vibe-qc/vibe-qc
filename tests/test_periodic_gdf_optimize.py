@@ -18,6 +18,8 @@ import pytest
 
 import vibeqc as vq
 
+from tests.refusal_receipt import assert_preflight_refusal
+
 
 def _h2_12bohr(d: float = 1.5):
     """H2 in a 12-bohr cubic box (the GDF gradient-test fixture cell)."""
@@ -194,7 +196,7 @@ def test_gdf_optimize_mdf_envelope_fails_in_preflight(tmp_path):
             dry_run=True,
             **_NO_SIDECARS,
         )
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 def test_gdf_optimize_dispersion_fails_before_dry_run(tmp_path):
@@ -212,7 +214,7 @@ def test_gdf_optimize_dispersion_fails_before_dry_run(tmp_path):
             output=stem,
             **_NO_SIDECARS,
         )
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 @pytest.mark.parametrize(
@@ -262,7 +264,7 @@ def test_gdf_optimize_finite_temperature_fails_before_dry_run(
             **_NO_SIDECARS,
             **kwargs,
         )
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 def test_gdf_optimize_zero_temperature_dry_run_stays_supported(tmp_path):
@@ -283,30 +285,27 @@ def test_gdf_optimize_zero_temperature_dry_run_stays_supported(tmp_path):
     assert stem.with_suffix(".system").exists()
 
 
-@pytest.mark.parametrize("dry_run", [True, False], ids=["dry-run", "live"])
-def test_gdf_optimize_legacy_gamma_fallback_fails_closed(tmp_path, dry_run):
-    """A Γ run that falls back to the legacy molecular-limit GDF driver
-    (here: explicit Fock mixing) has no analytic gradient and must fail
-    closed with the actionable runner message."""
+def test_gdf_optimize_gamma_fock_mixing_runs_the_k_mesh_engine(tmp_path):
+    """A Gamma job with explicit Fock mixing used to fall back to the legacy
+    molecular-limit driver, which has no analytic gradient, so optimization
+    was refused. It now runs the k-mesh engine at (1,1,1), whose gradient
+    differentiates the converged objective (#400)."""
     sysp, basis = _h2_12bohr()
-    stem = tmp_path / f"h2-gdf-legacy-opt-{dry_run}"
-    with pytest.raises(
-        NotImplementedError,
-        match="legacy Gamma molecular-limit GDF driver",
-    ):
-        vq.run_periodic_job(
-            sysp,
-            basis,
-            method="RHF",
-            jk_method="gdf",
-            fmixing_percent=30.0,
-            output=stem,
-            optimize=True,
-            optimize_max_iter=5,
-            dry_run=dry_run,
-            **_NO_SIDECARS,
-        )
-    assert not stem.with_suffix(".system").exists()
+    stem = tmp_path / "h2-gdf-fmix-opt"
+    result = vq.run_periodic_job(
+        sysp,
+        basis,
+        method="RHF",
+        jk_method="gdf",
+        fmixing_percent=30.0,
+        output=stem,
+        optimize=True,
+        optimize_max_iter=5,
+        dry_run=True,
+        **_NO_SIDECARS,
+    )
+    assert result is None
+    assert stem.with_suffix(".system").exists()
 
 
 def test_gdf_optimize_nonuniform_weights_fail_before_dry_run(tmp_path):
@@ -329,59 +328,57 @@ def test_gdf_optimize_nonuniform_weights_fail_before_dry_run(tmp_path):
             output=stem,
             **_NO_SIDECARS,
         )
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
-def test_gdf_optimize_pure_rks_multik_fails_before_dry_run(tmp_path):
-    sysp, basis = _h2_12bohr()
-    stem = tmp_path / "h2-gdf-pbe-multik-opt"
-    with pytest.raises(NotImplementedError, match="pure-functional multi-k"):
-        vq.run_periodic_job(
-            sysp,
-            basis,
-            method="RKS",
-            functional="pbe",
-            jk_method="gdf",
-            kpoints=(2, 1, 1),
-            optimize=True,
-            dry_run=True,
-            output=stem,
-            **_NO_SIDECARS,
-        )
-    assert not stem.with_suffix(".system").exists()
+def test_gdf_optimize_pure_rks_multik_sr_fit_is_admitted(tmp_path):
+    """Pure-functional multi-k RKS/GDF on the bulk SR/LR fit is optimizable.
 
-
-@pytest.mark.parametrize("dry_run", [True, False], ids=["dry-run", "live"])
-def test_gdf_optimize_pure_rks_explicit_gamma_mixer_fails_preflight(
-    tmp_path,
-    dry_run,
-):
-    """A non-None mixer sends explicit Gamma RKS into the full KRKS loop.
-
-    Pure RKS leaves that loop on use_compcell=False, so its optimizer rerun
-    has no fitted Lpq cache to differentiate. Reject both dry and live jobs
-    before either can create a manifest.
+    The SR/LR route promotes use_compcell, so the fitted J the analytic
+    gradient differentiates is the live one; the runner used to refuse this
+    as though it ran the analytic-Ewald J loop. Measured on H2/STO-3G in an
+    8-bohr cube at (2,1,1), PBE: analytic dE/dz -2.28649e-4 Ha/bohr against
+    a central finite difference of -2.28878e-4 (h = 1e-3 bohr).
     """
     sysp, basis = _h2_12bohr()
-    stem = tmp_path / f"h2-gdf-pbe-gamma-mixed-opt-{dry_run}"
-    with pytest.raises(
-        NotImplementedError,
-        match="pure-functional explicit-Gamma density-mixed RKS/GDF",
-    ):
-        vq.run_periodic_job(
-            sysp,
-            basis,
-            method="RKS",
-            functional="pbe",
-            jk_method="gdf",
-            kpoints=(1, 1, 1),
-            density_mixer="anderson",
-            optimize=True,
-            dry_run=dry_run,
-            output=stem,
-            **_NO_SIDECARS,
-        )
-    assert not stem.with_suffix(".system").exists()
+    stem = tmp_path / "h2-gdf-pbe-multik-opt"
+    result = vq.run_periodic_job(
+        sysp,
+        basis,
+        method="RKS",
+        functional="pbe",
+        jk_method="gdf",
+        kpoints=(2, 1, 1),
+        optimize=True,
+        dry_run=True,
+        output=stem,
+        **_NO_SIDECARS,
+    )
+    assert result is None
+    assert stem.with_suffix(".system").exists()
+
+
+def test_gdf_optimize_pure_rks_explicit_gamma_mixer_is_admitted(tmp_path):
+    """A non-None mixer sends explicit Gamma RKS into the full KRKS loop,
+    which on the SR/LR fit carries the fitted J its gradient differentiates.
+    """
+    sysp, basis = _h2_12bohr()
+    stem = tmp_path / "h2-gdf-pbe-gamma-mixed-opt"
+    result = vq.run_periodic_job(
+        sysp,
+        basis,
+        method="RKS",
+        functional="pbe",
+        jk_method="gdf",
+        kpoints=(1, 1, 1),
+        density_mixer="anderson",
+        optimize=True,
+        dry_run=True,
+        output=stem,
+        **_NO_SIDECARS,
+    )
+    assert result is None
+    assert stem.with_suffix(".system").exists()
 
 
 @pytest.mark.parametrize(
@@ -414,36 +411,30 @@ def test_gdf_optimize_pure_rks_gamma_default_diis_alias_stays_supported(
     assert stem.with_suffix(".system").exists()
 
 
-@pytest.mark.parametrize("dry_run", [True, False], ids=["dry-run", "live"])
-def test_gdf_optimize_pure_rks_single_non_gamma_fails_preflight(
-    tmp_path,
-    dry_run,
-):
-    """A one-point non-Gamma list still dispatches through full KRKS."""
+def test_gdf_optimize_pure_rks_single_non_gamma_is_admitted(tmp_path):
+    """A one-point non-Gamma list dispatches through full KRKS on the SR/LR
+    fit, the same fitted J objective as any other mesh."""
     sysp, basis = _h2_12bohr()
     kpoints = vq.KPoints.from_list(
         sysp,
         [[0.25, 0.0, 0.0]],
         weights=[1.0],
     )
-    stem = tmp_path / f"h2-gdf-pbe-single-nongamma-opt-{dry_run}"
-    with pytest.raises(
-        NotImplementedError,
-        match="pure-functional explicit non-Gamma RKS/GDF",
-    ):
-        vq.run_periodic_job(
-            sysp,
-            basis,
-            method="RKS",
-            functional="pbe",
-            jk_method="gdf",
-            kpoints=kpoints,
-            optimize=True,
-            dry_run=dry_run,
-            output=stem,
-            **_NO_SIDECARS,
-        )
-    assert not stem.with_suffix(".system").exists()
+    stem = tmp_path / "h2-gdf-pbe-single-nongamma-opt"
+    result = vq.run_periodic_job(
+        sysp,
+        basis,
+        method="RKS",
+        functional="pbe",
+        jk_method="gdf",
+        kpoints=kpoints,
+        optimize=True,
+        dry_run=True,
+        output=stem,
+        **_NO_SIDECARS,
+    )
+    assert result is None
+    assert stem.with_suffix(".system").exists()
 
 
 @pytest.mark.parametrize("dry_run", [True, False], ids=["dry-run", "live"])
@@ -486,6 +477,7 @@ def test_gdf_optimize_density_mixer_request_fails_before_manifest(
             **mixer_kwargs,
             **_NO_SIDECARS,
         )
+    # Invalid values are not capability refusals and leave no receipt.
     assert not stem.with_suffix(".system").exists()
 
 
@@ -564,7 +556,7 @@ def test_gdf_optimize_slab_controls_fail_before_manifest(
             **{control: value},
             **_NO_SIDECARS,
         )
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 @pytest.mark.parametrize("dry_run", [True, False], ids=["dry-run", "live"])
@@ -624,7 +616,7 @@ def test_gdf_optimize_slab_auto_resolved_controls_fail_preflight(
             output=stem,
             **_NO_SIDECARS,
         )
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 @pytest.mark.parametrize("dry_run", [True, False], ids=["dry-run", "live"])
@@ -655,7 +647,7 @@ def test_gdf_optimize_slab_object_mesh_fails_before_manifest(
             output=stem,
             **_NO_SIDECARS,
         )
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 @pytest.mark.parametrize("dry_run", [True, False], ids=["dry-run", "live"])
@@ -698,7 +690,7 @@ def test_gdf_optimize_slab_adapter_options_fail_before_manifest(
             **{control: value},
             **_NO_SIDECARS,
         )
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 @pytest.mark.parametrize("method", ["RKS", "UKS"])
@@ -721,7 +713,7 @@ def test_gdf_unsupported_functionals_fail_before_dry_run(
             output=stem,
             **_NO_SIDECARS,
         )
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 @pytest.mark.parametrize("functional", ["vv10", "b2plyp"])

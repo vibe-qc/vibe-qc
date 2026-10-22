@@ -204,6 +204,44 @@ def _is_single_gamma_mesh(kmesh: BlochKMesh) -> bool:
     )
 
 
+def _ran_molecular_limit_exchange(result, kmesh: BlochKMesh) -> bool:
+    """Whether the SCF behind ``result`` built K with the molecular-limit kernel.
+
+    Results of the Ewald drivers declare their gauge as ``exchange_q0``
+    (:mod:`vibeqc.periodic.exchange_convention`). A result that declares
+    none is inferred the pre-#23 way: plain RHF at a single Gamma point ran
+    the molecular limit, anything carrying a ``functional`` the corrected
+    split. The two gauges differ by the finite-size Madelung term, so
+    differentiating the wrong one leaves a gradient that does not match
+    its own energy.
+    """
+    from .periodic.exchange_convention import (
+        BVK_EWALD,
+        MOLECULAR_LIMIT,
+    )
+
+    declared = getattr(result, "exchange_q0", None)
+    if not (isinstance(declared, str) and declared):
+        return not hasattr(result, "functional") and _is_single_gamma_mesh(kmesh)
+    if declared == MOLECULAR_LIMIT:
+        if not _is_single_gamma_mesh(kmesh):
+            raise ValueError(
+                "compute_gradient_periodic_rhf_multi_k: the result records "
+                "the molecular-limit exchange gauge, which exists only at "
+                "a single Gamma point, but the supplied kmesh has "
+                f"{len(list(kmesh.kpoints))} point(s). Pass the kmesh the "
+                "SCF ran on."
+            )
+        return True
+    if declared == BVK_EWALD:
+        return False
+    raise NotImplementedError(
+        "compute_gradient_periodic_rhf_multi_k: no analytic gradient for "
+        f"the exchange gauge {declared!r} the SCF recorded. Use finite "
+        "differences."
+    )
+
+
 def _resolve_gradient_lattice_opts(
     system: PeriodicSystem,
     result,
@@ -387,11 +425,11 @@ def compute_gradient_periodic_rhf_multi_k(
             volume, ewald_alpha
         )
 
-        # Plain RHF has one deliberate exception: a genuine single Γ point
-        # uses molecular full-range K for compatibility with the molecular
-        # limit. RKS has no such exception; its global-hybrid full-range arm
-        # uses corrected periodic exchange even at one k point.
-        if not hasattr(result, "functional") and _is_single_gamma_mesh(kmesh):
+        # Differentiate the exchange gauge the SCF ran, which the result
+        # records; the mesh alone does not say (GitLab #23: a single Gamma
+        # point runs the corrected split by default and the molecular-limit
+        # kernel on request).
+        if _ran_molecular_limit_exchange(result, kmesh):
             return _compute_rhf_single_gamma_ewald_gradient(
                 system,
                 basis,

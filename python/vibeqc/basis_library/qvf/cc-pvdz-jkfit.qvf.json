@@ -1,8 +1,8 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
-  "role": "orbital",
+  "schema_version": "1.1.0",
+  "name": "cc-pvdz-jkfit",
+  "description": "origin: https://raw.githubusercontent.com/psi4/psi4/master/psi4/share/psi4/basis/cc-pvdz-jkfit.gbs\nretrieved on July 10, 2019\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n             CORRELATION CONSISTENT J&K-FIT DENSITY FITTING BASIS SETS\n                        CONSISTENT WITH MOLPRO 2009\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n                      CC-PVXZ-JKFIT\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n from MOLPRO weigend_jkfit.libmol 11 February 2010\n F. Weigend, A fully direct RI-HF algorithm: implementation, optimised\n    auxiliary basis sets, demonstration of accuracy and efficiency,\n    Physical Chemistry Chemical Physics 4, 4285 (2002)\n note that Ne, Ar, & Kr are extrapolated, not published coefficients\n note that double-zeta basis sets were not published but are here formed by\n    truncating the highest angular momentum functions from triple-zeta sets\n for H B C N O F Ne Al Si P S Cl Ar Ga Ge As Se Br Kr\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n             CORRELATION CONSISTENT J&K-FIT DENSITY FITTING BASIS SETS\n                        CONSISTENT WITH MOLPRO 2009\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n                      CC-PVDZ-JKFIT\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n from MOLPRO weigend_jkfit.libmol 11 February 2010\n F. Weigend, A fully direct RI-HF algorithm: implementation, optimised\n    auxiliary basis sets, demonstration of accuracy and efficiency,\n    Physical Chemistry Chemical Physics 4, 4285 (2002)\n note that Ne, Ar, & Kr are extrapolated, not published coefficients\n note that double-zeta basis sets were not published but are here formed by\n    truncating the highest angular momentum functions from triple-zeta sets\n for H B C N O F Ne Al Si P S Cl Ar Ga Ge As Se Br Kr\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\nmerged from pbasis-base.gbs and pbasis-d.gbs at Sun, 21:46 Aug 22, 2010",
+  "role": "fitting",
   "elements": {
     "H": {
       "element": "H",
@@ -8072,7 +8072,40 @@
       ]
     }
   },
+  "basis_family": "dunning",
+  "references": [
+    {
+      "key": "dunning_ccpvxz_1989",
+      "description": "T. H. Dunning, Journal of Chemical Physics 90, 1007-1023 (1989)",
+      "doi": "10.1063/1.456153"
+    },
+    {
+      "key": "weigend_jkfit_2002",
+      "description": "F. Weigend, Physical Chemistry Chemical Physics 4, 4285-4291 (2002)",
+      "doi": "10.1039/B204199P"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "vendor",
+    "upstream": [
+      {
+        "name": "libint",
+        "version": "2.13.1",
+        "identifier": "cc-pvdz-jkfit",
+        "detail": "byte-identical to libint's bundled file"
+      }
+    ],
+    "retrieval_date": "2026-09-08",
+    "content_sha256": "d90035034d3c51d665a9c2cbcdc2c5420183288c207275d80ef8add8da9ad820",
+    "citations": [
+      {
+        "keys": [
+          "dunning_ccpvxz_1989",
+          "weigend_jkfit_2002"
+        ]
+      }
+    ],
+    "notes": "The date is when the file entered this repository's history; the import date was not recorded."
   }
 }

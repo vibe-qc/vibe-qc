@@ -1,13 +1,22 @@
 # Γ-CCM (`aiccm2026dev-a`) dense four-center scalability - analysis & strategy
 
+```{admonition} Status: experimental
+:class: warning
+
+The four-centre route profiled here and every other `aiccm2026dev-a` driver is an experimental route. Every `run_ccm_*` SCF driver emits `vibeqc.AICCM2026DevAExperimentalWarning`, and the `.system` manifest records `method_status = "experimental"` for every AICCM job run through `run_periodic_job(method="aiccm", variant=...)`. Its numbers are research output, not validated results, and it is not part of the release gate. The label vocabulary is defined in [Methods: theory and status](methods.md#how-to-read-the-status-labels).
+```
+
 > **D89 construction-boundary notice (2026-07-15).** This completed analysis
 > preserves its measured memory and timing results, but its earlier route labels
-> are superseded. Γ-CCM is the union-and-weight/Wigner-Seitz integral-weighting
-> construction; χ-CCM is the distinct finite-translation-group character
-> construction. Neutral GDF/Bloch and real-Gamma calculations are
-> same-Hamiltonian representation controls once that block-circulant Hamiltonian
-> is specified. They are not Γ-CCM production routes, and their finite Fourier
-> equivalence does not prove Γ-CCM equals χ-CCM. Accordingly, statements below
+> are superseded. Γ-CCM is the neutral finite-torus construction (variants
+> `real-gamma` and `neutral-bloch`, ruling R1, 2026-08-21); the `four-center`
+> variant profiled here is the 2014 union-and-weight/Wigner-Seitz lineage kept
+> in the same development line; χ-CCM is the distinct
+> finite-translation-group character construction. Neutral GDF/Bloch and
+> real-Gamma calculations are same-Hamiltonian representation controls once
+> that block-circulant Hamiltonian is specified. They are not production-status
+> routes, and their finite Fourier equivalence does not prove Γ-CCM equals
+> χ-CCM. Accordingly, statements below
 > that call GDF "exact CCM", a Γ-CCM production path, or mere routing are retained
 > as historical planning language only. The resource measurements remain valid
 > for the named implementation routes.
@@ -19,12 +28,12 @@ and the surveyed phased plan to make it fit in RAM.
 
 > **Status: analysis + strategy, for review.** No code-behaviour change yet. The
 > recommended plan must be reviewed before any implementation (Phase 3) - see the
-> handover mandate (CLAUDE.md §11/§14).
+> historical design record mandate (CLAUDE.md §11/§14).
 
 All numbers below are **analytical** (cheap: `N_pad` and the implied tensor bytes
 need no ERI build) or from **tiny-cell** (1-D H-chain) memory profiles run under a
 hard RSS cap. The genuine c-diamond `(2,2,2)` reproduction is a declared-cap **vq**
-job (id recorded in the handover), not a local run - a parallel run already spiked
+job (id recorded in the original investigation), not a local run - a parallel run already spiked
 this shared box to 137 GB.
 
 ---
@@ -135,7 +144,7 @@ construction-preserving Γ-CCM fix:
    | c-diamond (2,2,2) | 10 | ~3 MiB | 55 800 TiB |
    | mgo (2,2,2) | 14 | ~8 MiB | 280 000 TiB |
 
-   The handover records it ran c-diamond `(2,2,2)` in **~6 GB / ~23 min**
+   the original investigation records it ran c-diamond `(2,2,2)` in **~6 GB / ~23 min**
    (E/atom −37.4155 Ha). This is evidence that a lean neutral fitted-torus
    control is achievable. It is not an exact Γ-CCM result or an oracle for the
    union-and-weight construction. (The submitted vq job re-confirms the peak
@@ -174,7 +183,7 @@ construction-preserving Γ-CCM fix:
 > Aside (not in scope here): `build_padded_cluster` raises `KeyError(0)` on a
 > pob-tzvp-rev2 cell (cscl) - an ECP/ghost-atom basis-mapping bug in the padded
 > assembly, independent of memory. It belongs to the method/basis chain
-> ([Archived `HANDOVER_AICCM_FOLLOWON.md`](https://vibe-qc.com/docs/)), not
+> (the original investigation), not
 > this workstream; flagged for them. The pob
 > `N_pad` rows above use the analytical `N_pad = nbf × eri_cells`, which is
 > unaffected.
@@ -183,7 +192,7 @@ construction-preserving Γ-CCM fix:
 
 ## 2. Phase 2 - strategy: candidates, adversarial check, recommended plan
 
-The goal (handover §1): the dense-four-center routes (hf/ks/viz/localize/post-HF)
+The goal (historical design record §1): the dense-four-center routes (hf/ks/viz/localize/post-HF)
 run light-tier 3-D cells (c-diamond/Si/MgO `(2,2,2)` and larger) within ~64 GB -
 ideally far less - with **zero change to any existing `-a` energy/property**
 (this is a memory/throughput refactor, **not** a numerics change).
@@ -247,7 +256,7 @@ into `eff` and discarded. Removes wall #1; leaves wall #2 (`eff` is still `N_ref
 
 The GDF path (`run_ccm_rhf_gdf`) and neutral cderi belong to a separately
 specified neutral fitted-torus Hamiltonian. They cannot replace the
-union-and-weight tensor while retaining Γ-CCM identity. The measurements below
+union-and-weight tensor while retaining the four-centre lineage's identity. The measurements below
 remain useful for sizing a control or a separately labelled post-HF research
 route, but C3 is not a Γ-CCM memory solution:
 
@@ -266,7 +275,7 @@ route, but C3 is not a Γ-CCM memory solution:
   (`mp2/ccsd/dlpno/neutral/properties/localize` - explicitly *not this chat's
   files*). C3 is therefore a **cross-chat** change: this chat can provide the lean
   J/K / `L` source; the method chat must adapt the consumers. It is falsified as a
-  *self-contained* milestone - it requires coordination (handover §0). Also: RI is
+  *self-contained* milestone - it requires coordination (historical design record §0). Also: RI is
   exact *to the fitting error*, not byte-for-byte vs the dense four-center, so C3
   changes the numbers at the ~0.05 mHa/atom level - it does **not** pass the
   byte-for-byte gate and so is a *new route*, not a refactor of the existing one.
@@ -357,7 +366,7 @@ energy/Fock.
 **Phase 3d (parallel, opt-in) - expose the lean RI/GDF source (C3)** for the
 consumers that can accept the RI answer (post-HF via the neutral cderi `L`, viz via
 GDF orbitals). This chat provides the lean J/K / `L`; the **method chain** wires the
-consumers (handover §0 boundary). Documented as a *separate route* (RI error, not
+consumers (historical design record §0 boundary). Documented as a *separate route* (RI error, not
 byte-for-byte), not a replacement.
 
 **Deferred:** C5 (out-of-core - un-storable for #1), C6 (GPU - long-term throughput
@@ -365,7 +374,7 @@ once C1 lands).
 
 ### 2.4 The byte-for-byte numerics gate (every phase)
 
-Non-negotiable (handover §3, CLAUDE.md §7 - no papering over):
+Non-negotiable (historical design record §3, CLAUDE.md §7 - no papering over):
 
 * Every existing `-a` energy and property is **unchanged** by 3a/3b/3c. The
   reference is the current dense `ccm_eri` / `ccm_eri_symmetric` `eff` (and the J/K

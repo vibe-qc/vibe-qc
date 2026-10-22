@@ -304,7 +304,7 @@ Eigen::MatrixXd compute_cosx_k(const BasisSet& basis,
     // The per-batch L2 hierarchy doesn't know about per-cell primary
     // shells yet, so image-cell mode runs the unbatched path — the
     // full-grid AO evaluation below is paid per K-build in that mode
-    // (handovers/HANDOVER_RIJCOSX_M3A.md §4.5; separate optimization).
+    // (a separate optimization).
     const GridBatches* batches_use =
         use_image_cells ? nullptr : grid_batches;
 
@@ -555,8 +555,7 @@ Eigen::MatrixXd compute_cosx_k(const BasisSet& basis,
             // treatment. R = 0 (the home cell, always first in the
             // list) reproduces the molecular kernel; the loop starts
             // F_g at zero and accumulates over all cells, so there is
-            // no special-casing and no double counting
-            // (handovers/HANDOVER_RIJCOSX_M3A.md §3).
+            // no special-casing and no double counting.
             //
             // Non-image mode (n_cells = 1, zero shift) is the exact
             // single-pass flow this loop generalizes.

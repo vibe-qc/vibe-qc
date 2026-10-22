@@ -95,8 +95,8 @@ the shape, adjust the fields. The required fields are: `kind`,
   particularly `test_required_functional_has_a_route` and
   `test_required_basis_has_a_route`.
 * The AGENTS.md clause, [`AGENTS.md` § "Citation database
-  ownership"](AGENTS.md) (rule 8 in "Project rules an agent
-  MUST follow").
+  ownership"](https://github.com/vibe-qc/vibe-qc/blob/main/AGENTS.md) (rule 8 in the historical "Project rules an agent
+  MUST follow"; today the "Cite what you implement" default).
 
 ## Manifest update template (for your chat's drop-box file)
 

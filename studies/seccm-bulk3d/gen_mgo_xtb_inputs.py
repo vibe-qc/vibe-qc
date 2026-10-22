@@ -4,7 +4,7 @@ CORRECTION (2026-08-26): the "$lattice:" xyz comment line is
 IGNORED by xtb (verified: bit-identical energy without it), and
 xtb 6.7.0 aborts on genuine periodic GFN2 input ("Multipoles not
 available with PBC"). Inputs produced here run as FREE MOLECULAR
-CLUSTERS. See handovers/HANDOVER_SECCM_BULK3D.md.
+CLUSTERS.
 """
 from __future__ import annotations
 

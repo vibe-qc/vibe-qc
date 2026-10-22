@@ -28,17 +28,197 @@ per-spin Fock matrices.
 See the [canonical CCSD(T) tutorial](../tutorial/coupled_cluster_ccsd_t.md)
 for a worked, paste-and-run walkthrough of every reference type below.
 
+Canonical CCSD, CCSD(T), CCSD[T], A-CCSD(T), the coupled-pair family,
+QCISD(T), Brueckner BCCD(T) and FNO-CCSD(T) are production routes at
+benchmark scale: dense $O(N^6)$ kernels for molecules of up to a few
+dozen atoms in a triple-zeta basis. CC3 and CCSDT are dense
+benchmark-scale determinant-space routes for compact orbital spaces.
+The label vocabulary is defined in
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels);
+the periodic reference path at the end of this page is experimental and
+is not reachable through `run_periodic_job`.
+
 ## At a glance
 
 | | |
 |---|---|
-| High-level entry point | `run_job(method="cc2")`, `run_job(method="ccsd", triples=..., ccsd_reference=...)`, `run_job(method="cc3")`, `run_job(method="ccsdt")`, `run_job(method="qcisd")` |
-| Low-level entry point | `run_ccsd` / `run_uccsd` / `run_rohf_ccsd` / `run_uccsd_from_mos`; `cc3`; `ccsdt` |
-| Reference | CCSD: RHF, UHF, or ROHF; CC3: RHF; CCSDT: RHF or common-orbital ROHF |
+| High-level entry point | `run_job(method="cc2")`, `run_job(method="ccsd", triples=..., ccsd_reference=...)`, `run_job(method="bccd(t)")`, `run_job(method="cc3")`, `run_job(method="ccsdt")`, `run_job(method="qcisd")` |
+| Low-level entry point | `run_ccsd` / `run_uccsd` / `run_rohf_ccsd` / `run_uccsd_from_mos`; `run_bccd`; `cc3`; `ccsdt` |
+| Reference | CCSD: RHF, UHF, or ROHF; BCCD, CC2, coupled-pair, QCISD: RHF; CC3: RHF; CCSDT: RHF or common-orbital ROHF |
 | Integral form | CCSD: density-fitted or exact four-index; CC3/CCSDT: exact four-index MO Hamiltonian |
 | Frozen-core default | ORCA 6.1 chemical-core count; `frozen_core=False` selects all-electron |
-| Scope | CCSD: dense O(N^6) small-molecule pilot; CC3/CCSDT: dense determinant-space benchmark routes |
+| Scope | CCSD family: dense O(N^6) canonical kernels at benchmark scale; CC3/CCSDT: dense determinant-space benchmark routes |
 | Validation | in-repo spin-orbital/FCI anchors and out-of-process PySCF/ORCA comparisons |
+
+## Theory
+
+**The exponential ansatz.** Coupled-cluster theory
+({vibeqc-cite}`cizek_cc_1966`) writes the correlated wave function as
+an exponential of excitation operators acting on the Hartree-Fock
+determinant,
+
+$$
+|\Psi_{\rm CC}\rangle = e^{T}\,|\Phi_0\rangle,
+\qquad
+T = T_1 + T_2 + \cdots,
+\qquad
+T_1 = \sum_{ia} t_i^a\, a_a^\dagger a_i,
+\quad
+T_2 = \tfrac14 \sum_{ijab} t_{ij}^{ab}\, a_a^\dagger a_b^\dagger a_j a_i,
+$$
+
+with $i, j$ occupied and $a, b$ virtual spin orbitals. Truncating $T$
+at doubles gives CCSD, but the exponential still generates
+disconnected higher excitations such as $\tfrac12 T_2^2$, and that is
+what makes every truncated coupled-cluster energy size-extensive where
+the corresponding truncated CI is not. Instead of diagonalising, the
+amplitudes are found by projecting the Schrödinger equation with the
+similarity-transformed Hamiltonian $\bar H = e^{-T} H e^{T}$, whose
+Baker-Campbell-Hausdorff expansion terminates exactly after the
+four-fold commutator because $H$ contains at most two-body operators.
+
+**The CCSD equations** ({vibeqc-cite}`purvis_bartlett_ccsd_1982`).
+Projecting $\bar H |\Phi_0\rangle$ onto the reference gives the energy,
+
+$$
+E_{\rm CC} = E_{\rm HF} + \sum_{ia} f_{ia}\, t_i^a
+  + \tfrac14 \sum_{ijab} \langle ij \| ab \rangle
+    \left( t_{ij}^{ab} + t_i^a t_j^b - t_i^b t_j^a \right),
+$$
+
+and projecting onto the singly and doubly excited determinants,
+$\langle \Phi_i^a | \bar H | \Phi_0 \rangle = 0$ and
+$\langle \Phi_{ij}^{ab} | \bar H | \Phi_0 \rangle = 0$, gives one
+equation per amplitude. In words, the doubles residual is the bare
+integral $\langle ab \| ij \rangle$ plus the Fock-driven terms that
+define the MP2 denominators, plus particle-particle and hole-hole
+ladders and ring terms linear in $T_2$, plus the quadratic $T_2^2$
+terms, plus every way $T_1$ can dress those integrals (up to $T_1^4$).
+The equations are nonlinear and are solved iteratively with DIIS from
+the MP2 guess; each iteration costs $O(o^2 v^4)$, that is $O(N^6)$,
+dominated by the particle-particle ladder. For a closed shell vibe-qc
+spin-adapts the equations, and the two-electron integrals enter through
+the density-fitted factorisation $(pq|rs) \approx \sum_P B^P_{pq} B^P_{rs}$
+({vibeqc-cite}`deprince_sherrill_df_ccsd_2013`), which is why the DF
+route is the default and the exact-integral route a parity option.
+
+**Perturbative triples.** CCSD misses connected triple excitations,
+which contribute at fourth order of perturbation theory. Rather than
+iterate $T_3$, the (T) correction
+({vibeqc-cite}`raghavachari_ccsdt_1989`) evaluates it once from the
+converged CCSD amplitudes with canonical orbital-energy denominators:
+the connected triples amplitudes are
+$D_{ijk}^{abc}\, t_{ijk}^{abc} = P(ijk|abc) \bigl[ \sum_d \langle bc\|dk\rangle\, t_{ij}^{ad} - \sum_l \langle lc\|jk\rangle\, t_{il}^{ab} \bigr]$
+with $D_{ijk}^{abc} = \varepsilon_i + \varepsilon_j + \varepsilon_k - \varepsilon_a - \varepsilon_b - \varepsilon_c$,
+and the energy is
+
+$$
+E_{(T)} = E^{[4]}_{T} + E^{[5]}_{ST},
+\qquad
+E^{[4]}_{T} = \tfrac{1}{36} \sum_{ijkabc} t_{ijk}^{abc\,*}\, D_{ijk}^{abc}\, t_{ijk}^{abc},
+\qquad
+E^{[5]}_{ST} = \tfrac14 \sum_{ijkabc} t_i^a\, \langle jk \| bc \rangle\, t_{ijk}^{abc},
+$$
+
+the fourth-order triples term and the fifth-order singles-triples
+coupling that distinguishes (T) from the older [T]. It is
+*non-iterative* because $t_{ijk}^{abc}$ is built once and never fed
+back into the singles and doubles: one $O(o^3 v^4)$, that is $O(N^7)$,
+pass after the $O(N^6)$ iterations, against $O(N^8)$ per iteration
+for full CCSDT. `result.ccsd.e_t4` and `e_t5_st` expose the two pieces.
+The asymmetric or Lambda variant, A-CCSD(T)
+({vibeqc-cite}`kucharski_bartlett_accsdt_1998`;
+{vibeqc-cite}`crawford_stanton_accsdt_1998`), replaces $t^*$ in the
+energy expression by the left-hand (Lambda) amplitudes obtained from
+the linear Lambda equations, which makes the correction a proper
+functional of the CC state and more robust when the singles are large.
+
+**CC2, CC3 and CCSDT.** The iterative hierarchy changes what is done
+with the higher excitations. CC2 ({vibeqc-cite}`christiansen_cc2_1995`)
+keeps the full singles equation but approximates the doubles equation
+to first order in the fluctuation potential using the
+$T_1$-transformed Hamiltonian $\hat H = e^{-T_1} H e^{T_1}$,
+$\langle \Phi_{ij}^{ab} | \hat H + [F, T_2] | \Phi_0 \rangle = 0$, so
+its ground-state energy is MP2-like at $O(N^5)$ cost and its value lies
+in response properties. CC3 ({vibeqc-cite}`koch_cc3_1997`) adds triples
+approximated in the same spirit,
+$\langle \Phi_{ijk}^{abc} | [F, T_3] + [\hat H, T_2] | \Phi_0 \rangle = 0$,
+regenerated every iteration and coupled back into the singles and
+doubles, at $O(N^7)$ per iteration. Full CCSDT
+({vibeqc-cite}`noga_bartlett_ccsdt_1987`) solves the complete
+$T_1 + T_2 + T_3$ equations at $O(N^8)$ per iteration. vibe-qc evaluates
+CC3 and CCSDT by applying the projected similarity transform directly in
+determinant space, which is exact but combinatorial in cost, hence
+"dense benchmark scale": compact orbital spaces, method validation, not
+production molecules.
+
+**QCISD.** Quadratic CI ({vibeqc-cite}`pople_qcisd_1987`) starts from
+CISD and adds just enough of the quadratic terms ($\tfrac12 T_2^2$ in
+the doubles equation, $T_1 T_2$ in the singles) to restore
+size-extensivity. It is a subset of CCSD that drops most of the
+nonlinear $T_1$ terms, and QCISD(T) adds the triples with the original
+$E^{[4]}_T + 2 E^{[5]}_{ST}$ weighting because QCISD amplitudes lack the
+$T_1 T_2$ disconnected contribution CCSD carries.
+
+**The coupled-pair family.** Dropping *all* nonlinear terms from the
+CCSD equations gives the linearised methods: LCCD (doubles only) and
+LCCSD, the latter identical to CEPA(0). Linearised CC is also CISD with
+the energy-dependent shift removed from the doubles equation, which
+restores size-extensivity at the price of losing the variational bound
+and over-correlating near-degenerate systems. Meyer's CEPA(n)
+({vibeqc-cite}`meyer_cepa_1973`) reinstates a pair-specific shift that
+approximates the exclusion-principle-violating terms the dropped
+$T_2^2$ term would have produced:
+
+$$
+\langle \Phi_{ij}^{ab} |\, H - E_{\rm HF} - \Delta_{ij}\, | \Psi \rangle = 0,
+\qquad
+\Delta_{ij} =
+\begin{cases}
+0 & \text{CEPA(0)} \\
+\tfrac12 \sum_k (e_{ik} + e_{jk}) & \text{CEPA(1)} \\
+e_{ij} & \text{CEPA(2)} \\
+-e_{ij} + \sum_k (e_{ik} + e_{jk}) & \text{CEPA(3)}
+\end{cases}
+$$
+
+with $e_{ij}$ the pair correlation energies; the closed-shell shift
+table is that of Wennmohs and Neese
+({vibeqc-cite}`wennmohs_neese_cepa_2008`). CCD is CCSD with the singles
+frozen at zero.
+
+**Brueckner orbitals.** Instead of solving for $T_1$, Brueckner theory
+rotates the orbitals until the converged singles vanish; the reference
+determinant then has maximum overlap with the coupled-cluster wave
+function, and BCCD is CCD in that basis ({vibeqc-cite}`handy_bccd_1989`).
+Each outer iteration solves a CCSD-like singles probe and rotates the
+occupied-virtual block by the resulting $T_1$, so BCCD costs several
+CCSD solves; BCCD(T) adds the standard triples on the Brueckner
+orbitals. Its energies lie within tens of microhartree of CCSD(T) for
+well-behaved closed shells and are more robust where large singles
+signal orbital relaxation or artefactual symmetry breaking.
+
+**Frozen natural orbitals.** The cost of every method above is set by
+the virtual dimension $v$. Diagonalising the virtual block of the MP2
+one-particle density gives natural orbitals ordered by how much
+correlation they carry; keeping those above an occupation threshold
+({vibeqc-cite}`taube_bartlett_fno_2008`;
+{vibeqc-cite}`deprince_sherrill_df_ccsd_2013`), semicanonicalising the
+retained block so that (T) keeps its canonical form, and adding back
+the MP2 energy of the discarded orbitals recovers CCSD(T) to a fraction
+of a millihartree at a fraction of the cost.
+
+**Where it helps and where it fails.** CCSD(T) is the accuracy
+reference for single-reference molecules: chemical accuracy for
+main-group thermochemistry in a converged basis. Its assumptions fail
+when the reference determinant is poor. A large $T_1$ norm (the
+$T_1$ diagnostic above about 0.02) or large individual $t_{ij}^{ab}$
+signal multireference character; there the perturbative (T) overshoots
+and can diverge as denominators close, A-CCSD(T) or BCCD(T) degrade
+more gracefully, and a multireference method is the honest answer.
+The $O(N^6)$ and $O(N^7)$ scaling limits canonical work to a few dozen
+atoms; beyond that the [DLPNO](dlpno_mp2.md) family keeps the physics
+at near-linear cost.
 
 ## Quick start
 
@@ -87,9 +267,12 @@ Low-level APIs retain `n_frozen_core` as an explicit spatial-orbital count;
 This is a count-only convention: vibe-qc removes the corresponding
 lowest-energy occupied orbitals and does not implement ORCA's extra
 atomic-orbital-character reorder. Review or override the count for unusual
-all-electron orbital orderings. Molecular ECP references are currently
-rejected because their variational electron count differs from the molecule's
-physical count; `frozen_core=False` does not restore ECP-removed electrons.
+all-electron orbital orderings. A molecular ECP reference is accepted
+since 2026-09: the occupied space is partitioned from the valence electron
+count the SCF result carries and the frozen-core table subtracts the ECP
+core per atom (see
+[Effective core potentials](ecp.md#correlated-open-shell-and-determinant-methods-on-an-ecp-reference));
+`frozen_core=False` does not restore ECP-removed electrons.
 
 ## CC2
 
@@ -339,6 +522,54 @@ triples increment is `E[T] + 2*E_ST`, not the CCSD(T) `E[T] + E_ST`
 combination. This is pinned against out-of-process ORCA 6.1
 `RI-QCISD(T)` with canonical orbitals and the same RI auxiliary basis.
 
+## Brueckner CCD: BCCD and BCCD(T)
+
+`method="bccd"` and `method="bccd(t)"` (also `citype="bccd"` /
+`"bccd(t)"`) run closed-shell Brueckner coupled cluster: an outer loop
+rotates the RHF orbitals by the converged CCSD singles until the $T_1$
+norm falls below `brueckner_tol`, then the doubles-only BCCD equations,
+and optionally the standard (T), run on those orbitals (see
+[Theory](#theory)). The route is DF by default like CCSD and shares
+`CCSDOptions`:
+
+```python
+import vibeqc as vq
+
+mol = vq.Molecule(
+    [
+        vq.Atom(8, [0.000, 0.000, 0.000]),
+        vq.Atom(1, [0.000, 1.499, -1.160]),
+        vq.Atom(1, [0.000, -1.499, -1.160]),
+    ],
+)
+
+result = vq.run_job(mol, basis="cc-pvdz", method="bccd(t)", output="h2o_bccd_t")
+cc = result.ccsd
+print(cc.brueckner_iterations, cc.brueckner_t1_norm)   # 14  9.2e-07
+print(cc.e_ccsd_correlation, cc.e_t)                   # -0.2155681  -0.0033982
+print(result.energy_total)                             # -76.2387108
+```
+
+On this water geometry (vibe-qc 0.17.10 development build on an Apple
+silicon Mac, 3.4 s wall) BCCD(T) gives $-76.2387108$ Ha against
+$-76.2387219$ Ha for CCSD(T) on the same frozen-core RHF reference, a
+difference of 11 µHa; the `.out` block reports
+`Algorithm = DF-BCCD(T)`, the Brueckner iteration count and the final
+CCSD $|T_1|$. The Brueckner controls on `CCSDOptions` are
+`brueckner_max_iter` (default 20), `brueckner_tol` (1e-6) and
+`brueckner_damping` (0.5); the result adds `brueckner_iterations`,
+`brueckner_converged`, `brueckner_t1_norm`, `brueckner_trace`,
+`brueckner_mo_coeffs` and `brueckner_reference_energy` (the energy of
+the rotated reference determinant, which is no longer the RHF energy)
+to the `CCSDResult` fields. The low-level entry point is
+`vq.run_bccd(mol, basis, rhf_result, options)`.
+
+BCCD requires a closed-shell RHF reference (an open-shell molecule
+raises), accepts `triples="(t)"` but not the bracket `"[t]"` (that
+decomposition is defined for CCSD amplitudes), and runs in the full
+virtual space: an `fno=True` on its options is ignored rather than
+applied.
+
 ## Low-level API
 
 Use the low-level API when you already have a converged RHF reference or
@@ -487,6 +718,9 @@ vq.run_job(mol, basis="cc-pvtz", method="ccsd(t)",
 
 The retained virtuals are semicanonicalized (the virtual Fock block is
 re-diagonalized) so the perturbative `(T)` stays exact in the truncated space.
+This step uses the shared dense Fock operator contract and checks the complete
+retained-block spectrum, residuals and orthogonality. The natural-orbital
+density eigensystem and truncation thresholds remain separate method steps.
 By default a **delta-MP2** correction `E_MP2[full] - E_MP2[trunc]` is added back
 (`fno_delta_mp2=True`), which recovers most of the small correlation lost to
 truncation. The `.out` file reports how many natural orbitals were kept and the
@@ -561,6 +795,17 @@ The current canonical engine is deliberately conservative:
 
 ## Native multi-k periodic reference under development
 
+```{admonition} Status: experimental
+:class: warning
+
+Everything in this section is an experimental, library-internal reference path.
+It is not selected by `run_periodic_job`, its Python bindings are diagnostic and
+enforce tiny bounds, and none of it implies a production periodic DLPNO-CCSD(T)
+capability. Its numbers are research output, not validated results, and it is not
+part of the release gate. The label vocabulary is defined in
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+```
+
 An internal C++ reference path now connects actual finite-source periodic
 Gaussian RHF, IAO/Wannier localization, selected real PAO spaces, streamed
 Gaussian factors, CCSD and occupied-Fock-coupled triples. It is tested on
@@ -582,6 +827,8 @@ coupled equations and the common-space reference. Distinct retained ranks,
 empty triple spaces, convergence failures and cancellation are tested.
 Explicit frozen-core masks are tested through both complete workflows,
 including the inactive-core contribution to the HF reference energy.
+The HF contribution is copied exactly from the supplied captured HF state,
+including all frozen occupied orbitals.
 This is not yet the production pair-specific
 periodic DLPNO-CCSD(T) implementation and is not selected by
 `run_periodic_job`. Its diagnostic Python bindings enforce tiny bounds.
@@ -863,6 +1110,18 @@ witness, all 16 s-shell quartet supports close; selected native multi-k SR
 integrals reproduce the mapped complex phases and independent Gaussian
 quadrature values.
 
+A private `audit_quartet_support` diagnostic compares two declared SR image
+multisets under any of the eight ERI permutations and integer site
+reanchoring. For centers moved by `A*t_i`, it starts from `(0,g,p,s)`,
+subtracts `t_i`, permutes the four slots, and subtracts the new first label.
+It preserves repeated-image counts and reports the lexicographically first
+label with unequal multiplicities. Integer arithmetic does not overflow or
+wrap finite cells onto a k mesh. Explicit storage/work admission precedes
+payload snapshots; the immutable receipt binds both ordered inputs and the
+mapping. A positive result proves label equality only. The caller must
+separately bind AO geometry, radii, kernel and Bloch phases, and both
+Hamiltonian and symmetry certification remain false.
+
 This is a source-development component, not the production HF truncation
 rule. It does not authenticate supplied centers as basis/atom ownership,
 bind a complete Ewald operator, or enable production symmetry reduction.
@@ -880,6 +1139,13 @@ and inventories both lists, counting an identical borrowed view once.
 The shared-cell API delegates to this kernel and retains the shared-list
 scientific identity when both ordered contents are identical, even if their
 storage differs.
+
+The weighted LR product distinguishes exact cancellation from unresolved
+roundoff using normalized binary64 products and their FMA remainders.
+Equal products with different factors are admitted, including the five-point
+and shifted multiaxis mesh cases; no cancellation tolerance or zero clipping
+is used. Exponent scaling still preserves small residuals restored by the
+reciprocal weight and rejects nonfinite final results.
 
 For physical product domains, reversal relates two lists by `C_ba = -C_ab`.
 An individual off-diagonal list need not be invariant under inversion.
