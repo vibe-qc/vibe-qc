@@ -185,6 +185,43 @@ class Citation:
         return out
 
 
+def _store_record_citations(name: str) -> tuple[list[str], str | None]:
+    """Citation keys of a user-store or fetch-cache record named ``name``.
+
+    Returns ``([], None)`` when no such record exists. Otherwise the keys
+    from the record's ``provenance.citations`` and a note naming the record,
+    which says "user-supplied" when the record carries no publication.
+    """
+    try:
+        from vibeqc import basis_store
+        from vibeqc.basis_toolkit import library
+
+        stored = next((r for r in basis_store.list_records() if r.name == name), None)
+        if stored is None:
+            stored = basis_store.cache_get(name)
+        if stored is None:
+            return [], None
+        record = library.load_record(stored.path)
+    except Exception as exc:  # noqa: BLE001 - citations must never fail a run
+        return [], f"basis set {name!r}: its store record could not be read ({exc})"
+    keys: list[str] = []
+    for route in (record.provenance.citations if record.provenance else []):
+        for key in route.keys:
+            if key not in keys:
+                keys.append(key)
+    for ref in record.references:
+        if ref.doi and ref.key not in keys and ref.key.startswith("doi:"):
+            keys.append(ref.key)
+    kind = record.provenance.kind.value if record.provenance and record.provenance.kind else "record"
+    identity = f"{kind} record from the {stored.layer}, content sha256 {stored.content_sha256[:16]}"
+    if not keys:
+        return [], (
+            f"basis set {name!r} is user-supplied ({identity}); no publication is "
+            "recorded for it, cite its provenance"
+        )
+    return keys, f"basis set {name!r} is a {identity}; citing the publications its provenance names"
+
+
 @dataclass(frozen=True)
 class AssembledCitations:
     """Ordered, deduplicated list of :class:`Citation` entries plus
@@ -299,6 +336,7 @@ class CitationDatabase:
         direct_scf: bool = False,
         uses_cpcm: bool = False,
         solvent_variant: str | None = None,
+        extra_solvation: Iterable[str] = (),
         pno_norm: str | None = None,
         extra_libraries: Iterable[str] = (),
         dft_plus_u: bool = False,
@@ -342,6 +380,7 @@ class CitationDatabase:
         properties: Iterable[str] = (),
         acceleration: Iterable[str] = (),
         numerics: Iterable[str] = (),
+        extra_methods: Iterable[str] = (),
         extra_entries: Iterable[str] = (),
     ) -> AssembledCitations:
         """Walk the routes table for a job and return the assembled
@@ -392,8 +431,8 @@ class CitationDatabase:
             lookup miss is silent (most parameter sets come from the
             dispersion method paper itself).
         scf_accelerator
-            ``"diis"`` / ``"ediis"`` -- keyed lookup. None => default
-            (DIIS) cite.
+            ``"diis"`` / ``"ediis"`` / ``"opentrustregion"`` -- keyed
+            lookup of the executed converger. None => default (DIIS) cite.
         uses_integrals
             True (default) => the always-on libint integral-library
             citation fires. Set False for engines that evaluate no
@@ -426,6 +465,10 @@ class CitationDatabase:
         solvent_variant
             ``"cpcm"`` (default when uses_cpcm=True) or ``"cosmo"``;
             routes through ``routes.solvation[<variant>]``.
+        extra_solvation
+            Solvation rows that fire *in addition* to the reaction-field row,
+            for thermodynamics computed on top of it -- ``"cosmors"`` when
+            ``run_job(cosmors=...)`` evaluated COSMO-RS on the conductor run.
         extra_libraries
             Additional library keys to route -- useful for tutorials
             that want to surface, e.g., Eigen by name.
@@ -512,7 +555,18 @@ class CitationDatabase:
                 b_key = filtered_match.group(1)
                 row = self._routes.get("basis_sets", {}).get(b_key)
             if row is None:
-                warnings.append(f"no citation route for basis set {basis!r}")
+                # A record from the user store or the fetch cache (#410):
+                # cite what its provenance says, and say so when it says
+                # nothing. Nothing downstream branches on the record's kind;
+                # the only difference from a bundled set is that the keys
+                # come from the record rather than from the route table.
+                store_keys, store_note = _store_record_citations(b_key)
+                if store_note is None:
+                    warnings.append(f"no citation route for basis set {basis!r}")
+                else:
+                    warnings.append(store_note)
+                    if store_keys:
+                        _add(store_keys, f"basis_store[{b_key!r}]")
             else:
                 _add(row, f"basis_sets[{b_key!r}]")
                 # The bundled basis library is sourced from the Basis Set
@@ -587,6 +641,29 @@ class CitationDatabase:
                             if k != _DF_CC_ASSEMBLY_ENTRY
                         ]
                     _add(row, f"methods[{m_key!r}]")
+
+        # 5a. Additional method routes, for a job whose single ``method``
+        # name does not name everything that ran. An open-shell double
+        # hybrid is the motivating case: ``method="b2plyp"`` fires the
+        # Grimme 2006 route, but the run also converged a ROKS reference
+        # and took a semicanonical RI-ROHF-MP2 doubles correction, each
+        # with its own defining paper. Routed rather than passed as raw
+        # entry keys so database.toml stays the one place a method's
+        # papers are declared. A miss warns here, unlike the silent miss
+        # above: a caller naming an extra method meant to cite something.
+        for extra_method in extra_methods:
+            if not extra_method:
+                continue
+            x_key = str(extra_method).strip().lower()
+            if x_key == (method or "").strip().lower():
+                continue
+            row = self._routes.get("methods", {}).get(x_key)
+            if row is None:
+                warnings.append(
+                    f"no citation route for extra method {extra_method!r}"
+                )
+            else:
+                _add(row, f"methods[{x_key!r}]")
 
         # 6. Dispersion.
         if dispersion:
@@ -718,7 +795,7 @@ class CitationDatabase:
         # kernel alike. The MSINDO engine is excluded by construction:
         # its frozen 1-D kernel is the truncated bare lattice sum the
         # wire Ewald replaced, so the adapter names it *_truncated_1d
-        # and it never reaches this route (GitLab #442).
+        # and it never reaches this route (former-tracker issue 442).
         seccm_uses_wire_ewald_1d = (
             seccm_dimension == 1
             and (seccm_electrostatics_kernel or "").endswith("wire_1d")
@@ -1010,6 +1087,17 @@ class CitationDatabase:
                 warnings.append(f"no citation route for solvent variant {variant!r}")
             else:
                 _add(row, f"solvation[{variant!r}]")
+
+        # 9a. Solvation thermodynamics layered on the reaction field. The row
+        # above is the one model that screened the solute; these are what was
+        # computed from its surface afterwards, so they add to it.
+        for key in extra_solvation:
+            k = str(key).strip().lower()
+            row = self._routes.get("solvation", {}).get(k)
+            if row is None:
+                warnings.append(f"no citation route for solvation extra {k!r}")
+            else:
+                _add(row, f"solvation[{k!r}]")
 
         # 9b. DLPNO pair-density convention. ``tcut_pno`` is a cut on the
         # eigenvalues of this density, so the convention is part of the method

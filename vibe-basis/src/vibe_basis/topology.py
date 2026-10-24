@@ -40,8 +40,8 @@ Shell shape mirrors ``vibeqc.basis_crystal.CrystalShell`` field for field
 (``shell_type``, ``exponents``, ``coefficients``, ``coefficients_p``,
 ``occupancy``, ``scale_factor``) so the Tier-2 adapter is a transcription and
 not a translation. It is deliberately a separate class rather than an import:
-see the duplicated-``OptResult`` incident in HANDOVER_BASISOPT.md 3.6, whose
-lesson was that the boundary needs *declared* shapes, not shared ones.
+the duplicated-``OptResult`` incident demonstrated that the boundary needs
+*declared* shapes, not shared ones.
 """
 
 from __future__ import annotations
@@ -87,6 +87,11 @@ class Shell:
 
     Mirrors ``vibeqc.basis_crystal.CrystalShell``. ``coefficients_p`` carries
     the p-side of an ``SP`` shell and is empty otherwise, exactly as there.
+    ``scale_factor`` is a CRYSTAL ``SCAL`` still to apply: the effective
+    exponents are ``exponents * scale_factor**2``, with 0.0 and 1.0 meaning
+    as written (``vibe_basis.io.export.crystal_exponent_factor``). A shell
+    transcribed from a parsed ``CrystalShell`` has 1.0, because vibe-qc's
+    parser applies the factor on the way in.
     """
 
     shell_type: str

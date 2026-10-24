@@ -5,7 +5,7 @@ parses via :func:`vibeqc.fetch.references.parsers.parse_exp2x_html`,
 and returns an :class:`ExperimentalReference` with full
 :class:`Provenance` (NIST DOI, license, fetched timestamp).
 
-Rate limiting (per the handover Sec. 7.2):
+Rate limiting (per the original investigation):
   * Sleep >= 1 s between consecutive requests in the same process.
   * Declared User-Agent identifying vibe-qc + version + public contact.
   * Honour ``Retry-After`` on 429 / 503 with exponential backoff
@@ -13,7 +13,7 @@ Rate limiting (per the handover Sec. 7.2):
   * Aggressive 30-day cache via :class:`FetchCache` --
     every cached hit is one HTTP request NIST doesn't have to serve.
 
-Architecture deviation from the handover-doc draft (logged in
+Architecture deviation from the earlier design draft (logged in
 ``references/__init__.py``): we use a single URL + single parser
 per molecule, not the multi-table-code orchestration the doc
 proposed. Live probing showed that ``ea2x.asp`` returns 500,
@@ -31,7 +31,7 @@ from typing import Optional
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from examples.regression.core.spec import ExperimentalReference, Provenance
+from vibeqc_spec import ExperimentalReference, Provenance
 
 from .. import __version__ as FETCHER_VERSION
 from ..cache import FetchCache, FetchCacheMiss, SOURCE_DB_CCCBDB

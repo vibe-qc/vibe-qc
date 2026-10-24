@@ -15,8 +15,8 @@ lines lives in ``vibeqc.periodic_runner`` / ``vibeqc.periodic_jk_method``,
 never here. Keep it that way.
 
 Modules, with the package-root file names they carried before the 2026-09-02
-layout move (``handovers/HANDOVER_AICCM_LAYOUT_MERGE.md``), for grep
-continuity with the handovers and the CHANGELOG:
+layout move (the original investigation), for grep
+continuity with the original investigations and the CHANGELOG:
 
 * ``scf``           was ``periodic_aiccm2026dev_b.py``: the RHF/RKS/UHF/UKS
   drivers, the finite-torus convention and exchange-assembly records, the

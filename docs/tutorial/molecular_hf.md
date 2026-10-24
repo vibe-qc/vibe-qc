@@ -27,16 +27,18 @@ print(f"MO energies = {result.mo_energies}")
 Output:
 
 ```
-E_RHF       = -76.0107424867
+E_RHF       = -76.0066778869
 converged   = True
-iterations  = 8
-MO energies = [-20.55  -1.34  -0.71  -0.56  -0.50   0.21   0.31   ...]
+iterations  = 9
+MO energies = [-20.54  -1.36  -0.74  -0.56  -0.50   0.22   0.31   ...]
 ```
 
 ## What just happened
 
 1. **Building the basis.** `BasisSet(mol, "6-31g*")` looks up the
-   6-31G\* contraction in libint's built-in library, places its
+   6-31G\* contraction ({vibeqc-cite}`ditchfield_6_31g_1971`,
+   {vibeqc-cite}`hariharan_pople_1973`) in libint's built-in library
+   ({vibeqc-cite}`libint_valeev`), places its
    shells on each atomic center, and records the resulting list of
    atomic orbitals.
 2. **SCF with DIIS.** The driver diagonalises H_core for an initial
@@ -53,13 +55,13 @@ Most of the time the defaults are fine. For tight benchmarks you may
 want:
 
 ```python
-from vibeqc import RHFOptions
+from vibeqc import InitialGuess, RHFOptions
 
 opts = RHFOptions()
 opts.conv_tol_energy = 1e-12
 opts.conv_tol_grad = 1e-10
 opts.use_diis = True
-opts.initial_guess = vq.InitialGuess.SAD   # superposition of atomic densities
+opts.initial_guess = InitialGuess.SAD   # superposition of atomic densities
 
 result = run_rhf(mol, basis, opts)
 ```
@@ -76,7 +78,9 @@ grad = compute_gradient(mol, basis, result)   # (n_atoms, 3), Hartree / bohr
 ```
 
 Gradients are analytic throughout; accuracy tracks the SCF convergence
-(better than 1e-8 Ha/bohr at default tolerances).
+(a few 1e-8 Ha/bohr at default tolerances: 3 to 4e-8 Ha/bohr against a
+tightly converged SCF for water at HF/6-31G\*, vibe-qc 0.17.17
+development build).
 
 ## Theory
 
@@ -115,7 +119,10 @@ $$
 The variational minimisation of the HF energy with respect to the
 $C_{\mu i}$ coefficients (subject to orthonormality $\mathbf{C}^\dagger
 \mathbf{S} \mathbf{C} = \mathbf{I}$) yields the **Roothaan-Hall
-equations**, a generalised eigenvalue problem in the AO basis:
+equations** (C. C. J. Roothaan, *Rev. Mod. Phys.* **23**, 69 (1951),
+doi:10.1103/RevModPhys.23.69; G. G. Hall, *Proc. R. Soc. Lond. A*
+**205**, 541 (1951), doi:10.1098/rspa.1951.0048), a generalised
+eigenvalue problem in the AO basis:
 
 $$
 \mathbf{F} \, \mathbf{C} = \mathbf{S} \, \mathbf{C} \, \boldsymbol{\varepsilon},
@@ -149,7 +156,8 @@ non-linear. The standard fix is the **self-consistent-field (SCF)**
 iteration:
 
 1. Guess an initial density $\mathbf{P}^{(0)}$ (vibe-qc defaults to
-   the superposition-of-atomic-densities (SAD) guess, with an
+   the superposition-of-atomic-densities (SAD) guess,
+   {vibeqc-cite}`vanlenthe_sad_2006`, with an
    $H_\text{core}$ fallback).
 2. Build $\mathbf{F}^{(n)}$ from $\mathbf{P}^{(n)}$.
 3. Solve the generalised eigenvalue problem for
@@ -166,8 +174,9 @@ iteration:
 
 Fixed-point iteration of the above recipe typically oscillates and
 converges slowly. Pulay's **Direct Inversion in the Iterative
-Subspace (DIIS)** extrapolates the Fock matrix instead of using
-$\mathbf{F}^{(n)}$ directly:
+Subspace (DIIS)** ({vibeqc-cite}`pulay_diis_1980`,
+{vibeqc-cite}`pulay_diis_1982`) extrapolates the Fock matrix instead of
+using $\mathbf{F}^{(n)}$ directly:
 
 $$
 \mathbf{F}_\text{DIIS} = \sum_{i} c_i \, \mathbf{F}^{(i)},
@@ -177,8 +186,10 @@ $$
 $$
 
 where $\mathbf{e}^{(i)} = [\mathbf{F}^{(i)}, \mathbf{P}^{(i)}
-\mathbf{S}]$ is the commutator error vector at iteration $i$. Near
-the solution DIIS converges quadratically in practice; at default
+\mathbf{S}]$ is the commutator error vector at iteration $i$, the
+choice introduced in the 1982 paper. Near
+the solution DIIS converges rapidly in practice (superlinearly, not
+quadratically); at default
 settings vibe-qc takes 8-12 iterations on most closed-shell
 molecules, where naïve mixing would take dozens.
 
@@ -186,10 +197,14 @@ molecules, where naïve mixing would take dozens.
 
 HF is exact for one-electron systems (H, He⁺, Li²⁺, …) and is the
 starting point for the whole correlated-wavefunction hierarchy (MP2,
-CCSD, CCSD(T)). It has a hard ceiling on accuracy because the single
+{vibeqc-cite}`moller_plesset_1934`; CCSD,
+{vibeqc-cite}`purvis_bartlett_ccsd_1982`; CCSD(T),
+{vibeqc-cite}`raghavachari_ccsdt_1989`). It has a hard ceiling on accuracy because the single
 determinant cannot represent the instantaneous electron-electron
 correlation, *dynamic* correlation is missing entirely. For
-benchmark-quality numbers you graduate to Kohn-Sham DFT (see
+benchmark-quality numbers you graduate to Kohn-Sham DFT (W. Kohn and
+L. J. Sham, *Phys. Rev.* **140**, A1133 (1965),
+doi:10.1103/PhysRev.140.A1133; see
 [Molecular DFT (RKS)](molecular_dft.md)), MP2, or coupled cluster.
 
 ## Resources

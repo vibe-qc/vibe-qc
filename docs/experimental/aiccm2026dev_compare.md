@@ -1,22 +1,33 @@
 ---
 myst:
   html_meta:
-    "description": "How to study the distinct union-and-weight Γ-CCM and finite-character χ-CCM approaches side by side without assuming a matched finite Hamiltonian."
+    "description": "How to study the distinct Γ-CCM (neutral finite-torus, with its four-centre union-and-weight sibling) and finite-character χ-CCM approaches side by side without assuming a matched finite Hamiltonian."
     "og:title": "vibe-qc - comparing Γ-CCM and χ-CCM"
 ---
 
 # Comparing Γ-CCM and χ-CCM
 
+```{admonition} Status: experimental
+:class: warning
+
+Every route compared on this page (both AICCM lines) is an experimental route. Every Γ-line SCF driver emits `vibeqc.AICCM2026DevAExperimentalWarning` and every χ-CCM driver emits `vibeqc.AICCM2026DevBExperimentalWarning`; the `.system` manifest records `method_status = "experimental"` for every AICCM job run through `run_periodic_job(method="aiccm", variant=...)`. Its numbers are research output, not validated results, and it is not part of the release gate. The label vocabulary is defined in [Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+```
+
 Γ-CCM (`aiccm2026dev-a`) and χ-CCM[^xccm-convention]
 (`aiccm2026dev-b`) are distinct approaches to the ab-initio Cyclic Cluster
-Model. Γ-CCM uses union-and-weight/Wigner--Seitz integral weighting; χ-CCM
-uses a finite-translation-group character construction. They are developed in
+Model. Γ-CCM is the neutral finite-torus construction (variants `real-gamma`
+and `neutral-bloch`); the `four-center` variant is the 2014 union-and-weight
+lineage kept in the same development line; χ-CCM uses a
+finite-translation-group character construction. They are developed in
 separate workstreams, share only the geometry registry (`testset.py`), and are
 compared head-to-head to determine, rather than presume, where specified
 finite operators and routes agree.
 
-[^xccm-convention]: Γ-CCM and χ-CCM are distinct CCM approaches. Γ-CCM uses
-    the union-and-weight/Wigner--Seitz integral-weighting construction; χ-CCM
+[^xccm-convention]: Γ-CCM and χ-CCM are distinct CCM approaches. Γ-CCM is
+    the neutral finite-torus construction with two producers, `variant="real-gamma"`
+    and `variant="neutral-bloch"` (ruling R1, 2026-08-21); the `four-center` variant
+    is the 2014 union-and-weight/Wigner-Seitz lineage, a different construction
+    kept in the same `aiccm2026dev-a` development line. χ-CCM
     uses the finite-translation-group character construction. They are compared
     at a declared common exchange-q=0 convention. Their distinction is not a
     choice of Coulomb kernels, and equality for a specified operator/route is
@@ -25,8 +36,8 @@ finite operators and routes agree.
 ```{important}
 The reportable Γ/χ approach-comparison map is currently empty. The existing
 `aiccm-hf-direct` versus B `rhf-ri` pair is a neutral-torus real-Gamma versus
-character representation control, not evidence for the union-and-weight
-Γ-CCM approach. Within the χ-defined Hamiltonian those two representations are
+character representation control, not evidence about the four-centre
+union-and-weight lineage. Within the χ-defined Hamiltonian those two representations are
 related by an exact finite Fourier transform. Cross-approach equality remains
 evidence to establish at a declared common exchange-`q=0` convention.
 ```
@@ -131,8 +142,9 @@ Hamiltonian, variational space, or approximation. Those bindings require a
 route-specific derivation and fingerprint.
 
 No such cross-approach route is currently reportable. In particular,
-`run_ccm_rhf_gdf` and `aiccm-hf-direct` are neutral fitted-torus controls; they
-are not the union-and-weight Γ-CCM construction. Their agreement with B `rhf-ri`
+`run_ccm_rhf_gdf` and `aiccm-hf-direct` are the two neutral finite-torus
+producers (Γ-CCM under ruling R1); they are not the four-centre
+union-and-weight lineage. Their agreement with B `rhf-ri`
 tests a specified fitted operator or its Fourier evaluation, not Γ-CCM/χ-CCM
 approach equality.
 
@@ -140,7 +152,7 @@ approach equality.
 
 | axis | current rule | reason |
 |---|---|---|
-| **Approach construction** | report `not-defined` | No route map currently binds a union-and-weight Γ-CCM result to a finite-character χ-CCM result for one fully attested operator. |
+| **Approach construction** | report `not-defined` | No route map currently binds a Γ-CCM result (neutral construction or four-centre lineage) to a finite-character χ-CCM result for one fully attested operator. |
 | **Neutral-torus Fourier control** | use only `real_gamma_control_*` fields | Character and real-Gamma evaluations of one specified block-circulant Hamiltonian are Fourier related. This is an internal representation theorem, not a construction identity. |
 | **Exchange seam** | require the same active `exchange_q0` convention | Different seams define different finite-size operators. A matching label is still only one part of the contract. |
 | **Low dimensions** | do not run or quote χ-CCM-B absolute energies | All 1-D/2-D B SCF backends fail closed until a shared wire/slab Coulomb convention is derived. |
@@ -156,8 +168,9 @@ construction, operator, numerical-input, and producer fingerprint.
    `ccm_approach="chi-ccm"`,
    `ccm_construction="finite-translation-group-character"`, and
    `evaluation_representation="gamma-centred-character-mesh"` fields. A future
-   Γ record needs its own union-and-weight identity. A real-Gamma control must
-   not be relabelled as Γ-CCM.
+   Γ record needs its own construction identity fields (neutral finite-torus
+   producer or four-centre lineage). A four-centre record must not be
+   relabelled as the neutral construction, nor the reverse.
 
 2. **Check the convention descriptor.** Both results must carry
    `coulomb_kernel="3d-periodic-g0"` and

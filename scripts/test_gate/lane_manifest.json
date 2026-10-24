@@ -9,7 +9,7 @@
       "--impact-mode release restricts --changed-since to smoke and explicitly opted-in cheap release-impact lanes; full area lanes remain available with the default dev mode or explicit --lane.",
       "CLI --jobs, --markexpr, --test-timeout, --file-timeout, and --only override lane defaults.",
       "Experimental AICCM/CCM/SECCM lanes are explicit manual research checks only; do not include them in release profiles, advisory profiles, or --changed-since impact gates.",
-      "Patch releases (0.15.x) are not blocked by experimental/research-stage features (CCM, MSINDO-CCM, SECCM, aiccm2026dev-a/-b) or by anything documented as planned for a later minor or major release. Track failures in those areas as known-red and ship; escalate only regressions in shipped, non-experimental features."
+      "Patch releases on the current line are not blocked by experimental/research-stage features (CCM, MSINDO-CCM, SECCM, aiccm2026dev-a/-b) or by anything documented as planned for a later minor or major release. Track failures in those areas as known-red and ship; escalate only regressions in shipped, non-experimental features."
     ],
     "validation_policy_snapshot": "scripts/test_gate/suite_manifest.json",
     "method_maturity_states": [
@@ -41,26 +41,7 @@
     "known_stale_target_release": {
       "ref": "#199",
       "reason": "Lanes whose target_release predates the current release line. Tracked so the staleness check can ship before the owning chats retarget; each owner retargets its own lane and removes it from this list in the same change.",
-      "lanes": [
-        "basis-ecp-integrals",
-        "embedding-surfaces-neb",
-        "external-reference",
-        "full-fast",
-        "molecular-correlation",
-        "molecular-scf-dft",
-        "output-docs",
-        "pbc-bipole",
-        "pbc-core",
-        "pbc-gapw-gpw",
-        "pbc-gdf",
-        "release-core-cheap",
-        "semiempirical",
-        "semiempirical-molecular",
-        "semiempirical-periodic",
-        "slow-nightly",
-        "smoke",
-        "solvation"
-      ]
+      "lanes": []
     }
   },
   "profiles": {
@@ -86,7 +67,7 @@
       "global_items": [
         "release-test-schedule"
       ],
-      "target_release": "v0.15.x",
+      "target_release": "v0.17.x",
       "scientific_acceptance": false,
       "required_full_calculation": "None. This is change-safety/build-health evidence only; scientific acceptance requires the agentic-loop full matched calculation selected by the policy snapshot.",
       "release_impact_default": false,
@@ -116,7 +97,7 @@
         "BUG 42",
         "BUG 44"
       ],
-      "target_release": "v0.15.x",
+      "target_release": "v0.17.x",
       "scientific_acceptance": false,
       "required_full_calculation": "For paper values or output-contract changes, rerun the affected full input with .out, .system, QVF, structured logs, references, and matched reference artifacts preserved.",
       "markexpr": "not slow",
@@ -133,6 +114,7 @@
         "tests/test_citations*.py",
         "tests/test_*citation*.py",
         "tests/test_features_doc_symbols.py",
+        "tests/test_roadmap_release_table.py",
         "tests/test_scf_log*.py",
         "tests/test_progress.py",
         "tests/test_structured_log.py",
@@ -158,7 +140,7 @@
       "global_items": [
         "release-test-schedule"
       ],
-      "target_release": "v0.15.x",
+      "target_release": "v0.17.x",
       "scientific_acceptance": false,
       "required_full_calculation": "Stable production sentinels and any patch-affected production, verified, or under-review full matched calculations selected by the agentic-loop policy.",
       "impact_default": false,
@@ -189,7 +171,7 @@
         "BUG 44",
         "BUG 45"
       ],
-      "target_release": "v0.15.x",
+      "target_release": "v0.17.x",
       "scientific_acceptance": false,
       "required_full_calculation": "Run the affected molecular HF/DFT inventory row(s) from full inputs against ORCA or the named independent reference with complete artifacts and numeric analysis.",
       "markexpr": "not slow",
@@ -213,6 +195,7 @@
         "tests/test_incremental_fock_open_shell.py",
         "tests/test_*diis*.py",
         "tests/test_newton.py",
+        "tests/test_opentrustregion.py",
         "tests/test_soscf.py",
         "tests/test_oda.py",
         "tests/test_mom.py",
@@ -258,7 +241,7 @@
         "G-CORR-005",
         "G-CORR-007"
       ],
-      "target_release": "v0.15.x",
+      "target_release": "v0.17.x",
       "scientific_acceptance": false,
       "required_full_calculation": "Run the affected MP2/CC/DLPNO/CAS/CI/TDDFT full input against ORCA, OpenMolcas, or the named oracle; keep the development owner involved for under-review routes.",
       "markexpr": "not slow",
@@ -267,6 +250,7 @@
       "file_timeout_s": 1200,
       "include": [
         "tests/test_*mp2*.py",
+        "tests/test_double_hybrid_run_job.py",
         "tests/test_cc*.py",
         "tests/test_uccsd*.py",
         "tests/test_rohf_ccsd*.py",
@@ -313,7 +297,7 @@
       "global_items": [
         "release-test-schedule"
       ],
-      "target_release": "v0.15.x",
+      "target_release": "v0.17.x",
       "scientific_acceptance": false,
       "required_full_calculation": "Run the affected basis/ECP/integral production calculation or reference artifact comparison when a paper value, shipped basis, ECP route, or citation route changes.",
       "markexpr": "not slow",
@@ -370,7 +354,7 @@
       "global_items": [
         "solvation-cross-code-validation-open-items"
       ],
-      "target_release": "v0.15.x",
+      "target_release": "v0.17.x",
       "scientific_acceptance": false,
       "required_full_calculation": "Run the affected solvated full input against the named matched reference before promoting a solvation value; analytic gradients additionally require a topology-validated central finite-difference ladder on the exact shipped energy.",
       "markexpr": "not slow",
@@ -396,7 +380,7 @@
       "global_items": [
         "semiempirical-article-validation-open-items"
       ],
-      "target_release": "v0.15.x",
+      "target_release": "v0.17.x",
       "scientific_acceptance": false,
       "required_full_calculation": "Run the affected molecular semiempirical full input against the named matched reference or retained article-validation oracle before promoting a value.",
       "markexpr": "not slow",
@@ -437,7 +421,7 @@
       "global_items": [
         "semiempirical-periodic-article-validation-rerun"
       ],
-      "target_release": "v0.15.x",
+      "target_release": "v0.17.x",
       "scientific_acceptance": false,
       "required_full_calculation": "Run compact periodic-core semiempirical rows on a current immutable release with full inputs, outputs, raw references, and analysis before promotion.",
       "markexpr": "not slow",
@@ -497,7 +481,7 @@
       "global_items": [
         "semiempirical-article-validation-open-items"
       ],
-      "target_release": "v0.15.x",
+      "target_release": "v0.17.x",
       "scientific_acceptance": false,
       "required_full_calculation": "Use the narrower molecular or periodic semiempirical full matched calculation set for scientific acceptance; this aggregate is change-safety only.",
       "impact_default": false,
@@ -540,7 +524,7 @@
         "G-PBC-006",
         "G-PBC-007"
       ],
-      "target_release": "v0.15.x",
+      "target_release": "v0.17.x",
       "scientific_acceptance": false,
       "required_full_calculation": "Run the affected periodic core full input against PySCF.pbc, CRYSTAL, GPAW, or the named independent reference with complete raw artifacts.",
       "markexpr": "not slow",
@@ -555,6 +539,7 @@
         "tests/test_madelung*.py",
         "tests/test_lattice_convention.py",
         "tests/test_bands.py",
+        "tests/test_band_edges.py",
         "tests/test_pdos.py",
         "tests/test_slab_2d_routing.py",
         "tests/test_j_slab_ewald_2d.py",
@@ -610,7 +595,7 @@
         "G-GDF-001",
         "G-PBC-002"
       ],
-      "target_release": "v0.15.x",
+      "target_release": "v0.17.x",
       "scientific_acceptance": false,
       "required_full_calculation": "Run the affected GDF/RSGDF/MDF/compcell full input against out-of-process PySCF.pbc GDF or the named reference; preserve raw cderi/input/output artifacts where applicable.",
       "markexpr": "not slow",
@@ -637,6 +622,7 @@
         "python/vibeqc/periodic_gdf_gradient.py",
         "python/vibeqc/periodic_gdf_properties.py",
         "python/vibeqc/periodic_*_gdf.py",
+        "python/vibeqc/periodic_gdf_route.py",
         "python/vibeqc/aux_basis.py",
         "cpp/include/vibeqc/grid.hpp",
         "cpp/include/vibeqc/xc.hpp",
@@ -659,7 +645,7 @@
       "global_items": [
         "G-PBC-001"
       ],
-      "target_release": "v0.15.x",
+      "target_release": "v0.17.x",
       "scientific_acceptance": false,
       "required_full_calculation": "Run the affected BIPOLE full input against the matched periodic reference or finite-difference force oracle with complete artifacts before promoting forces or energies.",
       "markexpr": "not slow",
@@ -716,7 +702,7 @@
       "global_items": [
         "G-PBC-003"
       ],
-      "target_release": "v0.15.x",
+      "target_release": "v0.17.x",
       "scientific_acceptance": false,
       "required_full_calculation": "Run the affected GPW/GAPW full input against GPAW/PySCF/plane-wave-limit reference artifacts with complete output before promotion.",
       "markexpr": "not slow",
@@ -783,7 +769,7 @@
     "aiccm-periodic": {
       "owner": "AICCM/PBC chats",
       "cadence": "manual research only",
-      "description": "Periodic AICCM, periodic CCM, low-D, finite-torus, megacell, toroidal-MP2, and SECCM tests. Experimental manual research lane; never a release, advisory-profile, or automatic impact gate.",
+      "description": "Periodic AICCM, periodic CCM, chi, low-D, finite-torus, megacell, toroidal-MP2, and SECCM tests. Experimental manual research lane; never a release, advisory-profile, or automatic impact gate.",
       "method_maturity": "experimental",
       "lane_class": "implementing-chat-only",
       "global_items": [
@@ -801,6 +787,7 @@
       "file_timeout_s": 1800,
       "include": [
         "tests/test_ccm_periodic*.py",
+        "tests/test_chi*.py",
         "tests/test_lowd_greens*.py",
         "tests/test_periodic_aiccm*.py",
         "tests/test_periodic_ccm*.py",
@@ -819,7 +806,7 @@
     "aiccm-experimental": {
       "owner": "AICCM/CCM chats",
       "cadence": "manual research aggregate",
-      "description": "Aggregate AICCM/CCM research lane. Experimental manual research only; never a release, advisory-profile, or automatic impact gate.",
+      "description": "Aggregate AICCM/CCM/chi/POLIPO research lane. Experimental manual research only; never a release, advisory-profile, or automatic impact gate.",
       "method_maturity": "experimental",
       "lane_class": "implementing-chat-only",
       "global_items": [
@@ -829,7 +816,7 @@
       ],
       "target_release": "v2.0",
       "scientific_acceptance": false,
-      "required_full_calculation": "Manual aggregate for experimental AICCM/CCM/SECCM research only; no release, advisory, or automatic impact role.",
+      "required_full_calculation": "Manual aggregate for experimental AICCM/CCM/chi/POLIPO/SECCM research only; no release, advisory, or automatic impact role.",
       "impact_default": false,
       "markexpr": "not slow",
       "jobs": 2,
@@ -839,13 +826,16 @@
         "tests/test_*seccm*.py",
         "tests/test_aiccm*.py",
         "tests/test_ccm*.py",
+        "tests/test_chi*.py",
         "tests/test_lowd_greens*.py",
         "tests/test_msindo_ccm*.py",
         "tests/test_periodic_aiccm*.py",
         "tests/test_periodic_ccm*.py",
         "tests/test_periodic_megacell*.py",
         "tests/test_periodic_toroidal_mp2.py",
-        "tests/test_seccm*.py"
+        "tests/test_polipo*.py",
+        "tests/test_seccm*.py",
+        "tests/test_sr_q_mpi.py"
       ],
       "trigger_paths": [
         "python/vibeqc/periodic/ccm/**",
@@ -865,7 +855,7 @@
         "G-PBC-004",
         "G-PBC-009"
       ],
-      "target_release": "v0.15.x",
+      "target_release": "v0.17.x",
       "scientific_acceptance": false,
       "required_full_calculation": "Run the affected slab/embedding/NEB full input against the matched periodic reference or force/path oracle with all raw artifacts retained.",
       "markexpr": "not slow",
@@ -906,7 +896,7 @@
         "BUG 44",
         "BUG 45"
       ],
-      "target_release": "v0.15.x",
+      "target_release": "v0.17.x",
       "scientific_acceptance": false,
       "required_full_calculation": "Run the relevant examples/regression full matched case; retain raw reference input/output, stdout/stderr, parsed JSON, and comparison summary.",
       "markexpr": "not slow",
@@ -933,13 +923,13 @@
     "full-fast": {
       "owner": "release/test-health chat",
       "cadence": "pre-push shared/pre-tag",
-      "description": "Every non-slow shipped-feature pytest file under per-file isolation. Experimental AICCM/CCM/SECCM are excluded and manual-only.",
+      "description": "Every non-slow shipped-feature pytest file under per-file isolation. Experimental AICCM/CCM/chi/POLIPO/SECCM are excluded and manual-only.",
       "method_maturity": "verified",
       "lane_class": "post-cut evaluation",
       "global_items": [
         "release-test-schedule"
       ],
-      "target_release": "v0.15.x",
+      "target_release": "v0.17.x",
       "scientific_acceptance": false,
       "required_full_calculation": "None by itself. This is broad change-safety evidence; scientific acceptance still comes from policy-selected full matched calculations.",
       "impact_default": false,
@@ -955,6 +945,7 @@
         "tests/test_*seccm*.py",
         "tests/test_aiccm*.py",
         "tests/test_ccm*.py",
+        "tests/test_chi*.py",
         "tests/test_lowd_greens*.py",
         "tests/test_msindo_ccm*.py",
         "tests/test_periodic_aiccm*.py",
@@ -962,7 +953,22 @@
         "tests/test_periodic_megacell*.py",
         "tests/test_periodic_toroidal_mp2.py",
         "tests/test_polipo*.py",
-        "tests/test_seccm*.py"
+        "tests/test_rsgdf_physical_support.py",
+        "tests/test_seccm*.py",
+        "tests/test_sr_q_mpi.py",
+        "tests/test_dlpno_parity_aux_name.py",
+        "tests/test_symmetry_hierarchical_bounds.py",
+        "tests/test_symmetry_molecular_job.py",
+        "tests/test_symmetry_molecular_routing.py",
+        "tests/test_symmetry_molecular_scf.py",
+        "tests/test_symmetry_products.py",
+        "tests/test_symmetry_ri.py",
+        "tests/test_symmetry_gdf.py",
+        "tests/test_symmetry_abelian.py",
+        "tests/test_symmetry_molecular_hf.py",
+        "tests/test_symmetry_producer_bounds.py",
+        "tests/test_symmetry_streaming_screening.py",
+        "tests/test_symmetry_quartets.py"
       ]
     },
     "slow-nightly": {
@@ -974,7 +980,7 @@
       "global_items": [
         "release-test-schedule"
       ],
-      "target_release": "v0.15.x",
+      "target_release": "v0.17.x",
       "scientific_acceptance": false,
       "required_full_calculation": "None by itself. This is slow/heavy change-safety evidence and cannot promote paper values without the matching full calculation artifact set.",
       "impact_default": false,
@@ -991,6 +997,7 @@
         "tests/test_*seccm*.py",
         "tests/test_aiccm*.py",
         "tests/test_ccm*.py",
+        "tests/test_chi*.py",
         "tests/test_lowd_greens*.py",
         "tests/test_msindo_ccm*.py",
         "tests/test_periodic_aiccm*.py",
@@ -998,7 +1005,22 @@
         "tests/test_periodic_megacell*.py",
         "tests/test_periodic_toroidal_mp2.py",
         "tests/test_polipo*.py",
-        "tests/test_seccm*.py"
+        "tests/test_rsgdf_physical_support.py",
+        "tests/test_seccm*.py",
+        "tests/test_sr_q_mpi.py",
+        "tests/test_dlpno_parity_aux_name.py",
+        "tests/test_symmetry_hierarchical_bounds.py",
+        "tests/test_symmetry_molecular_job.py",
+        "tests/test_symmetry_molecular_routing.py",
+        "tests/test_symmetry_molecular_scf.py",
+        "tests/test_symmetry_products.py",
+        "tests/test_symmetry_ri.py",
+        "tests/test_symmetry_gdf.py",
+        "tests/test_symmetry_abelian.py",
+        "tests/test_symmetry_molecular_hf.py",
+        "tests/test_symmetry_producer_bounds.py",
+        "tests/test_symmetry_streaming_screening.py",
+        "tests/test_symmetry_quartets.py"
       ]
     }
   }

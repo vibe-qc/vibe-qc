@@ -106,6 +106,33 @@ def test_quartet_axes_use_the_same_product_predicate():
             (tuple(g),tuple(h)) for g in left.cells for h in right.cells}
 
 
+@pytest.mark.parametrize("cutoff, membership", [
+    (9.9, [False, False, False]),
+    (10.0, [True, True, False]),
+    (10.1, [True, True, True]),
+])
+def test_h2_force_stencil_crosses_exact_product_midpoint_boundary(cutoff, membership):
+    """Preserve the geometry behind the cutoff-10 RKS force discontinuity.
+
+    This exact label oracle certifies membership, not an integral magnitude
+    or a production Hamiltonian. The smooth RKS force checks use 9.9/10.1.
+    """
+    witness = ((0, 0, -1), (0, 0, 1), (0, 0, 1))
+    actual = []
+    for displacement in (-1e-3, 0., 1e-3):
+        # (A0 B1@g | A0@lambda A0@sigma): product lengths 6 and 0,
+        # midpoint separation 10 + displacement/2, well inside pair support.
+        centers = np.array([[0., 0., displacement], [0., 0., 1.],
+                            [0., 0., displacement], [0., 0., displacement]])
+        support = _physical_support(
+            np.eye(3) * 7., centers, pair_radius=cutoff,
+            midpoint_radius=cutoff, maximum_candidates=1_000_000,
+            maximum_images=10_000,
+        )
+        actual.append(any(tuple(map(tuple, row)) == witness for row in support.images))
+    assert actual == membership
+
+
 @pytest.mark.parametrize('which',['bytes','work','candidates','cells'])
 def test_product_exact_and_minus_one_resource_caps(which):
     a, xyz = np.eye(3)*2, np.zeros((2,3))
@@ -872,6 +899,7 @@ def test_physical_owner_uses_actual_mixed_angular_AO_centers_and_matches_native_
 @pytest.mark.parametrize('mesh,shift',[
     ((1,1,1),(0,0,0)),((1,1,2),(0,0,0)),((1,1,3),(0,0,0)),
     ((1,1,3),(0,0,1)),((2,2,2),(1,1,1)),
+    ((1,1,5),(0,0,0)), ((1,2,3),(0,1,1)),  # #396 exact product cancellation
 ])
 def test_physical_owner_all_quartet_complex_density_actions_match_components_and_overlap(mesh,shift):
     """Test-only dense recontraction; production HF still has its own traversal."""
@@ -1491,6 +1519,7 @@ def _physical_jk_all(b, owner, density, *, plan=False, budget=None, stream_caps=
 @pytest.mark.parametrize('mesh,shift', [
     ((1,1,1),(0,0,0)), ((1,1,2),(0,0,0)), ((1,1,3),(0,0,0)),
     ((1,1,3),(0,0,1)), ((2,2,2),(1,1,1)),
+    ((1,1,5),(0,0,0)), ((1,2,3),(0,1,1)),  # #396 exact product cancellation
 ])
 def test_physical_jk_all_matches_each_native_target_at_exact_budget(mesh, shift):
     b = _finite_product_fixture(mesh=mesh, shift=shift); owner = _physical_owner(b)

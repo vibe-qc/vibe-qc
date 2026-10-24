@@ -120,6 +120,7 @@ def test_nonconverged_uks_reports_spheropole_3d():
         # corrected gauge (the Γ default since option (b) Phase 4b)
         # omits the term entirely (e_ext_el_spheropole is None).
         use_exchange_ewald_split=False,
+        historical_domain=True,
         ewald_precision=1e-6,
         progress=False,
     )
@@ -158,17 +159,19 @@ def test_nonconverged_uks_spheropole_matches_rhf():
 
     # Legacy gauge on the RHF side: under the Ewald exchange split (the
     # Γ RHF default) the spheropole is omitted from RHF results
-    # (e_ext_el_spheropole is None); UKS still reports it (option (b)
-    # Phase 4 propagation pending), so compare in the legacy gauge.
+    # (e_ext_el_spheropole is None). Compare both drivers in the
+    # historical legacy gauge, where the term remains present.
     rhf = run_pbc_bipole_rhf(
         system, basis, kmesh, _rhf_opts(),
         use_exchange_ewald_split=False,
+        historical_domain=True,
         ewald_precision=1e-6,
         progress=False,
     )
     uks = run_pbc_bipole_uks(
         system, basis, kmesh, _ks_opts(),
         use_exchange_ewald_split=False,  # legacy gauge, like the RHF side
+        historical_domain=True,
         ewald_precision=1e-6,
         progress=False,
     )
@@ -468,6 +471,9 @@ def test_multik_constructed_sad_reaches_hubbard_and_accelerator(monkeypatch, spi
         driver(
             system, basis, mesh, options, progress=False,
             use_exchange_ewald_split=False, ewald_precision=1e-6,
+            # The physical pair default (#316) refuses the legacy gauge;
+            # this pins the historical operator, so it replays it (#503).
+            historical_domain=True,
             dft_plus_u=[vq.HubbardSite(0, 0, U_ev=1.0)],
         )
     assert calls == {"builder": 1, "hubbard": 2 if spin else 1, "accelerator": 1}
@@ -527,6 +533,7 @@ def test_multik_patom_refinement_reaches_all_first_cycle_consumers(monkeypatch):
         module.run_pbc_bipole_uks(
             system, basis, mesh, options, progress=False,
             use_exchange_ewald_split=False, ewald_precision=1e-6,
+            historical_domain=True,
             dft_plus_u=[vq.HubbardSite(0, 0, U_ev=1.0)],
         )
     assert len(u_calls) == 2

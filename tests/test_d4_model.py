@@ -149,6 +149,64 @@ def test_n_gaussian_one_is_pure_single_gaussian():
     )
 
 
+def test_default_gaussians_follow_reference_environments():
+    """Caldeweyher 2019 Eq.8 sharpens crowded references, not every one."""
+    refs = np.array([0., 1., 2., 2., 3.])
+    cn = 1.4
+    # Free-atom reference: three terms; isolated CN1/CN3: one term;
+    # the two CN2 references: three terms each. These are fixed catalogue
+    # properties, independent of the atom's current coordination number.
+    d = (cn - refs)**2
+    g = np.exp(-6*d)
+    g[[0, 2, 3]] += np.exp(-12*d[[0, 2, 3]]) + np.exp(-18*d[[0, 2, 3]])
+    np.testing.assert_allclose(cn_gaussian_weights(cn, refs), g/g.sum(), rtol=1e-14)
+
+
+def test_uniform_gaussian_override_preserves_explicit_choice():
+    refs, cn = np.array([0., 1., 2., 2., 3.]), 1.4
+    g = sum(np.exp(-6*k*(cn-refs)**2) for k in (1, 2, 3))
+    np.testing.assert_allclose(
+        cn_gaussian_weights(cn, refs, n_gaussian=3), g/g.sum(), rtol=1e-14,
+    )
+
+
+def test_underflow_does_not_break_equal_reference_weights():
+    """At a symmetric midpoint even very narrow Gaussians share weight."""
+    refs = [0., 2.]
+    for order in (refs, refs[::-1]):
+        np.testing.assert_allclose(
+            cn_gaussian_weights(1., order, weighting_factor=1000., n_gaussian=1),
+            [.5, .5], atol=1e-15, rtol=0,
+        )
+
+
+@pytest.mark.parametrize("counts", [None, 1, 3, [3, 1, 3, 3, 1]])
+def test_reference_weight_derivative_uses_same_gaussian_policy(counts):
+    from vibeqc.dispersion_d4_model import d4_reference_weights_derivs
+
+    cn, q = 1.4, -.2
+    refs, charges = [0., 1., 2., 2., 3.], [0., -.1, -.3, .2, .1]
+    w, dcn, dq = d4_reference_weights_derivs(
+        cn, q, refs, charges, 6, n_gaussian=counts,
+    )
+    np.testing.assert_allclose(
+        w, d4_reference_weights(cn, q, refs, charges, 6, n_gaussian=counts),
+        rtol=1e-14,
+    )
+    for variable, derivative in ((0, dcn), (1, dq)):
+        steps = (2e-5, 1e-5)
+        estimates = []
+        for step in steps:
+            args = np.array([cn, q])
+            args[variable] += step
+            plus = d4_reference_weights(*args, refs, charges, 6, n_gaussian=counts)
+            args[variable] -= 2*step
+            minus = d4_reference_weights(*args, refs, charges, 6, n_gaussian=counts)
+            estimates.append((plus-minus)/(2*step))
+        allowance = 2*np.abs(estimates[0]-estimates[1]) + 100*np.finfo(float).eps/steps[1]
+        assert np.all(np.abs(derivative-estimates[1]) <= allowance)
+
+
 # ---------------------------------------------------------------------
 # Input validation.
 # ---------------------------------------------------------------------
@@ -167,6 +225,21 @@ def test_nonpositive_weighting_factor_raises():
 def test_bad_n_gaussian_raises():
     with pytest.raises(ValueError, match="n_gaussian"):
         cn_gaussian_weights(2.0, [1.0, 2.0], n_gaussian=0)
+
+
+@pytest.mark.parametrize("counts", [True, 1.5, [1], [1, 0], [1., 2.], [1, -2]])
+def test_invalid_reference_gaussian_counts_raise(counts):
+    with pytest.raises(ValueError, match="n_gaussian"):
+        cn_gaussian_weights(1.4, [1., 2.], n_gaussian=counts)
+
+
+@pytest.mark.parametrize("cn,refs,wf", [
+    (float("nan"), [1., 2.], 6.), (1., [float("nan")], 6.),
+    (1., [1., 2.], float("nan")), (1., [1., 2.], float("inf")),
+])
+def test_nonfinite_gaussian_inputs_raise(cn, refs, wf):
+    with pytest.raises(ValueError, match="finite"):
+        cn_gaussian_weights(cn, refs, weighting_factor=wf)
 
 
 # ---------------------------------------------------------------------
@@ -504,6 +577,77 @@ def test_dataset_json_roundtrip(tmp_path):
     np.testing.assert_allclose(loaded.elements[1].c6_self, c6s)
 
 
+def test_dataset_reference_gaussian_counts_survive_loading_and_pair_derivatives():
+    """Covalent CNs do not encode the nominal-environment multiplicities.
+
+    This small two-element model has unequal reference counts and Gaussian
+    widths. Its scalar anchor is a direct evaluation of Caldeweyher et al.,
+    JCP 150, 154122 (2019), Eq.8, independent of the production weights.
+    """
+    from vibeqc.dispersion_d4_model import compute_d4_c6_pair_derivs
+    from vibeqc.dispersion_d4_reference_data import D4ReferenceDataset
+
+    cns = ([.8, 1.9, 2.2], [2.17, 2.79])
+    counts = ([1, 3, 3], [3, 3])
+    cross = np.array([[12., 15.], [24., 32.], [20., 27.]])
+    payload = {"elements": {}, "c6_cross": {"6,8": cross.tolist()}}
+    for z, ref, widths in zip((6, 8), cns, counts):
+        payload["elements"][str(z)] = {
+            "cns": ref, "qs": [0.] * len(ref), "n_gaussian": widths,
+            "alpha_iw": [[1.]] * len(ref),
+            "c6_self": np.eye(len(ref)).tolist(),
+        }
+    data = D4ReferenceDataset.from_dict(payload)
+
+    def direct(cn_a, cn_b, override=None):
+        weights = []
+        for cn, ref, widths in zip((cn_a, cn_b), cns, counts):
+            g = np.array([sum(np.exp(-6. * k * (cn-r)**2)
+                              for k in range(1, (override or n)+1))
+                          for r, n in zip(ref, widths)])
+            weights.append(g / g.sum())
+        return weights[0] @ cross @ weights[1]
+
+    cn_a, cn_b = 1.35, 2.4
+    args = (cn_a, 0., 6, cn_b, 0., 8, data)
+    expected = direct(cn_a, cn_b)
+    assert compute_d4_c6_pair(*args) == pytest.approx(expected, abs=1e-13)
+    assert data.to_dict() == payload
+    again = D4ReferenceDataset.from_dict(data.to_dict())
+    assert compute_d4_c6_pair(*args[:-1], again) == pytest.approx(expected, abs=1e-13)
+    for override in (None, 2):
+        kw = {} if override is None else {"n_gaussian": override}
+        result = compute_d4_c6_pair_derivs(*args, **kw)
+        assert result[0] == pytest.approx(direct(cn_a, cn_b, override), abs=1e-13)
+        assert compute_d4_c6_pair(*args, **kw) == pytest.approx(result[0], abs=1e-13)
+        for h in (1e-4, 5e-5):
+            # Five-point differences separate the derivative check from the
+            # O(h**2) truncation of the steep interpolation near a crossing.
+            fd_a = (8*(direct(cn_a+h, cn_b, override)-direct(cn_a-h, cn_b, override))
+                    - (direct(cn_a+2*h, cn_b, override)-direct(cn_a-2*h, cn_b, override)))/(12*h)
+            fd_b = (8*(direct(cn_a, cn_b+h, override)-direct(cn_a, cn_b-h, override))
+                    - (direct(cn_a, cn_b+2*h, override)-direct(cn_a, cn_b-2*h, override)))/(12*h)
+            assert result[1] == pytest.approx(fd_a, abs=3e-6)
+            assert result[2] == pytest.approx(fd_b, abs=3e-6)
+    swapped = compute_d4_c6_pair_derivs(cn_b, 0., 8, cn_a, 0., 6, data)
+    original = compute_d4_c6_pair_derivs(*args)
+    np.testing.assert_allclose(swapped, np.array(original)[[0, 2, 1, 4, 3]], atol=1e-13)
+
+
+@pytest.mark.parametrize("counts", [[1], [1, 0], [1, -1], [1., 3.],
+                                   [True, False], [True, 3], [[1, 3]],
+                                   [1, float("nan")]])
+def test_dataset_rejects_invalid_reference_gaussian_counts(counts):
+    from vibeqc.dispersion_d4_reference_data import D4ReferenceDataset
+
+    payload = {"elements": {"6": {
+        "cns": [.8, 1.9], "qs": [0., 0.], "n_gaussian": counts,
+        "alpha_iw": [[1.], [2.]], "c6_self": [[1., 2.], [2., 4.]],
+    }}}
+    with pytest.raises(ValueError, match="n_gaussian"):
+        D4ReferenceDataset.from_dict(payload)
+
+
 def test_compute_d4_c6_single_ref():
     from vibeqc.dispersion_d4_reference_data import D4ReferenceDataset, _PerElement
 
@@ -778,7 +922,7 @@ def test_compute_c9_geometric_mean():
 def test_atm_triple_energy_equilateral_closed_form():
     """For an equilateral triangle (all sides r, all angles 60°) the
     angle factor 3·cos³60° + 1 = 3/8 + 1 = 1.375, so the undamped
-    triple energy is exactly C9 · 1.375 / r⁹. Verified at a distance
+    triple energy is exactly −C9 · 1.375 / r⁹. Verified at a distance
     large enough that the zero-damping factor is ≈ 1."""
     from vibeqc.dispersion_d4_model import d4_atm_triple_energy
 
@@ -786,8 +930,32 @@ def test_atm_triple_energy_equilateral_closed_form():
     c9 = -50.0
     r0 = 4.0  # small vs r → f_damp ≈ 1
     e = d4_atm_triple_energy(r, r, r, c9, r0, r0, r0)
-    expected = c9 * 1.375 / r**9
+    expected = -c9 * 1.375 / r**9
     assert e == pytest.approx(expected, rel=1e-6)
+    assert e > 0.0  # ATM is repulsive for an equilateral triplet.
+
+
+@pytest.mark.parametrize("r", [4.0, 8.0, 20.0])
+def test_atm_uniform_stretch_derivative(r):
+    """Independent radial derivative includes damping and the physical sign.
+
+    For an equilateral triangle E = K r^-9 / (1 + 6 (r0/r)^16),
+    where K = (11/8) sqrt(C6_ab C6_ac C6_bc) is positive.
+    This checks both the short-range and asymptotic force directions.
+    """
+    c6 = 10.0
+    c9 = compute_c9(c6, c6, c6)
+    r0 = 5.0
+    damp_ratio = 6.0 * (r0 / r)**16
+    energy = 1.375 * c6**1.5 / r**9 / (1.0 + damp_ratio)
+    derivative = energy / r * (-9.0 + 16.0 * damp_ratio / (1.0 + damp_ratio))
+    assert d4_atm_triple_energy(r, r, r, c9, r0, r0, r0) == pytest.approx(
+        energy, rel=1e-13, abs=0.0
+    )
+    for h in (1e-4, 5e-5):
+        ep = d4_atm_triple_energy(r+h, r+h, r+h, c9, r0, r0, r0)
+        em = d4_atm_triple_energy(r-h, r-h, r-h, c9, r0, r0, r0)
+        assert (ep-em)/(2*h) == pytest.approx(derivative, rel=2e-7, abs=1e-16)
 
 
 def test_atm_damping_suppresses_short_range():
@@ -799,7 +967,7 @@ def test_atm_damping_suppresses_short_range():
     c9, r0 = -50.0, 6.0
     r = 2.0  # well inside r0 → strong damping
     e_damped = d4_atm_triple_energy(r, r, r, c9, r0, r0, r0)
-    e_undamped = c9 * 1.375 / r**9
+    e_undamped = -c9 * 1.375 / r**9
     assert abs(e_damped) < 0.05 * abs(e_undamped)
 
 
@@ -828,7 +996,8 @@ def test_atm_angle_factor_collinear():
     e = d4_atm_triple_energy(d, 2.0 * d, d, c9, r0, r0, r0)
     # angle factor → −2 ⇒ sign opposite the equilateral (+1.375) case.
     e_equilateral = d4_atm_triple_energy(d, d, d, c9, r0, r0, r0)
-    assert e * e_equilateral < 0.0
+    assert e < 0.0  # ATM is attractive for a collinear triplet.
+    assert e_equilateral > 0.0
 
 
 def test_compute_d4_atm_energy_exported():
@@ -848,7 +1017,7 @@ def test_compute_d4_atm_energy_exported():
 # ---------------------------------------------------------------------
 # Native-backend dftd4 parity (the un-gating bar, now MET).
 #
-# The shipped d4_reference_data.json is built from the per-atom Eq.-6
+# The shipped d4_reference_data.json is built from the per-atom Eq.-5
 # extraction over a correlated CPKS (PBE38/TD-DFT) alpha(iw), and the
 # r4r2 / C8 table is dftd4-consistent (both landed 2026-06-26). Native
 # pairwise C6 now agree with dftd4 to within a few percent and the
@@ -856,7 +1025,7 @@ def test_compute_d4_atm_energy_exported():
 # real (no longer strict-xfail) and the experimental warning gate is
 # removed.
 #
-# Parity bars are handovers/HANDOVER_D4_NATIVE.md § 5: pairwise C6 within
+# Parity bars are the original investigation: pairwise C6 within
 # a few % (10% asserted here) and dimer dispersion energy within
 # 0.1 kcal/mol of the dftd4 backend. These guard against a regression
 # in the reference data, the extraction, the CPKS provider, or the
@@ -958,7 +1127,38 @@ def test_native_energy_parity_vs_dftd4():
         mol, "pbe", backend="native", ref_data_path=str(_REFDATA_JSON)
     ).energy
     e_dftd4 = compute_d4(mol, "pbe", backend="dftd4").energy
-    # 0.1 kcal/mol in Hartree — the handover § 5 chemical-accuracy bar.
+    # 0.1 kcal/mol in Hartree — the original investigation chemical-accuracy bar.
     assert abs(e_native - e_dftd4) < 0.1 / 627.5094740631, (
         f"E_disp native {e_native:.8f} vs dftd4 {e_dftd4:.8f} Ha"
     )
+
+
+def test_frozen_tz_ch_reference_spectra_reconstruct_all_coefficients():
+    """Validate the scientific data, including mixed Cu/light-element pairs."""
+    import json
+    from vibeqc.dispersion_d4 import _resolve_refdata_path
+    from vibeqc.dispersion_d4_refdata import imaginary_frequency_grid
+    from vibeqc.dispersion_d4_reference_data import D4ReferenceDataset, _zeta_partner
+
+    path = _Path(_resolve_refdata_path(None))
+    data = D4ReferenceDataset.load_json(path)
+    _, weights = imaginary_frequency_grid(23, .5)
+    for z, el in data.elements.items():
+        assert np.isfinite(el.alpha_iw).all() and np.all(el.alpha_iw > 0.)
+        assert np.all(np.isfinite(el.qs))
+        np.testing.assert_allclose(el.c6_self, 3/np.pi*(el.alpha_iw*weights)@el.alpha_iw.T,
+                                   rtol=1e-13, atol=1e-13)
+    for (za, zb), matrix in data.c6_cross.items():
+        np.testing.assert_allclose(matrix, 3/np.pi*(data.elements[za].alpha_iw*weights)@data.elements[zb].alpha_iw.T,
+                                   rtol=1e-13, atol=1e-13)
+    protocol = json.loads(path.with_name("d4_reference_light_protocol.json").read_text())
+    ch = protocol["CH"]
+    assert ch["multiplicity"] == 2 and ch["bond_angstrom"] == 1.1199
+    hydrogen = data.elements[1]
+    extracted = (np.array(ch["molecular_alpha_iw_bohr3"])
+                 - _zeta_partner(1, ch["reference_eeq_charges"][1], hydrogen.qs[0])*hydrogen.alpha_iw[0])
+    carbon = data.elements[6]
+    assert carbon.cns[:2] == [1., 1.]
+    assert carbon.qs[0] == ch["reference_eeq_charges"][0]
+    assert carbon.n_gaussian[:2] == [3, 3]
+    np.testing.assert_allclose(carbon.alpha_iw[0], extracted, rtol=1e-13, atol=1e-13)

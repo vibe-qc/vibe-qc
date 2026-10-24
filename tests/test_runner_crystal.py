@@ -1,11 +1,8 @@
 """Offline tests for ``examples.regression.core.runner_crystal``.
 
-Scope: only the *pure* pieces — the .d12 deck builder, the CRYSTAL14
-.out parser, the method-to-keyword mapping, the lattice-to-(a, b, c,
-α, β, γ) reduction, the job-name sanitization. We do NOT invoke vq,
-spawn CRYSTAL, or talk to a real host here — those are integration
-concerns the laptop's regression suite skips (status='unavailable')
-and Mike validates manually on compute-reference.
+Scope: the deck builder, output parser, method mapping, lattice conversion,
+job naming, and runner timing with mocked submit/wait/fetch. These tests do
+not invoke vq, spawn CRYSTAL, or connect to a host.
 
 Fixtures are inlined synthetic CRYSTAL14 output fragments. The
 anchor-line shapes match real CRYSTAL14 prints (per the .d12 +
@@ -17,12 +14,14 @@ changing the test logic.
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 import textwrap
 
 import pytest
 
 from examples.regression.core import runner_crystal
+from examples.regression.core.compare import paired_wall_ratio
 from examples.regression.core.runner_crystal import (
     _UNSUPPORTED,
     _CRYSTAL_BASIS_LIBRARY,
@@ -436,6 +435,67 @@ def test_parse_crystal_enecycle_mgo_snapshot() -> None:
 
 def test_parse_crystal_enecycle_absent_returns_empty() -> None:
     assert parse_crystal_enecycle(_CRYSTAL_SCF_CONVERGED) == []
+
+
+@pytest.mark.parametrize("token", ["3.57", "3.57E+00", "3.57D+00", "3.57d+00"])
+def test_parse_crystal_terminal_engine_time(token) -> None:
+    text = (
+        " TTTTTTTTTT SHELLXN TELAPSE 200.00 TCPU 150.00\n"
+        f" TTTTTTTTTT END TELAPSE {token} TCPU 1.43\n"
+    )
+    assert parse_crystal_out(text).wall_s == pytest.approx(3.57)
+
+
+@pytest.mark.parametrize("terminal", [
+    "", " TTTTTTTTTT SCF TELAPSE 3.57 TCPU 1.43",
+    *[f" TTTTTTTTTT END TELAPSE {token} TCPU 1.43"
+      for token in ("0", "-1", "NaN", "Inf", "1e999", "*****", "invalid")],
+    " TTTTTTTTTT END TELAPSE 3.57",
+    " TTTTTTTTTT END TELAPSE TCPU 1.43",
+    " TTTTTTTTTT END TELAPSE 3.57 TCPU 1.43\n" * 2,
+    " TTTTTTTTTT END malformed\n TTTTTTTTTT END TELAPSE 3.57 TCPU 1.43",
+])
+def test_parse_crystal_missing_or_ambiguous_time_is_unavailable(terminal) -> None:
+    assert parse_crystal_out(_CRYSTAL_SCF_CONVERGED + "\n" + terminal).wall_s is None
+
+
+@pytest.mark.parametrize("include_terminal", [True, False])
+def test_crystal_runner_uses_engine_time_not_queue_wait(
+    tmp_path, monkeypatch, include_terminal,
+) -> None:
+    text = (_ROOT / "examples/regression/crystal_parity/crystal_demos/"
+            "mgo_sto3g_enecycle.out").read_text()
+    if not include_terminal:
+        text = "\n".join(line for line in text.splitlines()
+                         if " END " not in line)
+    (tmp_path / "INPUT.out").write_text(text)
+    monkeypatch.setattr(runner_crystal.shutil, "which", lambda _: "/test/bin/vq")
+    monkeypatch.setenv("VIBEQC_CRYSTAL_VQ_HOST", "test-host")
+    monkeypatch.setenv("VIBEQC_CRYSTAL_WRAPPER", "/test/bin/run-crystal.sh")
+    monkeypatch.setattr(runner_crystal, "vq_submit", lambda **_: "test-job")
+    monkeypatch.setattr(runner_crystal, "vq_wait", lambda **_: "completed")
+    monkeypatch.setattr(runner_crystal, "vq_fetch", lambda **_: tmp_path)
+    clock = iter((10.0, 910.0))
+    monkeypatch.setattr(runner_crystal.time, "perf_counter", lambda: next(clock))
+
+    row = runner_crystal.run_periodic_case(
+        run_id="timing-test", target="dev", spec=_mgo_spec(), basis_name="sto-3g",
+        method=MethodSpec(id="rhf", scf="rhf"), kmesh=(1, 1, 1),
+        log_path=tmp_path / "runner.log", workdir=tmp_path / "work",
+    )
+
+    assert row.converged is True
+    assert "queue-monitor elapsed=900.0 s (not engine time)" in row.note
+    assert "queue-monitor elapsed 900.0 s; not engine time" in (tmp_path / "runner.log").read_text()
+    reference = replace(row, status="reference")
+    candidate = replace(row, code="vibeqc", status="pass", ref_code="crystal", wall_s=7.14)
+    if include_terminal:
+        assert row.wall_s == pytest.approx(3.57)  # TCPU is 1.43 in this snapshot.
+        assert paired_wall_ratio(candidate, reference) == pytest.approx(2.0)
+    else:
+        assert row.wall_s == 0.0
+        assert "engine wall time unavailable" in row.note
+        assert paired_wall_ratio(candidate, reference) is None
 
 
 def test_add_crystal_enecycle_keyword_before_final_end() -> None:

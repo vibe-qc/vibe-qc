@@ -1,8 +1,8 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
-  "role": "orbital",
+  "schema_version": "1.1.0",
+  "name": "aug-cc-pv5z-rifit",
+  "description": "Basis Set Exchange\nVersion 0.12\nhttps://www.basissetexchange.org\nOriginating publication: Weigend, Kohn, Hattig, J. Chem. Phys. 116, 3175 (2002); DOI: 10.1063/1.1445115\n  Basis set: aug-cc-pV5Z-RIFIT\nDescription: RI Fitting basis for use with aug-cc-pV5Z\n       Role: rifit\n    Version: 1  (Data from Turbomole 7.3)",
+  "role": "fitting",
   "elements": {
     "H": {
       "element": "H",
@@ -24309,7 +24309,46 @@
       ]
     }
   },
+  "basis_family": "dunning",
+  "references": [
+    {
+      "key": "kendall_dunning_harrison_1992",
+      "description": "R. A. Kendall, T. H. Dunning, R. J. Harrison, Journal of Chemical Physics 96, 6796-6806 (1992)",
+      "doi": "10.1063/1.462569"
+    },
+    {
+      "key": "haettig_aux_5z_2005",
+      "description": "C. Hättig, Physical Chemistry Chemical Physics 7, 59-66 (2005)",
+      "doi": "10.1039/B415208E"
+    },
+    {
+      "key": "weigend_ccpvxz_rifit_2002",
+      "description": "F. Weigend, A. Köhn, C. Hättig, Journal of Chemical Physics 116, 3175-3183 (2002)",
+      "doi": "10.1063/1.1445115"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "bse",
+    "upstream": [
+      {
+        "name": "basis-set-exchange",
+        "version": "0.12",
+        "url": "https://www.basissetexchange.org",
+        "identifier": "aug-cc-pv5z-rifit"
+      }
+    ],
+    "retrieval_date": "2026-09-08",
+    "content_sha256": "be7d7700703d0f8e57579a2742db964a3c03b0153ec6d00f81fc4e45fb9a4efe",
+    "citations": [
+      {
+        "keys": [
+          "kendall_dunning_harrison_1992",
+          "haettig_aux_5z_2005",
+          "weigend_ccpvxz_rifit_2002"
+        ]
+      }
+    ],
+    "notes": "The date is when the file entered this repository's history; the import date was not recorded."
   }
 }

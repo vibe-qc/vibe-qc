@@ -1,0 +1,114 @@
+{
+  "coefficients": {
+    "encoding": "complex_split_last_axis",
+    "data": [
+      [
+        [
+          0.4773756440298515,
+          0.0
+        ],
+        [
+          0.4773756440298515,
+          0.0
+        ]
+      ]
+    ]
+  },
+  "occupations": [
+    2.0
+  ],
+  "rotation": {
+    "encoding": "complex_split_last_axis",
+    "data": [
+      [
+        [
+          1.0,
+          0.0
+        ]
+      ]
+    ]
+  },
+  "representation": "finite_torus_ao",
+  "reference_gap_hartree": 1.5,
+  "translations": [
+    [
+      0,
+      0,
+      0
+    ]
+  ],
+  "lattice_bohr": [
+    [
+      4.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      10.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      10.0
+    ]
+  ],
+  "atom_populations": [
+    [
+      0.4999999999999999,
+      0.4999999999999999
+    ]
+  ],
+  "population_model": "lowdin_finite_torus",
+  "centroids_bohr": [
+    [
+      1.3,
+      0.0,
+      0.0
+    ]
+  ],
+  "centroid_model": "projected circular AO-centre approximation",
+  "n_centres": [
+    2
+  ],
+  "centre_threshold": 0.1,
+  "charges": [
+    2.220446049250313e-16,
+    2.220446049250313e-16
+  ],
+  "charge_model": "lowdin_finite_torus",
+  "spreads_bohr2": [
+    0.6400896933671554
+  ],
+  "aliasing_fraction": [
+    1.0
+  ],
+  "aliasing_detected": [
+    true
+  ],
+  "validation": {
+    "input_orthonormality_error": 0.0,
+    "orthonormality_error": 0.0,
+    "subspace_residual": 0.0,
+    "unitary_error": 0.0,
+    "tolerance": 1e-07,
+    "density_invariance_error": 0.0,
+    "translation_projector_error": 0.0
+  },
+  "experimental": true,
+  "warnings": [
+    "Experimental finite-torus localization; centres are a projected circular AO-centre approximation, not exact position expectations.",
+    "Localized weight reaches the cyclic antipode; enlarge the source torus before interpreting local domains."
+  ],
+  "method": "aiccm-wannier",
+  "source": "supplied",
+  "scf_performed": false,
+  "spin": "restricted",
+  "backend_version": "0.17.3",
+  "ao_convention": "qvf-gto-v1",
+  "convergence": "not_certified_by_kernel",
+  "citation_features": [
+    "wannier"
+  ]
+}

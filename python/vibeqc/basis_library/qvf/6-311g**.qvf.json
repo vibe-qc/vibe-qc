@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
+  "schema_version": "1.1.0",
+  "name": "6-311g**",
+  "description": " 6-311G**  EMSL  Basis Set Exchange Library   30/12/14 13:27\nElements                             References\nH, Li - Ne: R. Krishnan, J.S. Binkley, R. Seeger and J.A. Pople,\n            J. Chem. Phys. 72, 650 (1980)\nNa - Ar:    A.D. McLean and G.S. Chandler J. Chem. Phys. 72, 5639, (1980).\nK  - Ca:    J-P. Blaudeau, M. P. McGrath, L.A. Curtiss and L. Radom,\n            J. Chem. Phys. 107, 5016 (1997).\nGa - Kr:    L. A. Curtiss, M. P. McGrath, J-P. Blandeau, N. E. Davis,\n            R. C. Binning, Jr. L. Radom, J. Chem. Phys. 103, 6104 (1995).\nI      :    M.N. Glukhovstev, A. pross, M.P. McGrath, L. Radom, J. Chem. Phys.\n            103, 1878 (1995)\nElements                             References\nH - Ar:  R. Krishnan, J.S. Binkley, R. Seeger, J.A. Pople, J. Chem. Phys. 72,\n         650 (1980)",
   "role": "orbital",
   "elements": {
     "H": {
@@ -173,20 +173,20 @@
               "coefficient": 0.0933293
             },
             {
+              "exponent": 0.856924,
+              "coefficient": 0.943045
+            },
+            {
+              "exponent": 0.243227,
+              "coefficient": -0.00279827
+            },
+            {
               "exponent": 4.8689,
               "coefficient": 0.0327661
             },
             {
               "exponent": 0.856924,
-              "coefficient": 0.943045
-            },
-            {
-              "exponent": 0.856924,
               "coefficient": 0.159792
-            },
-            {
-              "exponent": 0.243227,
-              "coefficient": -0.00279827
             },
             {
               "exponent": 0.243227,
@@ -289,20 +289,20 @@
               "coefficient": 0.108621
             },
             {
+              "exponent": 1.74075,
+              "coefficient": 0.927301
+            },
+            {
+              "exponent": 0.485816,
+              "coefficient": -0.00297169
+            },
+            {
               "exponent": 8.30938,
               "coefficient": 0.0361344
             },
             {
               "exponent": 1.74075,
-              "coefficient": 0.927301
-            },
-            {
-              "exponent": 1.74075,
               "coefficient": 0.216958
-            },
-            {
-              "exponent": 0.485816,
-              "coefficient": -0.00297169
             },
             {
               "exponent": 0.485816,
@@ -405,20 +405,20 @@
               "coefficient": 0.117443
             },
             {
+              "exponent": 3.00166,
+              "coefficient": 0.918002
+            },
+            {
+              "exponent": 0.912856,
+              "coefficient": -0.00265105
+            },
+            {
               "exponent": 13.2415,
               "coefficient": 0.04181
             },
             {
               "exponent": 3.00166,
-              "coefficient": 0.918002
-            },
-            {
-              "exponent": 3.00166,
               "coefficient": 0.236575
-            },
-            {
-              "exponent": 0.912856,
-              "coefficient": -0.00265105
             },
             {
               "exponent": 0.912856,
@@ -521,20 +521,20 @@
               "coefficient": 0.11466
             },
             {
+              "exponent": 4.80331,
+              "coefficient": 0.919999
+            },
+            {
+              "exponent": 1.45933,
+              "coefficient": -0.00303068
+            },
+            {
               "exponent": 20.9642,
               "coefficient": 0.0402487
             },
             {
               "exponent": 4.80331,
-              "coefficient": 0.919999
-            },
-            {
-              "exponent": 4.80331,
               "coefficient": 0.237594
-            },
-            {
-              "exponent": 1.45933,
-              "coefficient": -0.00303068
             },
             {
               "exponent": 1.45933,
@@ -637,20 +637,20 @@
               "coefficient": 0.111906
             },
             {
+              "exponent": 7.02614,
+              "coefficient": 0.921666
+            },
+            {
+              "exponent": 2.11205,
+              "coefficient": -0.00256919
+            },
+            {
               "exponent": 30.6331,
               "coefficient": 0.0383119
             },
             {
               "exponent": 7.02614,
-              "coefficient": 0.921666
-            },
-            {
-              "exponent": 7.02614,
               "coefficient": 0.237403
-            },
-            {
-              "exponent": 2.11205,
-              "coefficient": -0.00256919
             },
             {
               "exponent": 2.11205,
@@ -753,20 +753,20 @@
               "coefficient": 0.113889
             },
             {
+              "exponent": 9.62837,
+              "coefficient": 0.920811
+            },
+            {
+              "exponent": 2.85332,
+              "coefficient": -0.00327447
+            },
+            {
               "exponent": 42.1175,
               "coefficient": 0.0365114
             },
             {
               "exponent": 9.62837,
-              "coefficient": 0.920811
-            },
-            {
-              "exponent": 9.62837,
               "coefficient": 0.237153
-            },
-            {
-              "exponent": 2.85332,
-              "coefficient": -0.00327447
             },
             {
               "exponent": 2.85332,
@@ -869,20 +869,20 @@
               "coefficient": 0.114536
             },
             {
+              "exponent": 12.6323,
+              "coefficient": 0.920512
+            },
+            {
+              "exponent": 3.71756,
+              "coefficient": -0.00337804
+            },
+            {
               "exponent": 55.4441,
               "coefficient": 0.0354609
             },
             {
               "exponent": 12.6323,
-              "coefficient": 0.920512
-            },
-            {
-              "exponent": 12.6323,
               "coefficient": 0.237451
-            },
-            {
-              "exponent": 3.71756,
-              "coefficient": -0.00337804
             },
             {
               "exponent": 3.71756,
@@ -985,20 +985,20 @@
               "coefficient": 0.119149
             },
             {
+              "exponent": 15.835,
+              "coefficient": 0.917375
+            },
+            {
+              "exponent": 4.67326,
+              "coefficient": -0.00405839
+            },
+            {
               "exponent": 69.1211,
               "coefficient": 0.0356574
             },
             {
               "exponent": 15.835,
-              "coefficient": 0.917375
-            },
-            {
-              "exponent": 15.835,
               "coefficient": 0.239477
-            },
-            {
-              "exponent": 4.67326,
-              "coefficient": -0.00405839
             },
             {
               "exponent": 4.67326,
@@ -5164,7 +5164,46 @@
       ]
     }
   },
+  "basis_family": "pople",
+  "references": [
+    {
+      "key": "krishnan_pople_6311g_1980",
+      "description": "R. Krishnan, J. S. Binkley, R. Seeger, J. A. Pople, Journal of Chemical Physics 72, 650-654 (1980)",
+      "doi": "10.1063/1.438955"
+    },
+    {
+      "key": "mclean_chandler_6311g_1980",
+      "description": "A. D. McLean, G. S. Chandler, Journal of Chemical Physics 72, 5639-5648 (1980)",
+      "doi": "10.1063/1.438980"
+    },
+    {
+      "key": "hariharan_pople_1973",
+      "description": "P. C. Hariharan, J. A. Pople, Theoretica Chimica Acta 28, 213-222 (1973)",
+      "doi": "10.1007/BF00533485"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "vendor",
+    "upstream": [
+      {
+        "name": "libint",
+        "version": "2.13.1",
+        "identifier": "6-311g**",
+        "detail": "byte-identical to libint's bundled file"
+      }
+    ],
+    "retrieval_date": "2026-09-08",
+    "content_sha256": "59673b8886f9a7a9ea35d87807296cb36d93b9ebbb3bbb5171741f2bdb72a0f1",
+    "citations": [
+      {
+        "keys": [
+          "krishnan_pople_6311g_1980",
+          "mclean_chandler_6311g_1980",
+          "hariharan_pople_1973"
+        ]
+      }
+    ],
+    "notes": "The date is when the file entered this repository's history; the import date was not recorded."
   }
 }

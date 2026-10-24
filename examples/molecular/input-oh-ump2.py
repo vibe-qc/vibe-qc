@@ -1,4 +1,4 @@
-"""OH radical — UHF + UMP2 post-SCF correlation energy.
+"""OH radical at 6-31G*: UHF + UMP2 post-SCF correlation energy.
 
 Demonstrates the open-shell post-Hartree-Fock workflow:
 

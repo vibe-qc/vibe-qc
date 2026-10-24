@@ -7,8 +7,7 @@ energy in the thermodynamic limit (TDL):
 * **megacell -> infinity** — vibe-qc's own finite-supercell route. A size series
   of open-boundary supercells, with ``E_corr(N) = b·N + a`` extrapolated; the
   slope ``b`` is the bulk per-cell correlation (``megacell_mp2_tdl``). This side
-  is a *molecular* calculation — no periodic exxdiv (see
-  ``handovers/HANDOVER_PERIODIC_LOCAL_CORRELATION.md`` § 6.5).
+  is a *molecular* calculation — no periodic exxdiv.
 
 * **k-mesh -> infinity** — PySCF.pbc periodic KMP2 (the maintainer-chosen
   oracle), a BvK-torus calculation sampled with a growing Monkhorst-Pack mesh.
@@ -33,9 +32,8 @@ converge to the isolated-chain TDL — it drifts past it.)
 
 PySCF reference — pinned with provenance
 ----------------------------------------
-The KMP2 k-mesh series below is pinned as committed reference values (the
-§0 "committed reference values with provenance" pattern of the handover, used
-here because the periodic KMP2 run is the external oracle). ``test_pyscf_kmp2_
+The KMP2 k-mesh series below is pinned as committed reference values with
+provenance because the periodic KMP2 run is the external oracle. ``test_pyscf_kmp2_
 pins_reproduce`` regenerates a subset live through ``run_periodic_mp2`` so the
 pin cannot silently rot.
 """

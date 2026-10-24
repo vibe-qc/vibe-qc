@@ -12,8 +12,10 @@ logs are kept out of the repo.
 """
 from __future__ import annotations
 
+import math
 import sys
 import time
+from numbers import Real
 from typing import Callable, Optional, Tuple
 
 import numpy as np
@@ -23,6 +25,26 @@ from vibeqc import CoulombMethod, InitialGuess, monkhorst_pack
 from vibeqc._vibeqc_core import PeriodicKSOptions, PeriodicRHFOptions
 from vibeqc.pbc_bipole import run_pbc_bipole_rhf
 from vibeqc.pbc_bipole_rks import run_pbc_bipole_rks
+
+
+def _demo_parity_verdict(result, reference, target_millihartree):
+    # Keep this standalone: legacy demo scripts import crystal_demos directly,
+    # without placing the repository's examples package on sys.path.
+    values = (result.energy, reference, target_millihartree)
+    valid = all(isinstance(v, Real) and not isinstance(v, bool) and math.isfinite(v)
+                for v in values)
+    if result.converged is not True or not valid or target_millihartree < 0:
+        print("\n  FAIL: convergence, finite energies and a valid tolerance are required")
+        return 2
+    delta_mha = (result.energy - reference) * 1000.
+    if not math.isfinite(delta_mha):
+        print("\n  FAIL: nonfinite energy difference")
+        return 2
+    if abs(delta_mha) > target_millihartree:
+        print(f"\n  FAIL: delta exceeds +/-{target_millihartree} mHa target")
+        return 1
+    print("\n  PASS")
+    return 0
 
 
 def run_demo_parity(
@@ -143,14 +165,7 @@ def run_demo_parity(
     print(f"  Δ:              {delta_mha:+.4f} mHa")
     print(f"  target:        ±{target_millihartree:.4f} mHa")
 
-    if not result.converged:
-        print("\n  FAIL: SCF did not converge")
-        return 2
-    if abs(delta_mha) > target_millihartree:
-        print(f"\n  FAIL: Δ exceeds ±{target_millihartree} mHa target")
-        return 1
-    print("\n  PASS")
-    return 0
+    return _demo_parity_verdict(result, crystal14_ref_ha_per_fu, target_millihartree)
 
 
 def run_demo_parity_rks(
@@ -261,11 +276,4 @@ def run_demo_parity_rks(
     print(f"  Δ:              {delta_mha:+.4f} mHa")
     print(f"  target:        ±{target_millihartree:.4f} mHa")
 
-    if not result.converged:
-        print("\n  FAIL: SCF did not converge")
-        return 2
-    if abs(delta_mha) > target_millihartree:
-        print(f"\n  FAIL: Δ exceeds ±{target_millihartree} mHa target")
-        return 1
-    print("\n  PASS")
-    return 0
+    return _demo_parity_verdict(result, crystal_ref_ha_per_fu, target_millihartree)

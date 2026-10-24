@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
+  "schema_version": "1.1.0",
+  "name": "mini",
+  "description": "Basis Set Exchange\nhttp://bse.pnl.gov\nAccessed 2018-12-10 19:15:09 UTC\n  Basis set: MINI\nDescription: Huzinaga MINI\n       Role: orbital\n    Version: 1  (Values from GAMESS)",
   "role": "orbital",
   "elements": {
     "H": {
@@ -16731,7 +16731,32 @@
       ]
     }
   },
+  "basis_family": "minimal",
+  "references": [
+    {
+      "key": "huzinaga_gtos_1984",
+      "description": "S. Huzinaga, J. Andzelm, M. Klobukowski, E. Radzio-Andzelm, Y. Sakai, H. Tatewaki, Gaussian Basis Sets for Molecular Calculations (1984)"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "vendor",
+    "upstream": [
+      {
+        "name": "libint",
+        "version": "2.13.1",
+        "identifier": "mini",
+        "detail": "byte-identical to libint's bundled file"
+      }
+    ],
+    "retrieval_date": "2018-12-10",
+    "content_sha256": "10922fb685d7141c2d2ddb91fd8709f1f073d2c4638cdf697ac055fd4afa59ae",
+    "citations": [
+      {
+        "keys": [
+          "huzinaga_gtos_1984"
+        ]
+      }
+    ]
   }
 }

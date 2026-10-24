@@ -1,0 +1,1 @@
+- Update the bounded MANTA `image-tight` example work allowance for conservative arithmetic preflight reservations, preserving its memory cap, physical settings and accuracy targets.

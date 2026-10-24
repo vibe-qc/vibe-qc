@@ -14,6 +14,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 import vibeqc as vq
+
+from tests.refusal_receipt import assert_preflight_refusal
 from vibeqc.tddft import (
     TDDFTResult,
     TDDFTState,
@@ -531,3 +533,246 @@ def test_nto_weights_sum_to_one():
     nto = compute_nto(tda.states[0], res.mo_coeffs, n_occ)
     # For a normalized excitation vector, sum(s^2) == 1
     assert abs(np.sum(nto.hole_weights**2) - 1.0) < 1e-12
+    # The weights are the squares (Martin 2003, eq. 9), not the singular values.
+    np.testing.assert_allclose(nto.weights, nto.hole_weights**2, rtol=0, atol=0)
+    assert abs(np.sum(nto.weights) - 1.0) < 1e-12
+
+
+# ---------------------------------------------------------------------------
+# run_job on a restricted open-shell reference (#361)
+# ---------------------------------------------------------------------------
+
+
+def _oh_radical() -> vq.Molecule:
+    return vq.Molecule(
+        [vq.Atom(8, [0.0, 0.0, 0.0]), vq.Atom(1, [0.0, 0.0, 0.97])], 0, 2
+    )
+
+
+def _h2o_singlet() -> vq.Molecule:
+    return vq.Molecule(
+        [
+            vq.Atom(8, [0.0, 0.0, 0.0]),
+            vq.Atom(1, [0.0, 0.757, 0.586]),
+            vq.Atom(1, [0.0, -0.757, 0.586]),
+        ],
+        0,
+        1,
+    )
+
+
+def test_run_job_rohf_casida_is_refused_before_scf(tmp_path):
+    """Casida on an ROHF reference is not implemented: refuse, do not
+    substitute (before #361 the closed-shell Casida code ran on the ROHF
+    orbitals with n_occ = n_electrons // 2 and printed 0 eV states)."""
+    with pytest.raises(NotImplementedError, match="Casida"):
+        vq.run_job(
+            _oh_radical(), basis="sto-3g", method="rohf",
+            tddft=True, tddft_type="casida", output=str(tmp_path / "oh"),
+        )
+    # The refusal precedes every output file; since !133 it leaves exactly
+    # its preflight receipt (status crashed, result_status refused).
+    assert {p.name for p in tmp_path.iterdir()} == {"oh.system"}
+    assert_preflight_refusal(tmp_path / "oh")
+
+
+def test_run_job_roks_tddft_is_refused_before_scf(tmp_path):
+    """No ROKS response kernel exists; the closed-shell RKS kernel must not
+    be run on the ROKS orbitals in its place."""
+    with pytest.raises(NotImplementedError, match="ROKS"):
+        vq.run_job(
+            _oh_radical(), basis="sto-3g", method="roks", functional="pbe",
+            tddft=True, output=str(tmp_path / "oh"),
+        )
+    assert {p.name for p in tmp_path.iterdir()} == {"oh.system"}
+    assert_preflight_refusal(tmp_path / "oh")
+
+
+def test_run_job_rohf_tda_runs_rohf_tda_and_labels_it(tmp_path):
+    """``run_job(method="rohf", tddft=True)`` reaches ``run_tddft_tda_rohf``
+    and says so in the .out. Before #361 the ROHF branch was unreachable
+    (ROHFResult mirrors mo_coeffs_alpha, which the attribute test read as
+    'not ROHF') and the closed-shell TDA ran under a plain "(TDA)" header.
+    """
+    from vibeqc.rohf import ROHFOptions, run_rohf
+    from vibeqc.tddft import run_tddft_tda_rohf
+
+    mol = _oh_radical()
+    res = vq.run_job(
+        mol, basis="sto-3g", method="rohf", tddft=True, tddft_n_states=3,
+        output=str(tmp_path / "oh"),
+    )
+    assert res.tddft.method == "TDA-ROHF"
+    out = (tmp_path / "oh.out").read_text()
+    assert "TD-DFT excited states (TDA-ROHF)" in out
+    assert "doubly-occupied → virtual excitations only" in out
+
+    basis = vq.BasisSet(mol, "sto-3g")
+    ref = run_rohf(mol, basis, ROHFOptions())
+    direct = run_tddft_tda_rohf(
+        mol, basis, np.asarray(ref.mo_energies), np.asarray(ref.mo_coeffs),
+        4, 1, n_states=3,
+    )
+    assert len(res.tddft.states) == 3
+    for a, b in zip(res.tddft.states, direct.states):
+        assert abs(a.excitation_energy - b.excitation_energy) < 1e-8
+        assert abs(a.oscillator_strength - b.oscillator_strength) < 1e-8
+        assert a.excitation_energy > 0
+
+
+def test_rohf_tda_singlet_limit_matches_rhf_tda():
+    """With no singly occupied orbital ROHF TDA is closed-shell TDA: same
+    excitation energies *and* oscillator strengths. The old ROHF path fed
+    the C++ MO-transform kernel a non-square coefficient block (it sizes
+    the virtual space from the AO dimension) and dropped the spin factor
+    from the transition dipole (#361)."""
+    from vibeqc.rohf import ROHFOptions, run_rohf
+    from vibeqc.tddft import run_tddft_tda, run_tddft_tda_rohf
+
+    mol = _h2o_singlet()
+    basis = vq.BasisSet(mol, "sto-3g")
+    ro_opts = ROHFOptions()
+    ro_opts.conv_tol_energy = 1e-12
+    ro = run_rohf(mol, basis, ro_opts)
+    rh_opts = vq.RHFOptions()
+    rh_opts.conv_tol_energy = 1e-12
+    rh = vq.run_rhf(mol, basis, rh_opts)
+    n_occ = mol.n_electrons() // 2
+
+    t_ro = run_tddft_tda_rohf(
+        mol, basis, np.asarray(ro.mo_energies), np.asarray(ro.mo_coeffs),
+        n_occ, 0, n_states=4,
+    )
+    t_r = run_tddft_tda(
+        mol, basis, np.asarray(rh.mo_energies), np.asarray(rh.mo_coeffs),
+        n_occ, n_states=4,
+    )
+    assert len(t_ro.states) == len(t_r.states) == 4
+    for a, b in zip(t_ro.states, t_r.states):
+        assert abs(a.excitation_energy - b.excitation_energy) < 1e-7
+        assert abs(a.oscillator_strength - b.oscillator_strength) < 1e-6
+
+
+# ---------------------------------------------------------------------------
+# #545: transition-dipole spin factors and the Casida (X+Y) normalisation
+# ---------------------------------------------------------------------------
+
+# H2O and the H2O+ doublet, cc-pVDZ, Bohr. (omega, |mu|, f) of the first six
+# states from PySCF 2.14 (examples/regression/tddft_oscillator_reference.py):
+# TDA from tdscf.TDA, TDHF from a full diagonalisation of PySCF's own A/B fed
+# to its own transition-dipole and oscillator-strength code. Before #545
+# vibe-qc reported f twice these (RHF) and four times (UHF); its Casida
+# paths also built the dipole from (X-Y) rescaled to unit length.
+_H2O_545 = [(8, (0.0, 0.0, 0.2217)), (1, (0.0, 1.4305, -0.8867)), (1, (0.0, -1.4305, -0.8867))]
+_PYSCF_545 = {
+    "rhf_tda": [
+        (0.3387652579, 0.3551626818, 0.0284880196),
+        (0.4040159290, 0.0000000000, 0.0000000000),
+        (0.4349107358, 0.6098418570, 0.1078309243),
+        (0.5006820148, 0.5326381285, 0.0946967853),
+        (0.5538822146, 0.9219033175, 0.3138317775),
+        (0.6750088518, 0.5912432796, 0.1573079400),
+    ],
+    "rhf_tdhf": [
+        (0.3366105990, 0.3609910619, 0.0292435051),
+        (0.4014631948, 0.0000000000, 0.0000000000),
+        (0.4324288341, 0.5929001900, 0.1013413218),
+        (0.4972317071, 0.5030442888, 0.0838841679),
+        (0.5522294411, 0.9000291226, 0.2982231973),
+        (0.6669170311, 0.5520515490, 0.1355001621),
+    ],
+    "uhf_tda": [
+        (0.0947831314, 0.1533330386, 0.0014856321),
+        (0.2575788939, 0.0000000000, 0.0000000000),
+        (0.5390198147, 0.1331161275, 0.0063675860),
+        (0.5909359647, 0.1556747568, 0.0095474096),
+        (0.6021279452, 0.2501359444, 0.0251159571),
+        (0.6028825863, 0.4767689311, 0.0913602699),
+    ],
+    "uhf_tdhf": [
+        (0.0911075243, 0.1535210232, 0.0014315242),
+        (0.2552397714, 0.0000000000, 0.0000000000),
+        (0.5298224609, 0.1211690199, 0.0051858780),
+        (0.5793909778, 0.1398362029, 0.0075530040),
+        (0.5988121130, 0.2678199024, 0.0286341973),
+        (0.5998454398, 0.4696892174, 0.0882204529),
+    ],
+}
+
+
+def _h2o_545(charge=0, multiplicity=1):
+    return vq.Molecule([vq.Atom(z, list(p)) for z, p in _H2O_545], charge, multiplicity)
+
+
+def _tddft_545(case, n_states=6):
+    from vibeqc.tddft import run_tddft_casida_uhf, run_tddft_tda_uhf
+
+    if case.startswith("rhf"):
+        mol = _h2o_545()
+        basis = vq.BasisSet(mol, "cc-pvdz")
+        opts = vq.RHFOptions()
+        opts.conv_tol_energy, opts.conv_tol_grad = 1e-12, 1e-9
+        scf = vq.run_rhf(mol, basis, opts)
+        args = (mol, basis, np.asarray(scf.mo_energies), np.asarray(scf.mo_coeffs),
+                mol.n_electrons() // 2)
+        run = run_tddft_tda if case == "rhf_tda" else run_tddft_casida
+        return run(*args, n_states=n_states)
+    mol = _h2o_545(charge=1, multiplicity=2)
+    basis = vq.BasisSet(mol, "cc-pvdz")
+    opts = vq.UHFOptions()
+    opts.conv_tol_energy, opts.conv_tol_grad = 1e-12, 1e-9
+    scf = vq.run_uhf(mol, basis, opts)
+    args = (mol, basis, np.asarray(scf.mo_energies_alpha), np.asarray(scf.mo_energies_beta),
+            np.asarray(scf.mo_coeffs_alpha), np.asarray(scf.mo_coeffs_beta), 5, 4)
+    run = run_tddft_tda_uhf if case == "uhf_tda" else run_tddft_casida_uhf
+    return run(*args, n_states=n_states)
+
+
+@pytest.mark.parametrize("case", sorted(_PYSCF_545))
+def test_oscillator_strengths_match_pyscf(case):
+    """Excitation energy, |transition dipole| and f of every state agree with
+    PySCF (#545), and f = (2/3) w |mu|^2 holds."""
+    result = _tddft_545(case)
+    assert len(result.states) == 6
+    for state, (omega, mu_norm, f) in zip(result.states, _PYSCF_545[case]):
+        mu = float(np.linalg.norm(state.transition_dipole))
+        assert state.excitation_energy == pytest.approx(omega, abs=1e-6)
+        assert mu == pytest.approx(mu_norm, abs=1e-6)
+        assert state.oscillator_strength == pytest.approx(f, abs=1e-6)
+        assert state.oscillator_strength == pytest.approx(
+            (2.0 / 3.0) * state.excitation_energy * mu ** 2, rel=1e-12, abs=1e-15)
+        if state.excitation_vector is not None:
+            assert float(np.linalg.norm(state.excitation_vector)) == pytest.approx(1.0)
+
+
+def test_uhf_tda_on_a_closed_shell_gives_rhf_singlets_and_dark_triplets():
+    """Through the UHF TDA path a closed-shell molecule has its RHF singlets,
+    with the same f, and triplets with f = 0. Before #545 the UHF singlets
+    carried twice the (already doubled) RHF value."""
+    from vibeqc.tddft import run_tddft_tda_uhf
+
+    mol = _h2o_545()
+    basis = vq.BasisSet(mol, "cc-pvdz")
+    r_opts = vq.RHFOptions()
+    r_opts.conv_tol_energy, r_opts.conv_tol_grad = 1e-12, 1e-9
+    rhf = vq.run_rhf(mol, basis, r_opts)
+    n_occ = mol.n_electrons() // 2
+    singlets = run_tddft_tda(mol, basis, np.asarray(rhf.mo_energies),
+                             np.asarray(rhf.mo_coeffs), n_occ, n_states=6).states
+    u_opts = vq.UHFOptions()
+    u_opts.conv_tol_energy, u_opts.conv_tol_grad = 1e-12, 1e-9
+    uhf = vq.run_uhf(mol, basis, u_opts)
+    states = run_tddft_tda_uhf(
+        mol, basis, np.asarray(uhf.mo_energies_alpha), np.asarray(uhf.mo_energies_beta),
+        np.asarray(uhf.mo_coeffs_alpha), np.asarray(uhf.mo_coeffs_beta), n_occ, n_occ,
+        n_states=12).states
+    matched = 0
+    for state in states:
+        partner = [s for s in singlets if abs(s.excitation_energy - state.excitation_energy) < 1e-7]
+        if partner:
+            assert state.oscillator_strength == pytest.approx(
+                partner[0].oscillator_strength, abs=1e-8)
+            matched += partner[0].oscillator_strength > 1e-3
+        else:
+            assert state.oscillator_strength < 1e-10      # a triplet
+    assert matched >= 2

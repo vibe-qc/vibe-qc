@@ -108,6 +108,7 @@ def main():
                 # recorded are pinned back -- the pair density (#65) and the
                 # MP2 PNO-truncation correction (#222).
                 pno_norm="legacy",
+                tcut_pno_diag_scale=1.0,  # retained recipe predates the #190 singles-PNO scale
                 pno_correction=False,
             ),
         )

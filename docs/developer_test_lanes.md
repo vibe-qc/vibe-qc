@@ -31,8 +31,8 @@ $PY scripts/test_gate/run_full_suite.py --wt "$WT" --py "$PY" --lane smoke
 For ordinary development:
 
 1. Run `smoke` only for native-binding or test-gate policy changes.
-2. Run every area lane that matches the files you changed. This is the normal
-   pre-push requirement; the complete repository inventory is not.
+2. Run small focused tests for the area changed. Whole area lanes are optional
+   broad validation, not a prerequisite for every push.
 3. For release and patch candidates, run the blocking `release-core` profile
    and `--changed-since <base> --impact-mode release`. The release impact gate
    runs only explicitly selected cheap release-impact lanes; the clean native
@@ -43,11 +43,10 @@ For ordinary development:
 5. Use the default `--impact-mode dev` or explicit `--lane <area>` while
    developing, when the changed scientific area needs the full calculation
    lane. Do not make those calculation lanes release blockers by default.
-6. Run `full-fast` only when the change touches shared infrastructure, core
-   numerical primitives, pytest/gate machinery, final pre-tag confidence, or
-   when no recent nightly covers the tree.
-7. Run `slow-nightly` and `external-reference` before release tags, or when
-   those areas are touched.
+6. Use `full-fast` for an explicitly requested broad validation, not automatically
+   for every shared-code change.
+7. Run `slow-nightly` and `external-reference` when the numerical acceptance
+   plan requires them, on an appropriately sized runtime.
 8. Keep AICCM/CCM/SECCM out of release, advisory-profile, and automatic impact
    gates. Run those lanes only by explicit manual research command.
 
@@ -56,6 +55,10 @@ of release testing or automatic impact testing. PBC lanes are not run for
 molecular-only work. Molecular semiempirical and periodic semiempirical lanes
 are separate. GAPW, BIPOLE, GDF, embedding, and external reference-code lanes
 are independent unless a change crosses those boundaries.
+
+Tests named `tests/test_chi*.py` belong to the manual `aiccm-periodic` and
+`aiccm-experimental` lanes. They are experimental/T3 and excluded from
+`full-fast` and `slow-nightly`, including newly added chi test files.
 
 ## Policy Metadata
 
@@ -128,6 +131,15 @@ advisory-profile, or automatic impact gates until their owner promotes them.
 | `slow-nightly` | Slow/heavy shipped-feature tests on a large box, excluding experimental AICCM/CCM/SECCM. |
 
 ## Examples
+
+Every `--out` artifact below lands in the directory you run from, normally the
+repo root, and all of them are gitignored. Do not commit one: a record's `tail`
+field holds the tail of the captured pytest output, warnings summary included,
+and pytest prints each warning with the absolute path of its origin. A green run
+is no safer than a red one, so any lane whose tests warn quotes your checkout's
+path, and `.githooks/pre-commit` then blocks the commit with "staged content
+contains personal-info patterns [values redacted]" without naming the file.
+Re-run the lane to regenerate an artifact.
 
 Molecular runner or SCF change:
 
@@ -208,6 +220,28 @@ $PY scripts/test_gate/run_full_suite.py --wt "$WT" --py "$PY" \
 Do not include `release-advisory.jsonl` in `blocking.jsonl`. AICCM/CCM/SECCM
 are not part of this profile.
 
+Gate children always enforce the stale-core guard, including isolated
+`gate_verdict.py --reverify` runs. `VIBEQC_ALLOW_STALE_CORE=1` remains available
+for direct diagnostic pytest sessions, but the gate runner removes it from
+each child environment. A stale core, or a checkout Libxc without the
+stable spin-fraction patch, exits 97 before collection and is recorded
+as `STALE_CORE`. The verdict exits 2 without a green or red verdict when either
+the input artifact or an isolated re-run reports that status. Rebuild the core
+and generate fresh gate evidence; diagnostic results cannot certify a release.
+
+With xdist, each worker sends a versioned compiled-core provenance report. A
+stale worker refuses before collecting tests, after session initialization so
+xdist can deliver that report. One stale worker makes the controller exit 97,
+even if another worker already ran tests. Missing or malformed provenance on a
+normal worker finish exits 96 (`CORE_PROVENANCE_ERROR`); this is an infrastructure
+condition, not proof of staleness. Both statuses void ordinary gate artifacts
+and isolated re-verification. A crashed worker retains xdist's ordinary error
+and restart behavior. A current empty collection remains `NOTESTS`.
+
+Direct diagnostic overrides remain available. If only a worker is stale, its
+warning is repeated in the controller's final summary even with pytest warnings
+disabled. A worker cannot opt a non-overridden controller into diagnostic mode.
+
 Final pre-tag shipped-feature confidence:
 
 ```sh
@@ -250,3 +284,38 @@ When adding a new expensive test, do one of these in the same change:
 
 When a lane's file list becomes noisy, update the manifest rather than telling
 every chat to remember a private command. The manifest is the contract.
+
+## CI feedback cost
+
+See [test inventory and execution policy](testing.md). Python/test/CI-only MRs
+use cheap syntax and policy checks. Native-input MRs compile/import only with `VIBEQC_BUILD_NATIVE=1`; release
+candidates and explicit full validation retain clean native builds and T1.
+Routine local work should use small focused tests on an existing qualified build.
+Broad periodic/correlation/reference calculations belong on appropriate compute
+resources, not in every pre-push loop.
+
+## Standalone TRAH regression
+
+Native-build CI also compiles and runs the UHF/UKS TRAH regression directly
+from source, independently of the Python extension:
+
+```sh
+cmake -S tests/native -B build-native-regressions -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_PREFIX_PATH="$PWD/third_party/libint/install"
+cmake --build build-native-regressions --parallel 2
+ctest --test-dir build-native-regressions --output-on-failure
+```
+
+This checks occupied/virtual gauge invariance for interior and boundary
+steps, empty spin channels, indefinite Hessians with a gradient component
+in the unstable space, and a coupled J/K step against a finite-difference
+Hessian. It does not certify the outer SCF controller or XC response.
+
+The `trah_hard_case_424` CTest case requires the small-space hard-case
+optimum and boundary norm in both orbital gauges, including low and zero
+gradients and multiple or nearly degenerate negative modes. It permits the
+equally valid signs of the unstable direction and checks the restricted path
+and budget-limited PCG fallback. Run
+`build-native-regressions/trah_noncanonical --hard-case` directly for diagnostics.
+Larger rotation spaces remain uncertified; this test does not establish
+molecular orbital stability or resolve the original SH witness in #55.

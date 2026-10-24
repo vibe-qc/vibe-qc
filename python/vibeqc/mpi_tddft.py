@@ -20,28 +20,13 @@ import numpy as np
 
 from .mpi import distribute_tasks, mpi_allreduce, mpi_available, mpi_gather, mpi_rank
 from .tddft import TDDFTResult, TDDFTState, oscillator_strength
+# The singlet transition dipole with the sqrt(2) spin factor (#545); this
+# module carried its own copy with the doubled factor.
+from .tddft import _transition_dipole_from_amplitudes as _transition_dipole_from_X
 
 __all__ = [
     "mpi_tddft_analysis",
 ]
-
-
-def _transition_dipole_from_X(
-    X: np.ndarray,
-    n_occ: int,
-    n_virt: int,
-    mo_coeff: np.ndarray,
-    dipole_ao,
-) -> np.ndarray:
-    """Compute transition dipole for a single excitation vector."""
-    C_occ = mo_coeff[:, :n_occ]
-    C_virt = mo_coeff[:, n_occ:]
-    X_ia = X.reshape(n_occ, n_virt)
-    P_ao = C_occ @ X_ia @ C_virt.T + C_virt @ X_ia.T @ C_occ.T
-    mu = np.zeros(3)
-    for d, comp in enumerate([dipole_ao.x, dipole_ao.y, dipole_ao.z]):
-        mu[d] = np.trace(P_ao @ np.asarray(comp))
-    return mu
 
 
 def mpi_tddft_analysis(

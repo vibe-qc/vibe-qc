@@ -75,6 +75,7 @@ __all__ = [
     "qvf_mo_data",
     "qvf_wf_data",
     "qvf_bloch_wf_data",
+    "qvf_excited_states_data",
     "scf_history_from_result",
     "qvf_ao_data",
     "QVF_BLOCH_WF_KIND",
@@ -85,9 +86,13 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 QVF_FORMAT_VERSION = 1
-QVF_FORMAT_VERSION_V2 = 2
+# ``qvf_version: 2`` was withdrawn (QVF spec Sec. 3.1): vibe-qc v0.10.0 to
+# v0.15.x stamped it on archives with a periodic ``reaction.path``. Readers
+# and the validator treat it as 1 and report ``W_VERSION_WITHDRAWN``;
+# producers never write it, and there is no separate v2 schema.
+_WITHDRAWN_QVF_VERSION = 2
+W_VERSION_WITHDRAWN = "W_VERSION_WITHDRAWN"
 _SCHEMA_URI = "https://vibe-qc.org/spec/qvf/1/manifest.schema.json"
-_SCHEMA_URI_V2 = "https://vibe-qc.org/spec/qvf/2/manifest.schema.json"
 _PRODUCER_NAME = "vibe-qc"
 QVF_BLOCH_WF_KIND = "x_vibeqc.bloch_wavefunction"
 
@@ -331,6 +336,7 @@ _IMPLEMENTED_KINDS = frozenset(
         "volume.spin",
         "volume.elf",
         "volume.difference",
+    "volume.transition_density",
         "volume.generic",
         "volume.potential",
         "volume.rdg",
@@ -367,6 +373,30 @@ _IMPLEMENTED_KINDS = frozenset(
         "dos.cohp",
         "run.record",
         "job.spec",
+        "excited_states",
+    }
+)
+
+# Canonical kinds of the pinned QVF schema (``QVF_TAG``) that this writer
+# does not emit. They are ordinary canonical kinds for the validator: their
+# sections are schema-checked like any other, and a ``critical`` flag on one
+# is legitimate. Moving a kind to ``_IMPLEMENTED_KINDS`` is the writer's
+# business; tests/test_qvf_round_trip.py keeps the three registries covering
+# every ``Section.oneOf`` branch of the schema.
+_SCHEMA_ONLY_KINDS = frozenset(
+    {
+        "forces",
+        "hessian",
+        "preview",
+        "properties.dielectric",
+        "properties.elastic",
+        "properties.electric",
+        "reaction.scheme",
+        "volume.complex",
+        "volume.laplacian",
+        "volume.series",
+            "volume.vector",
+        "wavefunction.bloch",
     }
 )
 
@@ -934,8 +964,7 @@ def _basis_shell_payload(basis: Any) -> tuple[list[dict[str, Any]], bool, int] |
     imported basis's ``harmonic_type`` (shipped since v0.15.0). Only the
     named-basis route forces ``set_pure(true)`` (cpp/src/basis.cpp), so
     archives from named bases are spherical, but a Cartesian payload is a
-    real production path, not a hypothetical (see
-    handovers/HANDOVER_AO_CONVENTION.md).
+    real production path, not a hypothetical.
     """
     try:
         shells_native = list(basis.shells())
@@ -1026,6 +1055,28 @@ def qvf_natural_wf_data(
     }
 
 
+def _split_localized_iao_charges(
+    payload: dict[str, Any],
+) -> tuple[dict[str, Any], Any]:
+    """Return ``payload`` without IAO charges, and the charges it carried.
+
+    :func:`qvf_localized_wf_data` hands IAO charges over beside the orbital
+    payload; older callers put them in ``mo_metadata["iao_charges"]``, a key
+    QVF deprecates in favour of the ``iao_charge`` member of
+    ``atom_properties`` (spec Sec. 5.3). Neither reaches the section.
+    """
+    payload = dict(payload)
+    charges = payload.pop("iao_charges", None)
+    meta = payload.get("mo_metadata")
+    if isinstance(meta, dict) and "iao_charges" in meta:
+        meta = dict(meta)
+        legacy = meta.pop("iao_charges")
+        if charges is None:
+            charges = legacy
+        payload["mo_metadata"] = meta
+    return payload, charges
+
+
 def qvf_localized_wf_data(
     orbitals: Any,
     basis: Any,
@@ -1055,6 +1106,10 @@ def qvf_localized_wf_data(
     throughout (closed shell). The chemistry the viewer actually needs -- which
     atoms each orbital sits on, and where it sits in space -- rides in
     ``mo_metadata`` as ``atom_populations`` / ``centroids`` / ``n_centres``.
+    ``reference_basis`` names the minimal basis the IAOs were built from
+    (``localization_reference_basis``). ``charges`` (IAO charges) are kept
+    out of ``mo_metadata``: :func:`write_qvf` writes them as the
+    ``iao_charge`` member of ``atom_properties`` (QVF spec Sec. 5.3, 5.7).
 
     Returns None when the basis payload cannot be built or shapes disagree,
     so the caller can omit the section rather than write an inconsistent one.
@@ -1081,8 +1136,6 @@ def qvf_localized_wf_data(
     }
     if reference_basis is not None:
         metadata["localization_reference_basis"] = reference_basis
-    if charges is not None:
-        metadata["iao_charges"] = np.asarray(charges, dtype=np.float64).tolist()
     if atom_populations is not None:
         populations = np.asarray(atom_populations, dtype=np.float64)
         if populations.shape[0] != n_mo:
@@ -1099,7 +1152,7 @@ def qvf_localized_wf_data(
             return None
         metadata["n_centres"] = counts.tolist()
 
-    return {
+    payload: dict[str, Any] = {
         "basis": shell_list,
         "structure_ref": structure_ref,
         "pure": pure_top,
@@ -1107,6 +1160,13 @@ def qvf_localized_wf_data(
         "mo_metadata": metadata,
         "mo_coefficients": C,
     }
+    if charges is not None:
+        # Not part of the orbital section: write_qvf carries IAO charges in
+        # the ``iao_charge`` member of ``atom_properties``, the canonical
+        # carrier (the ``mo_metadata`` key ``iao_charges`` is deprecated,
+        # QVF spec Sec. 5.3).
+        payload["iao_charges"] = np.asarray(charges, dtype=np.float64).tolist()
+    return payload
 
 
 def qvf_wf_data(
@@ -1115,7 +1175,7 @@ def qvf_wf_data(
     molecule: Any,
     *,
     structure_ref: str = "structure",
-    orbital_kind: str = "canonical",
+    orbital_kind: str | None = None,
     k_point: "list[float] | None" = None,
 ) -> dict[str, Any] | None:
     """Package basis shells + MO coefficients + per-orbital metadata into
@@ -1141,7 +1201,8 @@ def qvf_wf_data(
         :func:`_write_structure_section` emits).
     orbital_kind
         ``"canonical"`` | ``"natural"`` | ``"localized"`` -- written
-        verbatim into the mo_metadata.
+        verbatim into the mo_metadata. When omitted, uses result.orbital_kind
+        if supplied by the method, otherwise "canonical".
     k_point
         Optional fractional reciprocal-space coordinate the MO coefficients
         describe. Pass ``[0.0, 0.0, 0.0]`` for the Γ-point of a periodic
@@ -1158,6 +1219,35 @@ def qvf_wf_data(
         The shape matches what :func:`_write_wavefunction_gto_section`
         consumes.
     """
+    evaluated = getattr(result, "density_orbitals", None)
+    if evaluated is not None:
+        build = getattr(result, "fock_build", None)
+        if (build is None or evaluated.build_id != build.identity
+                or evaluated.density_id != build.density_id
+                or len(build.channels) != 2
+                or evaluated.frame_id != build.channels[0].operator.frame.identity):
+            raise ValueError("QVF density orbitals do not belong to the evaluated build")
+        for spin, channel in zip(("alpha", "beta"), build.channels):
+            if not np.array_equal(getattr(result, "density_" + spin), channel.density):
+                raise ValueError("QVF result density differs from its evaluated build")
+
+        class DensityOrbitalView:
+            # Serialization-only view: never overwrite canonical result fields.
+            def __getattr__(self, name):
+                return getattr(original, name)
+
+        original = result
+        result = DensityOrbitalView()
+        result.mo_coeffs_alpha, result.mo_coeffs_beta = evaluated.coefficients
+        result.occupations_alpha, result.occupations_beta = evaluated.occupations
+        result.mo_energies_alpha, result.mo_energies_beta = evaluated.energies
+        # Shared accepted RO orbitals also diagonalize their spin densities.
+        # Their physical Fock expectations are not canonical eigenvalues.
+        orbital_kind = "natural"
+
+    if orbital_kind is None:
+        orbital_kind = getattr(result, "orbital_kind", "canonical")
+
     # --- shells -------------------------------------------------------
     basis_payload = _basis_shell_payload(basis)
     if basis_payload is None:
@@ -1758,7 +1848,9 @@ def write_qvf(
           ``job.spec`` section (spec Sec. 5.9): ``job_type`` (required,
           ``"molecular"`` | ``"periodic"``) plus optional ``method``,
           ``basis``, ``functional``, ``charge``, ``multiplicity``,
-          ``kpoints``, ``tasks``, ``options``. Pair with
+          ``kpoints``, ``tasks``, ``options``. ``basis`` / ``functional``
+          are a name or ``None`` (written as ``null``: the method takes
+          none); a deprecated ``""`` is written as ``null``. Pair with
           ``run_status="pending"`` to describe a job that has not yet
           run; a runner executing the container preserves this section
           verbatim through the in-place update.
@@ -1772,6 +1864,12 @@ def write_qvf(
           ``spin``, ``component``
         * ``spin_data`` -- dict of ``{label: (data_3d, origin, span)}``
         * ``elf_data`` -- dict of ``{label: (data_3d, origin, span)}``
+        * ``transition_density_data`` -- ``{label: {"data": data_3d,
+          "origin": origin_bohr, "span": voxel_vectors_bohr}}`` of supplied
+          real, spin-summed transition densities in e/bohr^3. Optional
+          ``excited_states_ref="excited_states"`` and ``state_index`` link
+          to the emitted table; the index requires that reference.
+          No density is computed, normalized or replaced by a difference.
         * ``generic_volume_data`` -- dict of ``{label: (data_3d, origin,
           span)}`` for ``volume.generic`` (escape hatch for any scalar
           field that doesn't fit density/orbital/spin/elf/difference)
@@ -1820,6 +1918,11 @@ def write_qvf(
         * ``extensions`` -- dict of ``{vendor_ns: {version, schema_uri?,
           critical?}}`` for the root ``extensions`` governance block
           (QVF spec Sec. 5.4).
+        An executed ``result.engine_provenance`` is automatically exported as
+        the noncritical ``x_vibeqc.molecular_integral_engine`` JSON section,
+        preserving actual provider/algorithm, work and terminal-confirmation
+        receipts. The section identity and member path are reserved.
+
         * ``vendor_json_sections`` -- list of first- or third-party vendor
           JSON sections. Each entry is ``{id, kind, payload}`` with optional
           ``member`` (default ``"data"``), ``label``, and ``critical``. The
@@ -1843,21 +1946,33 @@ def write_qvf(
           first-party vendor section ``x_vibeqc.bloch_wavefunction``.
         * ``wf_localized_data`` -- same shape as ``wf_data`` but emitted as a
           second ``wavefunction.gto`` section with id ``"wf_localized"``.
-          ``mo_metadata["orbital_kind"]`` should be ``"localized"``.
+          ``mo_metadata["orbital_kind"]`` should be ``"localized"``. IAO
+          charges it carries (from :func:`qvf_localized_wf_data`, or a legacy
+          ``mo_metadata["iao_charges"]``) are written as the ``iao_charge``
+          member of ``atom_properties`` when ``iao_charges`` is not given.
         * ``wf_nto_hole_data`` -- same shape as ``wf_data``, emitted as
-          ``wavefunction.gto`` with id ``"wf_nto_hole"`` and
-          ``orbital_kind="natural"``.  The "hole" side of a single
-          NTO pair (simplest post-TD-DFT path).
-        * ``wf_nto_electron_data`` -- same shape as ``wf_data``, emitted as
-          ``wavefunction.gto`` with id ``"wf_nto_electron"`` and
-          ``orbital_kind="natural"``.  The "electron" side of a single
-          NTO pair.
+          ``wavefunction.gto`` with id ``"wf_nto_hole"``,
+          ``orbital_kind="nto"`` and ``nto_role="hole"``: the hole side of
+          a single NTO pair that belongs to no listed state.
+        * ``wf_nto_electron_data`` -- the particle side of that pair, id
+          ``"wf_nto_electron"``, ``nto_role="particle"``.
+        * ``excited_states_data`` -- the ``states`` payload of an
+          ``excited_states`` section (QVF spec Sec. 5.12), as built by
+          :func:`qvf_excited_states_data`. Emitted with id
+          ``"excited_states"``; a ``spectra.uvvis`` section names it as
+          ``states_ref``.
         * ``nto_data`` -- list of ``{"hole": wf_dict, "electron": wf_dict,
-          "state_index": int, "excitation_energy_ev": float}`` records, one per
-          excited state. Each emits two ``wavefunction.gto`` sections with
-          ``orbital_kind="natural"`` and ids ``"wf_nto_S{n}_hole"`` /
-          ``"wf_nto_S{n}_electron"``. Intended for Natural Transition Orbitals
-          (post-TD-DFT).
+          "state_index": int}`` records, the natural transition orbitals of
+          the states (QVF spec Sec. 5.3), ``occupations`` the weights
+          lambda_k = sigma_k**2 in decreasing order. An unrestricted state is
+          given as two records with ``"spin": "alpha"`` / ``"beta"`` and
+          written as one pair with ``spin: "unrestricted"`` (QVF spec Sec. 5.3).
+          Each state emits ``wavefunction.gto`` sections ``"wf_nto_S{n}_hole"``
+          and ``"wf_nto_S{n}_electron"`` with ``orbital_kind="nto"``,
+          ``nto_role``, ``state_ref`` / ``state_index``, and zero
+          ``energies``; its state gets ``nto_ref``. A legacy
+          ``excitation_energy_ev`` on a record supplies a state the
+          ``excited_states_data`` lacks.
         * ``ao_data`` -- list of dicts from :func:`qvf_ao_data`, each with
           keys ``label``, ``data`` (3-D array), ``origin``, ``span``,
           ``ao_metadata``, ``section_id``.  Emitted as ``basis.ao`` sections.
@@ -2101,6 +2216,8 @@ def _emit_qvf_into_zip(
             zf, diff_data, sections, volume_dtype=volume_dt
         )
 
+    # Transition densities are emitted after the excited-state table is resolved.
+
     # --- volume.generic -----------------------------------------
     gen_vol_data = context.get("generic_volume_data")
     if gen_vol_data:
@@ -2131,6 +2248,10 @@ def _emit_qvf_into_zip(
         _write_bloch_wavefunction_section(zf, bloch_wf_data, sections)
 
     # --- wavefunction.gto (localized) ----------------------------
+    # IAO charges never ride in a localized section's mo_metadata (the key
+    # ``iao_charges`` is deprecated, QVF spec Sec. 5.3); they are collected
+    # here and written as the ``iao_charge`` member of atom_properties below.
+    localized_iao_charges: Any = None
     wf_localized_data = context.get("wf_localized_data")
     if isinstance(wf_localized_data, (list, tuple)):
         # Several localization criteria on the same wave function, each its
@@ -2141,67 +2262,84 @@ def _emit_qvf_into_zip(
                 continue
             _section_id, _payload = _entry
             if _payload:
+                _payload, _charges = _split_localized_iao_charges(_payload)
+                if localized_iao_charges is None:
+                    localized_iao_charges = _charges
                 _write_wavefunction_gto_section(
                     zf, _payload, sections, section_id=_section_id
                 )
         wf_localized_data = None
     if wf_localized_data:
+        wf_localized_data, _charges = _split_localized_iao_charges(
+            wf_localized_data
+        )
+        if localized_iao_charges is None:
+            localized_iao_charges = _charges
         _write_wavefunction_gto_section(
             zf, wf_localized_data, sections, section_id="wf_localized"
         )
 
-    # --- wavefunction.gto (NTO hole / electron pairs) --------------
-    # Standalone keys: a single hole/electron pair (simplest path).
-    # Emitted as sections "wf_nto_hole" and "wf_nto_electron".
-    # The mo_metadata["orbital_kind"] should be "natural".
-    wf_nto_hole_data = context.get("wf_nto_hole_data")
-    if wf_nto_hole_data:
-        wf_nto_hole_data.setdefault("mo_metadata", {})
-        wf_nto_hole_data["mo_metadata"]["orbital_kind"] = "natural"
-        wf_nto_hole_data["mo_metadata"]["occupation_semantics"] = (
-            "transition_weight"
-        )
-        _write_wavefunction_gto_section(
-            zf, wf_nto_hole_data, sections, section_id="wf_nto_hole"
-        )
-    wf_nto_electron_data = context.get("wf_nto_electron_data")
-    if wf_nto_electron_data:
-        wf_nto_electron_data.setdefault("mo_metadata", {})
-        wf_nto_electron_data["mo_metadata"]["orbital_kind"] = "natural"
-        wf_nto_electron_data["mo_metadata"]["occupation_semantics"] = (
-            "transition_weight"
-        )
-        _write_wavefunction_gto_section(
-            zf, wf_nto_electron_data, sections, section_id="wf_nto_electron"
-        )
+    # --- wavefunction.gto (NTO hole / particle pair) ---------------
+    # Standalone keys: one pair without a state (simplest path), emitted
+    # as sections "wf_nto_hole" and "wf_nto_electron".
+    for key, role, sec_id in (
+        ("wf_nto_hole_data", "hole", "wf_nto_hole"),
+        ("wf_nto_electron_data", "particle", "wf_nto_electron"),
+    ):
+        if context.get(key):
+            _write_wavefunction_gto_section(
+                zf, _nto_wf_payload(context[key], role=role), sections,
+                section_id=sec_id,
+            )
 
-    # --- wavefunction.gto (NTO hole / electron pairs, multi-state) --
-    # Each entry is {"hole": wf_data_dict, "electron": wf_data_dict,
-    # "state_index": int, "excitation_energy_ev": float,
-    # optional "spin": "alpha"|"beta"}.
-    # Emitted as two sections per state: wf_nto_S{n}_hole and
-    # wf_nto_S{n}_electron (or wf_nto_S{n}_{spin}_hole etc. for UHF).
-    # The mo_metadata["orbital_kind"] should be "natural".
-    nto_states = context.get("nto_data")
-    if nto_states:
-        for state in nto_states:
-            si = state.get("state_index", 0)
-            e_ev = state.get("excitation_energy_ev")
-            _spin = state.get("spin", "")
-            _spin_tag = f"_{_spin}" if _spin else ""
-            for role in ("hole", "electron"):
-                wf = state.get(role)
-                if wf is None:
-                    continue
-                # Ensure orbital_kind is set.
-                wf.setdefault("mo_metadata", {})
-                wf["mo_metadata"]["orbital_kind"] = "natural"
-                wf["mo_metadata"]["occupation_semantics"] = "transition_weight"
-                if e_ev is not None:
-                    wf["mo_metadata"].setdefault("excitation_energy_ev", float(e_ev))
-                    wf["mo_metadata"].setdefault("excitation_index", int(si))
-                sec_id = f"wf_nto_S{si}{_spin_tag}_{role}"
-                _write_wavefunction_gto_section(zf, wf, sections, section_id=sec_id)
+    # --- excited_states + NTO pairs per state (spec Secs. 5.12, 5.3) --
+    # ``excited_states_data`` is the table of states
+    # (:func:`qvf_excited_states_data`); ``nto_data`` the NTO records,
+    # each {"hole": wf, "electron": wf, "state_index": int}, optionally
+    # with "spin": "alpha" | "beta" (one record per spin of an
+    # unrestricted state, merged here into one unrestricted pair) and a
+    # legacy "excitation_energy_ev". A state's pair is the sections
+    # wf_nto_S{n}_hole and wf_nto_S{n}_electron, linked to the state by
+    # state_ref / state_index and from it by nto_ref.
+    nto_pairs = _nto_pairs_by_state(context.get("nto_data") or [])
+    excited_states = _excited_states_payload(
+        context.get("excited_states_data"), nto_pairs
+    )
+    states_ref = "excited_states" if excited_states else None
+    transition_data = context.get("transition_density_data")
+    if transition_data:
+        _write_volume_transition_density_sections(
+            zf, transition_data, sections, excited_states=excited_states,
+            volume_dtype=volume_dt,
+        )
+    if excited_states:
+        section_ids = {s.get("id") for s in sections}
+        _write_excited_states_section(
+            zf, excited_states, sections,
+            section_id=states_ref,
+            structure_ref="structure" if "structure" in section_ids else None,
+            wavefunction_ref="wf" if "wf" in section_ids else None,
+        )
+    for si, pair in nto_pairs.items():
+        state_ref = (
+            states_ref
+            if excited_states and any(
+                st["index"] == si for st in excited_states["states"]
+            )
+            else None
+        )
+        for role, sec_id in (
+            ("hole", f"wf_nto_S{si}_hole"),
+            ("particle", f"wf_nto_S{si}_electron"),
+        ):
+            _write_wavefunction_gto_section(
+                zf,
+                _nto_wf_payload(
+                    pair[role], role=role, state_ref=state_ref, state_index=si
+                ),
+                sections,
+                section_id=sec_id,
+            )
 
     # --- basis.ao -----------------------------------------------
     ao_data = context.get("ao_data")
@@ -2211,6 +2349,16 @@ def _emit_qvf_into_zip(
     # --- atom_properties ----------------------------------------
     pop = context.get("population_summary")
     iao_charges = context.get("iao_charges")
+    if iao_charges is None:
+        iao_charges = localized_iao_charges
+    iao_analysis = getattr(pop, "iao_analysis", None)
+    if iao_analysis is not None:
+        if iao_analysis.available:
+            iao_charges = iao_analysis.charges
+        _write_vendor_json_sections(zf, [{
+            "id": "iao_analysis", "kind": "x_vibeqc.iao_analysis",
+            "path": "analysis/iao.json", "payload": iao_analysis.to_dict(),
+        }], sections)
     if pop is not None or iao_charges is not None:
         _write_atom_properties_section(
             zf, pop, sections, iao_charges=iao_charges
@@ -2310,7 +2458,14 @@ def _emit_qvf_into_zip(
         syms = None
         if mol is not None:
             syms = [_symbol(int(a.Z)) for a in mol.atoms]
-        _write_vibrations_section(zf, hess, sections, atom_symbols=syms, molecule=mol)
+        _write_vibrations_section(
+            zf,
+            hess,
+            sections,
+            atom_symbols=syms,
+            molecule=mol,
+            surface=context.get("hessian_surface"),
+        )
 
     # --- spectra.ir ---------------------------------------------
     if hess is not None:
@@ -2364,6 +2519,8 @@ def _emit_qvf_into_zip(
     # --- spectra.uvvis ------------------------------------------
     uvvis = context.get("uvvis_data")
     if uvvis:
+        if states_ref is not None:
+            uvvis = {"states_ref": states_ref, **uvvis}
         _write_spectra_uvvis_section(zf, uvvis, sections)
 
     # --- spectra.ecd --------------------------------------------
@@ -2440,6 +2597,30 @@ def _emit_qvf_into_zip(
             bond_paths=qtaim.get("bond_paths"),
             sections=sections,
         )
+
+    # The receipt belongs to the executed result, including failed terminal
+    # confirmation. Never infer a provider from requested job options.
+    result = context.get("result")
+    if getattr(result, "engine_provenance", None) is not None:
+        from ...manta_scf import molecular_engine_provenance
+
+        kind = "x_vibeqc.molecular_integral_engine"
+        section_id = "molecular_integral_engine"
+        member_path = "provenance/molecular_integral_engine.json"
+        for spec in context.get("vendor_json_sections") or ():
+            if (spec.get("kind") == kind or spec.get("id") == section_id
+                    or spec.get("path") == member_path):
+                raise ValueError("Molecular integral-engine QVF provenance is reserved for the executed result")
+        # qvf_bytes and file output share this code. Copy caller governance
+        # before adding the noncritical first-party extension declaration.
+        extensions = dict(manifest.get("extensions", context.get("extensions") or {}))
+        extensions.setdefault("x_vibeqc", {"version": "1.0", "critical": False})
+        manifest["extensions"] = extensions
+        _write_vendor_json_sections(zf, [{
+            "id": section_id, "kind": kind, "path": member_path,
+            "label": "Executed molecular integral engine", "critical": False,
+            "payload": molecular_engine_provenance(result),
+        }], sections)
 
     # --- x_<vendor> JSON sections -----------------------------------
     vendor_json_sections = context.get("vendor_json_sections")
@@ -3245,6 +3426,70 @@ def _write_volume_generic_section(
         sections.append(section)
 
 
+# -- volume.transition_density -------------------------------------------
+
+
+def _write_volume_transition_density_sections(
+    zf: zipfile.ZipFile,
+    data_by_label: dict[str, dict[str, Any]],
+    sections: list[dict[str, Any]],
+    *,
+    excited_states: Optional[dict[str, Any]],
+    volume_dtype: np.dtype,
+) -> None:
+    """Serialize supplied spin-summed transition densities (QVF Sec. 5.2).
+
+    Values are rho_0n in e/bohr^3, with arbitrary overall sign. They are
+    neither normalized nor converted to excited-minus-reference densities.
+    The optional state link must resolve to the table actually being emitted.
+    """
+    known_states = {st["index"] for st in (excited_states or {}).get("states", [])}
+    for idx, (label, spec) in enumerate(data_by_label.items()):
+        ref, si = spec.get("excited_states_ref"), spec.get("state_index")
+        if "excited_states_ref" in spec and (
+            ref != "excited_states" or not known_states
+        ):
+            raise ValueError("transition density excited_states_ref must name the emitted table")
+        if "state_index" in spec and (
+            isinstance(si, (bool, np.bool_)) or not isinstance(si, (int, np.integer))
+            or si < 1 or si not in known_states or ref != "excited_states"
+        ):
+            raise ValueError("transition density state_index must name a state in excited_states_ref")
+        raw = np.asarray(spec["data"])
+        _require_3d_volume(raw, "volume.transition_density", label)
+        if raw.size > _MAX_VOXELS or any(n == 0 for n in raw.shape):
+            raise ValueError("transition density grid must be nonempty and within the voxel limit")
+        vol = _real_array_for_artifact(
+            raw, dtype=volume_dtype, label=f"volume.transition_density[{label!r}]",
+        )
+        origin = np.asarray(spec["origin"], dtype=np.float64)
+        span = np.asarray(spec["span"], dtype=np.float64)
+        if origin.shape != (3,) or span.shape != (3, 3):
+            raise ValueError("transition density origin and span must have shapes (3,) and (3, 3)")
+        if not all(np.isfinite(a).all() for a in (vol, origin, span)):
+            raise ValueError("transition density data and grid must be finite")
+        section_id = f"vol_transition_{idx}"
+        # Index-based names remain unique even when labels have the same slug.
+        stem = f"volumes/{section_id}"
+        member = _write_binary_to_zip(zf, stem + ".dat", vol)
+        grid = _grid_descriptor(vol, origin, span)
+        grid["units"] = {"origin": "bohr", "voxel_vectors": "bohr"}
+        grid_json = safe_json_bytes(grid)
+        zf.writestr(stem + "_grid.json", grid_json)
+        section = {
+            "id": section_id, "kind": "volume.transition_density", "label": label,
+            "members": {"data": member, "grid": {
+                "path": stem + "_grid.json", "format": "json",
+                "sha256": _sha256_hex(grid_json),
+            }},
+        }
+        if ref is not None:
+            section["excited_states_ref"] = ref
+        if si is not None:
+            section["state_index"] = int(si)
+        sections.append(section)
+
+
 # -- volume.difference ----------------------------------------------------
 
 
@@ -3707,6 +3952,227 @@ def _write_spectra_raman_section(
     sections.append(section)
 
 
+# -- excited_states and natural transition orbitals ------------------------
+
+# mo_metadata keys QVF v0.3.0 deprecates for NTOs; their canonical
+# carriers are state_index and the excited_states section (spec Sec. 5.3).
+_DEPRECATED_NTO_KEYS = ("excitation_index", "excitation_energy_ev")
+
+
+def qvf_excited_states_data(
+    tddft_result: Any,
+    *,
+    functional: Optional[str] = None,
+    multiplicity: Optional[int] = None,
+    reference_state: Optional[str] = None,
+) -> Optional[dict[str, Any]]:
+    """The ``states`` payload of an ``excited_states`` section (QVF spec
+    Sec. 5.12) for a :class:`vibeqc.tddft.TDDFTResult`, or ``None`` when it
+    has no states.
+
+    Every state carries its 1-based ``index``, the vertical
+    ``excitation_energy`` in eV, the length-gauge ``oscillator_strength``
+    and the ``transition_dipole`` in e bohr. ``multiplicity`` is written on
+    every state when given: 1 for the singlets of a closed-shell reference.
+    The writer adds each state's ``nto_ref`` when it writes its NTOs.
+    """
+    states = list(getattr(tddft_result, "states", None) or [])
+    if not states:
+        return None
+    label = str(getattr(tddft_result, "method", ""))
+    tda = label.upper().startswith("TDA")
+    if functional:
+        method = "tddft"
+    else:
+        method = "cis" if tda else "tdhf"
+    payload_states = []
+    for st in states:
+        entry: dict[str, Any] = {
+            "index": int(st.index),
+            "excitation_energy": {
+                "value": float(st.excitation_energy_ev), "units": "ev",
+            },
+            "oscillator_strength": float(st.oscillator_strength),
+        }
+        dipole = getattr(st, "transition_dipole", None)
+        if dipole is not None:
+            entry["transition_dipole"] = [
+                float(x) for x in np.asarray(dipole, dtype=float).ravel()
+            ]
+        if multiplicity is not None:
+            entry["multiplicity"] = int(multiplicity)
+        payload_states.append(entry)
+    meta: dict[str, Any] = {
+        "method": method,
+        "tda": tda,
+        "n_states": len(payload_states),
+        "units": {
+            "excitation_energy": "ev",
+            "oscillator_strength": "dimensionless",
+        },
+    }
+    if reference_state:
+        meta["reference_state"] = str(reference_state)
+    return {"states": payload_states, "meta": meta}
+
+
+def _nto_wf_payload(
+    wf: dict[str, Any],
+    *,
+    role: str,
+    state_ref: Optional[str] = None,
+    state_index: Optional[int] = None,
+) -> dict[str, Any]:
+    """A copy of one NTO half (``wavefunction.gto`` data) with the QVF
+    v0.3.0 carriers (spec Sec. 5.3): ``orbital_kind: "nto"``,
+    ``occupation_semantics: "transition_weight"``, ``nto_role``, and
+    ``state_ref`` / ``state_index`` when the state is in an
+    ``excited_states`` section. ``energies`` are zeros, which the spec asks
+    for since NTOs have none, and the deprecated ``excitation_*`` keys are
+    dropped. The caller's dict is not changed.
+    """
+    out = dict(wf)
+    meta = {
+        k: v for k, v in dict(wf.get("mo_metadata") or {}).items()
+        if k not in _DEPRECATED_NTO_KEYS
+    }
+    meta["orbital_kind"] = "nto"
+    meta["occupation_semantics"] = "transition_weight"
+    meta["nto_role"] = role
+    if state_ref is not None and state_index is not None:
+        meta["state_ref"] = state_ref
+        meta["state_index"] = int(state_index)
+    if meta.get("spin") == "unrestricted":
+        for channel in ("alpha", "beta"):
+            if isinstance(meta.get(channel), dict):
+                ch = dict(meta[channel])
+                ch["energies"] = [0.0] * len(ch.get("occupations", []))
+                meta[channel] = ch
+    elif "occupations" in meta:
+        meta["energies"] = [0.0] * len(meta["occupations"])
+    out["mo_metadata"] = meta
+    return out
+
+
+def _merge_spin_nto_halves(
+    alpha: dict[str, Any], beta: dict[str, Any]
+) -> dict[str, Any]:
+    """One unrestricted NTO half from the per-spin restricted-shaped halves
+    of a state: QVF spec Sec. 5.3 keeps two sections per state,
+    each with ``spin: "unrestricted"`` and an ``alpha`` and a ``beta`` set.
+    """
+    out = {
+        k: alpha[k] for k in ("basis", "structure_ref", "pure", "n_ao")
+        if k in alpha
+    }
+    meta_a = dict(alpha.get("mo_metadata") or {})
+    meta_b = dict(beta.get("mo_metadata") or {})
+
+    def _channel(meta: dict[str, Any]) -> dict[str, Any]:
+        occ = [float(x) for x in meta.get("occupations", [])]
+        return {"n_mo": len(occ), "energies": [0.0] * len(occ),
+                "occupations": occ}
+
+    meta: dict[str, Any] = {"spin": "unrestricted"}
+    if "n_ao" in meta_a:
+        meta["n_ao"] = meta_a["n_ao"]
+    meta["alpha"] = _channel(meta_a)
+    meta["beta"] = _channel(meta_b)
+    out["mo_metadata"] = meta
+    out["mo_coefficients_alpha"] = alpha["mo_coefficients"]
+    out["mo_coefficients_beta"] = beta["mo_coefficients"]
+    return out
+
+
+def _nto_pairs_by_state(records: Sequence[dict[str, Any]]) -> dict[int, dict[str, Any]]:
+    """``{state_index: {"hole", "particle", "excitation_energy_ev"}}`` from
+    ``nto_data`` records, in the order of first appearance. A state given
+    as one record per spin (``"spin": "alpha"`` / ``"beta"``) becomes one
+    unrestricted pair."""
+    by_state: dict[int, list[dict[str, Any]]] = {}
+    for rec in records:
+        if rec.get("hole") is None or rec.get("electron") is None:
+            continue
+        by_state.setdefault(int(rec.get("state_index", 0)), []).append(rec)
+    pairs: dict[int, dict[str, Any]] = {}
+    for si, recs in by_state.items():
+        spins = {rec.get("spin"): rec for rec in recs}
+        if "alpha" in spins and "beta" in spins:
+            a, b = spins["alpha"], spins["beta"]
+            hole = _merge_spin_nto_halves(a["hole"], b["hole"])
+            particle = _merge_spin_nto_halves(a["electron"], b["electron"])
+        else:
+            hole, particle = recs[0]["hole"], recs[0]["electron"]
+        e_ev = next(
+            (r["excitation_energy_ev"] for r in recs
+             if r.get("excitation_energy_ev") is not None),
+            None,
+        )
+        pairs[si] = {"hole": hole, "particle": particle,
+                     "excitation_energy_ev": e_ev}
+    return pairs
+
+
+def _excited_states_payload(
+    data: Optional[dict[str, Any]], nto_pairs: dict[int, dict[str, Any]]
+) -> Optional[dict[str, Any]]:
+    """The ``excited_states`` payload to write: ``data`` plus a minimal
+    state for an NTO record whose state it lacks but whose excitation
+    energy the record carries, each state with NTOs given its ``nto_ref``.
+    ``None`` when there are no states."""
+    states = [dict(st) for st in (data or {}).get("states", [])]
+    known = {st["index"] for st in states}
+    for si, pair in nto_pairs.items():
+        if si not in known and si >= 1 and pair["excitation_energy_ev"] is not None:
+            states.append({
+                "index": si,
+                "excitation_energy": {
+                    "value": float(pair["excitation_energy_ev"]), "units": "ev",
+                },
+            })
+    if not states:
+        return None
+    for st in states:
+        if st["index"] in nto_pairs:
+            st["nto_ref"] = f"wf_nto_S{st['index']}_hole"
+    states.sort(key=lambda st: st["index"])
+    meta = dict((data or {}).get("meta", {}))
+    meta["n_states"] = len(states)
+    return {"states": states, "meta": meta}
+
+
+def _write_excited_states_section(
+    zf: zipfile.ZipFile,
+    payload: dict[str, Any],
+    sections: list[dict[str, Any]],
+    *,
+    section_id: str = "excited_states",
+    structure_ref: Optional[str] = None,
+    wavefunction_ref: Optional[str] = None,
+) -> None:
+    """Write an ``excited_states`` section (QVF spec Sec. 5.12)."""
+    states_json = safe_json_bytes(payload, indent=2)
+    path_in_zip = f"{section_id}/states.json"
+    zf.writestr(path_in_zip, states_json)
+    section: dict[str, Any] = {
+        "id": section_id,
+        "kind": "excited_states",
+        "label": "Excited states",
+        "members": {
+            "states": {
+                "path": path_in_zip,
+                "format": "json",
+                "sha256": _sha256_hex(states_json),
+            },
+        },
+    }
+    if structure_ref is not None:
+        section["structure_ref"] = structure_ref
+    if wavefunction_ref is not None:
+        section["wavefunction_ref"] = wavefunction_ref
+    sections.append(section)
+
+
 # -- spectra.uvvis ---------------------------------------------------------
 
 
@@ -4153,12 +4619,9 @@ def _write_atom_properties_section(
     ``dipole``, ``errors``. It may be None when the only per-atom
     property available is ``iao_charges``.
 
-    ``iao_charges`` is a plain per-atom array rather than a
-    ``PopulationSummary`` field because the IAO analysis runs in the QVF
-    preparation block, after the population sidecars have already been
-    written. That is why the ``.population.{txt,json}`` sidecars do not
-    carry an IAO row while the QVF does — see
-    ``handovers/HANDOVER_IBO.md``.
+    ``iao_charges`` preserves the legacy localization-only charge payload.
+    An independently requested analysis additionally supplies a complete
+    JSON payload in the separate ``x_vibeqc.iao_analysis`` vendor section.
     """
     section: dict[str, Any] = {
         "id": "props0",
@@ -4219,8 +4682,8 @@ def _write_atom_properties_section(
             )
             section["members"]["spin_population"] = member
 
-        if section["members"]:
-            sections.append(section)
+    if section["members"]:
+        sections.append(section)
 
 
 # -- trajectory -----------------------------------------------------------
@@ -4433,15 +4896,15 @@ def _write_reaction_path_section(
     if reaction_coordinate is not None:
         meta["reaction_coordinate"] = [float(x) for x in reaction_coordinate]
     # Optional human-readable axis annotations for the energy plot.
-    # Additive + optional: v1/v2 readers that don't know them ignore
-    # them, so this needs no qvf_version bump.
+    # Additive + optional: readers that don't know them ignore them, so
+    # this needs no qvf_version bump.
     if reaction_coordinate_label is not None:
         meta["reaction_coordinate_label"] = str(reaction_coordinate_label)
     if reaction_coordinate_unit is not None:
         meta["reaction_coordinate_unit"] = str(reaction_coordinate_unit)
 
-    # v2: pull lattice + dim off periodic frames before writing the
-    # metadata JSON so its sha256 includes them.
+    # Periodic path: pull lattice + dim off periodic frames before writing
+    # the metadata JSON so its sha256 includes them.
     lattice_array: Optional[np.ndarray] = None
     if is_periodic:
         lattices = [np.asarray(f.lattice, dtype=np.float64) for f in frames]
@@ -4583,6 +5046,7 @@ def write_reaction_path_qvf(
     method: str,
     basis: str,
     functional: Optional[str] = None,
+    mlip_result: Any = None,
     extra_assemble_kwargs: Optional[dict[str, Any]] = None,
     compression: Optional[int] = None,
 ) -> Path:
@@ -4597,9 +5061,9 @@ def write_reaction_path_qvf(
 
     Periodic vs molecular dispatch is automatic: if
     ``frames[0]`` is a :class:`PeriodicSystem` the writer detects
-    it (via ``_reaction_path_is_periodic``) and bumps the manifest
-    to QVF v2 with the per-frame lattice + dim -- no extra knobs
-    needed.
+    it (via ``_reaction_path_is_periodic``) and writes the optional
+    per-frame ``lattice`` member + ``dim`` (still ``qvf_version`` 1) --
+    no extra knobs needed.
 
     Parameters
     ----------
@@ -4630,6 +5094,9 @@ def write_reaction_path_qvf(
     method, basis, functional
         SCF flavour for the OutputPlan + citation routing.
         ``functional`` is None for HF methods.
+    mlip_result
+        Optional executed MACE result carrying model, runtime and checkpoint
+        identity for provenance. Does not replace the per-frame energies.
     extra_assemble_kwargs
         Forwarded to ``CitationDatabase.assemble`` --
         e.g. ``{"uses_neb": True, "uses_ci_neb": True}`` for a
@@ -4702,6 +5169,10 @@ def write_reaction_path_qvf(
         },
     )()
 
+    if method.strip().lower() == "mace" and mlip_result is not None:
+        for name in ("model_info", "device", "dtype", "weight_identity"):
+            setattr(stub_result, name, getattr(mlip_result, name, None))
+
     # Assemble citations. The method / basis / functional routes
     # always fire; extra_assemble_kwargs fires driver-level routes
     # (e.g. uses_neb / uses_ci_neb).
@@ -4727,6 +5198,10 @@ def write_reaction_path_qvf(
         },
         "bibtex_content": bibtex_content,
     }
+    if method.strip().lower() in {"mace", "dftb0"}:
+        # The stub carries an energy for the first frame, not an SCF
+        # convergence verdict. These methods evaluate each image without SCF.
+        context["scf_applicable"] = False
     if rc is not None:
         context["reaction_path"]["reaction_coordinate"] = rc
     if reaction_coordinate_label is not None:
@@ -4978,6 +5453,7 @@ def _write_vibrations_section(
     *,
     atom_symbols: list[str] | None = None,
     molecule: Any | None = None,
+    surface: dict[str, Any] | None = None,
 ) -> None:
     """Write the ``vibrations`` section.
 
@@ -4985,6 +5461,12 @@ def _write_vibrations_section(
     ``normal_modes`` (and optionally ``masses_amu``).
     ``atom_symbols`` provides element symbols; ``molecule`` provides the
     equilibrium geometry + atomic numbers for the metadata atoms array.
+    ``surface`` names the potential-energy surface the Hessian was built
+    on (see :func:`vibeqc.output.hessian_surface_manifest_fields`). It
+    matters because run_job resolves a correlated request down to its
+    mean-field reference before differentiating it, so an MP2 job's
+    frequencies are RHF frequencies -- without this key a consumer
+    reading the section cannot tell the two apart.
 
     Two correctness fixes vs. the original implementation (audit findings
     A5-01/A5-02/A5-05):
@@ -5040,10 +5522,12 @@ def _write_vibrations_section(
             else 0
         )
         atoms_list.append({"symbol": sym, "position": pos, "atomic_number": z})
-    meta = {
+    meta: dict[str, Any] = {
         "frequencies": [float(freqs[p]) for p in range(n_modes)],
         "atoms": atoms_list,
     }
+    if surface:
+        meta["surface"] = dict(surface)
     meta_json = safe_json_bytes(meta)
     meta_path = "vibrations/metadata.json"
     zf.writestr(meta_path, meta_json)
@@ -5478,7 +5962,13 @@ def _write_job_spec_section(
                 "job.spec kpoints must be three integers >= 1, "
                 f"got {kpoints!r}"
             )
-    spec_bytes = safe_json_bytes(dict(job_spec), indent=2)
+    payload = dict(job_spec)
+    # QVF spec Sec. 5.9: ``""`` is a deprecated spelling of ``null`` ("the
+    # method takes none"); write the canonical spelling.
+    for _key in ("basis", "functional"):
+        if isinstance(payload.get(_key), str) and not payload[_key].strip():
+            payload[_key] = None
+    spec_bytes = safe_json_bytes(payload, indent=2)
     path_in_zip = "job_spec/spec.json"
     zf.writestr(path_in_zip, spec_bytes)
     sections.append(
@@ -6130,6 +6620,8 @@ def scf_history_from_result(result: Any) -> list[dict[str, Any]] | None:
 
 def _build_provenance(context: dict[str, Any]) -> dict[str, Any]:
     """Build the ``provenance`` block for the manifest root."""
+    from .mlip_record import mlip_record_fields
+
     result = context.get("result")
     provenance: dict[str, Any] = {}
     if context.get("method"):
@@ -6144,6 +6636,9 @@ def _build_provenance(context: dict[str, Any]) -> dict[str, Any]:
         provenance["jk_method_resolved"] = str(context["jk_method_resolved"])
     if context.get("jk_method_executed"):
         provenance["jk_method_executed"] = str(context["jk_method_executed"])
+    if context.get("exchange_q0"):
+        # The exact-exchange q=0 gauge that ran, as .system [run] records it.
+        provenance["exchange_q0"] = str(context["exchange_q0"])
     if "dft_plus_u" in context:
         provenance["dft_plus_u"] = bool(context["dft_plus_u"])
     if context.get("dft_plus_u_route"):
@@ -6161,9 +6656,26 @@ def _build_provenance(context: dict[str, Any]) -> dict[str, Any]:
             provenance["n_electrons"] = int(n_elec)
 
     if result is not None:
-        provenance["scf_converged"] = bool(
-            getattr(result, "converged", False),
-        )
+        # A completed noniterative calculation has no SCF convergence
+        # verdict. The caller knows the executed route; absence of a
+        # result attribute alone only means that convergence was unreported.
+        scf_applicable = context.get("scf_applicable")
+        mlip_fields = mlip_record_fields(result)
+        if mlip_fields:
+            provenance.update(mlip_fields)
+            scf_applicable = False
+        if scf_applicable is not None:
+            scf_applicable = bool(scf_applicable)
+            provenance["scf_applicable"] = scf_applicable
+        converged = getattr(result, "converged", None)
+        if scf_applicable is not False and converged is not None:
+            provenance["scf_converged"] = bool(converged)
+        # Executed controls and per-point audit facts belong to provenance,
+        # not job.spec options (which are replayed as runner arguments).
+        # Older results without this record carry no inferred audit verdict.
+        run_fields = getattr(result, "run_fields", None)
+        if run_fields:
+            provenance["run_fields"] = dict(run_fields)
         # SCF iteration count. Both the molecular ``SolverResult`` and
         # the periodic solver results carry ``n_iter``; fall back to the
         # length of the per-iteration trace when the count isn't a field.
@@ -6172,7 +6684,7 @@ def _build_provenance(context: dict[str, Any]) -> dict[str, Any]:
             _trace = getattr(result, "scf_trace", None)
             if _trace:
                 n_iter = len(_trace)
-        if n_iter is not None:
+        if scf_applicable is not False and n_iter is not None:
             provenance["n_scf_iterations"] = int(n_iter)
         energy = getattr(result, "energy", None)
         if energy is not None:
@@ -6239,6 +6751,17 @@ def _build_provenance(context: dict[str, Any]) -> dict[str, Any]:
                 f"'pending' | 'running' | 'converged' | 'failed', got {rs!r}."
             )
         provenance["run_status"] = rs
+    optimization = context.get("optimization")
+    if optimization is not None:
+        provenance["optimization"] = dict(optimization)
+    run_verdict = context.get("run_verdict")
+    if run_verdict is not None:
+        # The run-level verdict every writer shares (#342 #346 #351): the
+        # same mapping lands in .system [verdict] and the job_end event.
+        # run_status stays the lifecycle flag it always was.
+        provenance["verdict"] = {
+            str(k): v for k, v in dict(run_verdict).items()
+        }
     checkpoint = context.get("checkpoint")
     if checkpoint is not None:
         # Copy defensively; the caller's dict must not be mutated and any
@@ -6274,106 +6797,73 @@ def _build_provenance(context: dict[str, Any]) -> dict[str, Any]:
 # sections.
 
 _SCHEMA_PATH_V1 = Path(__file__).parent / "qvf_manifest.schema.json"
-_SCHEMA_PATH_V2 = Path(__file__).parent / "qvf_manifest_v2.schema.json"
-# Back-compat alias for any caller still reaching for ``_SCHEMA_PATH``;
-# defaults to the v1 path (the only version that existed before v2).
+# Back-compat alias for any caller still reaching for ``_SCHEMA_PATH``.
 _SCHEMA_PATH = _SCHEMA_PATH_V1
 _SCHEMA_CACHE: dict[int, dict[str, Any]] = {}
 
-# ---------------------------------------------------------------------------
-# v2 = v1 + the periodic-reaction-path delta, derived — never forked.
-#
-# v2 began life as a hand-copied snapshot of v1 and then fell behind it:
-# every section kind added to v1 afterwards (bond_orders, spectra.epr,
-# volume.rdg, volume.potential, basis.ao, fermi_surface, phonon.bands,
-# phonon.dos, equation_of_state, topology.qtaim), the root
-# thermochemistry / dipole_moment / constraints / extensions blocks, the
-# Section ``critical`` flag, and the ``bands`` fat-band ``projections``
-# member were all absent from the fork. Because the manifest root sets
-# ``additionalProperties: false`` and ``Section`` is a closed ``oneOf``,
-# a periodic reaction.path -- which forces qvf_version=2 -- carrying any
-# of them tripped the write-time validation gate in :func:`write_qvf`.
-#
-# Deriving v2 from v1 makes the delta below the *only* way the two can
-# differ, so a section added to v1 tomorrow lands in v2 for free.
-# ``scripts/gen_qvf_v2_schema.py`` renders this derivation to
-# ``qvf_manifest_v2.schema.json`` for external validators;
-# ``tests/test_qvf_v2_schema_drift.py`` pins that file to the derivation.
-# ---------------------------------------------------------------------------
-
-_V2_TITLE = "QVF Manifest (v2)"
-
-_V2_DESCRIPTION = (
-    "DEPRECATED. Canonical JSON Schema for manifest.json inside a .qvf "
-    "archive that declares qvf_version=2. GENERATED FILE -- do not "
-    "hand-edit; regenerate with scripts/gen_qvf_v2_schema.py. "
-    "qvf_version=2 was WITHDRAWN by the governance ruling of 2026-07-10 "
-    "(qvf-writer/GOVERNANCE.md, Version history): its only delta over v1 "
-    "was the optional SectionReactionPath `lattice` member, which is the "
-    "additive case and must not bump the version. `lattice` is now an "
-    "optional member of v1, and a periodic reaction path is detected by "
-    "its presence. This schema is therefore v1 with a different "
-    "qvf_version const, retained only so that archives written by "
-    "vibe-qc v0.10.0-v0.15.x (which are v1-compatible) still validate and "
-    "so anything resolving its $id keeps working. Producers MUST NOT emit "
-    "qvf_version=2; consumers SHOULD accept it and treat it as 1."
-)
-
-_V2_QVF_VERSION_DESCRIPTION = (
-    "QVF format version. DEPRECATED: 2 was withdrawn (see the schema "
-    "description); it is v1 in every respect but this const. Producers "
-    "must emit 1."
-)
-
-def _derive_v2_schema(v1_schema: dict[str, Any]) -> dict[str, Any]:
-    """Return the (deprecated) v2 manifest schema derived from ``v1_schema``.
-
-    ``qvf_version: 2`` was withdrawn by the governance ruling of 2026-07-10
-    (``qvf-writer/GOVERNANCE.md``, "Version history"): its only delta over v1
-    was the optional ``SectionReactionPath.lattice`` member, which is the
-    *additive* case and must not bump the version. ``lattice`` now lives in the
-    v1 schema, so the v2 delta has collapsed to pure identity metadata:
-    ``$id``, ``title``, ``description``, and ``properties.qvf_version``
-    (const + description). Everything else is v1 verbatim.
-
-    v2 is therefore v1 with a different ``qvf_version`` const. It is retained
-    only so archives written by vibe-qc v0.10.0-v0.15.x still validate, and so
-    anything resolving the v2 ``$id`` keeps working. Producers must emit 1.
-    """
-    schema = copy.deepcopy(v1_schema)
-    schema["$id"] = _SCHEMA_URI_V2
-    schema["title"] = _V2_TITLE
-    schema["description"] = _V2_DESCRIPTION
-
-    version_prop = schema["properties"]["qvf_version"]
-    version_prop["const"] = QVF_FORMAT_VERSION_V2
-    version_prop["description"] = _V2_QVF_VERSION_DESCRIPTION
-    return schema
 
 def _load_canonical_schema(qvf_version: int = 1) -> dict[str, Any]:
-    """Return the canonical QVF manifest schema for ``qvf_version``.
+    """Return the canonical QVF manifest schema.
 
-    v1 is loaded from ``qvf_manifest.schema.json``, the single source of
-    truth. v2 is *derived* from it by :func:`_derive_v2_schema` rather
-    than read from disk, so the on-disk v2 copy can never drift out from
-    under the validator. v2 extends only ``SectionReactionPath``, with an
-    optional ``lattice`` binary member + ``dim`` carried in metadata, so
-    that periodic reaction paths (slabs, surfaces, NEB) round-trip
-    cleanly through vibe-view. Every other section is v1's.
+    ``qvf_manifest.schema.json`` is a byte-identical copy of the schema of
+    the pinned QVF release (``QVF_TAG`` in ``.gitlab-ci.yml``;
+    ``scripts/ci/check_qvf_schema.py`` enforces the identity). QVF has one
+    schema, for ``qvf_version`` 1. The withdrawn version 2 is validated as 1
+    (spec Sec. 3.1), so there is no schema to load for it.
     """
+    if qvf_version != QVF_FORMAT_VERSION:
+        raise ValueError(
+            f"unknown qvf_version {qvf_version!r}; the only schema is "
+            f"version {QVF_FORMAT_VERSION} (the withdrawn version "
+            f"{_WITHDRAWN_QVF_VERSION} is validated as {QVF_FORMAT_VERSION})"
+        )
     cached = _SCHEMA_CACHE.get(qvf_version)
     if cached is not None:
         return cached
-    if qvf_version not in (1, 2):
-        raise ValueError(f"unknown qvf_version {qvf_version!r}; supported: 1, 2")
-
     with open(_SCHEMA_PATH_V1, encoding="utf-8") as f:
         schema = json.load(f)
-    _SCHEMA_CACHE[1] = schema
-    if qvf_version == 2:
-        schema = _derive_v2_schema(schema)
-        _SCHEMA_CACHE[2] = schema
+    _SCHEMA_CACHE[qvf_version] = schema
     return schema
+
+
+def qvf_read_version(
+    manifest: dict[str, Any],
+    *,
+    source: str = "QVF archive",
+    warn: bool = True,
+) -> int:
+    """Return the ``qvf_version`` a reader should apply to ``manifest``.
+
+    QVF spec Sec. 3.1: version 1 is read as 1. The withdrawn version 2 is
+    read as 1, with a :class:`UserWarning` carrying ``W_VERSION_WITHDRAWN``
+    when ``warn`` is true. Any other value is refused with
+    :class:`ValueError`. A manifest without ``qvf_version`` is malformed
+    (the validator reports it); readers keep opening it as version 1, as
+    they always have.
+    """
+    if "qvf_version" not in manifest:
+        return QVF_FORMAT_VERSION
+    version = manifest.get("qvf_version")
+    if isinstance(version, int) and not isinstance(version, bool):
+        if version == QVF_FORMAT_VERSION:
+            return QVF_FORMAT_VERSION
+        if version == _WITHDRAWN_QVF_VERSION:
+            if warn:
+                import warnings
+
+                warnings.warn(
+                    f"{W_VERSION_WITHDRAWN}: {source} declares qvf_version 2, "
+                    "which was withdrawn; it is read as version 1 "
+                    "(QVF spec Sec. 3.1)",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            return QVF_FORMAT_VERSION
+    raise ValueError(
+        f"{source}: unsupported qvf_version {version!r}; this vibe-qc reads "
+        f"QVF version {QVF_FORMAT_VERSION} (and the withdrawn version "
+        f"{_WITHDRAWN_QVF_VERSION}, as {QVF_FORMAT_VERSION})"
+    )
 
 
 def validate_qvf(
@@ -6387,7 +6877,11 @@ def validate_qvf(
     round-tripping through disk.
 
     Returns a dict with keys ``valid`` (bool), ``summary`` (list of
-    per-section result strs), and ``errors`` (list of error strs).
+    per-section result strs), ``errors`` (list of error strs), and
+    ``warnings`` (list of warning strs; a warning never makes an archive
+    invalid). An archive stamped with the withdrawn ``qvf_version`` 2 is
+    checked as version 1 and reported as the warning
+    ``W_VERSION_WITHDRAWN`` (QVF spec Sec. 3.1).
 
     Checks performed:
 
@@ -6411,9 +6905,16 @@ def validate_qvf(
     ``SectionVendor`` schema branch (members must be valid Json/Binary
     members) but the shape of those members is unconstrained.
     """
-    report: dict[str, Any] = {"valid": True, "summary": [], "errors": []}
+    report: dict[str, Any] = {
+        "valid": True,
+        "summary": [],
+        "errors": [],
+        "warnings": [],
+    }
     summary: list[str] = []
     errors: list[str] = []
+    warnings_out: list[str] = []
+    report["warnings"] = warnings_out
 
     # Accept either a path-like (open + close here) or an already-open
     # ZipFile (do not close -- caller owns the handle).
@@ -6487,24 +6988,34 @@ def validate_qvf(
             report.update(valid=False, errors=errors)
             return report
 
-        # Dispatch by the manifest's qvf_version: v1 archives validate
-        # against the v1 schema; v2 archives (periodic reaction.path)
-        # against the v2 schema. An unknown version falls through to
-        # the v1 schema's `const: 1` rule, which produces the natural
-        # "qvf_version was X, expected 1" validation error.
-        try:
-            manifest_qvf_version = int(manifest.get("qvf_version", 1))
-        except (TypeError, ValueError):
-            manifest_qvf_version = 1
-        schema_version = manifest_qvf_version if manifest_qvf_version in (1, 2) else 1
-        schema = _load_canonical_schema(schema_version)
+        # QVF has one schema, for version 1 (spec Sec. 3.1). The withdrawn
+        # version 2 is checked as 1 for every check, the schema included,
+        # and reported as the warning W_VERSION_WITHDRAWN: the archive is
+        # valid, and the warning records that its producer wrote a version
+        # producers must not write. Any other value fails the schema's
+        # ``qvf_version`` const.
+        schema = _load_canonical_schema(QVF_FORMAT_VERSION)
+        manifest_version = manifest.get("qvf_version")
+        if (
+            isinstance(manifest_version, int)
+            and not isinstance(manifest_version, bool)
+            and manifest_version == _WITHDRAWN_QVF_VERSION
+        ):
+            warnings_out.append(
+                f"{W_VERSION_WITHDRAWN}: /qvf_version: qvf_version 2 was "
+                "withdrawn; the archive is checked as version 1, which "
+                "producers must write (QVF spec Sec. 3.1)"
+            )
+            manifest_for_schema = dict(manifest, qvf_version=QVF_FORMAT_VERSION)
+        else:
+            manifest_for_schema = manifest
 
         # Build a "check manifest" that mirrors the input but with
         # reserved-kind sections pulled out (they have no schema branch
         # yet; the validator still file-ref-checks them below). If
         # `sections` was absent from the input we leave it absent so
         # the schema's required-field rule fires.
-        check_manifest = dict(manifest)
+        check_manifest = dict(manifest_for_schema)
         raw_sections = manifest.get("sections")
         if isinstance(raw_sections, list):
             shape_check_secs = [
@@ -6556,7 +7067,11 @@ def validate_qvf(
                             f"kind is reserved (no consumer renders it)"
                         )
                         report["valid"] = False
-                    elif not _is_vendor_kind(kind) and kind not in _IMPLEMENTED_KINDS:
+                    elif (
+                        not _is_vendor_kind(kind)
+                        and kind not in _IMPLEMENTED_KINDS
+                        and kind not in _SCHEMA_ONLY_KINDS
+                    ):
                         errors.append(
                             f"section {sec_id} ({kind}): critical=true but "
                             f"kind is not a known canonical or vendor kind"
@@ -6832,6 +7347,8 @@ def _print_validate_report(report: dict[str, Any]) -> str:
         else:
             prefix = "✗"
         lines.append(f"{prefix} {s}")
+    for w in report.get("warnings", ()):
+        lines.append(f"⚠ WARNING: {w}")
     for e in report["errors"]:
         lines.append(f"✗ ERROR: {e}")
     if report["valid"]:

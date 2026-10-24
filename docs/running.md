@@ -253,6 +253,14 @@ cd "${SLURM_SUBMIT_DIR}"
 srun <vibe-qc-checkout>/.venv/bin/python input-water-qz.py
 ```
 
+A Slurm-only task step with a numeric normal `SLURM_STEP_ID`,
+`SLURM_PROCID=0` and `SLURM_STEP_NUM_TASKS=1` runs serially without the
+optional `mpi4py` dependency. If the selected launcher plugin adds MPI rank
+metadata (PMI, PMIx, Open MPI or MVAPICH), or a wrapper sets
+`VIBEQC_MPI_REQUIRED=1`, MPI remains required even for one task. Multi-task
+steps also require MPI. Incomplete, malformed or conflicting launcher rank
+metadata is rejected rather than treated as serial.
+
 Submit with `sbatch run.slurm`. PBS, LSF, and SGE use the same principles:
 one task, an explicit CPU count, an explicit memory request, a wall-time cap,
 the intended venv interpreter, and a project or scratch run directory. Do not

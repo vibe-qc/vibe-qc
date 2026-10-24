@@ -1,29 +1,29 @@
 #!/usr/bin/env bash
-# Assemble the basis-library from libint's standard bases + our custom
-# ones. By default writes into build/basis_library/basis/ — a build-output
-# directory that is gitignored (build/) so the working tree stays clean
-# across pip install -e . and fleet deploys.
+# Materialise the basis library for libint from its QVF-Basis records.
 #
-# The committed python/vibeqc/basis_library/basis/ ships unchanged inside
-# the Python wheel; the build-output copy is an overlay that the runtime
-# (vibeqc._install_basis_library) prefers when present.
+# python/vibeqc/basis_library/qvf/*.qvf.json are the records (the source of
+# truth, #406). This renders them into <target>/basis/ as the .g94 orbital
+# files libint reads and the .ecp sidecars libecpint reads, then writes the
+# content receipt the runtime checks before it will use the overlay (#409).
 #
-# To regenerate the committed basis/ directory (e.g. after adding a new
-# file to custom/ or upgrading libint), pass the explicit target:
+# By default the target is build/basis_library/, a gitignored build-output
+# directory the runtime prefers when present. The committed rendering under
+# python/vibeqc/basis_library/basis/ ships inside the wheel and is pinned
+# byte for byte to the records by tests/test_basis_qvf_parity.py; refresh it
+# after changing a record with:
 #
-#     ./scripts/setup_basis_library.sh python/vibeqc/basis_library
+#     ./scripts/setup_basis_library.sh --target-dir python/vibeqc/basis_library
 #
-# Idempotent: safe to re-run.
+# Needs Python 3.11 or newer: an explicit PYTHON_BIN, else the project .venv,
+# the active VIRTUAL_ENV, then python3 (#516). Nothing here imports vibeqc or
+# the native core, so it runs before the core is built. Idempotent.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+LIBRARY="$REPO_ROOT/python/vibeqc/basis_library"
 
-# --target-dir lets the caller override where the basis/ directory
-# is assembled. Default: build/basis_library (gitignored, won't
-# dirty the tree). Pass python/vibeqc/basis_library to regenerate
-# the committed copy.
 TARGET_DIR="${REPO_ROOT}/build/basis_library"
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -34,8 +34,9 @@ while [ $# -gt 0 ]; do
             ;;
         -h|--help)
             echo "Usage: $0 [--target-dir PATH]" >&2
-            echo "  Default target: build/basis_library (gitignored build output)" >&2
-            echo "  For committing: --target-dir python/vibeqc/basis_library" >&2
+            echo "  Default target: build/basis_library (gitignored runtime overlay)" >&2
+            echo "  For the committed rendering: --target-dir python/vibeqc/basis_library" >&2
+            echo "  Python >=3.11: PYTHON_BIN override, project .venv, active VIRTUAL_ENV, then python3" >&2
             exit 0
             ;;
         *)
@@ -45,73 +46,49 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-CUSTOM_DIR="$REPO_ROOT/python/vibeqc/basis_library/custom"
-BASIS_DIR="$TARGET_DIR/basis"
-LIBINT_BASIS="$REPO_ROOT/third_party/libint/install/share/libint"
-
-# Find libint's actual version directory (e.g. 2.13.1/basis).
-if [ ! -d "$LIBINT_BASIS" ]; then
-    echo "Error: libint not found at $LIBINT_BASIS." >&2
-    echo "Run ./scripts/build_libint.sh first." >&2
+# Resolve an interpreter matching pyproject.toml before changing any output.
+# An explicit nonempty PYTHON_BIN is authoritative, including on failure.
+# Otherwise prefer usable project/active environments over the system PATH.
+if [ -z "${PYTHON_BIN:-}" ]; then
+    PYTHON_BIN="python3"
+    for candidate in "$REPO_ROOT/.venv/bin/python" "${VIRTUAL_ENV:-}/bin/python"; do
+        [ "$candidate" != "/bin/python" ] || continue
+        if [ -x "$candidate" ] && "$candidate" -c 'import sys; sys.exit(sys.version_info < (3, 11))' >/dev/null 2>&1; then
+            PYTHON_BIN="$candidate"
+            break
+        fi
+    done
+fi
+if ! PYTHON_VERSION=$("$PYTHON_BIN" -c 'import sys; print(sys.version.split()[0]); sys.exit(sys.version_info < (3, 11))' 2>&1); then
+    echo "Error: PYTHON_BIN='$PYTHON_BIN' must run Python >=3.11 before basis setup can write output." >&2
+    echo "  Interpreter check: $PYTHON_VERSION" >&2
+    echo "Set PYTHON_BIN to a supported Python interpreter and run setup again." >&2
     exit 1
 fi
-LIBINT_BASIS_DIR=$(find "$LIBINT_BASIS" -maxdepth 2 -name basis -type d | head -1)
-if [ -z "$LIBINT_BASIS_DIR" ]; then
-    echo "Error: couldn't find libint's basis directory under $LIBINT_BASIS" >&2
-    exit 1
+
+echo "Rendering $(ls -1 "$LIBRARY/qvf"/*.qvf.json | wc -l | tr -d ' ') QVF-Basis records into $TARGET_DIR/basis"
+mkdir -p "$TARGET_DIR/basis"
+"$PYTHON_BIN" "$SCRIPT_DIR/render_basis_library.py" --target "$TARGET_DIR/basis"
+
+if [ "$TARGET_DIR" != "$LIBRARY" ]; then
+    # The committed rendering must agree with the records, or the receipt
+    # below would make every import refuse the overlay it just built.
+    if ! "$PYTHON_BIN" "$SCRIPT_DIR/render_basis_library.py" --check; then
+        echo "Error: the committed rendering under python/vibeqc/basis_library/basis/ is out of" >&2
+        echo "step with the records. Refresh it first:" >&2
+        echo "  $0 --target-dir python/vibeqc/basis_library" >&2
+        exit 1
+    fi
+    # Prepare content receipts while setup owns the catalog. Imports are read-only.
+    "$PYTHON_BIN" "$REPO_ROOT/python/vibeqc/_basis_overlay.py" "$TARGET_DIR" "$LIBRARY"
 fi
 
-echo "Populating $BASIS_DIR"
-echo "  standard bases from: $LIBINT_BASIS_DIR"
-echo "  custom bases from:   $CUSTOM_DIR"
-
-mkdir -p "$CUSTOM_DIR"
-rm -rf "$BASIS_DIR"
-mkdir -p "$BASIS_DIR"
-
-# Standard first.
-cp "$LIBINT_BASIS_DIR"/*.g94 "$BASIS_DIR"/
-n_standard=$(ls -1 "$BASIS_DIR" | wc -l | tr -d ' ')
-
-# Custom last, so a custom file with the same name wins. Copy any
-# pre-split ECP sidecars as well: custom orbital files such as vdzp.g94
-# are already libint-clean, so the splitter cannot recreate their .ecp
-# siblings from the .g94 alone.
-n_custom_g94=0
-n_custom_ecp=0
-if compgen -G "$CUSTOM_DIR"/*.g94 > /dev/null; then
-    cp "$CUSTOM_DIR"/*.g94 "$BASIS_DIR"/
-    n_custom_g94=$(ls -1 "$CUSTOM_DIR"/*.g94 | wc -l | tr -d ' ')
-fi
-if compgen -G "$CUSTOM_DIR"/*.ecp > /dev/null; then
-    cp "$CUSTOM_DIR"/*.ecp "$BASIS_DIR"/
-    n_custom_ecp=$(ls -1 "$CUSTOM_DIR"/*.ecp | wc -l | tr -d ' ')
-fi
-
-# ECP-aware split: BSE-format files for vDZP, LANL2DZ, dhf-*, etc.
-# bundle orbital basis blocks AND ECP definition blocks into one
-# .g94 file. libint2 cannot parse the ECP blocks ("invalid angular
-# momentum label"), so we split each into a libint-clean
-# <name>.g94 (orbital only) plus a <name>.ecp sidecar that vibe-qc
-# reads via libecpint when needed. See
-# scripts/basisset_dev/split_ecp_g94.py for details.
+n_g94=$(ls -1 "$TARGET_DIR/basis"/*.g94 2>/dev/null | wc -l | tr -d ' ')
+n_ecp=$(ls -1 "$TARGET_DIR/basis"/*.ecp 2>/dev/null | wc -l | tr -d ' ')
 echo ""
-echo "Splitting ECP blocks out of any ECP-bearing .g94 files…"
-PYTHON_BIN="${PYTHON_BIN:-python3}"
-"$PYTHON_BIN" "$SCRIPT_DIR/basisset_dev/split_ecp_g94.py" "$BASIS_DIR"
-
-n_total=$(ls -1 "$BASIS_DIR" | wc -l | tr -d ' ')
-n_g94=$(ls -1 "$BASIS_DIR"/*.g94 2>/dev/null | wc -l | tr -d ' ')
-n_ecp=$(ls -1 "$BASIS_DIR"/*.ecp 2>/dev/null | wc -l | tr -d ' ')
-echo ""
-echo "Done: $n_standard standard .g94 + $n_custom_g94 custom .g94 + $n_custom_ecp custom .ecp source files"
-echo "      produced $n_total total files ($n_g94 .g94 orbital files, $n_ecp .ecp sidecars)"
-echo ""
+echo "Done: $n_g94 .g94 orbital files and $n_ecp .ecp sidecars under $TARGET_DIR/basis"
 if [ "$TARGET_DIR" = "${REPO_ROOT}/build/basis_library" ]; then
     echo "Written to build/basis_library/ (runtime overlay; not committed)."
-    echo "To regenerate the committed basis/ directory instead, run:"
-    echo "  ./scripts/setup_basis_library.sh --target-dir python/vibeqc/basis_library"
 else
-    echo "Written to $TARGET_DIR."
-    echo "These files are committed to the repo and ship inside the wheel."
+    echo "Written to $TARGET_DIR. The committed rendering ships inside the wheel."
 fi

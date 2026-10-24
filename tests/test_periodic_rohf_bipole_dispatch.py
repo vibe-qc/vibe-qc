@@ -194,7 +194,7 @@ def test_roks_bipole_rejects_screened_hybrid(tmp_path):
         )
 
 
-def test_roks_bipole_rejects_unsupported_knobs():
+def test_roks_bipole_rejects_unsupported_knobs(tmp_path):
     system, basis = _h_atom_system()
     with pytest.raises(NotImplementedError, match="use_mom"):
         vq.run_periodic_job(
@@ -204,14 +204,16 @@ def test_roks_bipole_rejects_unsupported_knobs():
             functional="pbe",
             jk_method="bipole",
             use_mom=True,
+            output=tmp_path / "refused",
         )
 
 
-def test_roks_gdf_fails_closed():
+def test_roks_gdf_fails_closed(tmp_path):
     system, basis = _h_atom_system()
     with pytest.raises(NotImplementedError, match="gdf"):
         vq.run_periodic_job(
-            system, basis, method="ROKS", functional="pbe", jk_method="gdf"
+            system, basis, method="ROKS", functional="pbe", jk_method="gdf",
+            output=tmp_path / "refused",
         )
 
 
@@ -222,7 +224,7 @@ def test_roks_gdf_fails_closed():
         (
             (1, 1, 1),
             "explicit",
-            {"convergence": "off", "damping": 0.0},
+            {"convergence": "off", "damping": 0.0, "sr_image_precision": 1e-6},
             True,
         ),
         # Multi-k GDF exports the Gamma block like BIPOLE. It was briefly
@@ -322,6 +324,7 @@ def test_public_rohf_gdf_matches_standalone_driver(
         ({"use_mom": True}, "use_mom"),
         ({"level_shift": 0.2}, "level_shift"),
         ({"fock_mixing": 0.2}, "fock_mixing"),
+        ({"sr_image_precision": 1e-4}, "sr_image_precision"),
     ],
 )
 def test_rohf_gdf_rejects_unimplemented_knobs(tmp_path, kwargs, match):
@@ -338,19 +341,21 @@ def test_rohf_gdf_rejects_unimplemented_knobs(tmp_path, kwargs, match):
         )
 
 
-def test_rohf_bipole_rejects_unsupported_knobs():
+def test_rohf_bipole_rejects_unsupported_knobs(tmp_path):
     system, basis = _h_atom_system()
     with pytest.raises(NotImplementedError, match="use_mom"):
         vq.run_periodic_job(
-            system, basis, method="ROHF", jk_method="bipole", use_mom=True
+            system, basis, method="ROHF", jk_method="bipole", use_mom=True,
+            output=tmp_path / "refused",
         )
     with pytest.raises(NotImplementedError, match="ewald_omega"):
         vq.run_periodic_job(
-            system, basis, method="ROHF", jk_method="bipole", ewald_omega=0.3
+            system, basis, method="ROHF", jk_method="bipole", ewald_omega=0.3,
+            output=tmp_path / "refused",
         )
 
 
-def test_rohf_bipole_rejects_smearing():
+def test_rohf_bipole_rejects_smearing(tmp_path):
     system, basis = _h_atom_system()
     with pytest.raises(NotImplementedError, match="smearing"):
         vq.run_periodic_job(
@@ -359,14 +364,16 @@ def test_rohf_bipole_rejects_smearing():
             method="ROHF",
             jk_method="bipole",
             smearing_temperature=0.01,
+            output=tmp_path / "refused",
         )
 
 
-def test_rohf_bipole_rejects_optimize():
+def test_rohf_bipole_rejects_optimize(tmp_path):
     system, basis = _h_atom_system()
     with pytest.raises(NotImplementedError, match="optimization"):
         vq.run_periodic_job(
-            system, basis, method="ROHF", jk_method="bipole", optimize=True
+            system, basis, method="ROHF", jk_method="bipole", optimize=True,
+            output=tmp_path / "refused",
         )
 
 

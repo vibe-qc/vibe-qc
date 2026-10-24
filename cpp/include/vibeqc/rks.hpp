@@ -14,6 +14,7 @@
 // supported through a single path.
 
 #pragma once
+#include "vibeqc/opentrustregion.hpp"
 
 #include <Eigen/Dense>
 #include <optional>
@@ -36,6 +37,10 @@
 namespace vibeqc {
 
 struct RKSOptions {
+    // Explicit whole-SCF orbital optimizer; existing native phase defaults stay unchanged.
+    std::string orbital_optimizer = "native";
+    OpenTrustRegionOptions opentrustregion;
+
     std::string functional = "LDA";   // name accepted by Functional(...)
     GridOptions grid;
 
@@ -257,9 +262,22 @@ struct RKSOptions {
     bool stability_check_explicit = false;
     double stability_tol = 1e-4;
     int stability_davidson_max_iter = 60;
+    // Wall-clock budget for each post-convergence stability solve (#342).
+    // stability_wall_budget_s > 0 is used as given; 0 (default) means
+    // automatic: max(stability_wall_floor_s, stability_wall_fraction x the
+    // SCF loop's own wall, the sum of the per-iteration trace). A spent
+    // budget ends the solve with an UNVERIFIED verdict instead of running
+    // to the matvec cap; a solve that finishes inside it is unchanged.
+    // Defaults: fraction 3.0, floor 600 s (maintainer decision D1,
+    // 2026-09-29).
+    double stability_wall_budget_s = 0.0;
+    double stability_wall_fraction = 3.0;
+    double stability_wall_floor_s = 600.0;
 };
 
 struct RKSResult {
+    std::optional<manta::MolecularEngineProvenance> engine_provenance;
+    OpenTrustRegionReport opentrustregion;
     std::optional<BasisSet> restart_basis;
     std::optional<GuessSelection> guess_selection;
     double energy = 0.0;              // total KS energy (Hartree)
@@ -298,6 +316,14 @@ struct RKSResult {
     // stable); ``internal_instability`` is the negative verdict.
     bool stability_checked = false;
     bool stability_analysis_converged = false;
+    // Why the stability solve ended (vibeqc::StabilityStop as int: 0
+    // converged, 1 matvec budget, 2 wall budget, 3 not run, 4 trivial,
+    // 5 stagnated), the Hessian-vector products it spent and the wall
+    // budget that applied (seconds; 0 = unbounded). Carried into every
+    // output writer by the Python verdict object (#342).
+    int stability_stop_reason = 3;
+    int stability_n_matvec = 0;
+    double stability_wall_budget_s = 0.0;
     double stability_eigenvalue = 0.0;
     bool internal_instability = false;
     double stability_wall_s = 0.0;
@@ -334,6 +360,7 @@ RKSResult run_rks(const Molecule& mol,
 // for downstream inspection; MP2 ignores them.
 inline RHFResult rhf_result_from_rks(const RKSResult& rks) {
     RHFResult r;
+    r.engine_provenance = rks.engine_provenance;
     r.restart_basis = rks.restart_basis;
     r.guess_selection = rks.guess_selection;
     r.energy       = rks.energy;
@@ -353,11 +380,15 @@ inline RHFResult rhf_result_from_rks(const RKSResult& rks) {
     r.density      = rks.density;
     r.fock         = rks.fock;
     r.scf_trace    = rks.scf_trace;
+    r.opentrustregion = rks.opentrustregion;
     // Carry the restricted-stability verdict across the adapter so
     // double-hybrid / MP2-on-RKS consumers see the same diagnosis the
     // RKS result reported (issue #144).
     r.stability_checked = rks.stability_checked;
     r.stability_analysis_converged = rks.stability_analysis_converged;
+    r.stability_stop_reason = rks.stability_stop_reason;
+    r.stability_n_matvec = rks.stability_n_matvec;
+    r.stability_wall_budget_s = rks.stability_wall_budget_s;
     r.stability_eigenvalue = rks.stability_eigenvalue;
     r.internal_instability = rks.internal_instability;
     r.stability_wall_s = rks.stability_wall_s;

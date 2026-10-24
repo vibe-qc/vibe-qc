@@ -42,8 +42,7 @@ default.
 
 **The M1 cross-route gate has not been run yet.** No frequency here has
 been compared against the GAPW route; the gate driver exists
-(``examples/basisset_dev/gamma_phonon_gate.py``) and the submission
-recipe is in ``handovers/HANDOVER_BASISOPT.md``, but the numbers do not
+(``examples/basisset_dev/gamma_phonon_gate.py``), but the numbers do not
 exist. Nothing in this module should be read as gate-validated.
 
 Scope
@@ -153,8 +152,8 @@ _ZERO_CM1: float = 1.0
 #: **That is a reasoned estimate, not a measurement.** No step-size scan
 #: has been run on this route yet. Verify with one on a new system class
 #: rather than assuming this transfers -- ``--steps`` on
-#: ``examples/basisset_dev/gamma_phonon_gate.py`` does it, and the
-#: numbers belong in ``handovers/HANDOVER_BASISOPT.md`` once they exist.
+#: ``examples/basisset_dev/gamma_phonon_gate.py`` does it; retain the
+#: measured evidence when it exists.
 DEFAULT_STEP_BOHR: float = 0.02
 
 

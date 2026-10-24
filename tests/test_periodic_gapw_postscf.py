@@ -207,6 +207,37 @@ def test_compute_homo_lumo_h2_has_positive_gap(_h2_converged):
 # ============================================================
 
 
+def test_band_path_uses_complex_metric_solve(_h2_converged, monkeypatch):
+    """Check the actual fixed-density KS matrices at Gamma and a general k."""
+    import scipy.linalg as sla
+    from vibeqc.solvers import _scf
+
+    r, basis, system = _h2_converged
+    k_path = [(0., 0., 0.), (.13, .04, 0.)]
+    original = _scf.solve_dense_fock
+    spectra = []
+
+    def checked(fock, **kwargs):
+        result = original(fock, **kwargs)
+        assert result.operator_metadata.kind == "ks"
+        assert result.operator_metadata.kpoint == k_path[len(spectra)]
+        assert result.operator_metadata.basis_id == "ao-scf"
+        s = kwargs["overlap"]
+        reference = sla.eigh(fock, s, eigvals_only=True)
+        spectra.append(reference)
+        np.testing.assert_allclose(result.eigenvalues, reference, atol=1e-11, rtol=0)
+        assert result.residual_frame == "original"
+        assert max(result.residuals) < 1e-9
+        return result
+
+    monkeypatch.setattr(_scf, "solve_dense_fock", checked)
+    bands = band_path_eigenvalues(
+        system, basis, r.density, k_path, functional="lda", cutoff_ha=30.,
+    )
+    assert len(spectra) == len(k_path)
+    np.testing.assert_allclose(bands, spectra, atol=1e-11, rtol=0)
+
+
 def test_band_path_at_gamma_reproduces_single_k_eigenvalues(_h2_converged):
     """A k_path containing only Γ should reproduce the converged
     single-k Γ eigenvalues (the F(k) is built at the same density

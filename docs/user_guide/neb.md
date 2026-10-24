@@ -30,6 +30,58 @@ what is shippable today; the rest is signposted as roadmap.
 | + MSINDO-SECCM backend | **Available** (closed-shell, explicit cyclic cell) | `run_neb(..., method="seccm", ccm_options=...)` |
 | + DFTB0-SECCM backend | **Available** (gated 1-D H/C, explicit frozen topology) | `run_neb(..., method="dftb0", seccm_topology=...)` |
 
+## Theory
+
+The nudged elastic band discretises a path between the reactant
+$\mathbf R_0$ and the product $\mathbf R_{N+1}$ into $N$ intermediate
+images $\mathbf R_i$ joined by springs, and relaxes the images under a
+projected force rather than the bare gradient. With the unit tangent
+$\hat{\boldsymbol\tau}_i$ at image $i$ (the improved tangent of
+{vibeqc-cite}`henkelman_jonsson_neb_2000`, which points towards the
+higher-energy neighbour and blends the two differences at an energy
+extremum), the NEB force is
+
+$$
+\mathbf F_i^{\mathrm{NEB}} = \mathbf F_i^{\perp} + \mathbf F_i^{s\parallel},
+\qquad
+\mathbf F_i^{\perp} = -\nabla E(\mathbf R_i)
+  + \big[\nabla E(\mathbf R_i)\cdot\hat{\boldsymbol\tau}_i\big]\hat{\boldsymbol\tau}_i,
+\qquad
+\mathbf F_i^{s\parallel} = k\big(|\mathbf R_{i+1}-\mathbf R_i|
+  - |\mathbf R_i-\mathbf R_{i-1}|\big)\hat{\boldsymbol\tau}_i .
+$$
+
+The true force acts only perpendicular to the path, so the images slide
+down onto the minimum-energy path without being pulled along it, and the
+spring force acts only along the path, so it keeps the images evenly
+spaced without corner-cutting; $k$ is `spring_constant` in Ha/bohr².
+Because the parallel spring term depends on projected distances and not on
+a scalar potential, $\mathbf F^{\mathrm{NEB}}$ is not the gradient of any
+function, which is why the driver uses a projected-velocity (quick-min)
+outer loop rather than a quasi-Newton minimiser.
+
+A converged plain band only brackets the saddle between two images. The
+climbing image ({vibeqc-cite}`henkelman_uberuaga_jonsson_ci_neb_2000`)
+removes that discretisation error: after a warm-up the highest-energy image
+drops its springs and has the parallel component of the true force
+inverted,
+
+$$
+\mathbf F_i^{\mathrm{CI}} = -\nabla E(\mathbf R_i)
+  + 2\big[\nabla E(\mathbf R_i)\cdot\hat{\boldsymbol\tau}_i\big]\hat{\boldsymbol\tau}_i ,
+$$
+
+so it moves uphill along the band and downhill in every other direction and
+converges onto the first-order saddle point itself; the barrier is then
+$E(\mathbf R_{\mathrm{CI}}) - E(\mathbf R_0)$. The method needs only
+energies and gradients, so every vibe-qc route that supplies them (Gaussian
+SCF, semiempirical, MACE, SECCM) can drive it. Its costs are the $N$
+gradient evaluations per outer step and the slow final decay of the spring
+component, both discussed below. NEB is a production workflow, see
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels);
+the per-backend caveats in the status table apply to the energy and
+gradient providers, not to the band algorithm.
+
 ## Increment 1, path-construction primitives (available today)
 
 Two interpolators construct an initial chain of images between a
@@ -161,6 +213,14 @@ iteration. `n_jobs=0` (default) uses a bounded automatic worker count
 `n_jobs=1` for serial or `n_jobs=-1` to explicitly use every available
 core. The endpoints are evaluated once and cached - they don't move
 while `free_endpoints=False` (the default).
+
+Worker processes receive each image task by pickling. A molecular image
+returns its converged density for the next iteration's warm start in a
+picklable form, so a parallel molecular band equals the serial one. Native
+option objects passed as `rhf_options=`, `uhf_options=` and the like do not
+pickle, and neither does the periodic k-mesh; such a run warns and evaluates
+the band serially (`n_jobs=1`) instead of failing. A periodic band therefore
+runs serially whatever `n_jobs` asks for.
 
 ### Frozen atoms
 
@@ -608,6 +668,9 @@ The improved-tangent force, climbing image, frozen atoms, and the
 [minimum-image handling](#periodic-systems) for cross-boundary periodic
 hops all work exactly as for the SCF methods, only the per-image
 energy/force evaluation changes.
+MACE bands preserve the endpoint's `dim=1`, `dim=2`, or `dim=3` periodic
+axes, including skew cells. Non-periodic directions in wires and slabs stay
+non-periodic during every image evaluation.
 
 **How it runs.** The MACE model (torch weights) is loaded **once** and
 its ASE calculator reused for every image and outer iteration;
@@ -665,7 +728,7 @@ import vibeqc as vq
 # D3h transition state. Endpoints carry the atomic numbers / charge /
 # multiplicity; no basis or functional is passed.
 result = vq.run_neb(
-    reactant, product,            # Molecule endpoints (H-Br supported)
+    reactant, product,            # Molecule endpoints (INDO H-Xe)
     method="msindo",
     n_images=5,
     climbing_image=True,

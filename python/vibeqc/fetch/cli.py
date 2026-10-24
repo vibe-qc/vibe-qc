@@ -28,7 +28,7 @@ import sys
 from pathlib import Path
 from typing import Optional, Sequence
 
-from examples.regression.core.spec import MoleculeSpec, PeriodicSpec, TestSystem
+from vibeqc_spec import MoleculeSpec, PeriodicSpec, TestSystem
 
 from . import __version__ as FETCHER_VERSION
 from .cache import FetchCache, FetchCacheMiss

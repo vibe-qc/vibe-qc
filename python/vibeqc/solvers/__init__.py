@@ -139,9 +139,11 @@ from ._dmrg import (
 
 # Hamiltonian construction
 from ._hamiltonian import (
+    OrbitalFrameReport,
     build_hamiltonian_ao,
     build_hamiltonian_mo,
     canonical_orthogonalize,
+    canonicalize_degenerate_orbitals,
     get_hf_orbital_provider,
     transform_hamiltonian,
 )
@@ -246,6 +248,8 @@ __all__ = [
     "build_hamiltonian_mo",
     "canonical_orthogonalize",
     "get_hf_orbital_provider",
+    "canonicalize_degenerate_orbitals",
+    "OrbitalFrameReport",
     "transform_hamiltonian",
     # Determinants
     "Det",
@@ -338,4 +342,14 @@ __all__ = [
     "get_solver",
     "solve_eigenproblem",
     "solve_scf_step",
+]
+
+# Additive operator API; SolverOptions above retains its historical meaning.
+from .operators import (
+    FockOperator, HermitianOperator, OperatorFrame, OperatorMetadata, SolverCapabilities,
+    solve_operator, solver_capabilities, subspace_overlap,
+)
+__all__ += [
+    "FockOperator", "HermitianOperator", "OperatorFrame", "OperatorMetadata", "SolverCapabilities",
+    "solve_operator", "solver_capabilities", "subspace_overlap",
 ]

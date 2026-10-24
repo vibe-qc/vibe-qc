@@ -44,8 +44,8 @@ sentence before any code.
   the companion script's own docstring warns.
 
 * **The route.** Open-shell periodic SCF goes through vibe-qc's
-  **BIPOLE** driver (`jk_method="bipole"`), the CRYSTAL-gauge Ewald
-  `J`-split path that handles RHF/UHF/RKS/UKS at multiple k-points.
+  **BIPOLE** driver (`jk_method="bipole"`, {vibeqc-cite}`saunders_bipole_1992`),
+  the CRYSTAL-gauge Ewald `J`-split path that handles RHF/UHF/RKS/UKS at multiple k-points.
   This remains the recommended route for the tight-cell magnetic-oxide
   walkthrough here. The smoother GPW route also supports Gamma-point
   open-shell UHF/UKS +U for route-audit and grid-based validation jobs.
@@ -104,8 +104,9 @@ path.
 **`U` is per `(atom, l)`, not per orbital, and the projector must be
 spherical.** The Mulliken projector vibe-qc uses groups *all* AOs of a
 given `l` on the chosen atom into one block. A basis whose `d` space
-has two shells (a TZ basis with an outer-core `d` in addition to the
-`3d`) puts both into the same projector. The projector also requires
+has two shells (a TZ basis that splits the `3d` into two contractions,
+or adds a diffuse `d` polarisation shell) puts both into the same
+projector. The projector also requires
 pure spherical harmonics; a Cartesian `d`/`f` basis raises an error,
 because the Cartesian `d` trace mixes in `s`-like character and breaks
 the rotational invariance of the Dudarev energy.
@@ -185,10 +186,10 @@ session: at the production 15-bohr lattice-sum cutoff each BIPOLE
 iteration costs about ten minutes, and an ionic insulator needs tens of
 iterations, so a converged `U` sweep is an overnight batch job rather
 than a live run. What the run shows immediately is a clean start. The
-SCF banner reports `n_alpha = 19, n_beta = 17`, that is `Ms = 2` net
-unpaired electrons, the high-spin Ni²⁺ `d⁸` configuration declared by
+SCF banner reports `n_alpha = 19, n_beta = 17`, that is two net
+unpaired electrons (`M_s = 1`), the high-spin Ni²⁺ `d⁸` configuration declared by
 `multiplicity=3`; the driver auto-selects the ionic-insulator profile
-(SAD guess, Fermi-Dirac smearing, Fock mixing); the linear-dependence
+(SAD guess, integer occupations, Fock mixing); the linear-dependence
 preflight passes; and iteration 1 lands at a sane `E = -1561.94 Ha`.
 
 When the batch completes, two quantities carry the physics.
@@ -272,7 +273,8 @@ small, the metal-or-tiny-gap picture LSDA gives for NiO.
 
 DFT+U restores the missing physics with an explicit on-site Coulomb
 penalty on the correlated subspace. vibe-qc implements the
-**rotationally-invariant Dudarev formulation** (Dudarev *et al.* 1998),
+**rotationally-invariant Dudarev formulation** (Dudarev *et al.* 1998,
+{vibeqc-cite}`dudarev_dft_plus_u_1998`),
 which depends only on the single combined parameter `U_eff = U - J`:
 
 $$
@@ -297,13 +299,14 @@ $$
 V_U^{A,l} = U_\text{eff}^{A,l}\Big(\tfrac{1}{2}\mathbf{1} - n^{A,l}\Big),
 $$
 
-which pushes a less-than-half-filled state down (`n < ½`, potential
-negative, stabilizing) and a more-than-half-filled state up. That
+which pushes a less-than-half-filled state up (`n < ½`, potential
+positive, destabilizing) and a more-than-half-filled state down. That
 spectral re-ordering is what opens the gap.
 
 ### The occupation-matrix projector, and the overlap sandwich
 
-The correlated subspace is defined by a Mulliken-style AO projector. For
+The correlated subspace is defined by a Mulliken-style AO projector
+({vibeqc-cite}`mulliken_1955`). For
 a chosen `(atom A, angular channel l)` the `(2l+1)` AOs of that shell
 form a block, and the occupation matrix is that block of the
 density-overlap product:
@@ -360,7 +363,8 @@ machine, not a number at the prompt.
 
 * **An ionic insulator is a hard SCF.** The driver auto-selects an
   ionic-insulator profile for this cell: `SAD` initial guess, integer
-  occupations, and CRYSTAL-style 30% Fock mixing. Smearing is deliberately
+  occupations, and CRYSTAL-style 30% Fock mixing
+  ({vibeqc-cite}`dovesi_crystal14_2014`). Smearing is deliberately
   excluded because it can metallize a gapped ionic system. Keep the
   `SAD` guess, `HCORE` is far from the rock-salt density and converges
   poorly. If the SCF oscillates or lands at an impossible energy, that
@@ -408,7 +412,8 @@ machine, not a number at the prompt.
   with a different `Z`, multiplicity, and `U`; lanthanide/actinide `4f`
   systems use `l=3`.
 * **Calibrating `U`.** vibe-qc takes `U` as user input; the
-  linear-response prescription of Cococcioni & de Gironcoli (2005) is
+  linear-response prescription of Cococcioni & de Gironcoli (2005,
+  {vibeqc-cite}`cococcioni_gironcoli_2005`) is
   the standard way to derive it from first principles, and is the paper
   to cite alongside Dudarev when you report a `+U` number.
 

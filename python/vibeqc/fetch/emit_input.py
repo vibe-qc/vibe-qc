@@ -22,7 +22,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Sequence
 
-from examples.regression.core.spec import MoleculeSpec, PeriodicSpec, TestSystem
+from vibeqc_spec import MoleculeSpec, PeriodicSpec, TestSystem
 
 
 # ---- Periodic --------------------------------------------------------------

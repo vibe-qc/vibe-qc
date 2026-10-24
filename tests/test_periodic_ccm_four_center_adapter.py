@@ -2,7 +2,7 @@
 
 Gates for :mod:`vibeqc.periodic.ccm.four_center_runner` and the
 ``method="aiccm", variant="four-center"`` arm (milestone M3a of
-``handovers/HANDOVER_AICCM_STANDARD_METHOD.md``). This is the construction the
+the original investigation). This is the construction the
 line is named after, and ruling R1 keeps it distinct from the two neutral
 producers, so the pins here are deliberately of a different kind from the
 neutral-Bloch file's: there is NO cross-variant energy agreement to assert. A

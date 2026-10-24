@@ -72,7 +72,7 @@ INPUT_DIR.mkdir(exist_ok=True)
 #   (b) Federation default  fetch_optimade(formula="MgO")              # no provider
 #   (c) Canonical set       vqfetch canonical mgo_rocksalt               # CLI
 #
-# This example uses (a). See § 11 of the structure-fetcher handover
+# This example uses (a).
 # for the failure mode in full, and the multi-candidate API below
 # (`max_results=N`) for the interactive-disambiguation path.
 

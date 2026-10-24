@@ -1,5 +1,10 @@
 """H2O — write electron density and frontier MOs as Gaussian cube files.
 
+RHF / 6-31G*. Success criterion: the SCF lands at E = -76.0036002 Ha (the
+same number as input-h2o-rhf.py, to 1e-6 Ha) and the four cube files
+listed below exist; summing the density cube over its grid times the voxel
+volume gives 9.98 electrons (10 within the grid quadrature error).
+
 Run:
     .venv/bin/python input-h2o-cube.py
 

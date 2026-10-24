@@ -6,6 +6,7 @@
 
 #include <Eigen/Dense>
 #include <complex>
+#include <vector>
 
 #include "basis.hpp"
 
@@ -17,6 +18,16 @@ namespace vibeqc {
 // bohr. The basis-function ordering matches BasisSet::shell2bf().
 Eigen::MatrixXd evaluate_ao(const BasisSet& basis,
                             const Eigen::MatrixX3d& points);
+
+// Sum molecular AO values over exactly the supplied translations on the
+// Cartesian product x × y × z (z fastest), without building shifted points.
+// Axes may be nonuniform; this is not an arbitrary point-cloud evaluator.
+// Preserves shell-wide libint normalization, contractions and pure transforms.
+// Factored exponentials can differ from evaluate_ao by floating-point rounding.
+Eigen::MatrixXd evaluate_ao_tensor_grid(
+    const BasisSet& basis, const Eigen::VectorXd& x,
+    const Eigen::VectorXd& y, const Eigen::VectorXd& z,
+    const Eigen::MatrixX3d& lattice_translations);
 
 // Returns value plus spatial gradients:
 //   values(g, μ)      = χ_μ(r_g)
@@ -60,6 +71,15 @@ evaluate_bloch_ao(
     const BasisSet& basis,
     const Eigen::MatrixX3d& points,
     const Eigen::Vector3d& k_cart,
+    const Eigen::MatrixX3d& lattice_translations);
+
+// The same image sum for several k points. Real Gaussian values are shared
+// across k within small point/shell panels, including on arbitrary skew grids.
+// Returns one (n_points, n_basis) complex matrix per row of k_cart. The caller
+// must admit the full output size; workspace is independent of n_points.
+std::vector<Eigen::MatrixXcd> evaluate_bloch_ao_multi_k(
+    const BasisSet& basis, const Eigen::MatrixX3d& points,
+    const Eigen::MatrixX3d& k_cart,
     const Eigen::MatrixX3d& lattice_translations);
 
 }  // namespace vibeqc

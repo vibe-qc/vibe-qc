@@ -98,6 +98,10 @@ def make_ewald_3d_lattice_j_cache(
     fixed across SCF iterations, so the cache built once is valid for the
     whole SCF. This is the multi-k sibling of the Γ E2 fix in
     ``docs/pbc_audit_2026-06.md``.
+
+    Physical support stores only cells containing an admitted AO pair;
+    the cache maps them back to the complete output list during contraction.
+    This avoids allocating the exchange enclosure's exactly zero FT blocks.
     """
     backend = os.environ.get("VIBEQC_J_EWALD3D_BACKEND", "analytic_ft").lower()
     if backend != "analytic_ft":
@@ -111,49 +115,9 @@ def make_ewald_3d_lattice_j_cache(
 
     ke = float(os.environ.get("VIBEQC_J_EWALD3D_KE", "200.0"))
     return build_j_ewald_3d_ft_lattice_cache(
-        basis, system, cells, lattice_opts=lattice_opts, ke_cutoff=ke
+        basis, system, cells, lattice_opts=lattice_opts, ke_cutoff=ke,
+        compact_physical_support=True,
     )
-
-
-def _ewald_3d_lattice_j_cache_fits_memory_target(
-    basis: BasisSet,
-    system: PeriodicSystem,
-    cells,
-    *,
-    ke_cutoff: Optional[float] = None,
-) -> bool:
-    """Return whether dense exact-J cache reuse fits its memory target.
-
-    This planning probe builds only the reciprocal-vector list, not the
-    ``(n_cells, nbf, nbf, n_G)`` AO-pair tensor. The cache target accounts
-    for that tensor plus one similarly sized construction temporary. A cache
-    that fits can retain the fast pre-SCF reuse path; a larger one must use
-    the separately bounded per-iteration contraction.
-    """
-    if int(system.dim) != 3:
-        return False
-    from .aux_basis import rsgdf_dense_g_mesh
-    from .ewald_composed import _ewald_j_ft_cell_chunk_size
-
-    cell_list = list(cells)
-    if not cell_list:
-        return True
-    ke = (
-        float(os.environ.get("VIBEQC_J_EWALD3D_KE", "200.0"))
-        if ke_cutoff is None
-        else float(ke_cutoff)
-    )
-    G_all = rsgdf_dense_g_mesh(system, ke)
-    n_g = int(np.count_nonzero((G_all**2).sum(axis=1) > 0.0))
-    cache_target_mib = float(
-        os.environ.get("VIBEQC_J_EWALD3D_CACHE_MIB", "4096.0")
-    )
-    cell_batch = _ewald_j_ft_cell_chunk_size(
-        int(basis.nbasis),
-        n_g,
-        target_mib=cache_target_mib,
-    )
-    return len(cell_list) <= cell_batch
 
 
 def make_slab_ewald_2d_lattice_j_cache(
@@ -505,6 +469,7 @@ def build_periodic_j_ewald3d_k_from_k_density(
     ke_cutoff: Optional[float] = None,
     reciprocal_chunk_size: int = 512,
     cell_chunk_size: Optional[int] = None,
+    integral_engine=None,
 ) -> List[np.ndarray]:
     """Build exact EWALD_3D Hartree ``J(k)`` from per-k densities.
 
@@ -516,6 +481,8 @@ def build_periodic_j_ewald3d_k_from_k_density(
 
     ``ke_cutoff=None`` preserves the driver-facing
     ``VIBEQC_J_EWALD3D_KE`` override used by the legacy lattice builder.
+    Explicit MANTA selection returns the checked native complex J(k) and
+    records the whole-mesh source. It does not enable K or a full SCF method.
     """
     from .ewald_composed import compute_j_ewald_3d_ft_k_density_to_cells
 
@@ -525,6 +492,14 @@ def build_periodic_j_ewald3d_k_from_k_density(
         else float(ke_cutoff)
     )
     cell_list = list(cells)
+    if integral_engine is not None:
+        from .manta_periodic import _selected_periodic_hartree
+
+        result = _selected_periodic_hartree(
+            basis, system, D_k_list, k_points_cart, weights, cell_list, omega,
+            lattice_opts=lattice_opts, ke_cutoff=ke, reciprocal_batch=reciprocal_chunk_size,
+            cell_chunk_size=cell_chunk_size, integral_engine=integral_engine)
+        return list(result.values)
     # Sun et al., J. Chem. Phys. 147, 164119 (2017), Eqs. 16-17:
     # rho(G) contracts the Bloch AO-pair FT and J uses 4*pi/G^2 with G=0
     # omitted. Batching changes only evaluation order. On non-TRIM H2 in a

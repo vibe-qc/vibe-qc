@@ -1,6 +1,6 @@
 """Reproduce MgO RKS BIPOLE convergence oscillation.
 
-Per handovers/HANDOVER_BIPOLE_PRODUCTION.md Gap B: MgO primitive cell oscillates
+Per the original investigation Gap B: MgO primitive cell oscillates
 ~0.5 Ha in RKS BIPOLE. First rule out a gauge/physics bug (§7 CLAUDE.md),
 then decide if it's a convergence-aid gap.
 
@@ -136,7 +136,8 @@ def run_rks_trajectory(
 
 def run_rhf_reference(system, basis_name="sto-3g", verbose=True):
     """Run RHF BIPOLE SCF as a reference (known-stable)."""
-    from vibeqc.pbc_bipole import PeriodicRHFOptions, run_pbc_bipole_rhf
+    from vibeqc import PeriodicRHFOptions
+    from vibeqc.pbc_bipole import run_pbc_bipole_rhf
 
     basis = vq.BasisSet(system.unit_cell_molecule(), basis_name)
     kmesh_obj = vq.monkhorst_pack(system, [1, 1, 1])

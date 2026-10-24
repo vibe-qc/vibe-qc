@@ -514,6 +514,63 @@ class TestVariantStructure:
 
 
 class TestBruecknerCCD:
+    @pytest.mark.parametrize("n_frozen,n_occ,n_mo", [
+        (1, 3, 6), (1, 2, 3), (0, 0, 4), (2, 4, 4),
+    ])
+    def test_semicanonical_fock_partitions(
+        self, monkeypatch, n_frozen, n_occ, n_mo,
+    ):
+        """Rectangular MOs retain frozen columns and partition densities."""
+        from scipy.linalg import eigvalsh
+        import vibeqc.cc as cc_module
+
+        rng = np.random.default_rng(91)
+        n_ao = n_mo + 2
+        S = np.diag(np.linspace(0.3, 2.0, n_ao))
+        Q, _ = np.linalg.qr(rng.normal(size=(n_ao, n_mo)))
+        C = np.diag(1 / np.sqrt(S.diagonal())) @ Q
+        f = rng.normal(size=(n_mo, n_mo))
+        f = (f + f.T) / 2
+        # Deliberately put occupied energies above virtuals: never sort
+        # across a partition boundary when semicanonicalizing.
+        f[:n_occ, :n_occ] += 10 * np.eye(n_occ)
+        F = S @ C @ f @ C.T @ S
+        original_C, original_F = C.copy(), F.copy()
+        calls = []
+        solve = cc_module.solve_dense_fock
+
+        def checked_solve(matrix, **kwargs):
+            result = solve(matrix, **kwargs)
+            calls.append((matrix.shape[0], result.operator_metadata.basis_id))
+            assert result.operator_metadata.kind == "fock"
+            assert result.operator_metadata.spin == "restricted"
+            assert result.residual_frame == "orthogonal"
+            assert result.selection_verified
+            assert max(result.residuals) < 1e-11
+            assert result.orthogonality_error < 1e-12
+            return result
+
+        monkeypatch.setattr(cc_module, "solve_dense_fock", checked_solve)
+        rotated = cc_module._semicanonicalize_brueckner_blocks(
+            C, F, n_frozen, n_occ,
+        )
+        np.testing.assert_array_equal(C, original_C)
+        np.testing.assert_array_equal(F, original_F)
+        np.testing.assert_allclose(rotated[:, :n_frozen], C[:, :n_frozen], atol=1e-14)
+        np.testing.assert_allclose(rotated.T @ S @ rotated, np.eye(n_mo), atol=1e-13)
+        expected_calls = []
+        for block, label in ((slice(n_frozen, n_occ), "active-occupied"),
+                             (slice(n_occ, n_mo), "virtual")):
+            old, new = C[:, block], rotated[:, block]
+            np.testing.assert_allclose(new @ new.T, old @ old.T, atol=1e-13)
+            if old.shape[1] > 1:
+                expected_calls.append((old.shape[1], f"brueckner-mo-{label}"))
+                expected = eigvalsh(old.T @ F @ old)
+                np.testing.assert_allclose(new.T @ F @ new, np.diag(expected), atol=1e-12)
+            else:
+                np.testing.assert_allclose(new, old, atol=1e-14)
+        assert calls == expected_calls
+
     @pytest.mark.parametrize(
         ("field", "value"),
         [

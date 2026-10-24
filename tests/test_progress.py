@@ -590,6 +590,9 @@ def test_molecular_progress_scope_cleans_up_after_native_exception(
     from vibeqc.crash_dump import load_dump
     from vibeqc.output._cpp_diagnostics import _forward_progress
 
+    # Exercise the explicit flag independently of queue/env telemetry defaults.
+    monkeypatch.delenv("VQ_WORKDIR", raising=False)
+    monkeypatch.delenv("VIBEQC_STRUCTURED_LOG", raising=False)
     molecule = _h2_molecule()
     output = tmp_path / f"native-failure-{structured_enabled}"
     structured_path = output.with_suffix(".scf.jsonl")
@@ -1004,7 +1007,14 @@ def test_post_scf_helper_rows_precede_job_end_and_restore_headline(
     assert manifest["progress"]["phase"] == "scf"
     assert int(manifest["progress"]["iteration"]) == int(result.n_iter)
     assert int(manifest["progress"]["selected_attempt"]) == 1
-    assert float(manifest["progress"]["energy_eh"]) == float(result.energy)
+    # The progress section stamps the last headline SCF iteration, the same
+    # row as the final "scf" record, not a helper's (-0.4 / -0.5 Ha here).
+    # result.energy is the terminal evaluation of the converged state and may
+    # sit a few ULP from that row (2 ULP on this H2 fixture).
+    progress_energy = float(manifest["progress"]["energy_eh"])
+    assert progress_energy == float(result.scf_trace[-1].energy)
+    assert progress_energy == float(headline[-1]["energy"])
+    assert progress_energy == pytest.approx(float(result.energy), abs=1e-10)
 
 
 def test_staged_rijcosx_global_trace_does_not_replay_live_local_rows(

@@ -63,7 +63,10 @@ from .guess import periodic_result_selection
 
 import math
 from dataclasses import dataclass, field
-from typing import List, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, List, Optional, Sequence, Tuple, Union
+
+if TYPE_CHECKING:
+    from .fock_state import SourceProvenance
 
 import numpy as np
 
@@ -129,8 +132,9 @@ from .periodic_screened_exchange import (
 )
 from .progress import ProgressLogger, resolve_progress
 from .scf_divergence import check_scf_divergence
-from .smearing.fermi_dirac import (
-    fermi_dirac_occupations_per_k as _fermi_dirac_occupations_per_k,
+from .smearing import (
+    occupations_are_per_k_integer_aufbau as _occupations_are_per_k_integer_aufbau,
+    spin_channel_occupations as _spin_channel_occupations,
 )
 
 __all__ = [
@@ -200,6 +204,12 @@ class PeriodicUKSMultiKEwaldResult:
     # Preserve the physical per-k state independently of lattice cutoff.
     density_alpha_k: Optional[List[np.ndarray]] = None
     density_beta_k: Optional[List[np.ndarray]] = None
+
+    # The derivative consumer must not infer the Hamiltonian from the basis
+    # name: manually supplied ECPs can also have zero replaced core electrons.
+    ecp_operator: Optional[bool] = None  # None for legacy/externally built results
+    ecp_total_ncore: int = 0
+    ecp_derivative_source: Optional[SourceProvenance] = None
 
 
 def _build_uks_fock_2e_blocks_ewald3d(
@@ -373,11 +383,24 @@ def run_uks_periodic_multi_k_ewald3d(
     :class:`PeriodicUKSMultiKEwaldResult`.
     """
     opts = options if options is not None else PeriodicKSOptions()
-    from .guess import select_periodic_driver_guess
+    # ECP cells run here since #35 (3-D cells; the context refuses slabs):
+    # the Z_eff nuclear frame for V_ne and e_nuc, the Bloch-summed lattice
+    # V_ECP in every Hcore(k), and the valence fill, as on the k-point GDF
+    # drivers. Orphan metadata is refused by the same validators.
+    from .guess import guess_ecp_context, select_periodic_driver_guess, validate_guess_ecp
+    from .periodic_k_gdf import _ecp_lattice_blocks, _periodic_ecp_context
+    _ecp_ctx = _periodic_ecp_context(opts, system, "run_uks_periodic_multi_k_ewald3d")
+    _ecp_ncore = _ecp_ctx[3] if _ecp_ctx is not None else 0
+    _system_v = _ecp_ctx[4] if _ecp_ctx is not None else system
     guess = select_periodic_driver_guess(
         system, opts, route="ewald", method="UKS", driver="run_uks_periodic_multi_k_ewald3d",
         multi_k=True, restart_supplied=initial_density_k is not None,
+        ecp_operator=_ecp_ctx is not None,
     ).transport
+    _guess_mol = system.unit_cell_molecule()
+    _guess_ecp = validate_guess_ecp(
+        guess, guess_ecp_context(opts, molecule=_guess_mol), _guess_mol
+    )
     if initial_density_k is not None:
         if len(kmesh.kpoints) != int(np.prod(kmesh.mesh)):
             raise NotImplementedError("READ requires a complete full k mesh on the Ewald lattice adapter")
@@ -431,7 +454,7 @@ def run_uks_periodic_multi_k_ewald3d(
         )
     plog = resolve_progress(progress, verbose=verbose)
 
-    # ---- Force EWALD_3D gauge (gauge consistency; handover F4 2026-06-01) ----
+    # ---- Force EWALD_3D gauge (gauge consistency; historical design record F4 2026-06-01) ----
     # This driver hard-codes the Hartree J to the Ewald-3D builder, so V_ne
     # (compute_nuclear_lattice_dispatch) and e_nuc (nuclear_repulsion_per_cell)
     # MUST share that gauge. Without the force, a default options object
@@ -534,7 +557,7 @@ def run_uks_periodic_multi_k_ewald3d(
 
         plog.write_raw(format_basis_summary(basis))
 
-    n_elec = int(system.n_electrons())
+    n_elec = int(system.n_electrons()) - _ecp_ncore
     mult = int(system.multiplicity)
     if mult < 1:
         raise ValueError(
@@ -602,6 +625,13 @@ def run_uks_periodic_multi_k_ewald3d(
                 plog.warn("auto_optimize_truncation did not converge.")
             lat_opts = opt_rep.optimized_lattice_opts
 
+    ecp_derivative_source = None
+    if _ecp_ctx is not None:
+        from .periodic_ecp_source import capture_ewald_uks_ecp_source
+
+        ecp_derivative_source = capture_ewald_uks_ecp_source(
+            system, basis, kmesh, opts, lat_opts, _ecp_ctx, omega,
+        )
     with plog.stage(
         "integrals_lattice", detail=f"S/T/V at cutoff {lat_opts.cutoff_bohr:.2f} bohr"
     ):
@@ -620,12 +650,21 @@ def run_uks_periodic_multi_k_ewald3d(
         else:
             from .periodic_v_ne import compute_nuclear_lattice_dispatch
 
-            V_lat = compute_nuclear_lattice_dispatch(basis, system, lat_opts)
+            V_lat = compute_nuclear_lattice_dispatch(basis, _system_v, lat_opts)
+        V_ecp_lat = (
+            _ecp_lattice_blocks(basis, system, lat_opts, _ecp_ctx)
+            if _ecp_ctx is not None else None)
     from .lattice_screening import on_physical_eri_cells
 
     S_lat = on_physical_eri_cells(S_lat, basis, system, lat_opts)
     T_lat = on_physical_eri_cells(T_lat, basis, system, lat_opts)
     V_lat = on_physical_eri_cells(V_lat, basis, system, lat_opts)
+    V_ecp_lat = on_physical_eri_cells(V_ecp_lat, basis, system, lat_opts)
+    if _ecp_ctx is not None:
+        plog.info(
+            f"periodic ECP: {_ecp_ncore} core electrons replaced on "
+            f"{len(_ecp_ctx[0])} centre(s); V_ne and e_nuc on the Z_eff frame"
+        )
     cells = list(S_lat.cells)
     n_cells = len(cells)
 
@@ -667,6 +706,8 @@ def run_uks_periodic_multi_k_ewald3d(
             )
         else:
             V_k = np.asarray(bloch_sum(V_lat, k_arr))
+        if V_ecp_lat is not None:
+            V_k = V_k + np.asarray(bloch_sum(V_ecp_lat, k_arr))
         H_k = T_k + V_k
         S_k = 0.5 * (S_k + S_k.conj().T)
         H_k = 0.5 * (H_k + H_k.conj().T)
@@ -712,15 +753,16 @@ def run_uks_periodic_multi_k_ewald3d(
                 lattice_opts=lat_opts,
                 kinetic_lattice=T_lat,
                 overlap_lattice=S_lat,
+                ecp_context=_guess_ecp,
             )
         )
 
     # T_lat / V_lat are folded into Hcore(k), and SAP has consumed T_lat when
     # requested. Free the per-cell one-electron lattice integrals before the
     # SCF iterations (S_lat is still needed for its g0 block).
-    del T_lat, V_lat
+    del T_lat, V_lat, V_ecp_lat
 
-    e_nuc = float(nuclear_repulsion_per_cell(system, lat_opts))
+    e_nuc = float(nuclear_repulsion_per_cell(_system_v, lat_opts))
 
     # ---- Initial guess --------------------------------------------------
     C_alpha_per_k: List[np.ndarray] = []
@@ -735,25 +777,19 @@ def run_uks_periodic_multi_k_ewald3d(
         C_beta_per_k.append(C_b.astype(complex))
         eps_beta_per_k.append(eps_b)
 
-    def _integer_occupations(nbf: int, n_occ_each: int) -> List[np.ndarray]:
-        occ_per_k = []
-        for _ in range(n_k):
-            occ = np.zeros(nbf, dtype=float)
-            occ[:n_occ_each] = 1.0
-            occ_per_k.append(occ)
-        return occ_per_k
-
     def _occupations_per_spin(
         eps_spin_per_k: Sequence[np.ndarray],
         n_spin: int,
+        *,
+        mom: bool = False,
     ) -> Tuple[List[np.ndarray], float, float]:
-        """Per-spin fractional occupations via Fermi-Dirac (mirrors the
-        BIPOLE UKS driver): the closed-shell FD helper targets 2.n_spin
-        electrons and returns occupations in [0, 2]; halving gives the
-        single-spin occupations in [0, 1] at the same per-spin chemical
-        potential, and the entropy halves with them. Returns
-        (occ_per_k, mu_spin, entropy_spin)."""
-        nbf = eps_spin_per_k[0].shape[0] if eps_spin_per_k else 0
+        """Per-spin occupations from the shared open-shell fill.
+
+        One chemical potential per spin over the whole mesh, also at T = 0
+        (#176); positional while the SPINLOCK PATTERN_HOLD keeps its
+        MOM-selected columns first (``mom``, #725). The per-k integer Aufbau
+        this replaced filled the lowest ``n_spin`` bands at every k and
+        reported mu = 0. Returns (occ_per_k, mu_spin, entropy_spin)."""
         if use_gilat and n_spin > 0:
             # Gilat-Raubenheimer net for this spin channel (g=1.0, n_spin
             # electrons; sharp Fermi surface -> entropy 0). Handles full or
@@ -764,16 +800,18 @@ def run_uks_periodic_multi_k_ewald3d(
                 system, kmesh, eps_spin_per_k, float(n_spin), spin_degeneracy=1.0
             )
             return occ_gr, float(ef_gr), 0.0
-        if smearing_T <= 0.0 or n_spin == 0:
-            return _integer_occupations(nbf, n_spin), 0.0, 0.0
-        occ_double, mu, entropy_double = _fermi_dirac_occupations_per_k(
+        result = _spin_channel_occupations(
             eps_spin_per_k,
-            weights,
-            float(2 * n_spin),
-            smearing_T,
+            weights=weights,
+            n_electrons=float(n_spin),
+            smearing=smearing_T,
+            fixed_occupied_subspace=bool(mom) and smearing_T <= 0.0,
         )
-        occ = [np.asarray(o, dtype=float) * 0.5 for o in occ_double]
-        return occ, float(mu), float(entropy_double) * 0.5
+        return (
+            [np.asarray(o, dtype=float) for o in result.occupations_per_k],
+            float(result.mu),
+            float(result.entropy),
+        )
 
     def _spin_density(C_per_k_local, occ_per_k_local):
         """One-particle (no factor 2) real-space spin density via the
@@ -827,6 +865,7 @@ def run_uks_periodic_multi_k_ewald3d(
             # (Bloch-sums to a broken-symmetry D(k)). Empty/None = symmetric.
             atomic_spins=getattr(opts, "atomic_spins", None) or None,
             overlap=S_k_list, weights=weights,
+            ecp_context=_guess_ecp,
         )
         if split is not None:
             plog.info(
@@ -892,6 +931,17 @@ def run_uks_periodic_multi_k_ewald3d(
         _unavailable = corrected_exchange_unavailable_reason(
             system, kmesh, slab_mode=slab_mode
         )
+        if slab_mode:
+            # The bare sum is the only exchange this gauge has here, and it
+            # grows with the lattice cutoff on a k mesh (#485; the RKS
+            # sibling already refuses). There is no open-shell slab GDF.
+            raise NotImplementedError(
+                "run_uks_periodic_multi_k_ewald3d: this functional needs "
+                f"full-range exact exchange (c_full = {exx.c_full:g}), but "
+                f"{_unavailable}, and the bare real-space image sum does "
+                "not converge on a k mesh. Use a single Gamma point, a "
+                "pure functional, or a screened hybrid (hse06)."
+            )
         if _unavailable is None:
             corrected_exchange = CorrectedEwaldExchange.build(
                 basis,
@@ -907,7 +957,7 @@ def run_uks_periodic_multi_k_ewald3d(
         elif is_unsupported_gauge(system, slab_mode=slab_mode):
             # A gauge the split does not exist for (2D slab, dim != 3).
             # Live, pre-dates the fix: keep the historical kernel and say
-            # so. Remaining gap, recorded in HANDOVER_OPEN_BUGS_V015.md.
+            # so. Remaining gap, recorded in the original investigation.
             plog.info(
                 "full-range exact exchange stays on the uncorrected "
                 f"real-space image sum: {_unavailable}. Energies on this "
@@ -1353,7 +1403,7 @@ def run_uks_periodic_multi_k_ewald3d(
         E_madelung_fix = (
             0.0
             if slab_mode
-            else _madelung_energy_correction_for_lat(_D_g0, _S_g0, system, lat_opts)
+            else _madelung_energy_correction_for_lat(_D_g0, _S_g0, _system_v, lat_opts)
         )
         E_total = E_elec + e_nuc + E_madelung_fix
         # Free-energy formulation: with smearing the variational
@@ -1504,11 +1554,12 @@ def run_uks_periodic_multi_k_ewald3d(
         C_beta_per_k = new_C_beta
         eps_beta_per_k = new_eps_beta
 
+        _held = bool(_pattern_hold and 1 < iter_idx <= spinlock_iterations)
         occ_alpha_per_k, mu_alpha, entropy_alpha = _occupations_per_spin(
-            eps_alpha_per_k, n_alpha
+            eps_alpha_per_k, n_alpha, mom=_held
         )
         occ_beta_per_k, mu_beta, entropy_beta = _occupations_per_spin(
-            eps_beta_per_k, n_beta
+            eps_beta_per_k, n_beta, mom=_held
         )
         entropy = entropy_alpha + entropy_beta
         D_alpha_new = _spin_density(C_alpha_per_k, occ_alpha_per_k)
@@ -1680,11 +1731,18 @@ def run_uks_periodic_multi_k_ewald3d(
                 eps_alpha_terminal.append(eps_a)
                 C_beta_terminal.append(C_b)
                 eps_beta_terminal.append(eps_b)
+            _terminal_held = bool(
+                _pattern_hold and iter_idx <= spinlock_iterations
+            )
             occ_alpha_terminal, _, entropy_alpha_terminal = (
-                _occupations_per_spin(eps_alpha_terminal, n_alpha)
+                _occupations_per_spin(
+                    eps_alpha_terminal, n_alpha, mom=_terminal_held
+                )
             )
             occ_beta_terminal, _, entropy_beta_terminal = (
-                _occupations_per_spin(eps_beta_terminal, n_beta)
+                _occupations_per_spin(
+                    eps_beta_terminal, n_beta, mom=_terminal_held
+                )
             )
             D_a_terminal_next = _density_matrices_per_k(
                 C_alpha_terminal, occ_alpha_terminal
@@ -1951,28 +2009,38 @@ def run_uks_periodic_multi_k_ewald3d(
             final_eps_beta.append(eps_b)
 
         # The terminal Fock generally has a different spectrum from the
-        # preceding SCF update. Fractional and Gilat occupations therefore
-        # have to be solved again on these reported eigenvalues; carrying the
-        # previous occupation arrays would mix two distinct states in the
-        # energy, free energy, density, and output metadata.
-        if use_fractional_density:
-            occ_alpha_final, mu_alpha, entropy_alpha = _occupations_per_spin(
-                final_eps_alpha, n_alpha
+        # preceding SCF update, so the occupations are solved again on these
+        # reported eigenvalues at every temperature: the zero-temperature
+        # fill is one chemical potential per spin over the mesh (#176), and
+        # which bands it occupies can move with the spectrum just as a
+        # fractional or Gilat fill does. Carrying the previous arrays would
+        # mix two distinct states in the energy, free energy, density, and
+        # output metadata.
+        _final_held = bool(_pattern_hold and iter_idx <= spinlock_iterations)
+        occ_alpha_final, mu_alpha, entropy_alpha = _occupations_per_spin(
+            final_eps_alpha, n_alpha, mom=_final_held
+        )
+        occ_beta_final, mu_beta, entropy_beta = _occupations_per_spin(
+            final_eps_beta, n_beta, mom=_final_held
+        )
+        entropy = entropy_alpha + entropy_beta
+        # The C[:, :n] slice is exact only for the per-k integer Aufbau
+        # pattern; a band-overlap fill is weighted by its own occupations.
+        _final_occupation_density = use_fractional_density or not (
+            _occupations_are_per_k_integer_aufbau(
+                occ_alpha_final, n_alpha, occ_value=1.0
             )
-            occ_beta_final, mu_beta, entropy_beta = _occupations_per_spin(
-                final_eps_beta, n_beta
+            and _occupations_are_per_k_integer_aufbau(
+                occ_beta_final, n_beta, occ_value=1.0
             )
-            entropy = entropy_alpha + entropy_beta
-        else:
-            occ_alpha_final = occ_alpha_per_k
-            occ_beta_final = occ_beta_per_k
+        )
 
         D_a_reported_per_k: List[np.ndarray] = []
         D_b_reported_per_k: List[np.ndarray] = []
         for idx in range(n_k):
             C_a = final_C_alpha[idx]
             C_b = final_C_beta[idx]
-            if use_fractional_density:
+            if _final_occupation_density:
                 D_a_k = (C_a * occ_alpha_final[idx]) @ C_a.conj().T
                 D_b_k = (C_b * occ_beta_final[idx]) @ C_b.conj().T
             else:
@@ -2062,7 +2130,7 @@ def run_uks_periodic_multi_k_ewald3d(
     plog.converged(n_iter=iter_idx, energy=E_total, converged=converged)
     from .eigs_preflight import _copy_lattice_opts
 
-    return PeriodicUKSMultiKEwaldResult(
+    result = PeriodicUKSMultiKEwaldResult(
                restart_mesh=tuple(kmesh.mesh),
                restart_kpoints=np.asarray(kmesh.kpoints).copy(), restart_weights=np.asarray(kmesh.weights).copy(),
                guess_selection=periodic_result_selection(system, opts.initial_guess, restarted=initial_density_k is not None),
@@ -2101,6 +2169,9 @@ def run_uks_periodic_multi_k_ewald3d(
         entropy=float(entropy),
         free_energy=float(E_total - smearing_T * entropy),
         effective_lattice_opts=_copy_lattice_opts(lat_opts),
+        ecp_operator=_ecp_ctx is not None,
+        ecp_total_ncore=int(_ecp_ncore),
+        ecp_derivative_source=ecp_derivative_source,
         occupations_alpha=[
             np.asarray(occ, dtype=float).copy() for occ in occ_alpha_per_k
         ],
@@ -2108,3 +2179,8 @@ def run_uks_periodic_multi_k_ewald3d(
             np.asarray(occ, dtype=float).copy() for occ in occ_beta_per_k
         ],
     )
+    if ecp_derivative_source is not None:
+        from .periodic_ecp_source import seal_ewald_uks_ecp_source
+
+        result.ecp_derivative_source = seal_ewald_uks_ecp_source(ecp_derivative_source, result)
+    return result

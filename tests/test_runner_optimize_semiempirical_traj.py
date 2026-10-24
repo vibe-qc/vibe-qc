@@ -307,7 +307,12 @@ def test_pm6_formamide_dimer_reaches_hard_occupation_root_without_cooling():
 
     assert cold.converged
     assert result.converged
-    assert result.n_iter == cold.n_iter
+    # #154: the route now always probes for a second zero-temperature basin,
+    # so its iteration count carries that cost even when, as here, the probe
+    # agrees with the direct SCF and nothing is refused.  What must still
+    # match the direct run is the ROOT it reports: the zero temperature, the
+    # energy to 1e-12 Ha and the density trace below.
+    assert result.n_iter >= cold.n_iter
     assert result.electronic_temperature == 0.0
     assert result.energy == pytest.approx(cold.energy, abs=1.0e-12)
     assert np.trace(np.asarray(result.density)) == pytest.approx(36.0)
@@ -430,9 +435,53 @@ def test_scc_dftb_paper_core_co2_optimizer_uses_bounded_steps(tmp_path):
     assert len(Trajectory(stem.with_suffix(".traj"))) >= 2
 
 
-def test_scc_dftb_model_reports_h2co_nonconvergence():
-    """ArtVal25 H2CO has no converged integer-occupation SCC solution."""
-    model = SCCDFTBModel(H2CO)
+# Square cyclobutadiene (D4h, C-C 1.44 A, C-H 1.089 A): two electrons in an
+# exactly degenerate pair, so the zero-temperature Aufbau fill has no stable
+# SCC fixed point. Since #478 it is the retry ladder's fixture: the Thiel and
+# ArtVal25 molecules that used to need the Mermin rungs converge at T = 0
+# under the corrected Wolfsberg-Helmholz hopping (#562).
+_CBD_C, _CBD_H = 0.72, 0.77
+SQUARE_CYCLOBUTADIENE = _molecule_from_angstrom(
+    [
+        (6, (_CBD_C, _CBD_C, 0.0)), (6, (-_CBD_C, _CBD_C, 0.0)),
+        (6, (-_CBD_C, -_CBD_C, 0.0)), (6, (_CBD_C, -_CBD_C, 0.0)),
+        (1, (_CBD_C + _CBD_H, _CBD_C + _CBD_H, 0.0)),
+        (1, (-_CBD_C - _CBD_H, _CBD_C + _CBD_H, 0.0)),
+        (1, (-_CBD_C - _CBD_H, -_CBD_C - _CBD_H, 0.0)),
+        (1, (_CBD_C + _CBD_H, -_CBD_C - _CBD_H, 0.0)),
+    ]
+)
+
+
+def _assert_gradient_matches_central_difference(molecule, gradient, temperature, atom):
+    step = 1.0e-4
+    energies = []
+    for displacement in (-step, step):
+        atoms = []
+        for index, item in enumerate(molecule.atoms):
+            xyz = list(item.xyz)
+            if index == atom:
+                xyz[0] += displacement
+            atoms.append(Atom(item.Z, xyz))
+        model = SCCDFTBModel(
+            Molecule(atoms),
+            max_iter=1500,
+            charge_mixing=0.05 if temperature > 0.0 else 0.2,
+            electronic_temperature=temperature,
+            use_diis=temperature == 0.0,
+        )
+        energies.append(model.energy())
+        assert model.converged
+    finite_difference = (energies[1] - energies[0]) / (2.0 * step)
+    assert gradient[atom, 0] == pytest.approx(finite_difference, abs=1.0e-6)
+
+
+def test_scc_dftb_model_reports_degenerate_frontier_nonconvergence():
+    """An exactly degenerate half-filled pair has no converged integer-
+    occupation SCC solution; the model says so instead of returning a
+    silently unconverged energy. (ArtVal25 H2CO, which held this role, now
+    converges at T = 0 in 38 iterations, #562.)"""
+    model = SCCDFTBModel(SQUARE_CYCLOBUTADIENE)
 
     energy = model.energy()
 
@@ -441,192 +490,95 @@ def test_scc_dftb_model_reports_h2co_nonconvergence():
     assert model.n_iter == 100
 
 
-def test_thiel_acetamide_scc_dftb_uses_finite_temperature_retry():
-    result = runner._run_semiempirical("scc_dftb", ACETAMIDE)
+@pytest.mark.parametrize(
+    "name,energy",
+    [
+        # Measured on the corrected H0 (#478, #562); converged at T = 0 in
+        # 31 to 45 iterations.
+        ("ACETAMIDE", -10.455654280257448),
+        ("ACETONE_THIEL_SCC_DFTB", -9.845271558928461),
+        ("CH2O_THIEL_SCC_DFTB", -5.510561934314006),
+        ("FURAN_THIEL_SCC_DFTB", -10.776656234362731),
+        ("PYRIMIDINE_THIEL_SCC_DFTB", -12.202074715210516),
+        ("PYRIDINE_THIEL_SCC_DFTB", -11.75783821102743),
+        ("TRIAZINE_THIEL_SCC_DFTB", -12.92981824200281),
+        ("IMIDAZOLE_THIEL_SCC_DFTB", -10.75502465666601),
+        ("CYTOSINE_THIEL_SCC_DFTB", -18.24118579321806),
+    ],
+)
+def test_thiel_scc_dftb_rows_converge_at_zero_temperature(name, energy):
+    """BUG67 and #78 pinned these rows on the Mermin retry rungs; their
+    zero-temperature failure was the weak hopping of the pre-#478 H0. They
+    now converge on the first, integer-occupation attempt (#562)."""
+    molecule = globals()[name]
+    result = runner._run_semiempirical("scc_dftb", molecule)
 
     assert result.converged
-    assert result.n_iter > 500
-    assert result.electronic_temperature == pytest.approx(0.001)
+    assert result.electronic_temperature == 0.0
+    assert result.n_iter < 100
+    assert float(result.energy) == pytest.approx(energy, abs=5.0e-7)
     assert sum(result.mulliken_charges) == pytest.approx(0.0, abs=1.0e-10)
     gradient = np.asarray(result.gradient())
     assert np.all(np.isfinite(gradient))
-
-    step = 1.0e-4
-    displaced_energies = []
-    for displacement in (-step, step):
-        atoms = []
-        for index, atom in enumerate(ACETAMIDE.atoms):
-            xyz = list(atom.xyz)
-            if index == 0:
-                xyz[0] += displacement
-            atoms.append(Atom(atom.Z, xyz))
-        model = SCCDFTBModel(
-            Molecule(atoms),
-            max_iter=500,
-            electronic_temperature=0.001,
-        )
-        displaced_energies.append(model.energy())
-        assert model.converged
-    finite_difference = (
-        displaced_energies[1] - displaced_energies[0]
-    ) / (2.0 * step)
-    assert gradient[0, 0] == pytest.approx(finite_difference, abs=2.0e-4)
+    if name == "ACETAMIDE":
+        _assert_gradient_matches_central_difference(molecule, gradient, 0.0, 0)
 
 
-def test_thiel_acetone_scc_dftb_uses_finite_temperature_retry():
-    """BUG67: acetone needs the public Mermin rung, not a larger zero-T cap."""
-    zero_temperature = SCCDFTBModel(
-        ACETONE_THIEL_SCC_DFTB,
-        max_iter=500,
-    )
+def test_degenerate_frontier_scc_dftb_uses_finite_temperature_retry():
+    """The public route retries a zero-T failure on the Mermin ladder and its
+    force is the derivative of the free energy it reports (#563)."""
+    zero_temperature = SCCDFTBModel(SQUARE_CYCLOBUTADIENE, max_iter=500)
     zero_temperature.energy()
     assert not zero_temperature.converged
 
-    result = runner._run_semiempirical("scc_dftb", ACETONE_THIEL_SCC_DFTB)
+    result = runner._run_semiempirical("scc_dftb", SQUARE_CYCLOBUTADIENE)
 
     assert result.converged
     assert result.n_iter > 500
     assert result.electronic_temperature == pytest.approx(0.001)
-    assert float(result.energy) == pytest.approx(-8.7685882829, abs=5.0e-7)
+    assert float(result.energy) == pytest.approx(-7.286063797988252, abs=5.0e-7)
+    # The pair holds occupation 1 each: E_internal - E_free = T * 4 ln 2.
+    assert float(result.e_internal) == pytest.approx(-7.283291209266012, abs=5.0e-7)
+    assert float(result.entropy) == pytest.approx(4.0 * np.log(2.0), abs=1.0e-9)
     assert sum(result.mulliken_charges) == pytest.approx(0.0, abs=1.0e-10)
-
-
-def test_thiel_ch2o_scc_dftb_uses_finite_temperature_retry():
-    """BUG67: CH2O needs the public Mermin rung, not a larger zero-T cap."""
-    zero_temperature = SCCDFTBModel(
-        CH2O_THIEL_SCC_DFTB,
-        max_iter=500,
+    gradient = np.asarray(result.gradient())
+    _assert_gradient_matches_central_difference(
+        SQUARE_CYCLOBUTADIENE, gradient, 0.001, 0
     )
-    zero_temperature.energy()
-    assert not zero_temperature.converged
 
-    result = runner._run_semiempirical("scc_dftb", CH2O_THIEL_SCC_DFTB)
+
+def test_retry_ladder_moves_to_the_next_rung_when_one_fails(monkeypatch):
+    """A rung that does not converge hands over to the next one, and the
+    result reports the rung that converged and the cumulative iterations.
+    Every rung of the shipped ladder converges this fixture in 136
+    iterations, so the first rung is made unconvergeable (mixing 1e-4)."""
+    import vibeqc.semiempirical.runner as semiempirical_runner
+
+    monkeypatch.setattr(
+        semiempirical_runner,
+        "_RUNNER_SCC_DFTB_RETRY_SETTINGS",
+        (
+            {"electronic_temperature": 0.001, "charge_mixing": 1.0e-4, "use_diis": False},
+            {"electronic_temperature": 0.0012, "charge_mixing": 0.05, "use_diis": False},
+        ),
+    )
+    result = runner._run_semiempirical("scc_dftb", SQUARE_CYCLOBUTADIENE)
 
     assert result.converged
-    assert result.n_iter > 500
-    assert result.electronic_temperature == pytest.approx(0.001)
-    assert float(result.energy) == pytest.approx(-5.0276818817, abs=5.0e-7)
-    assert sum(result.mulliken_charges) == pytest.approx(0.0, abs=1.0e-10)
-
-
-def test_thiel_furan_scc_dftb_uses_finite_temperature_retry():
-    """BUG67: furan needs the public Mermin rung, not a larger zero-T cap."""
-    zero_temperature = SCCDFTBModel(
-        FURAN_THIEL_SCC_DFTB,
-        max_iter=500,
-    )
-    zero_temperature.energy()
-    assert not zero_temperature.converged
-
-    result = runner._run_semiempirical("scc_dftb", FURAN_THIEL_SCC_DFTB)
-
-    assert result.converged
-    assert result.n_iter > 500
-    assert result.electronic_temperature == pytest.approx(0.001)
-    assert float(result.energy) == pytest.approx(-9.7519736134, abs=5.0e-7)
-    assert sum(result.mulliken_charges) == pytest.approx(0.0, abs=1.0e-10)
-
-
-def test_thiel_pyrimidine_scc_dftb_uses_finite_temperature_retry():
-    """BUG67: pyrimidine needs the Mermin rung, not a larger zero-T cap."""
-    zero_temperature = SCCDFTBModel(
-        PYRIMIDINE_THIEL_SCC_DFTB,
-        max_iter=500,
-    )
-    zero_temperature.energy()
-    assert not zero_temperature.converged
-
-    result = runner._run_semiempirical("scc_dftb", PYRIMIDINE_THIEL_SCC_DFTB)
-
-    assert result.converged
-    assert result.n_iter > 500
-    assert result.electronic_temperature == pytest.approx(0.001)
-    assert float(result.energy) == pytest.approx(-11.1331880662, abs=5.0e-7)
-    assert sum(result.mulliken_charges) == pytest.approx(0.0, abs=1.0e-10)
-
-
-def test_thiel_pyridine_scc_dftb_uses_finite_temperature_retry():
-    """BUG67: pyridine needs the Mermin rung, not a larger zero-T cap."""
-    zero_temperature = SCCDFTBModel(
-        PYRIDINE_THIEL_SCC_DFTB,
-        max_iter=500,
-    )
-    zero_temperature.energy()
-    assert not zero_temperature.converged
-
-    result = runner._run_semiempirical("scc_dftb", PYRIDINE_THIEL_SCC_DFTB)
-
-    assert result.converged
-    assert result.n_iter > 500
-    assert result.electronic_temperature == pytest.approx(0.001)
-    assert float(result.energy) == pytest.approx(-10.4898128335, abs=5.0e-7)
-    assert sum(result.mulliken_charges) == pytest.approx(0.0, abs=1.0e-10)
-
-
-def test_thiel_triazine_scc_dftb_uses_finite_temperature_retry():
-    """BUG67: triazine needs the Mermin rung, not a larger zero-T cap."""
-    zero_temperature = SCCDFTBModel(
-        TRIAZINE_THIEL_SCC_DFTB,
-        max_iter=500,
-    )
-    zero_temperature.energy()
-    assert not zero_temperature.converged
-
-    result = runner._run_semiempirical("scc_dftb", TRIAZINE_THIEL_SCC_DFTB)
-
-    assert result.converged
-    assert result.n_iter > 500
-    assert result.electronic_temperature == pytest.approx(0.001)
-    assert float(result.energy) == pytest.approx(-11.7678399398, abs=5.0e-7)
-    assert sum(result.mulliken_charges) == pytest.approx(0.0, abs=1.0e-10)
-
-
-def test_thiel_imidazole_scc_dftb_uses_finite_temperature_retry():
-    """BUG67: imidazole needs the Mermin rung, not a larger zero-T cap."""
-    zero_temperature = SCCDFTBModel(
-        IMIDAZOLE_THIEL_SCC_DFTB,
-        max_iter=500,
-    )
-    zero_temperature.energy()
-    assert not zero_temperature.converged
-
-    result = runner._run_semiempirical("scc_dftb", IMIDAZOLE_THIEL_SCC_DFTB)
-
-    assert result.converged
-    assert result.n_iter > 500
-    assert result.electronic_temperature == pytest.approx(0.001)
-    assert float(result.energy) == pytest.approx(-9.7218320822, abs=5.0e-7)
-    assert sum(result.mulliken_charges) == pytest.approx(0.0, abs=1.0e-10)
-
-
-def test_thiel_cytosine_scc_dftb_uses_second_temperature_retry():
-    first_retry = SCCDFTBModel(
-        CYTOSINE_THIEL_SCC_DFTB,
-        max_iter=500,
-        electronic_temperature=0.001,
-    )
-    first_retry.energy()
-    assert not first_retry.converged
-
-    result = runner._run_semiempirical("scc_dftb", CYTOSINE_THIEL_SCC_DFTB)
-
-    assert result.converged
-    assert result.n_iter > 1000
     assert result.electronic_temperature == pytest.approx(0.0012)
-    assert sum(result.mulliken_charges) == pytest.approx(0.0, abs=1.0e-10)
-    gradient = np.asarray(result.gradient(), dtype=float)
-    assert gradient.shape == (13, 3)
-    assert np.all(np.isfinite(gradient))
+    budget = semiempirical_runner._RUNNER_SCC_DFTB_RETRY_MAX_ITER
+    assert result.n_iter == semiempirical_runner._RUNNER_SCC_DFTB_MAX_ITER + budget + 136
+    assert float(result.energy) == pytest.approx(-7.2866183157322295, abs=5.0e-7)
+    assert float(result.e_internal) == pytest.approx(-7.283291209265541, abs=5.0e-7)
 
 
 def test_scc_dftb_hcooh_trial_prefers_zero_temperature_relaxation():
     # The bounded Mermin fallback remains available for this frame when called
-    # directly, but the public route should now solve the zero-temperature
-    # charge fixed point before reaching that retry.
+    # directly, but the public route solves the zero-temperature charge fixed
+    # point before reaching that retry.
     #
     # 2026-08-12: the ladder rungs were re-pinned to the verified recipe
-    # (no DIIS, charge_mixing=0.05; see
-    # handovers/HANDOVER_SCC_DFTB_CONVERGENCE.md).  At the historical 0.2
+    # (no DIIS, charge_mixing=0.05). At the historical 0.2
     # mixing the T=0.0012 Ha rung stalls past the 500-iteration budget (619
     # needed); at 0.05 it converges in 332.  The converged fixed point is
     # unchanged -- only the path length differs.
@@ -656,12 +608,10 @@ def test_scc_dftb_hcooh_trial_prefers_zero_temperature_relaxation():
     )
 
     assert result.converged
-    assert result.n_iter == 163
+    # Re-pinned for the corrected H0 (#478, #562): 49 iterations (was 163).
+    assert result.n_iter == 49
     assert result.electronic_temperature == pytest.approx(0.0)
-    # 2026-08-06: energy pin updated — the SCC path shifted slightly
-    # (DIIS subspace default changed to 2, giving a more contractive
-    # Aitken-only loop) but the converged root is the same.
-    assert result.energy == pytest.approx(-8.2942879453, abs=1.0e-10)
+    assert result.energy == pytest.approx(-8.701112674924511, abs=1.0e-10)
     assert sum(result.mulliken_charges) == pytest.approx(0.0, abs=1.0e-10)
     gradient = np.asarray(result.gradient(), dtype=float)
     assert gradient.shape == (5, 3)

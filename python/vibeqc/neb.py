@@ -51,8 +51,10 @@ References
 
 from __future__ import annotations
 
+from .bipole_domain import DEFAULT_BIPOLE_SR_IMAGE_PRECISION
+
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, List, Optional, Sequence, Union
 
@@ -552,6 +554,90 @@ def _positive_int_env(name: str) -> int | None:
     return value if value > 0 else None
 
 
+class _ProcessImageCache:
+    """A molecular image's warm-start cache that pickles across processes (#564).
+
+    The outer loop hands each image's converged SCF result to its next
+    evaluation, which projects the density from ``restart_basis`` onto the
+    moved image's basis and keeps the ``guess_selection``. The native result,
+    its ``BasisSet`` and ``GuessSelection`` do not pickle, so joblib's process
+    workers return this record instead. It keeps the densities and the
+    selection, and rebuilds the restart basis from the image molecule and
+    basis name exactly as :func:`_evaluate_image` built it.
+    """
+
+    def __init__(self, molecule, basis_name, density, density_alpha, density_beta, selection):
+        from ._vibeqc_core import GuessSelection
+
+        self._state = (molecule, basis_name, density, density_alpha, density_beta, selection)
+        self.density = density
+        self.density_alpha = density_alpha
+        self.density_beta = density_beta
+        self.restart_basis = BasisSet(molecule, basis_name)
+        self.guess_selection = None if selection is None else GuessSelection(*selection)
+
+    def __reduce__(self):
+        return type(self), self._state
+
+
+def _process_image_cache(evaluator, cache, positions, eval_kwargs):
+    """The form of an image cache that a process worker returns."""
+    if evaluator is not _evaluate_image or getattr(cache, "restart_basis", None) is None:
+        return cache
+
+    def _array(name):
+        value = getattr(cache, name, None)
+        return None if value is None else np.array(value, dtype=float)
+
+    selection = getattr(cache, "guess_selection", None)
+    return _ProcessImageCache(
+        _rebuild_with_positions(eval_kwargs["template"], positions),
+        eval_kwargs["basis_name"],
+        _array("density"), _array("density_alpha"), _array("density_beta"),
+        None if selection is None else (selection.requested, selection.effective, selection.transport),
+    )
+
+
+def _evaluate_image_in_process(evaluator, positions, eval_kwargs, *, keep_cache, **kwargs):
+    """Evaluate one image in a joblib worker and return a picklable result."""
+    energy, gradient, cache = evaluator(positions, **eval_kwargs, **kwargs)
+    if not keep_cache:
+        return energy, gradient, None
+    return energy, gradient, _process_image_cache(evaluator, cache, positions, eval_kwargs)
+
+
+def _process_safe_neb_n_jobs(n_jobs: int, evaluator, eval_kwargs: dict, sample_cache) -> int:
+    """``n_jobs``, or 1 when the images cannot round-trip through worker processes.
+
+    joblib's process backend pickles every task and every result. Molecules
+    and periodic systems pickle, and a molecular SCF cache travels as a
+    :class:`_ProcessImageCache` (#564). Native option objects passed through
+    ``rhf_options=`` and friends do not pickle, a periodic system with
+    attached symmetry refuses to, and periodic SCF caches have no portable
+    form; ``sample_cache`` is an endpoint's cache in its process form, or
+    ``None`` without warm starts. Serial evaluation computes the same band,
+    so such a run proceeds on one process with a warning instead of failing.
+    """
+    if n_jobs == 1:
+        return 1
+    import pickle
+    import warnings
+
+    try:
+        pickle.dumps((evaluator, eval_kwargs))
+        pickle.dumps(sample_cache)
+    except Exception as exc:  # noqa: BLE001 - any pickling failure
+        warnings.warn(
+            "run_neb: the images cannot round-trip through worker processes "
+            f"({type(exc).__name__}: {exc}); evaluating the band serially "
+            "(n_jobs=1). The band is the same; only the wall time differs.",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+        return 1
+    return n_jobs
+
+
 def _resolve_neb_n_jobs(
     n_jobs: int,
     *,
@@ -629,6 +715,11 @@ class NEBResult:
     # surface even when ``method`` is the canonical dispatcher key.
     semiempirical_variant: Optional[str] = None
     semiempirical_citation_entries: tuple[str, ...] = ()
+    # Identity captured from the loaded MACE model, not mutable caller options.
+    model_info: Any = None
+    device: Optional[str] = None
+    dtype: Optional[str] = None
+    weight_identity: dict[str, Any] = field(default_factory=dict)
 
     def write_qvf(
         self,
@@ -816,6 +907,7 @@ class NEBResult:
             functional=(
                 None if (is_mace or is_semiempirical) else self.functional
             ),
+            mlip_result=self if is_mace else None,
             extra_assemble_kwargs=extra,
             compression=compression,
         )
@@ -1835,6 +1927,8 @@ def _load_mace_model(
     template: System,
     mlip_options: Any,
     is_periodic: bool,
+    *,
+    mlip_execution: Optional[dict[str, Any]] = None,
 ) -> tuple[Any, np.ndarray, Optional[np.ndarray], str]:
     """Load the MACE model once and return ``(calc, numbers, cell, citation)``.
 
@@ -1843,12 +1937,21 @@ def _load_mace_model(
     ``citation`` the per-model foundation-model citation key (for the
     references block -- e.g. ``batatia_mace_mp_2024``). The ASL gate (academic,
     non-commercial models) fires inside :class:`vibeqc.mlip.mace.MACEModel`.
+    When supplied, ``mlip_execution`` receives the loaded model's identity
+    for the path result and output, before the first geometry evaluation.
     """
-    from .mlip.mace import MACEModel
+    from .mlip.mace import MACEModel, _pbc_for_dimension
 
     cell = np.asarray(template.lattice, dtype=float) if is_periodic else None
     seed = template.unit_cell_molecule() if is_periodic else template
-    model = MACEModel(seed, mlip_options, cell=cell)
+    pbc = _pbc_for_dimension(template.dim) if is_periodic else None
+    model = MACEModel(seed, mlip_options, cell=cell, pbc=pbc)
+    if mlip_execution is not None:
+        options = model.options
+        mlip_execution.update(
+            model_info=model.info, device=options.device, dtype=options.dtype,
+            weight_identity=model.weight_identity,
+        )
     citation = getattr(getattr(model, "info", None), "citation", "") or ""
     return model.calculator, _atomic_numbers_of(template), cell, citation
 
@@ -1859,6 +1962,7 @@ def _evaluate_image_mace(
     calc: Any,
     numbers: np.ndarray,
     cell: Optional[np.ndarray],
+    pbc: Optional[tuple[bool, bool, bool]] = None,
     **_ignored: Any,
 ) -> tuple[float, np.ndarray, None]:
     """Energy + analytic gradient at one geometry from a pre-loaded MACE
@@ -1871,18 +1975,28 @@ def _evaluate_image_mace(
     """
     from ase import Atoms
     from ase.units import Bohr, Hartree
+    from .mlip.mace import _checked_backend_result
 
     atoms = Atoms(
         numbers=[int(z) for z in numbers],
         positions=np.asarray(positions, dtype=float) * Bohr,
     )
     if cell is not None:
-        atoms.set_cell(np.asarray(cell, dtype=float) * Bohr)
-        atoms.set_pbc(True)
-    atoms.calc = calc
-    energy_ha = float(atoms.get_potential_energy()) / Hartree
+        # PeriodicSystem stores lattice vectors in columns; ASE uses rows.
+        atoms.set_cell(np.asarray(cell, dtype=float).T * Bohr)
+        atoms.set_pbc(pbc if pbc is not None else (True, True, True))
+    # Match the single-point wrapper: accept the whole forward pass only
+    # after checking its scalar energy and one finite force vector per atom.
+    # ASE getters alone can return NaNs or a shape that broadcasts across the
+    # band, contaminating its tangents and optimizer state without an error.
+    calc.calculate(atoms, properties=["energy", "forces"])
+    energy_eV = _checked_backend_result(calc.results, "energy", (), "NEB image")
+    forces = _checked_backend_result(
+        calc.results, "forces", (len(numbers), 3), "NEB image",
+    )
+    energy_ha = float(energy_eV) / Hartree
     # ASE forces are eV/Angstrom; gradient = -force in Ha/bohr.
-    grad = -np.asarray(atoms.get_forces(), dtype=float) * Bohr / Hartree
+    grad = -forces * Bohr / Hartree
     return energy_ha, grad, None
 
 
@@ -2639,7 +2753,7 @@ def run_neb(
     climbing_image_start_fraction: float = 0.3,
     kpoints: Optional[Any] = None,
     fd_step_bohr: float = 1e-3,
-    sr_image_precision: Optional[float] = 1e-6,
+    sr_image_precision: Optional[float] = DEFAULT_BIPOLE_SR_IMAGE_PRECISION,
     warm_start: bool = True,
     dft_plus_u: Optional[Sequence[Any]] = None,
     ccm_options: Any = None,
@@ -2709,7 +2823,9 @@ def run_neb(
     n_jobs
         joblib.Parallel ``n_jobs``. ``0`` (default) selects a bounded
         automatic worker count; ``-1`` explicitly requests all cores;
-        ``1`` is serial.
+        ``1`` is serial. A band whose tasks cannot be pickled for worker
+        processes (native ``*_options`` objects, a periodic k-mesh) warns
+        and runs serially.
     initial_step, max_step
         Quick-min step sizes (bohr). The integrator starts at
         ``initial_step`` and scales up (capped at ``max_step``) when
@@ -2769,7 +2885,7 @@ def run_neb(
         analytic routes, and for ``method="mace"`` (analytic forces).
     sr_image_precision
         Periodic BIPOLE ket-image precision forwarded to every reference and
-        finite-difference SCF. The production default is ``1e-6``. Pass
+        finite-difference SCF. The production default is ``1e-8``. Pass
         ``None`` only for an explicit historical-domain diagnostic or a
         bounded-cost dispatch test whose numerical accuracy is not under
         test; this does not cap or change the production default. Ignored for
@@ -3474,18 +3590,22 @@ def run_neb(
 
     # --- 2. Evaluate endpoints once + cache --------------------------------
     mace_citation = ""
+    mlip_execution: dict[str, Any] = {}
     if is_mace:
+        from .mlip.mace import _pbc_for_dimension
+
         # Load the MACE model once and reuse the calculator for every image.
         # Per-image work is a single forward pass (analytic energy + forces),
         # so the band is evaluated serially rather than pickling the torch
         # model across joblib processes. No SCF, no k-mesh, no basis.
         _mace_calc, _mace_numbers, _mace_cell, mace_citation = _load_mace_model(
-            reactant, mlip_options, is_periodic
+            reactant, mlip_options, is_periodic, mlip_execution=mlip_execution
         )
         eval_kwargs: dict[str, Any] = {
             "calc": _mace_calc,
             "numbers": _mace_numbers,
             "cell": _mace_cell,
+            "pbc": _pbc_for_dimension(neb_dim) if is_periodic else None,
         }
         evaluator = _evaluate_image_mace
         n_jobs = 1
@@ -3591,6 +3711,11 @@ def run_neb(
     # --- 3. Outer loop (quick-min) -----------------------------------------
     from joblib import Parallel, delayed
 
+    n_jobs = _process_safe_neb_n_jobs(
+        n_jobs, evaluator, eval_kwargs,
+        _process_image_cache(evaluator, _d_R, positions[0], eval_kwargs) if warm_start else None,
+    )
+
     velocities: list[np.ndarray] = [
         np.zeros((n_atoms, 3)) for _ in range(n_images)
     ]
@@ -3614,10 +3739,21 @@ def run_neb(
         # Per-image warm-start density: pass last iter's converged
         # density when ``warm_start`` is on; otherwise pass None
         # which falls back to the cold initial guess (SAD/Hcore).
+        # Worker processes return the picklable form of each cache (#564);
+        # serial evaluation keeps the SCF results themselves.
         results = Parallel(n_jobs=n_jobs, prefer="processes")(
             delayed(evaluator)(
                 positions[i],
                 **eval_kwargs,
+                initial_density=image_densities[i] if warm_start else None,
+                image_index=i,
+            )
+            if n_jobs == 1
+            else delayed(_evaluate_image_in_process)(
+                evaluator,
+                positions[i],
+                eval_kwargs,
+                keep_cache=warm_start,
                 initial_density=image_densities[i] if warm_start else None,
                 image_index=i,
             )
@@ -3773,6 +3909,7 @@ def run_neb(
         is_periodic=is_periodic,
         used_dft_plus_u=bool(dft_plus_u),
         mace_model_citation=(mace_citation or None),
+        **mlip_execution,
         semiempirical_route_method=(
             "dftb0_seccm" if is_dftb0_seccm else None
         ),

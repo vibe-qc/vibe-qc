@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Optional
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from examples.regression.core.spec import (
+from vibeqc_spec import (
     ExperimentalReference,
     Provenance,
     ReferenceKind,

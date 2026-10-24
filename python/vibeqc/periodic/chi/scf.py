@@ -37,7 +37,7 @@ from ..._vibeqc_core import (
     PeriodicSystem,
     PeriodicXCDensityDomain,
 )
-from ...kpoints import KPoints
+from ...kpoints import KPoints, _integer_counts
 from ...level_shift_schedule import LevelShiftSchedule
 from ...mpi import LatticeOutputPartition, mpi_world
 from ...pbc_bipole import PBCBipoleRHFResult, run_pbc_bipole_rhf
@@ -75,6 +75,10 @@ from ...periodic_screened_exchange import (
     resolve_periodic_exchange,
 )
 
+from ._transform_inputs import (
+    inverse_inputs, translations_array, complete_characters, checked_mesh_size, phase_arguments,
+)
+
 __all__ = [
     "AICCM2026DevBChargeBookkeeping",
     "AICCM2026DevBDiagnostics",
@@ -92,6 +96,7 @@ __all__ = [
     "pair_wigner_seitz_representatives",
     "rhf_idempotency_error",
     "run_aiccm2026dev_b_rhf",
+    "run_aiccm2026dev_b_rohf",
     "run_aiccm2026dev_b_rks",
     "run_aiccm2026dev_b_uhf",
     "run_aiccm2026dev_b_uks",
@@ -344,6 +349,28 @@ class AICCM2026DevBExactExchangeAssembly:
                 "'short-range-direct' or 'full-range-minus-long-range'; "
                 f"got {assembly!r}"
             )
+
+
+@dataclass(frozen=True)
+class ChiHybridExactExchangeAssembly(AICCM2026DevBExactExchangeAssembly):
+    """Executed full plus signed erfc contract on the explicit chi KS path."""
+
+    schema: str = field(init=False, default="vibeqc.chi.exact-exchange-assembly/v2")
+    resolver: str = field(init=False, default="vibeqc.periodic.chi.xc.exchange_assembly")
+
+    def __post_init__(self):
+        from .xc import ChiExchangeAssembly
+        contract = ChiExchangeAssembly(self.c_full, self.c_sr, self.omega_screen_bohr_inv)
+        for name in ("c_full", "c_sr"):
+            object.__setattr__(self, name, getattr(contract, name))
+        object.__setattr__(self, "omega_screen_bohr_inv", contract.omega_screen)
+        active = "active" if contract.is_screened else "inactive"
+        if self.screened_exchange_applicability != active:
+            raise ValueError("chi hybrid execution applicability disagrees with coefficients")
+        assemblies = (_SCREENED_EXCHANGE_ASSEMBLIES | {"kernel-specific-factors-plus-exact-zero-mode"}
+                      if contract.is_screened else ("not-applicable",))
+        if self.screened_exchange_assembly not in assemblies:
+            raise ValueError("unknown chi hybrid execution assembly")
 
 
 @dataclass(frozen=True)
@@ -689,10 +716,7 @@ def _normalise_mesh(
     dim = int(system.dim)
     if dim not in (1, 2, 3):
         raise ValueError(f"aiccm2026dev-b requires dim=1, 2, or 3; got {dim}")
-    if isinstance(mesh, (int, np.integer)):
-        values = [int(mesh)] * dim
-    else:
-        values = [int(value) for value in mesh]
+    values = _integer_counts(mesh, repeat=dim, name="aiccm2026dev-b mesh")
     if len(values) == dim:
         values += [1] * (3 - dim)
     elif len(values) != 3:
@@ -707,6 +731,7 @@ def _normalise_mesh(
             "aiccm2026dev-b inactive lattice directions must have mesh size 1; "
             f"got {values!r} for dim={dim}"
         )
+    checked_mesh_size(values)
     return tuple(values)  # type: ignore[return-value]
 
 
@@ -736,10 +761,9 @@ def _resolve_lattice_extension(
         )
     if wigner_seitz_shells is not None:
         dim = int(system.dim)
-        if isinstance(wigner_seitz_shells, (int, np.integer)):
-            shells = [int(wigner_seitz_shells)] * dim
-        else:
-            shells = [int(value) for value in wigner_seitz_shells]
+        shells = _integer_counts(
+            wigner_seitz_shells, repeat=dim, name="wigner_seitz_shells"
+        )
         if len(shells) == dim:
             shells += [0] * (3 - dim)
         if len(shells) != 3 or any(value < 0 for value in shells):
@@ -777,7 +801,7 @@ def cyclic_lattice_extension(
         repetitions=repetitions,
         wigner_seitz_half_extent=tuple(0.5 * value for value in repetitions),
         supercell_lattice_bohr=supercell,
-        n_cells=int(np.prod(repetitions)),
+        n_cells=checked_mesh_size(repetitions),
     )
 
 
@@ -842,6 +866,27 @@ def _finalize_exact_exchange_assembly(
     c_full = float(coefficients.c_full)
     c_sr = float(coefficients.c_sr)
     omega_screen = float(coefficients.omega_screen)
+    if getattr(coefficients, "schema", None) == "vibeqc.chi.exchange-kernels/v1":
+        assembly = "not-applicable"
+        if c_sr != 0.0:
+            if backend is AICCM2026DevBBackend.FOUR_CENTER:
+                from ...pbc_bipole_fock import BipoleChiScreenedExchangeExecution
+                expected = BipoleChiScreenedExchangeExecution(c_sr, omega_screen)
+                if execution != expected:
+                    raise RuntimeError(f"{where}: missing or inconsistent chi direct kernel execution")
+                assembly = execution.assembly
+            elif backend is AICCM2026DevBBackend.RI:
+                operator = getattr(result, "fitted_exchange_operator", None)
+                if operator is None or operator.assembly != coefficients or operator.screened is None:
+                    raise RuntimeError(f"{where}: missing or inconsistent chi fitted kernel execution")
+                assembly = "kernel-specific-factors-plus-exact-zero-mode"
+            else:
+                raise NotImplementedError("chi hybrid kernel source is unavailable")
+        elif execution is not None:
+            raise RuntimeError(f"{where}: unexpected screened chi kernel execution")
+        return ChiHybridExactExchangeAssembly(
+            c_full, c_sr, omega_screen,
+            "active" if c_sr != 0 else "inactive", assembly)
     if c_sr == 0.0:
         if execution is not None:
             raise RuntimeError(
@@ -975,12 +1020,12 @@ def wigner_seitz_representatives(
     the only Wigner--Seitz weighting used by ``aiccm2026dev-b``.
     """
 
-    if tolerance <= 0.0:
+    if not np.isfinite(tolerance) or tolerance <= 0.0:
         raise ValueError("aiccm2026dev-b Wigner-Seitz tolerance must be positive")
     mesh_tuple = _normalise_mesh(system, mesh)
     dim = int(system.dim)
     lattice = np.asarray(system.lattice, dtype=float)
-    if lattice.shape != (3, 3):
+    if lattice.shape != (3, 3) or not np.all(np.isfinite(lattice)):
         raise ValueError(f"aiccm2026dev-b lattice must have shape (3,3); got {lattice.shape}")
     # PeriodicSystem stores lattice vectors as columns.  Restrict the
     # closest-vector generator to the active primitive directions.
@@ -1042,24 +1087,7 @@ def _validated_inverse_bloch_inputs(
     kpoints_frac: np.ndarray,
     weights: Sequence[float] | np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    matrices = np.asarray(matrices_k, dtype=np.complex128)
-    kfrac = np.asarray(kpoints_frac, dtype=float).reshape(-1, 3)
-    if matrices.ndim != 3 or matrices.shape[0] != kfrac.shape[0]:
-        raise ValueError(
-            "inverse_bloch_transform expects one square matrix per k-point; "
-            f"got matrices {matrices.shape}, k-points {kfrac.shape}"
-        )
-    if matrices.shape[1] != matrices.shape[2]:
-        raise ValueError("inverse_bloch_transform matrices must be square")
-    if weights is None:
-        weights_array = np.full(kfrac.shape[0], 1.0 / kfrac.shape[0])
-    else:
-        weights_array = np.asarray(weights, dtype=float).reshape(-1)
-    if weights_array.shape != (kfrac.shape[0],):
-        raise ValueError("inverse_bloch_transform weight count does not match k-points")
-    if not np.isclose(weights_array.sum(), 1.0, atol=1e-12, rtol=0.0):
-        raise ValueError("inverse_bloch_transform weights must sum to one")
-    return matrices, kfrac, weights_array
+    return inverse_inputs(matrices_k, kpoints_frac, weights)
 
 
 def inverse_bloch_transform(
@@ -1067,12 +1095,16 @@ def inverse_bloch_transform(
     kpoints_frac: np.ndarray,
     translations: Sequence[Sequence[int]],
     weights: Sequence[float] | np.ndarray | None = None,
+    *,
+    extension_matrix: Sequence[Sequence[int]] | None = None,
 ) -> np.ndarray:
     """Transform k-block matrices to primitive-translation blocks.
 
     The convention is ``M(R)=sum_k w_k exp(-2*pi*i*k.R) M(k)``.
-    This is the exact finite-group Fourier transform, not a numerical
-    quadrature approximation.
+    Nonnegative normalized weights, including zero weights, are supported.
+    With ``extension_matrix=S``, require the complete dual of Z^3 / S Z^3
+    and uniform weights. This optional algebraic contract admits general
+    integral nonsingular extensions; it does not extend SCF support.
     """
 
     matrices, kfrac, weights_array = _validated_inverse_bloch_inputs(
@@ -1080,18 +1112,20 @@ def inverse_bloch_transform(
         kpoints_frac,
         weights,
     )
-    translations_array = np.asarray(translations, dtype=int).reshape(-1, 3)
+    translation_values = translations_array(translations)
+    if extension_matrix is not None:
+        complete_characters(kfrac, weights_array, extension_matrix)
 
     native = _inverse_bloch_transform_native(
         matrices,
         kfrac,
-        translations_array,
+        translation_values,
         weights_array,
     )
     if native is not None:
         return native
 
-    phases = np.exp(-2j * np.pi * (translations_array @ kfrac.T))
+    phases = np.exp(-2j * np.pi * phase_arguments(kfrac, translation_values))
     return np.einsum("rk,k,kij->rij", phases, weights_array, matrices, optimize=True)
 
 
@@ -1147,7 +1181,7 @@ def _group_wigner_seitz_residues(
                 "representative translations; representative "
                 f"{position} has {raw_translation!r}"
             )
-        translation = tuple(int(value) for value in raw_translation)
+        translation = tuple(translations_array([raw_translation])[0].tolist())
         if tuple(
             translation[axis] % mesh[axis] for axis in range(3)
         ) != residue:
@@ -1236,7 +1270,7 @@ def _validated_residue_character_plan(
             "positive integers"
         )
     mesh_tuple = tuple(int(value) for value in raw_mesh)
-    n_characters = int(np.prod(np.asarray(mesh_tuple, dtype=object)))
+    n_characters = checked_mesh_size(mesh_tuple)
     if kfrac.shape[0] != n_characters:
         raise ValueError(
             "aiccm2026dev-b residue transform character count does not "
@@ -1246,7 +1280,8 @@ def _validated_residue_character_plan(
         raise ValueError(
             "aiccm2026dev-b residue transform characters must be finite"
         )
-    scaled = kfrac * np.asarray(mesh_tuple, dtype=float)[None, :]
+    complete_characters(kfrac, weights, np.diag(mesh_tuple))
+    scaled = np.remainder(kfrac, 1.) * np.asarray(mesh_tuple, dtype=float)[None, :]
     nearest = np.rint(scaled)
     if not np.allclose(scaled, nearest, atol=1.0e-10, rtol=0.0):
         raise ValueError(
@@ -1410,6 +1445,9 @@ def _inverse_bloch_transform_native(
     weights: np.ndarray,
 ) -> np.ndarray | None:
     """Return native inverse Bloch blocks, or ``None`` for older extensions."""
+
+    matrices, kfrac, weights = inverse_inputs(matrices, kfrac, weights)
+    translations = translations_array(translations)
 
     try:
         from ... import _vibeqc_core
@@ -1974,6 +2012,9 @@ def _density_blocks_per_k(
     result: object,
     n_electrons: int,
 ) -> list[np.ndarray]:
+    accepted = getattr(result, "accepted_density_k", None)
+    if accepted is not None:
+        return [np.asarray(d) for d in accepted]
     density = getattr(result, "density")
     if isinstance(density, (list, tuple)):
         return [np.asarray(block) for block in density]
@@ -1996,6 +2037,9 @@ def _spin_density_blocks_per_k(
     spin: str,
     n_occupied: int,
 ) -> list[np.ndarray]:
+    accepted = getattr(result, "accepted_density_k", None)
+    if accepted is not None:
+        return [np.asarray(d) for d in accepted[0 if spin == "alpha" else 1]]
     density = getattr(result, f"density_{spin}")
     if isinstance(density, (list, tuple)):
         return [np.asarray(block) for block in density]
@@ -2086,7 +2130,11 @@ def _executed_level_shift_warmup_cycles(
     backend_value = getattr(result, "level_shift_warmup_cycles", None)
     if backend_value is not None:
         return int(backend_value)
-    return int(getattr(options, "level_shift_warmup_cycles", 0))
+    raw = int(getattr(options, "level_shift_warmup_cycles", 0))
+    maximum = int(getattr(options, "max_iter", 0))
+    if maximum <= 1:
+        return 0
+    return min(5, maximum - 1) if raw < 0 else min(raw, maximum - 1)
 
 
 def _attach_diagnostics(
@@ -2125,6 +2173,8 @@ def _attach_diagnostics(
                 "native-gamma-gdf-via-k-gdf",
                 f"native-multi-k-gdf-gdf-{method_name}",
             }
+            if method_name == "rohf":
+                allowed_runtime_backends = {"chi-classic-shared-spatial-rohf"}
         else:
             allowed_runtime_backends = {
                 f"native-multi-k-gdf-cosx-{method_name}",
@@ -2147,14 +2197,20 @@ def _attach_diagnostics(
     # field instead of substring-matching the backend or grepping .err.
     setattr(result, "parity_held", "+PARITY_HELD" in runtime_backend)
     if backend is AICCM2026DevBBackend.FOUR_CENTER:
+        from ...bipole_domain import BipoleResolvedDomain
+
         sr_image_extent = getattr(result, "sr_image_extent_bohr", None)
-        if sr_image_extent is not None:
+        domain = getattr(result, "resolved_domain", None)
+        if (sr_image_extent is not None
+                and isinstance(domain, BipoleResolvedDomain)
+                and domain.sr_image_extent_bohr == sr_image_extent):
             # The physical route measures interaction reach between pair
             # midpoints, not the legacy absolute ket-image radius. Consumers
             # qualified for that legacy finite operator must not inherit an
             # attestation for the different physical quartet support (#243).
-            lattice_options = getattr(options, "lattice_opts", None)
-            physical_pairs = bool(getattr(lattice_options, "pair_complete_1e", False))
+            # BIPOLE resolves its policy without mutating caller options;
+            # only its executed snapshot can attest the selected domain.
+            physical_pairs = dict(domain.lattice_2e.values)["pair_complete_1e"]
             domain_policy = (
                 _M5_SR_PHYSICAL_DOMAIN_POLICY
                 if physical_pairs else _M5_SR_IMAGE_DOMAIN_POLICY
@@ -2229,7 +2285,9 @@ def _attach_diagnostics(
         imaginary_residual = max(
             float(np.max(np.abs(blocks.imag))) for blocks in transformed
         )
-        variational_space = "translation-invariant unrestricted determinants"
+        variational_space = ("translation-invariant shared-spatial high-spin ROHF determinants"
+                             if electronic_method == "ROHF" else
+                             "translation-invariant unrestricted determinants")
     else:
         density_k = _density_blocks_per_k(result, effective_electrons)
         idempotency_error = rhf_idempotency_error(density_k, overlap_k)
@@ -2341,6 +2399,11 @@ def _attach_diagnostics(
         residue_inverse_transform=residue_transform_execution,
     )
     setattr(result, "backend", f"aiccm2026dev-b-{backend.value}")
+    from ...banner import loaded_process_provenance
+    from types import MappingProxyType
+    result.process_provenance = MappingProxyType(loaded_process_provenance())
+    if backend is not AICCM2026DevBBackend.FOUR_CENTER:
+        result.quantitative_status = "not-qualified"
     setattr(result, "aiccm2026dev_b", diagnostics)
     setattr(
         result,
@@ -2516,6 +2579,96 @@ def _reject_implicit_gamma_rsgdf_tail(
     )
 
 
+def _require_hf_integer_state(result, system):
+    """Admit only the insulating fixed-population envelope, per character."""
+    unrestricted = hasattr(result, "density_alpha")
+    ne = int(getattr(result, 'effective_n_electrons', system.n_electrons()))
+    spin = int(system.multiplicity) - 1
+    targets = (("alpha", (ne + spin) // 2, 1.), ("beta", (ne - spin) // 2, 1.)) if unrestricted else (("", ne // 2, 2.),)
+    for suffix, count, maximum in targets:
+        name = "occupations" + ("_" + suffix if suffix else "")
+        occupations = getattr(result, name, None)
+        if occupations is None or len(occupations) == 0:
+            raise ValueError("explicit chi HF result lacks executed occupations")
+        for row in occupations:
+            values = np.asarray(row, dtype=float)
+            if (not np.isfinite(values).all() or
+                    np.max(np.minimum(abs(values), abs(values - maximum)), initial=0.) > 1e-10 or
+                    abs(float(np.sum(values)) - maximum * count) > 1e-8):
+                raise NotImplementedError("explicit chi HF requires integer, constant per-character occupations; metallic/fractional states are unsupported")
+
+
+def _chi_classic_support_kwargs(system, fit_source, gdf_method):
+    """Keep chi's classic SCF on the historical index ball (#466).
+
+    The GDF drivers now build a classic fit on the physical AO pairs by
+    default. chi's classic SCF and the correlation consumers that reuse its
+    factors stay on the support their recorded numbers were measured with,
+    until this experimental line moves deliberately (#453).
+    """
+    from ...periodic_fit_source import resolve_fit_source
+    if int(system.dim) == 3 and resolve_fit_source(
+            fit_source, gdf_method=gdf_method, dimension=3) == "classic":
+        return dict(classic_support_policy="historical_index_ball")
+    return {}
+
+
+def _hf_support_contract(system, opts, selected, fit_source, gdf_method,
+                         support_policy, coulomb_controls, rsgdf_ke_cutoff,
+                         rsgdf_tail_ke_cutoff, gdf_linear_dep_threshold):
+    """Resolve one support contract before choosing an RHF or UHF consumer."""
+    if support_policy is not None or coulomb_controls is not None:
+        spinlock = getattr(opts, "spinlock_mode", None)
+        if spinlock is not None and getattr(spinlock, "name", str(spinlock).split(".")[-1]) != "OFF":
+            raise NotImplementedError("explicit chi HF support requires fixed spin and Aufbau occupations; spinlock/MOM is unsupported")
+    from .support import resolve_support_policy, DirectSupportRecorder
+    fitted_kwargs = {}
+    if coulomb_controls is not None:
+        from .fitted import ChiCoulombControls
+        if not isinstance(coulomb_controls, ChiCoulombControls):
+            raise TypeError("coulomb_controls must be ChiCoulombControls")
+        coulomb_controls.require_source(fit_source)
+        if (selected is not AICCM2026DevBBackend.RI or int(system.dim) != 3
+                or gdf_method != "rsgdf"):
+            raise NotImplementedError("Coulomb controls require 3D chi RI HF")
+        from .ecp_hamiltonian import require_ecp_support
+        require_ecp_support(system, opts, coulomb_controls, fit_source)
+        if support_policy is not None and support_policy != coulomb_controls.support_policy:
+            raise ValueError("support_policy conflicts with coulomb_controls")
+        # Legacy arguments retain their old defaults, but an explicit conflicting
+        # override cannot silently describe a different finite source.
+        for value, default, executed, name in (
+            (rsgdf_ke_cutoff, 200., coulomb_controls.reciprocal_cutoff_ha, 'rsgdf_ke_cutoff'),
+            (gdf_linear_dep_threshold, 1e-9, coulomb_controls.metric_threshold, 'gdf_linear_dep_threshold'),
+            (rsgdf_tail_ke_cutoff, None, coulomb_controls.tail_reciprocal_cutoff_ha, 'rsgdf_tail_ke_cutoff')):
+            if value != default and value != executed:
+                raise ValueError(name + " conflicts with coulomb_controls")
+        rsgdf_ke_cutoff = coulomb_controls.reciprocal_cutoff_ha
+        rsgdf_tail_ke_cutoff = coulomb_controls.tail_reciprocal_cutoff_ha
+        gdf_linear_dep_threshold = coulomb_controls.metric_threshold
+        resolved_support = None
+        fitted_kwargs = dict(fitted_support=coulomb_controls)
+    else:
+        resolved_support = resolve_support_policy(
+            support_policy, backend=selected.value, dimension=int(system.dim),
+            ecp=aiccm2026dev_b_charge_bookkeeping(system, opts).has_ecp,
+        )
+        fitted_kwargs = _chi_classic_support_kwargs(system, fit_source, gdf_method)
+    support_kwargs = {}
+    if resolved_support is not None:
+        from ... import _vibeqc_core as core
+        if not all(hasattr(core, name) for name in (
+            "physical_nuclear_source_indices", "ewald_nuclear_repulsion_with_support")):
+            raise RuntimeError("chi explicit support requires a matching native support recorder")
+        support_kwargs = dict(
+            historical_domain=resolved_support == "historical_index_ball",
+            _support_recorder=DirectSupportRecorder(resolved_support),
+            use_fock_symmetry=False, use_fock_symmetry_reduce=False,
+        )
+    return (support_kwargs, fitted_kwargs, rsgdf_ke_cutoff,
+            rsgdf_tail_ke_cutoff, gdf_linear_dep_threshold)
+
+
 def run_aiccm2026dev_b_rhf(
     system: PeriodicSystem,
     basis: BasisSet,
@@ -2527,6 +2680,12 @@ def run_aiccm2026dev_b_rhf(
     backend: str | AICCM2026DevBBackend = AICCM2026DevBBackend.FOUR_CENTER,
     aux_basis: str | None = None,
     gdf_method: str = "rsgdf",
+    fit_source: str = "auto",
+    support_policy: str | None = None,
+    coulomb_controls=None,
+    hf_reference=None,
+    initial_density_k=None,
+    gdf_linear_dep_threshold: float = 1e-9,
     rsgdf_ke_cutoff: float = 200.0,
     rsgdf_tail_ke_cutoff: float | None = None,
     mdf_ke_cutoff: float = 40.0,
@@ -2549,6 +2708,11 @@ def run_aiccm2026dev_b_rhf(
         wigner_seitz_shells=wigner_seitz_shells,
     )
     selected = _resolve_backend(backend)
+    from ...periodic_fit_source import resolve_fit_source
+    resolved_source = resolve_fit_source(
+        fit_source, gdf_method=gdf_method, dimension=int(system.dim))
+    if selected is AICCM2026DevBBackend.FOUR_CENTER and fit_source != "auto":
+        raise NotImplementedError("fit_source applies only to RI and RIJCOSX backends")
     opts = options if options is not None else PeriodicRHFOptions()
     requested_fock_mixing = resolve_fock_mixing(
         opts,
@@ -2557,20 +2721,17 @@ def run_aiccm2026dev_b_rhf(
     )
     _validate_closed_shell_problem(system, opts)
     _require_supported_scf_dimension(system)
+    (support_kwargs, fitted_kwargs, rsgdf_ke_cutoff,
+     rsgdf_tail_ke_cutoff, gdf_linear_dep_threshold) = _hf_support_contract(
+        system, opts, selected, fit_source, gdf_method, support_policy,
+        coulomb_controls, rsgdf_ke_cutoff, rsgdf_tail_ke_cutoff,
+        gdf_linear_dep_threshold)
     direct_level_shift_schedule = None
     executed_level_shift_warmup_cycles = None
     if selected is AICCM2026DevBBackend.FOUR_CENTER:
-        _require_zero_restricted_four_center_level_shift_schedule(
-            opts,
-            where="run_aiccm2026dev_b_rhf",
-        )
-        (
-            direct_level_shift_schedule,
-            executed_level_shift_warmup_cycles,
-        ) = _resolve_restricted_four_center_level_shift_warmup(
-            opts,
-            where="run_aiccm2026dev_b_rhf",
-        )
+        # The shared direct HF engine consumes the original schedule and
+        # warmup controls, applying a density-normalized projector shift.
+        executed_level_shift_warmup_cycles = None
     if (
         selected is not AICCM2026DevBBackend.FOUR_CENTER
         and gdf_method not in ("rsgdf", "mdf")
@@ -2579,13 +2740,17 @@ def run_aiccm2026dev_b_rhf(
             "aiccm2026dev-b requires gdf_method='rsgdf' or 'mdf'; the q-only "
             "compcell fit is not a consistent finite-torus Hamiltonian"
         )
-    resolved_rsgdf_tail = _resolve_fitted_rsgdf_tail(
-        selected,
-        gdf_method=gdf_method,
-        rsgdf_ke_cutoff=rsgdf_ke_cutoff,
-        rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
-        where="run_aiccm2026dev_b_rhf",
-    )
+    if coulomb_controls is not None:
+        # The explicit contract admits an equal tail as the empty complement.
+        resolved_rsgdf_tail = coulomb_controls.tail_reciprocal_cutoff_ha
+    else:
+        resolved_rsgdf_tail = _resolve_fitted_rsgdf_tail(
+            selected,
+            gdf_method=gdf_method,
+            rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+            rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
+            where="run_aiccm2026dev_b_rhf",
+        )
     kpoints = cyclic_gamma_mesh(system, mesh_tuple)
     exact_exchange_coefficients = _resolve_exact_exchange_coefficients(
         None,
@@ -2608,6 +2773,7 @@ def run_aiccm2026dev_b_rhf(
         selected is AICCM2026DevBBackend.RI
         and int(system.dim) == 3
         and int(np.prod(mesh_tuple)) == 1
+        and coulomb_controls is None
         and requested_fock_mixing != 0.0
     ):
         raise NotImplementedError(
@@ -2619,22 +2785,24 @@ def run_aiccm2026dev_b_rhf(
         selected is AICCM2026DevBBackend.RI
         and int(system.dim) == 3
         and int(np.prod(mesh_tuple)) == 1
+        and coulomb_controls is None
     ):
         _require_zero_gamma_ri_rhf_level_shift(
             opts,
             where="run_aiccm2026dev_b_rhf",
         )
-    _reject_implicit_gamma_rsgdf_tail(
-        system,
-        basis,
-        mesh_tuple,
-        selected,
-        gdf_method=gdf_method,
-        rsgdf_ke_cutoff=rsgdf_ke_cutoff,
-        rsgdf_tail_ke_cutoff=resolved_rsgdf_tail,
-        fock_mixing=requested_fock_mixing,
-        where="run_aiccm2026dev_b_rhf",
-    )
+    if resolved_source == "classic" and fit_source == "auto":
+        _reject_implicit_gamma_rsgdf_tail(
+            system,
+            basis,
+            mesh_tuple,
+            selected,
+            gdf_method=gdf_method,
+            rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+            rsgdf_tail_ke_cutoff=resolved_rsgdf_tail,
+            fock_mixing=requested_fock_mixing,
+            where="run_aiccm2026dev_b_rhf",
+        )
     _require_inactive_quadratic_fallback(
         opts,
         where="run_aiccm2026dev_b_rhf",
@@ -2645,6 +2813,24 @@ def run_aiccm2026dev_b_rhf(
         where="run_aiccm2026dev_b_rhf",
     )
 
+    request_identity = None
+    if support_policy is not None or coulomb_controls is not None or hf_reference is not None:
+        from .reference import _hf_request_identity, ChiHFReference
+        request_controls = dict(backend=selected.value, aux_basis=aux_basis, gdf_method=gdf_method,
+                 fit_source=fit_source, support_policy=support_policy,
+                 coulomb_controls=coulomb_controls, rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+                 rsgdf_tail_ke_cutoff=resolved_rsgdf_tail,
+                 gdf_linear_dep_threshold=gdf_linear_dep_threshold,
+                 mdf_ke_cutoff=mdf_ke_cutoff, fock_mixing=requested_fock_mixing,
+                 initial_density_k=initial_density_k,
+                 symmetry_mode=str(symmetry_mode), symmetry_precision=symmetry_precision,
+                 symmetry_require_full_group=symmetry_require_full_group)
+        request_identity = _hf_request_identity(
+            system, basis, mesh_tuple, opts, 'RHF', request_controls)
+        if hf_reference is not None:
+            if not isinstance(hf_reference, ChiHFReference):
+                raise TypeError("hf_reference must be prepared by prepare_chi_hf_reference")
+            return hf_reference.validate(request_identity, 'RHF')
     started = perf_counter()
     if selected is AICCM2026DevBBackend.FOUR_CENTER:
         use_3d_ewald = int(system.dim) == 3
@@ -2653,6 +2839,8 @@ def run_aiccm2026dev_b_rhf(
             basis,
             kpoints.to_bloch_kmesh(),
             opts,
+            initial_density_k=initial_density_k,
+            **support_kwargs,
             level_shift_schedule=direct_level_shift_schedule,
             fock_mixing=requested_fock_mixing,
             use_ewald_j_split=use_3d_ewald,
@@ -2672,6 +2860,7 @@ def run_aiccm2026dev_b_rhf(
             basis,
             kpoints,
             opts,
+            initial_density_k=initial_density_k,
             functional=None,
             aux_basis=aux_basis,
             fock_mixing=requested_fock_mixing,
@@ -2680,6 +2869,9 @@ def run_aiccm2026dev_b_rhf(
                 "cosx" if selected is AICCM2026DevBBackend.RIJCOSX else "gdf"
             ),
             gdf_method=gdf_method,
+            fit_source=fit_source,
+            **fitted_kwargs,
+            gdf_linear_dep_threshold=gdf_linear_dep_threshold,
             rsgdf_ke_cutoff=rsgdf_ke_cutoff,
             rsgdf_tail_ke_cutoff=resolved_rsgdf_tail,
             mdf_ke_cutoff=mdf_ke_cutoff,
@@ -2711,6 +2903,21 @@ def run_aiccm2026dev_b_rhf(
         rsgdf_tail_ke_cutoff=resolved_rsgdf_tail,
         mdf_ke_cutoff=mdf_ke_cutoff,
     )
+    if request_identity is not None:
+        _require_hf_integer_state(result, system)
+        result._chi_hf_request_identity = request_identity
+        from .checkpoint import bind_chi_restart_inputs
+        bind_chi_restart_inputs(result, system, basis, mesh_tuple, opts, 'RHF', request_controls)
+        result.chi_scf_controls = dict(
+            requested_fock_mixing=requested_fock_mixing,
+            executed_fock_mixing=_executed_fock_mixing(result, opts),
+            requested_level_shift=float(getattr(opts, "level_shift", 0.0)),
+            requested_level_shift_schedule=list(getattr(opts, "level_shift_schedule", ()) or ()),
+            executed_level_shift_warmup_cycles=_executed_level_shift_warmup_cycles(result, opts, None),
+            final_operator="rebuilt-unshifted-unmixed",
+            requested_damping=float(getattr(opts, "damping", 0.0)),
+            requested_initial_guess=str(getattr(opts, "initial_guess", "default")),
+            stability="not-assessed", method_maturity="experimental")
     return result
 
 
@@ -2726,6 +2933,13 @@ def run_aiccm2026dev_b_rks(
     backend: str | AICCM2026DevBBackend = AICCM2026DevBBackend.FOUR_CENTER,
     aux_basis: str | None = None,
     gdf_method: str = "rsgdf",
+    fit_source: str = "auto",
+    support_policy: str | None = None,
+    coulomb_controls=None,
+    xc_controls=None,
+    ks_reference=None,
+    initial_density_k=None,
+    gdf_linear_dep_threshold: float = 1e-9,
     rsgdf_ke_cutoff: float = 200.0,
     rsgdf_tail_ke_cutoff: float | None = None,
     mdf_ke_cutoff: float = 40.0,
@@ -2740,6 +2954,21 @@ def run_aiccm2026dev_b_rks(
 ) -> PeriodicKRKSGDFResult | PBCBipoleRKSResult:
     """Minimise the finite-torus closed-shell Kohn--Sham energy per cell."""
 
+    if any(v is not None for v in (support_policy, coulomb_controls, xc_controls, ks_reference, initial_density_k)):
+        return _run_chi_semilocal(
+            system, basis, functional, lattice_extension, options,
+            method="RKS", mesh=mesh, wigner_seitz_shells=wigner_seitz_shells,
+            backend=backend, aux_basis=aux_basis, gdf_method=gdf_method,
+            fit_source=fit_source, support_policy=support_policy,
+            coulomb_controls=coulomb_controls, xc_controls=xc_controls,
+            ks_reference=ks_reference, initial_density_k=initial_density_k,
+            gdf_linear_dep_threshold=gdf_linear_dep_threshold,
+            rsgdf_ke_cutoff=rsgdf_ke_cutoff, rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
+            mdf_ke_cutoff=mdf_ke_cutoff, fock_mixing=fock_mixing,
+            symmetry_mode=symmetry_mode, symmetry_precision=symmetry_precision,
+            symmetry_require_full_group=symmetry_require_full_group,
+            progress=progress, verbose=verbose)
+
     _warn_experimental()
     if not str(functional).strip():
         raise ValueError("aiccm2026dev-b RKS requires a functional name")
@@ -2750,6 +2979,11 @@ def run_aiccm2026dev_b_rks(
         wigner_seitz_shells=wigner_seitz_shells,
     )
     selected = _resolve_backend(backend)
+    from ...periodic_fit_source import resolve_fit_source
+    resolved_source = resolve_fit_source(
+        fit_source, gdf_method=gdf_method, dimension=int(system.dim))
+    if selected is AICCM2026DevBBackend.FOUR_CENTER and fit_source != "auto":
+        raise NotImplementedError("fit_source applies only to RI and RIJCOSX backends")
     opts = options if options is not None else PeriodicKSOptions()
     opts.functional = str(functional)
     func = Functional(str(functional), 1)
@@ -2904,6 +3138,9 @@ def run_aiccm2026dev_b_rks(
                 "cosx" if selected is AICCM2026DevBBackend.RIJCOSX else "gdf"
             ),
             gdf_method=gdf_method,
+            fit_source=fit_source,
+            **_chi_classic_support_kwargs(system, fit_source, gdf_method),
+            gdf_linear_dep_threshold=gdf_linear_dep_threshold,
             rsgdf_ke_cutoff=rsgdf_ke_cutoff,
             rsgdf_tail_ke_cutoff=resolved_rsgdf_tail,
             mdf_ke_cutoff=mdf_ke_cutoff,
@@ -2943,6 +3180,12 @@ def run_aiccm2026dev_b_rks(
     return result
 
 
+def run_aiccm2026dev_b_rohf(system, basis, lattice_extension=None, options=None, **controls):
+    """Optimize shared ROHF orbitals on the explicit classic chi source."""
+    from .rohf import run_chi_rohf
+    return run_chi_rohf(system, basis, lattice_extension, options, **controls)
+
+
 def run_aiccm2026dev_b_uhf(
     system: PeriodicSystem,
     basis: BasisSet,
@@ -2954,6 +3197,12 @@ def run_aiccm2026dev_b_uhf(
     backend: str | AICCM2026DevBBackend = AICCM2026DevBBackend.FOUR_CENTER,
     aux_basis: str | None = None,
     gdf_method: str = "rsgdf",
+    fit_source: str = "auto",
+    support_policy: str | None = None,
+    coulomb_controls=None,
+    hf_reference=None,
+    initial_density_k=None,
+    gdf_linear_dep_threshold: float = 1e-9,
     rsgdf_ke_cutoff: float = 200.0,
     rsgdf_tail_ke_cutoff: float | None = None,
     mdf_ke_cutoff: float = 40.0,
@@ -2976,6 +3225,11 @@ def run_aiccm2026dev_b_uhf(
         wigner_seitz_shells=wigner_seitz_shells,
     )
     selected = _resolve_backend(backend)
+    from ...periodic_fit_source import resolve_fit_source
+    resolved_source = resolve_fit_source(
+        fit_source, gdf_method=gdf_method, dimension=int(system.dim))
+    if selected is AICCM2026DevBBackend.FOUR_CENTER and fit_source != "auto":
+        raise NotImplementedError("fit_source applies only to RI and RIJCOSX backends")
     opts = options if options is not None else PeriodicRHFOptions()
     requested_fock_mixing = resolve_fock_mixing(
         opts,
@@ -2984,12 +3238,18 @@ def run_aiccm2026dev_b_uhf(
     )
     _validate_open_shell_problem(system, opts)
     _require_supported_scf_dimension(system)
-    _require_zero_unrestricted_level_shift(
-        opts,
-        where="run_aiccm2026dev_b_uhf",
-    )
+    (support_kwargs, fitted_kwargs, rsgdf_ke_cutoff,
+     rsgdf_tail_ke_cutoff, gdf_linear_dep_threshold) = _hf_support_contract(
+        system, opts, selected, fit_source, gdf_method, support_policy,
+        coulomb_controls, rsgdf_ke_cutoff, rsgdf_tail_ke_cutoff,
+        gdf_linear_dep_threshold)
+    if selected is AICCM2026DevBBackend.RIJCOSX or (
+        selected is AICCM2026DevBBackend.RI and coulomb_controls is None
+    ):
+        _require_zero_unrestricted_level_shift(opts, where="run_aiccm2026dev_b_uhf")
     if (
         selected is not AICCM2026DevBBackend.FOUR_CENTER
+        and coulomb_controls is None
         and requested_fock_mixing != 0.0
     ):
         raise NotImplementedError(
@@ -3002,13 +3262,14 @@ def run_aiccm2026dev_b_uhf(
         "mdf",
     ):
         raise ValueError("aiccm2026dev-b UHF requires gdf_method='rsgdf' or 'mdf'")
-    resolved_rsgdf_tail = _resolve_fitted_rsgdf_tail(
+    resolved_rsgdf_tail = (coulomb_controls.tail_reciprocal_cutoff_ha
+        if coulomb_controls is not None else _resolve_fitted_rsgdf_tail(
         selected,
         gdf_method=gdf_method,
         rsgdf_ke_cutoff=rsgdf_ke_cutoff,
         rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
         where="run_aiccm2026dev_b_uhf",
-    )
+    ))
     if selected is AICCM2026DevBBackend.RIJCOSX and int(np.prod(extension)) == 1:
         raise NotImplementedError(
             "aiccm2026dev-b RIJCOSX requires at least two cyclic cells"
@@ -3035,6 +3296,24 @@ def run_aiccm2026dev_b_uhf(
         aux_basis,
         where="run_aiccm2026dev_b_uhf",
     )
+    request_identity = None
+    if support_policy is not None or coulomb_controls is not None or hf_reference is not None:
+        from .reference import _hf_request_identity, ChiHFReference
+        request_controls = dict(backend=selected.value, aux_basis=aux_basis, gdf_method=gdf_method,
+                 fit_source=fit_source, support_policy=support_policy,
+                 coulomb_controls=coulomb_controls, rsgdf_ke_cutoff=rsgdf_ke_cutoff,
+                 rsgdf_tail_ke_cutoff=resolved_rsgdf_tail,
+                 gdf_linear_dep_threshold=gdf_linear_dep_threshold,
+                 mdf_ke_cutoff=mdf_ke_cutoff, fock_mixing=requested_fock_mixing,
+                 initial_density_k=initial_density_k,
+                 symmetry_mode=str(symmetry_mode), symmetry_precision=symmetry_precision,
+                 symmetry_require_full_group=symmetry_require_full_group)
+        request_identity = _hf_request_identity(
+            system, basis, extension, opts, 'UHF', request_controls)
+        if hf_reference is not None:
+            if not isinstance(hf_reference, ChiHFReference):
+                raise TypeError("hf_reference must be prepared by prepare_chi_hf_reference")
+            return hf_reference.validate(request_identity, 'UHF')
     started = perf_counter()
     if selected is AICCM2026DevBBackend.FOUR_CENTER:
         use_3d_ewald = int(system.dim) == 3
@@ -3043,6 +3322,8 @@ def run_aiccm2026dev_b_uhf(
             basis,
             kpoints.to_bloch_kmesh(),
             opts,
+            initial_density_k=initial_density_k,
+            **support_kwargs,
             fock_mixing=requested_fock_mixing,
             use_ewald_j_split=use_3d_ewald,
             use_exchange_ewald_split=use_3d_ewald,
@@ -3058,9 +3339,14 @@ def run_aiccm2026dev_b_uhf(
             basis,
             kpoints,
             opts,
+            initial_density_k=initial_density_k,
             functional=None,
             aux_basis=aux_basis,
             gdf_method=gdf_method,
+            fit_source=fit_source,
+            **fitted_kwargs,
+            **(dict(fock_mixing=requested_fock_mixing) if coulomb_controls is not None else {}),
+            gdf_linear_dep_threshold=gdf_linear_dep_threshold,
             rsgdf_ke_cutoff=rsgdf_ke_cutoff,
             rsgdf_tail_ke_cutoff=resolved_rsgdf_tail,
             mdf_ke_cutoff=mdf_ke_cutoff,
@@ -3094,6 +3380,21 @@ def run_aiccm2026dev_b_uhf(
         rsgdf_tail_ke_cutoff=resolved_rsgdf_tail,
         mdf_ke_cutoff=mdf_ke_cutoff,
     )
+    if request_identity is not None:
+        _require_hf_integer_state(result, system)
+        result._chi_hf_request_identity = request_identity
+        from .checkpoint import bind_chi_restart_inputs
+        bind_chi_restart_inputs(result, system, basis, extension, opts, 'UHF', request_controls)
+        result.chi_scf_controls = dict(
+            requested_fock_mixing=requested_fock_mixing,
+            executed_fock_mixing=_executed_fock_mixing(result, opts),
+            requested_level_shift=float(getattr(opts, "level_shift", 0.0)),
+            requested_level_shift_schedule=list(getattr(opts, "level_shift_schedule", ()) or ()),
+            executed_level_shift_warmup_cycles=_executed_level_shift_warmup_cycles(result, opts, None),
+            final_operator="rebuilt-unshifted-unmixed",
+            requested_damping=float(getattr(opts, "damping", 0.0)),
+            requested_initial_guess=str(getattr(opts, "initial_guess", "default")),
+            stability="not-assessed", method_maturity="experimental")
     return result
 
 
@@ -3109,6 +3410,13 @@ def run_aiccm2026dev_b_uks(
     backend: str | AICCM2026DevBBackend = AICCM2026DevBBackend.FOUR_CENTER,
     aux_basis: str | None = None,
     gdf_method: str = "rsgdf",
+    fit_source: str = "auto",
+    support_policy: str | None = None,
+    coulomb_controls=None,
+    xc_controls=None,
+    ks_reference=None,
+    initial_density_k=None,
+    gdf_linear_dep_threshold: float = 1e-9,
     rsgdf_ke_cutoff: float = 200.0,
     rsgdf_tail_ke_cutoff: float | None = None,
     mdf_ke_cutoff: float = 40.0,
@@ -3123,6 +3431,21 @@ def run_aiccm2026dev_b_uks(
 ) -> PeriodicKUHFGDFResult | PBCBipoleUKSResult:
     """Minimize the finite-torus spin-polarized Kohn--Sham functional."""
 
+    if any(v is not None for v in (support_policy, coulomb_controls, xc_controls, ks_reference, initial_density_k)):
+        return _run_chi_semilocal(
+            system, basis, functional, lattice_extension, options,
+            method="UKS", mesh=mesh, wigner_seitz_shells=wigner_seitz_shells,
+            backend=backend, aux_basis=aux_basis, gdf_method=gdf_method,
+            fit_source=fit_source, support_policy=support_policy,
+            coulomb_controls=coulomb_controls, xc_controls=xc_controls,
+            ks_reference=ks_reference, initial_density_k=initial_density_k,
+            gdf_linear_dep_threshold=gdf_linear_dep_threshold,
+            rsgdf_ke_cutoff=rsgdf_ke_cutoff, rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
+            mdf_ke_cutoff=mdf_ke_cutoff, fock_mixing=fock_mixing,
+            symmetry_mode=symmetry_mode, symmetry_precision=symmetry_precision,
+            symmetry_require_full_group=symmetry_require_full_group,
+            progress=progress, verbose=verbose)
+
     _warn_experimental()
     if not str(functional).strip():
         raise ValueError("aiccm2026dev-b UKS requires a functional name")
@@ -3133,6 +3456,11 @@ def run_aiccm2026dev_b_uks(
         wigner_seitz_shells=wigner_seitz_shells,
     )
     selected = _resolve_backend(backend)
+    from ...periodic_fit_source import resolve_fit_source
+    resolved_source = resolve_fit_source(
+        fit_source, gdf_method=gdf_method, dimension=int(system.dim))
+    if selected is AICCM2026DevBBackend.FOUR_CENTER and fit_source != "auto":
+        raise NotImplementedError("fit_source applies only to RI and RIJCOSX backends")
     opts = options if options is not None else PeriodicKSOptions()
     opts.functional = str(functional)
     func = Functional(str(functional), 2)
@@ -3266,6 +3594,9 @@ def run_aiccm2026dev_b_uks(
             functional=str(functional),
             aux_basis=aux_basis,
             gdf_method=gdf_method,
+            fit_source=fit_source,
+            **_chi_classic_support_kwargs(system, fit_source, gdf_method),
+            gdf_linear_dep_threshold=gdf_linear_dep_threshold,
             rsgdf_ke_cutoff=rsgdf_ke_cutoff,
             rsgdf_tail_ke_cutoff=resolved_rsgdf_tail,
             mdf_ke_cutoff=mdf_ke_cutoff,
@@ -3304,4 +3635,121 @@ def run_aiccm2026dev_b_uks(
         rsgdf_tail_ke_cutoff=resolved_rsgdf_tail,
         mdf_ke_cutoff=mdf_ke_cutoff,
     )
+    return result
+
+
+def _run_chi_semilocal(system, basis, functional, lattice_extension, options, *,
+                      method, mesh, wigner_seitz_shells, backend, aux_basis,
+                      gdf_method, fit_source, support_policy, coulomb_controls,
+                      xc_controls, ks_reference, initial_density_k,
+                      gdf_linear_dep_threshold, rsgdf_ke_cutoff,
+                      rsgdf_tail_ke_cutoff, mdf_ke_cutoff, fock_mixing,
+                      symmetry_mode, symmetry_precision, symmetry_require_full_group,
+                      progress, verbose):
+    """Explicit KS energy path using selected finite Coulomb/exchange providers.
+
+    Grid density is formed directly from character orbitals. The callback's
+    potential is the derivative of precisely its executed quadrature energy.
+    """
+    from .xc import ChiXCControls, ChiSemilocalXC, functional_identity, exchange_assembly
+    from .reference import _hf_request_identity, ChiKSReference
+    _warn_experimental()
+    if not isinstance(xc_controls, ChiXCControls):
+        raise TypeError("explicit chi KS requires xc_controls=ChiXCControls(...)")
+    spin = 1 if method == "RKS" else 2
+    identity = functional_identity(functional, spin)
+    resolved_functional = Functional(functional, spin) if isinstance(functional, str) else functional
+    coefficients = exchange_assembly(resolved_functional)
+    functional_name = str(resolved_functional.name)
+    extension = _resolve_lattice_extension(system, lattice_extension, mesh=mesh,
+                                          wigner_seitz_shells=wigner_seitz_shells)
+    selected = _resolve_backend(backend)
+    opts = options if options is not None else PeriodicKSOptions()
+    if not isinstance(opts, PeriodicKSOptions):
+        raise TypeError("chi semilocal KS requires PeriodicKSOptions")
+    if int(system.dim) != 3 or aiccm2026dev_b_charge_bookkeeping(system, opts).has_ecp:
+        raise NotImplementedError("explicit chi semilocal energy requires all-electron 3D cells")
+    if selected not in (AICCM2026DevBBackend.FOUR_CENTER, AICCM2026DevBBackend.RI):
+        raise NotImplementedError("explicit chi semilocal energy supports direct or RI Coulomb")
+    if selected is AICCM2026DevBBackend.FOUR_CENTER:
+        if fit_source != "auto" or aux_basis is not None or coulomb_controls is not None:
+            raise ValueError("direct chi KS does not consume fitted Coulomb controls")
+        if support_policy is None:
+            raise ValueError("direct chi KS requires an explicit support_policy")
+    elif coulomb_controls is None or fit_source not in ("classic", "sr"):
+        raise ValueError("RI chi KS requires explicit classic/sr and coulomb_controls")
+    if _resolve_symmetry_mode(symmetry_mode) is not AICCM2026DevBSymmetryMode.OFF:
+        raise NotImplementedError("explicit chi KS currently uses the full character mesh")
+    (_validate_closed_shell_problem if spin == 1 else _validate_open_shell_problem)(system, opts)
+    _require_inactive_quadratic_fallback(opts, where="explicit chi KS")
+    opts.functional = functional_name
+    mixing = resolve_fock_mixing(opts, fock_mixing, where="explicit chi KS")
+    (support_kwargs, fitted_kwargs, cutoff, tail, metric) = _hf_support_contract(
+        system, opts, selected, fit_source, gdf_method, support_policy,
+        coulomb_controls, rsgdf_ke_cutoff, rsgdf_tail_ke_cutoff, gdf_linear_dep_threshold)
+    if selected is AICCM2026DevBBackend.FOUR_CENTER:
+        from .support import DirectSupportRecorder
+        support_kwargs["_support_recorder"] = DirectSupportRecorder(
+            support_policy, exact_exchange=coefficients.needs_exchange,
+            full_range_exchange=coefficients.c_full != 0.0)
+    controls = dict(backend=selected.value, aux_basis=aux_basis, gdf_method=gdf_method,
+                    fit_source=fit_source, support_policy=support_policy,
+                    coulomb_controls=coulomb_controls, xc_controls=xc_controls,
+                        functional=identity, cutoff=cutoff, tail=tail, metric=metric,
+                    mdf_ke_cutoff=mdf_ke_cutoff, fock_mixing=mixing,
+                    initial_density_k=initial_density_k)
+    request = _hf_request_identity(system, basis, extension, opts, method, controls)
+    if ks_reference is not None:
+        if not isinstance(ks_reference, ChiKSReference):
+            raise TypeError("ks_reference must be prepared by prepare_chi_ks_reference")
+        return ks_reference.validate(request, method)
+    kpoints = cyclic_gamma_mesh(system, extension)
+    km = kpoints.to_bloch_kmesh()
+    xc = ChiSemilocalXC(system, basis, km.kpoints, km.weights,
+                       functional, spin, opts, xc_controls)
+    started = perf_counter()
+    if selected is AICCM2026DevBBackend.FOUR_CENTER:
+        driver = run_pbc_bipole_rks if spin == 1 else run_pbc_bipole_uks
+        result = driver(system, basis, km, opts, functional=functional_name,
+                        initial_density_k=initial_density_k,
+                        _chi_xc=xc, **support_kwargs, fock_mixing=mixing,
+                        use_ewald_j_split=True, use_exchange_ewald_split=True,
+                        exchange_exxdiv="ewald", use_multipole_far_field=False,
+                        sr_image_precision=_M5_SR_IMAGE_PRECISION,
+                        progress=progress, verbose=verbose)
+    else:
+        driver = run_krks_periodic_gdf if spin == 1 else run_kuks_periodic_gdf
+        result = driver(system, basis, kpoints, opts, functional=functional_name,
+                        initial_density_k=initial_density_k, _chi_xc=xc,
+                        **fitted_kwargs, aux_basis=aux_basis, fit_source=fit_source,
+                        gdf_method=gdf_method, rsgdf_ke_cutoff=cutoff,
+                        rsgdf_tail_ke_cutoff=tail, gdf_linear_dep_threshold=metric,
+                        fock_mixing=mixing, compute_gradient=False,
+                        progress=progress, verbose=verbose)
+    plan = _build_symmetry_plan(system, extension, symmetry_mode,
+                               symmetry_precision=symmetry_precision,
+                               symmetry_require_full_group=symmetry_require_full_group)
+    result = _attach_diagnostics(result, system, basis, kpoints, extension, selected,
+                                 method + "/" + functional_name, coefficients,
+                                 perf_counter() - started, plan, opts, None)
+    _attach_fitted_selector_settings(result, selected, gdf_method=gdf_method,
+                                     rsgdf_ke_cutoff=cutoff, rsgdf_tail_ke_cutoff=tail,
+                                     mdf_ke_cutoff=mdf_ke_cutoff)
+    _require_hf_integer_state(result, system)
+    result._chi_ks_request_identity = request
+    result.executed_chi_xc = dict(xc.metadata)
+    if not hasattr(result, "executed_chi_exchange"):
+        executed_support = getattr(result, "executed_support", None)
+        result.executed_chi_exchange = dict(
+            assembly=coefficients.as_dict(), source="direct",
+            support_identity=executed_support.identity if executed_support is not None else None,
+            method_maturity="experimental", quantitative_status="not-qualified")
+    result.chi_scf_controls = dict(
+        requested_fock_mixing=mixing, executed_fock_mixing=_executed_fock_mixing(result, opts),
+        requested_damping=float(opts.damping), requested_initial_guess=str(opts.initial_guess),
+        final_operator="rebuilt-unshifted-unmixed", stability="not-assessed",
+        method_maturity="experimental", quantitative_status="not-qualified")
+    from ...periodic_xc_diagnostics import report_xc_grid_charge
+    report_xc_grid_charge(result, {"n_electrons_grid": xc.metadata["electron_count"], "periodic_density_bras": True},
+                         int(system.n_electrons()), context="chi semilocal KS")
     return result

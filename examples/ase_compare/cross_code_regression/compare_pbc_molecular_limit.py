@@ -98,7 +98,7 @@ def run_periodic_vibeqc(label: str, sys_: vq.PeriodicSystem,
         opts.conv_tol_energy = 1e-7
         out_stem = OUT_DIR / label
         with vq.crash_dump_context(out_stem):
-            with vq.perf_log(out_stem.with_suffix(".perf")):
+            with vq.perf_log(out_stem.parent / f"{out_stem.name}.perf"):
                 r = vq.run_rhf_periodic_scf(
                     sys_, basis, vq.KPoints.gamma(sys_), opts,
                     progress=False, spacing_bohr=0.4,

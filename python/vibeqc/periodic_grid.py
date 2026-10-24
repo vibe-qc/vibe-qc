@@ -1,12 +1,18 @@
 """Periodic atomic quadrature with point-centered image neighborhoods.
 
 For a grid point r, the partition includes every physical atom image B+g
-within max(image_radius_bohr, 2*d_nearest) of r. Here d_nearest is the
-shortest distance to any physical atom image. The normalized Becke (or
-selected Stratmann) weight belongs to the owning home atom A when A is in
-that set, and is zero otherwise. The same physical point sees the same
-neighborhood under atom-image relabelling or a rigid translation. The
-nearest-image term keeps vacuum regions covered for diffuse densities.
+within rho = max(image_radius_bohr, 2*d_nearest) of r. Here d_nearest is
+the shortest distance to any physical atom image. Images beyond rho switch
+off smoothly across a band of 0.1*image_radius_bohr: an image at distance
+d enters with inclusion chi(d), 1 up to rho and 0 from rho + band, and its
+pair factor in the other atoms' products becomes 1 - chi*(1 - s). The
+normalized Becke (or selected Stratmann) weight belongs to the owning home
+atom A, scaled by A's own inclusion. Because nothing is cut off abruptly,
+the weights, and every periodic KS energy, are continuous in the atomic
+positions; a hard cutoff made them jump wherever an image crossed rho
+(#482). The same physical point sees the same neighborhood under
+atom-image relabelling or a rigid translation. The nearest-image term
+keeps vacuum regions covered for diffuse densities.
 
 Grid points, raw atomic weights and ownership retain their atom-major
 layout. Only the energy-quadrature weights carry the periodic partition.
@@ -160,9 +166,12 @@ def build_periodic_becke_grid(
     image_radius_bohr
         Minimum physical atom-image neighborhood radius around each point
         (default 10 bohr). The radius expands to twice the nearest-image
-        distance where needed to retain coverage through vacuum. Converge
-        it for the chosen density and cell; it is not an atomic radial
-        cutoff or a total-energy tolerance.
+        distance where needed to retain coverage through vacuum. Images
+        are fully included up to that radius and switch off smoothly over
+        a further 0.1 * ``image_radius_bohr``, so the weights stay
+        continuous as atoms move. Converge it for the chosen density and
+        cell; it is not an atomic radial cutoff or a total-energy
+        tolerance.
         Zero explicitly selects the molecular partition.
 
     Returns

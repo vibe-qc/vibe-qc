@@ -101,13 +101,21 @@ INSTALL_DIR="$OPENBLAS_DIR/install"
 # Sentinel file we look for to short-circuit: the C-interface header
 # lapacke.h is only there if USE_LAPACKE=1 succeeded. If a previous
 # partial build dropped libopenblas.so but failed before installing
-# lapacke.h, we want to redo the build.
+# lapacke.h, refuse reuse and require an explicit rebuild.
 SENTINEL="$INSTALL_DIR/include/lapacke.h"
 
-if [ "${REBUILD:-0}" != "1" ] && [ -f "$SENTINEL" ]; then
-    echo "OpenBLAS $OPENBLAS_VERSION already installed at $INSTALL_DIR"
+# Cache admission does not change source or compilation options.
+# vibeqc-recipe-hash: lifecycle-only-begin
+if [ "${REBUILD:-0}" != "1" ] && [ -d "$INSTALL_DIR" ]; then
+    if [ ! -f "$SENTINEL" ]; then
+        echo "OpenBLAS artifact identity unavailable: cached install lacks lapacke.h" >&2
+        exit 3
+    fi
+    python3 "$SCRIPT_DIR/attest_native_image.py" openblas "$INSTALL_DIR" || exit 3
+    echo "OpenBLAS cache admitted at $INSTALL_DIR (recipe pin $OPENBLAS_VERSION; source/build provenance not attested)"
     exit 0
 fi
+# vibeqc-recipe-hash: lifecycle-only-end
 
 # Fortran compiler check — bail with a helpful message if missing.
 if ! command -v gfortran >/dev/null 2>&1; then

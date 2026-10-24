@@ -1,6 +1,8 @@
 """Tolerance-based pass / marginal / fail classification of ΔE."""
 from __future__ import annotations
 
+import math
+from numbers import Real
 from typing import Optional, Tuple
 
 from .case import CodeRow
@@ -80,10 +82,14 @@ def classify(
     pass     : |Δ| <= tolerance
     marginal : tolerance < |Δ| <= marginal_factor * tolerance
     fail     : |Δ| > marginal_factor * tolerance
-    error    : Δ unavailable (one side did not converge)
+    error    : invalid policy or unavailable/nonfinite delta
     """
-    if delta_ha is None:
-        return "error", "delta unavailable"
+    if not _finite_number(tolerance_ha) or tolerance_ha < 0:
+        return "error", "tolerance must be finite and nonnegative"
+    if not _finite_number(marginal_factor) or marginal_factor < 1:
+        return "error", "marginal factor must be finite and at least one"
+    if not _finite_number(delta_ha):
+        return "error", "delta unavailable or nonfinite"
     abs_d = abs(delta_ha)
     if abs_d <= tolerance_ha:
         return "pass", f"|Δ|={abs_d:.3e} Ha <= tol {tolerance_ha:.3e}"
@@ -98,46 +104,106 @@ def classify(
     )
 
 
+def _finite_number(value) -> bool:
+    return isinstance(value, Real) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def scf_energy_problem(converged, energy) -> str:
+    """An energy alone does not attest a successfully converged calculation."""
+    if converged is not True:
+        return "SCF convergence is false or unconfirmed"
+    if not _finite_number(energy):
+        return "energy unavailable or nonfinite"
+    return ""
+
+
+def _case_key(row):
+    return row.system_id, row.basis, row.method_id, row.kmesh
+
+
+def _case_mismatch(row, reference) -> bool:
+    if _case_key(row) != _case_key(reference):
+        return True
+    return any(getattr(row, key) is not None and getattr(reference, key) is not None
+               and getattr(row, key) != getattr(reference, key)
+               for key in ("n_atoms", "n_electrons", "n_basis_functions"))
+
+
+def paired_wall_ratio(row: CodeRow, reference: CodeRow) -> Optional[float]:
+    """Accuracy-filtered timing; resource equivalence needs separate evidence."""
+    if (row.status != "pass" or reference.status != "reference"
+            or row.ref_code != reference.code or _case_mismatch(row, reference)
+            or scf_energy_problem(row.converged, row.energy_ha)
+            or scf_energy_problem(reference.converged, reference.energy_ha)):
+        return None
+    if not all(_finite_number(r.wall_s) and r.wall_s > 0 for r in (row, reference)):
+        return None
+    ratio = row.wall_s / reference.wall_s
+    return ratio if math.isfinite(ratio) else None
+
+
 def annotate_against_reference(
     rows: list[CodeRow], ref_code: str, expected: ExpectedRef,
 ) -> None:
-    """Mutate rows in-place: set delta_ha_vs_ref / ref_code / status / note
-    for every non-reference row.
+    """Classify only finite, explicitly converged, matching case rows.
 
-    The reference row itself gets status = 'reference' and Δ = 0.
+    Preserve runner errors/unavailability. Labels and reported counts must
+    match, but this is not proof of equal basis primitives, grids, Hamiltonian
+    conventions or runtime provenance; the numerical campaign supplies those.
     """
-    ref_row = next((r for r in rows if r.code == ref_code), None)
-    if ref_row is None or ref_row.energy_ha is None:
-        for r in rows:
-            if r.status == "pending":
-                r.status = "error"
-                if not r.note:
-                    r.note = f"reference code {ref_code!r} missing or did not converge"
+    pending = [r for r in rows if r.status in ("pending", "pass", "marginal", "fail", "reference")]
+    for r in pending:
+        r.delta_ha_vs_ref = None
+        r.ref_code = ""
+        _set_normalized_deltas(r)
+
+    def error(row, reason):
+        row.status = "error"
+        row.note = f"{row.note} | {reason}" if row.note else reason
+
+    candidates = [r for r in rows if r.code == ref_code]
+    issue = ""
+    ref_row = candidates[0] if len(candidates) == 1 else None
+    if ref_row is None:
+        issue = f"reference code {ref_code!r} missing or ambiguous"
+    elif ref_row.status not in ("pending", "pass", "marginal", "fail", "reference"):
+        issue = f"reference code {ref_code!r} has status {ref_row.status}"
+    else:
+        issue = scf_energy_problem(ref_row.converged, ref_row.energy_ha)
+        expected_mesh = "mol" if tuple(expected.kmesh) == (0, 0, 0) else "x".join(map(str, expected.kmesh))
+        if _case_key(ref_row) != (expected.system_id, expected.basis, expected.method_id, expected_mesh):
+            issue = "reference case does not match the expected comparison"
+    if not issue and classify(0., expected.tolerance_ha)[0] == "error":
+        issue = "invalid comparison tolerance"
+    if issue:
+        for r in pending:
+            error(r, issue)
         return
 
-    ref_e = ref_row.energy_ha
     ref_row.delta_ha_vs_ref = 0.0
     ref_row.ref_code = ref_code
     ref_row.status = "reference"
     _set_normalized_deltas(ref_row)
     if not ref_row.note:
-        ref_row.note = f"reference (E={ref_e:.6f} Ha)"
+        ref_row.note = f"reference (E={ref_row.energy_ha:.6f} Ha)"
 
-    for r in rows:
-        if r is ref_row or r.status not in ("pending",):
+    for r in pending:
+        if r is ref_row:
             continue
-        if r.energy_ha is None:
-            r.status = "error"
-            if not r.note:
-                r.note = "did not converge"
+        issue = scf_energy_problem(r.converged, r.energy_ha)
+        if _case_mismatch(r, ref_row):
+            issue = "candidate case or reported counts differ from reference"
+        if issue:
+            error(r, issue)
             continue
-        r.delta_ha_vs_ref = r.energy_ha - ref_e
+        delta = r.energy_ha - ref_row.energy_ha
+        status, note = classify(delta, expected.tolerance_ha)
+        if status == "error":
+            error(r, note)
+            continue
+        r.delta_ha_vs_ref = delta
         r.ref_code = ref_code
-        status, note = classify(r.delta_ha_vs_ref, expected.tolerance_ha)
         _set_normalized_deltas(r)
         r.status = status
-        note = note + _normalization_note(r)
-        if r.note:
-            r.note = f"{r.note} | {note}"
-        else:
-            r.note = note
+        note += _normalization_note(r)
+        r.note = f"{r.note} | {note}" if r.note else note

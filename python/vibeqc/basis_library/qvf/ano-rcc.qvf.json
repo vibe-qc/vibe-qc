@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
+  "schema_version": "1.1.0",
+  "name": "ano-rcc",
+  "description": "v1.2.2\n ANO-RCC  EMSL  Basis Set Exchange Library   12/5/18 8:40 AM\nElements                             References\nH He: P.-O. Widmark, P.-Å. Malmqvist, and B. O. Roos, Density-matrix averaged atomic natural orbital (ANO) basis-sets for correlated molecular wave-functions 1: 1st row atoms., Theor. Chim. Acta 77, 291-306 (1990).\nLi Be Na Mg K Ca Rb Sr Cs Ba Fr Ra: O. Roos, V. Veryazov and P.-O. Widmark, Relativistic atomic natural orbital type basis sets for the alkaline and alkaline-earth atoms applied to the ground-state potentials for the corresponding dimers., Theor. Chem. Acc. 111, 345-351 (2003).\nB C N O F Ne Al Si P S Cl Ar Ga Ge As Se Br Kr In Sn Sb Te I Xe Tl Pb Bi Po At Rn: B. O. Roos, R. Lindh, P.-Å. Malmqvist, V. Veryazov, and P.-O. Widmark, Main group atoms and dimers studied with a new relativistic ANO basis set, J. Phys. Chem. A 108, 2851 (2005).\nSc Ti V Cr Mn Fe Co Ni Cu Zn Y Zr Nb Mo Tc Ru Rh Pd Ag Cd Hf Ta W Re Os Ir Pt Au Hg: . O. Roos, R. Lindh and P.-Å. Malmqvist, V. Veryazov and P.-O. Widmark, New relativistic ANO basis sets for transition metal atoms, J. Phys. Chem. A 109, 6575-6579 (2005).\nAc Th Pa U Np Pu Am Cm: B.O. Roos, R. Lindh, P.-Å. Malmqvist, V. Veryazov, and P.-O. Widmark, New relativistic ANO basis sets for actinide atoms, Chem. Phys. Letters 409, 295-299 (2005).\nLa Ce Pr Nd Pm Sm Eu Gd Tb Dy Ho Er Tm Yb Lu: B. O. Roos, R. Lindh, P.-Å. Malmqvist, V. Veryazov, and P.-O. Widmark, New Relativistic atomic natural orbital basis sets for lanthanide atoms with applications to the Ce diatomic abd LuF3, Phys. Chem. A 112, 11431-11435 (2008).",
   "role": "orbital",
   "elements": {
     "H": {
@@ -243093,7 +243093,46 @@
       ]
     }
   },
+  "basis_family": "ano",
+  "references": [
+    {
+      "key": "widmark_malmqvist_roos_ano_1990",
+      "description": "P. O. Widmark, P. Å. Malmqvist, B. O. Roos, Theoretica Chimica Acta 77, 291-306 (1990)",
+      "doi": "10.1007/BF01120130"
+    },
+    {
+      "key": "roos_ano_rcc_main_group_2004",
+      "description": "B. O. Roos, R. Lindh, P. Å. Malmqvist, V. Veryazov, P. O. Widmark, Journal of Physical Chemistry A 108, 2851-2858 (2004)",
+      "doi": "10.1021/jp031064+"
+    },
+    {
+      "key": "roos_ano_rcc_tm_2005",
+      "description": "B. O. Roos, R. Lindh, P. Å. Malmqvist, V. Veryazov, P. O. Widmark, Journal of Physical Chemistry A 109, 6575-6579 (2005)",
+      "doi": "10.1021/jp0581126"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "vendor",
+    "upstream": [
+      {
+        "name": "libint",
+        "version": "2.13.1",
+        "identifier": "ano-rcc",
+        "detail": "byte-identical to libint's bundled file"
+      }
+    ],
+    "retrieval_date": "2026-09-08",
+    "content_sha256": "ecf2395f5cabc58cff7f00d8ad2873d77ab06619811c83164bdef82d8e0cf70e",
+    "citations": [
+      {
+        "keys": [
+          "widmark_malmqvist_roos_ano_1990",
+          "roos_ano_rcc_main_group_2004",
+          "roos_ano_rcc_tm_2005"
+        ]
+      }
+    ],
+    "notes": "The date is when the file entered this repository's history; the import date was not recorded."
   }
 }

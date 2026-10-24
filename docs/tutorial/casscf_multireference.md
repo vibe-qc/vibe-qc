@@ -133,7 +133,7 @@ This is exactly what you get:
   NEVPT2 / CASSCF  -107.64546059   (+ dynamic, intruder-free)
   CASPT2 / CASSCF  -107.64834004   (+ dynamic)
 
-  static  correlation (RHF -> CASSCF):  88.46 kcal/mol
+  static  correlation (RHF -> CASSCF):  88.47 kcal/mol
   dynamic correlation (CASSCF -> CASPT2):  7.22 kcal/mol
 ```
 
@@ -160,8 +160,8 @@ against the OpenMolcas RASSCF value of $-107.63683522$ Ha (agreement to
 0.05 microhartree), and the CASPT2-on-CASSCF total is $-107.64834004$
 Ha against OpenMolcas $-107.64834018$ Ha (0.14 microhartree). Those
 OpenMolcas numbers were generated out-of-process and recorded as
-constants in the test suite (CLAUDE.md disallows importing another
-quantum-chemistry program into vibe-qc), and the parity is what lets
+constants in the test suite (the project rules in AGENTS.md disallow
+importing another quantum-chemistry program into vibe-qc), and the parity is what lets
 this tutorial state real digits rather than hand-wave at a trend.
 
 ```{admonition} Two references, two PT2 totals
@@ -183,8 +183,10 @@ The ladder above was run at equilibrium, where the static correlation
 is real but moderate. To see *why* the multireference machinery is not
 optional, pull a bond apart and watch RHF break. H2 in a 6-31G basis is
 the smallest honest example: the full valence active space is again
-CAS(2,2), so CASSCF(2,2) is the exact-in-basis curve, and RHF is the
-single-determinant approximation to it. This script scans the bond from
+CAS(2,2), the smallest space that dissociates correctly, and RHF is the
+single-determinant approximation to it. CASSCF(2,2) is not the
+exact-in-basis curve (6-31G gives H2 four orbitals, so full CI would be
+CAS(2,4)), but it holds the static correlation that RHF misses. This script scans the bond from
 equilibrium out toward dissociation and prints the gap.
 
 ```python
@@ -226,12 +228,14 @@ becomes an equal mixture of the closed-shell determinant
 locked into keeping $\sigma_g$ doubly occupied, which forces in
 high-energy ionic terms (H$^+\cdots$H$^-$) that should vanish at
 dissociation. No single determinant can represent the
-correctly-mixed state, and so no amount of single-reference correlation
-on top of RHF can fix it (MP2 diverges here; CCSD develops a spurious
-bump). CAS(2,2) holds both determinants from the start, which is why
+correctly-mixed state, and so low-order single-reference corrections on
+top of RHF cannot fix it (MP2 diverges here). CCSD escapes only
+because H2 has two electrons, where CCSD equals full CI; for
+many-electron bond breaking it fails as well. CAS(2,2) holds both determinants from the start, which is why
 its curve is right at every distance. The gap between the two curves
-*is* the static correlation, and the fact that it grows without bound as
-you stretch the bond is the fingerprint that tells you a single-reference
+*is* the static correlation, and the fact that it keeps growing as you
+stretch the bond (toward a finite limit at infinite separation in this
+basis) is the fingerprint that tells you a single-reference
 method has no business being used.
 
 At equilibrium ($R = 1.4$) the CASSCF(2,2) value $-1.14624789$ Ha
@@ -279,9 +283,10 @@ The NEVPT2 and CASPT2 lines here use the **default CASCI-on-HF
 reference** (no `casscf_options`), which is what OpenMolcas reproduces
 with its `CIonly` keyword. vibe-qc's CASPT2 total $-74.97302709$ Ha
 matches the recorded OpenMolcas `&CASPT2` value of $-74.97302712$ Ha to
-0.03 microhartree. Note that the dynamic-correlation step (CASSCF to
-CASPT2, about 13 kcal/mol) is much larger than the static step (RHF to
-CASSCF, about 7 kcal/mol) here: at a closed-shell equilibrium geometry,
+0.03 microhartree. Note that the dynamic-correlation step (CASCI to
+CASPT2, about 16 kcal/mol, since this CASPT2 is CASCI-referenced) is
+much larger than the static step (RHF to CASSCF, about 7 kcal/mol)
+here: at a closed-shell equilibrium geometry,
 most of the missing correlation is dynamic, and the active space is
 doing comparatively little. That is the opposite balance from
 stretched N2, and recognizing which regime you are in is half the
@@ -345,7 +350,9 @@ into three sets:
 A CAS($n$, $m$) calculation places $m$ electrons in $n$ active spatial
 orbitals. The number of active determinants grows combinatorially, so
 active spaces are kept small (typically up to CAS(14,14) or so for
-conventional determinant CI; larger needs DMRG). Choosing the active
+conventional determinant CI, {vibeqc-cite}`knowles_handy_fci_1984`;
+larger needs DMRG, {vibeqc-cite}`white_dmrg_1992`,
+{vibeqc-cite}`chan_headgordon_dmrg_2002`). Choosing the active
 space is the one genuinely non-black-box decision in a multireference
 calculation: it must contain every orbital involved in the
 near-degeneracy you care about. For a breaking bond, that is the
@@ -355,7 +362,9 @@ $\pi$ and $\pi^*$ orbitals.
 
 ### CASCI: full CI in a chosen window
 
-The cheapest CAS method is **CASCI**: take a fixed set of orbitals
+The cheapest CAS method is **CASCI**
+({vibeqc-cite}`roos_taylor_siegbahn_casci_1980`): take a fixed set of
+orbitals
 (here, the converged RHF orbitals), partition them into
 inactive/active/virtual, and diagonalize the Hamiltonian in the full
 determinant space of the active electrons. The inactive orbitals are
@@ -373,7 +382,8 @@ you hand it.
 The HF orbitals are optimal for the single HF determinant. They are
 *not* optimal for a multi-determinant CAS wavefunction, the density has
 changed, so the best orbitals have changed. **CASSCF** (complete active
-space self-consistent field) closes that loop: it optimizes the CI
+space self-consistent field, {vibeqc-cite}`roos_taylor_siegbahn_casci_1980`)
+closes that loop: it optimizes the CI
 coefficients *and* the orbital shapes simultaneously, minimizing the
 CAS energy with respect to both. Formally it iterates two coupled
 steps, a CI solve in the current orbitals and an orbital rotation
@@ -398,8 +408,8 @@ A CASSCF wavefunction is an excellent reference but still misses
 dynamic correlation, the excitations into the virtual space it never
 touches. Both **CASPT2** and **NEVPT2** recover that dynamic
 correlation by second-order perturbation theory built on the CAS
-reference, in direct analogy to how MP2 corrects a single HF
-determinant. The first-order wavefunction spans the excitations out of
+reference, in direct analogy to how MP2
+({vibeqc-cite}`moller_plesset_1934`) corrects a single HF determinant. The first-order wavefunction spans the excitations out of
 the active space (internal-to-virtual, internal-to-active, and so on),
 and the second-order energy is the resulting correction. Both reduce to
 MP2 exactly when the active space is empty, and both give zero
@@ -411,16 +421,21 @@ $\hat H_0$, the operator whose eigenvalues become the energy
 denominators of the perturbation series, and that difference has a
 practical consequence:
 
-- **CASPT2** (Andersson, Malmqvist, Roos) uses a generalized Fock
-  operator as $\hat H_0$. It is the established workhorse, but its $\hat
+- **CASPT2** (Andersson, Malmqvist, Roos;
+  {vibeqc-cite}`andersson_caspt2_1990`,
+  {vibeqc-cite}`andersson_malmqvist_roos_caspt2_1992`) uses a generalized
+  Fock operator as $\hat H_0$. It is the established workhorse, but its $\hat
   H_0$ is not guaranteed to keep the perturber states above the
   reference in energy. When a perturber accidentally falls *near* the
   reference energy, its denominator goes to zero and the second-order
   energy diverges, the **intruder-state problem**. The standard
   remedies are a real or imaginary *level shift* that pushes the
   offending denominator away from zero; vibe-qc exposes an imaginary
-  shift through `caspt2_options=CASPT2Options(imaginary=...)`.
-- **NEVPT2** (Angeli, Cimiraglia, Malrieu) uses Dyall's $\hat H_0$,
+  shift ({vibeqc-cite}`forsberg_malmqvist_imaginary_1997`) through `caspt2_options=CASPT2Options(imaginary=...)`.
+- **NEVPT2** (Angeli, Cimiraglia, Malrieu;
+  {vibeqc-cite}`angeli_nevpt2_2001`) uses Dyall's $\hat H_0$
+  (K. G. Dyall, *J. Chem. Phys.* **102**, 4909 (1995),
+  doi:10.1063/1.469539),
   which retains the two-electron interaction *within* the active space.
   This is more expensive per term but **structurally intruder-free**:
   the perturber denominators are bounded away from zero by
@@ -434,8 +449,26 @@ typical spread. NEVPT2 is the safer default when you suspect intruder
 trouble; CASPT2 remains a common, widely benchmarked choice for excited
 states and spectroscopy. vibe-qc ships internally-contracted CASPT2 un-gated
 and validated against OpenMolcas to within a few microhartree, including the
-canonical eight-class single-state IPEA contraction. The strongly-contracted
-variant remains gated behind `VIBEQC_EXPERIMENTAL_MULTIREF=1`.
+canonical eight-class single-state IPEA contraction
+({vibeqc-cite}`ghigo_roos_malmqvist_ipea_2004`,
+{vibeqc-cite}`nishimoto_ipea_derivatives_2023`). The strongly-contracted
+CASPT2 variant remains gated behind `VIBEQC_EXPERIMENTAL_MULTIREF=1`.
+
+```{admonition} Status: gated
+:class: caution
+
+The strongly-contracted CASPT2 variant (`CASPT2Options(variant="sc")`, the
+1990 single-state formulation) is recognised but fails closed. Without the
+opt-in it raises `RuntimeError: CASPT2 (strongly-contracted) is gated: it is
+not sub-microhartree reproducible against OpenMolcas`, naming the missing
+validation, and runs only after you set the environment variable
+`VIBEQC_EXPERIMENTAL_MULTIREF=1`. With the gate lifted, H2/6-31G CAS(2,2) at
+1.6 bohr gives -1.145309 Ha, against -1.145330 Ha for the default
+internally contracted variant. Only this variant is gated: the default
+`method="caspt2"` (internally contracted) and `method="nevpt2"` (strongly
+contracted by construction, validated against PySCF) are production. See
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+```
 
 ### Choosing a method
 
@@ -459,11 +492,13 @@ points:
 
 ## Nuclear gradients and geometry optimization
 
-A converged CASSCF wavefunction has well-defined nuclear gradients, but
-vibe-qc's current analytic implementation is incomplete. It is not tight
-against a central finite difference of the full CASSCF energy, so do not use
-`result.gradient` as a production force or correctness reference yet. The
-geometry optimizer deliberately differentiates the full energy instead.
+A converged state-specific CASSCF wavefunction has a well-defined analytic
+nuclear gradient, and vibe-qc's is validated for that envelope: closed shell,
+one root. Outside it (state-averaged CASSCF with `nroots > 1`, open-shell
+references, or `compute_wz="numerical"`) the analytic vector is not checked
+against finite differences, and the geometry optimizers fall back to central
+finite differences of the full energy. The PT2 methods are narrower still,
+as described after the optimisation example below.
 
 `run_job` attaches the gradient to the result whenever a CASSCF single
 point converges:
@@ -481,7 +516,10 @@ orbital rotation and CI coefficient, so no response ("z-vector") term
 exists, and the analytic vector matches a central finite difference of the
 energy to ~2e-7 Ha/bohr (H2/6-31G and H2/cc-pVDZ CAS(2,2)) and to 1.1e-6
 on N2/cc-pVDZ CAS(6,6), where the residual is the finite difference's own
-truncation error. A finite-difference cross-check is available as
+truncation error. Re-checked on a vibe-qc 0.17.10 development build: H2/6-31G
+CAS(2,2) at 1.8 bohr gives 0.06979236 Ha/bohr analytically against 0.06979230
+by central differences, and N2/STO-3G CAS(6,6) at 2.3 bohr gives 0.0446371
+against 0.0446365. A finite-difference cross-check is available as
 `CASSCFOptions(compute_wz="numerical")` (expensive: the CASSCF is
 re-converged at every displaced geometry).
 
@@ -494,8 +532,9 @@ linear molecules with p/d functions (GitLab #516). State-averaged runs
 approximation, which is checked for finiteness and translational
 invariance but not against finite differences.
 
-For geometry optimization, call `optimize_molecule`. It uses central finite
-differences of the full CASSCF energy and returns the trajectory of frames:
+For geometry optimization, call `optimize_molecule`. Inside the validated
+envelope it walks the analytic gradient; outside it, central finite
+differences of the full CASSCF energy. It returns the trajectory of frames:
 
 ```python
 from vibeqc import Atom, Molecule
@@ -510,10 +549,41 @@ opt = optimize_molecule(
 print(opt.energy, opt.trajectory_frames[-1])     # R = 1.5 relaxes toward ~1.4 bohr
 ```
 
-`run_job(..., optimize=True)` uses the same full-energy finite-difference
-path. The known-failing analytic-gradient reproducer lives at
-`examples/regression/casscf_gradient_fd_reproducer.py` and will flip to PASS
-when the single-point gradient is safe to use.
+`run_job(..., optimize=True)` makes the same choice. For the H2/6-31G
+example above, run through `run_job` from a 1.5 bohr start, the ASE, `native`
+and `brent` optimizer backends all relax to E = -1.14633791 Ha. The
+regression adjudicator for the analytic gradient is
+`examples/regression/casscf_gradient_fd_reproducer.py`.
+
+### Gradients and optimisation for the PT2 methods
+
+The analytic PT2 gradient ({vibeqc-cite}`celani_werner_ms_caspt2_gradient_2003`)
+covers only a narrow envelope: state-specific,
+closed-shell, unshifted, explicit-engine IC-CASPT2 on a converged CASSCF
+reference (`variant="ic"`, `ipea=0`, `imaginary=0`, gas phase, with
+`compute_corr_grad=True` on the options); NEVPT2 gets a relaxed
+finite-difference gradient under the same switch. Everything else is finite
+differences of the full energy, which is a preview capability. With the
+default `compute_corr_grad=False` the returned gradient is the bare CASSCF
+gradient, and vibe-qc warns that it is not a PT2 force.
+
+`run_job(..., optimize=True)` for `fci`, `nevpt2`, `caspt2` and `mrci`
+therefore refuses the default optimizer backend: the ASE backend has no
+correlated-surface calculator for them and would silently relax the
+mean-field surface while reporting the correlated method. It raises
+`ValueError: run_job(method='caspt2', optimize=True) requires
+optimizer_backend='native' or 'brent'` (GitLab #357). Pass
+`optimizer_backend="native"` or `"brent"` to walk the correlated surface by
+finite differences of the full energy, and expect minutes, not seconds, even
+for a small molecule:
+
+```python
+result = run_job(
+    h2, basis="6-31g", method="caspt2", active_space=(2, 2),
+    casscf_options=CASSCFOptions(),
+    optimize=True, optimizer_backend="native",
+)
+```
 
 ## Natural orbitals and QVF wavefunction export
 

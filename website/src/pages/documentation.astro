@@ -1,0 +1,30 @@
+---
+import Base from '../layouts/Base.astro';
+import Nav from '../components/Nav.astro';
+import Footer from '../components/Footer.astro';
+import ReleaseBadge from '../components/ReleaseBadge.astro';
+import { products } from '../data/products.mjs';
+const base = import.meta.env.BASE_URL;
+const reference = [
+ ['Methods & status', `${base}methods/`, 'Find a method family, read its status and follow the detailed reference.'],
+ ['Validation', '/docs/validation.html', 'Reference calculations, comparisons and the limits of the evidence.'],
+ ['Core API', '/docs/api/index.html', 'Python interfaces for building calculations and analysis workflows.'],
+ ['Examples', '/docs/example_outputs.html', 'Annotated outputs, sample inputs and result archives.'],
+ ['Basis sets', '/docs/user_guide/basis_sets.html', 'Basis selection, effective core potentials and the retained vibe-basis toolkit.'],
+ ['Citations', '/docs/citing.html', 'How to cite the software, algorithms and data used in a calculation.'],
+];
+---
+<Base title="Documentation — vibe-qc technical hub" description="Find installation, tutorials, Python APIs and technical manuals for the vibe scientific toolset.">
+  <Nav />
+  <main id="main-content" class="wrap">
+    <header class="page-heading"><span class="eyebrow">Documentation</span><h1>The reference desk.</h1><p>Start with a tool’s manual, follow a worked example, or look up the method and interface behind a result.</p></header>
+    <section class="document-section" aria-labelledby="manuals"><h2 id="manuals">Product manuals</h2><div class="manual-grid">
+      {['vibe-sketch','vibe-queue','vibe-qc','vibe-view'].map(id=>products.find(p=>p.id===id)).map(p => <article class="manual"><span class="eyebrow">{p.action}</span><h3>{p.name}</h3><ReleaseBadge product={p.id}/><p>{p.summary}</p><p><a href={p.licenseGuide}>{p.license} license &amp; notices ↗</a></p>{p.status && <p class="notice">{p.status}. Desktop downloads and matching source are public.</p>}{p.docs ? <><a class="text-link" href={p.docs}>Read the manual ↗</a><ul><li><a href={p.installGuide}>Installation ↗</a></li>{p.guides.map(([label,href]) => <li><a href={href}>{label} ↗</a></li>)}</ul></> : <><p class="notice">A public manual is not published yet.</p><a class="text-link" href={`${base}products/${p.id}/#install`}>Overview, access & setup ↗</a></>}</article>)}
+    </div></section>
+    <section class="document-section" aria-labelledby="reference"><h2 id="reference">Engine reference & evidence</h2><div class="grid">{reference.map(([name,href,detail]) => <a class="card" href={href}><h3>{name} ↗</h3><p>{detail}</p></a>)}</div></section>
+    <section class="document-section format-row"><div><span class="eyebrow">Shared file contract</span><h2>QVF connects the data.</h2><p>The QVF specification, schema and reference toolkit live in a separate Apache-2.0 project. The four applications use MPL-2.0; bundled dependencies retain their own licenses. A structure document, a submitted job and a computed result are different kinds of content. Read the format and each consumer’s support before choosing an exchange route.</p><a class="text-link" href="https://github.com/vibe-qc/qvf">QVF specification & toolkit ↗</a></div><aside class="card"><h3>Check the version</h3><p>Each manual and companion release has its own version. The website and published manuals can describe source changes newer than your installed release. Use the manual matching your installed software when reproducing a calculation.</p><p><a class="text-link" href="/docs/changelog.html">Core changelog ↗</a></p></aside></section>
+  </main><Footer />
+</Base>
+<style>
+.manual-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));border:1px solid var(--line);border-radius:6px;overflow:hidden}.manual{padding:30px;background:var(--surface);border-bottom:1px solid var(--line)}.manual:nth-child(odd){border-right:1px solid var(--line)}.manual:nth-last-child(-n+2){border-bottom:0}.manual h3{margin:10px 0;font-size:28px;font-weight:550}.manual p{font-size:15px}.manual ul{list-style:none;margin:22px 0 0;padding:18px 0 0;border-top:1px solid var(--line);display:flex;flex-wrap:wrap;gap:8px 22px;font-size:13px;color:var(--slate)}.manual ul a:hover{color:var(--phase-pos)}.notice{padding:12px 16px;background:var(--surface-2);border-left:2px solid var(--phase-pos)}.format-row{display:grid;grid-template-columns:1.2fr 1fr;gap:50px}.format-row h2{margin-top:16px}.format-row p{font-size:15px}.format-row .card p+p{margin-top:18px}@media(max-width:650px){.manual-grid,.format-row{grid-template-columns:1fr}.manual:nth-child(odd){border-right:0}.manual:nth-last-child(2){border-bottom:1px solid var(--line)}.manual{padding:24px}.format-row{gap:25px}}
+</style>

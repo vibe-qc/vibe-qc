@@ -34,6 +34,7 @@
 
 #include "vibeqc/semiempirical/methods/indo/msindo_integrals.hpp"
 #include "vibeqc/solvation_cpcm.hpp"
+#include "vibeqc/soscf.hpp"
 
 namespace vibeqc {
 namespace semiempirical {
@@ -2065,6 +2066,12 @@ struct MsindoResult {
     bool stability_checked=false, stability_analysis_converged=false;
     double stability_eigenvalue=0.0;
     int n_stability_restarts=0;
+    int frontier_seed_evaluations=0;
+    int frontier_seed_orbitals=0, frontier_seed_expansions=0;
+    bool frontier_seed_completed=false, orbital_optimization_used=false;
+    // A reference-policy CCM run returned the reference trajectory's state
+    // although the audit found it to be a saddle (resolved Hcore gap, #249).
+    bool internal_instability=false;
 };
 
 // --------------------------------------------------------------------------- //
@@ -2273,7 +2280,8 @@ inline MsindoResult scf_rhf_driver(const Eigen::MatrixXd& H, const Eigen::Matrix
                                     const MsindoParameterSet& p,
                                     int max_iter, double conv_tol,
                                     std::function<std::pair<Eigen::MatrixXd,double>(const Eigen::MatrixXd&)> fock_extra,
-                                    const Eigen::MatrixXd* initial_density = nullptr) {
+                                    const Eigen::MatrixXd* initial_density = nullptr,
+                                    int optimize_orbitals_after = 0) {
     int nsto = H.rows();
     std::vector<int> uat(nsto);
     for (size_t i=0; i<blocks.size(); ++i)
@@ -2287,6 +2295,8 @@ inline MsindoResult scf_rhf_driver(const Eigen::MatrixXd& H, const Eigen::Matrix
         : *initial_density;
 
     double e_elec=0.0; bool converged=false; int it=0;
+    vibeqc::SOSCF orbital_optimizer;
+    bool orbital_optimization_used=false;
     std::vector<Eigen::MatrixXd> f_hist, e_hist;
     const int DIIS_MAX=8;
     f_hist.reserve(DIIS_MAX + 1);
@@ -2301,6 +2311,17 @@ inline MsindoResult scf_rhf_driver(const Eigen::MatrixXd& H, const Eigen::Matrix
             e_elec=e_cur; converged=true; break;
         }
         e_elec=e_cur;
+        if (optimize_orbitals_after > 0 && it >= optimize_orbitals_after) {
+            orbital_optimization_used=true;
+            // Reuse the Neese (2000) orbital optimizer once the caller's
+            // DIIS phase ends. This changes the search, not the Hamiltonian,
+            // occupations, residual tolerance, or cumulative iteration cap.
+            const auto step = orbital_optimizer.step(F, Cmo, eps, nocc);
+            Cmo = step.C;
+            eps = step.eps;
+            P = 2.0*Cmo.leftCols(nocc)*Cmo.leftCols(nocc).transpose();
+            continue;
+        }
         f_hist.push_back(F); e_hist.push_back(err);
         if (static_cast<int>(f_hist.size())>DIIS_MAX) { f_hist.erase(f_hist.begin()); e_hist.erase(e_hist.begin()); }
         int n=static_cast<int>(f_hist.size());
@@ -2333,6 +2354,7 @@ inline MsindoResult scf_rhf_driver(const Eigen::MatrixXd& H, const Eigen::Matrix
     MsindoResult res;
     res.electronic_energy=e_elec; res.mo_energies=eps; res.density=P;
     res.n_iter=converged ? it : max_iter; res.converged=converged;
+    res.orbital_optimization_used=orbital_optimization_used;
     return res;
 }
 

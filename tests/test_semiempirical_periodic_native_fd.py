@@ -778,18 +778,20 @@ def test_periodic_scc_dftb_gamma_sum_converges_with_cutoff():
     periodic systems -- and Eq. 17's ``gamma = 1/R - S(R)`` exists so the
     long-range part can go through Ewald while the exponentially decaying S
     is summed over a few cells.  Both halves are now in place (maintainer
-    decision D1, 2026-08-28), and both are needed.  On this fixture:
+    decision D1, 2026-08-28), and both are needed.  On this fixture, measured
+    again under the #373 basis and the #478 hopping (#565):
 
         cutoff        Elstner    Klopman-Ohno (with Ewald)
-            12   -0.442872865   -0.419106186
-            20   -0.450119928   -0.499294489
-            40   -0.450188859   -0.620488893
-            60   -0.450188859   -0.673944650
-            80   -0.450188859   -0.720458644
-           120   -0.450188859   -0.788949524
-           200   -0.450188859   -0.871638200
+            12   -0.591334803   -0.589341186
+            20   -0.591259160   -0.597949671
+            40   -0.591204009   -0.825469516
+            60   -0.591204008   -0.998638488
+            80   -0.591204008   -1.158808083
+           120   -0.591204008   -1.402706922
+           200   -0.591204008   -1.703917818
 
-    Elstner is flat to nine decimals from 40 bohr out; Klopman-Ohno still
+    Elstner is flat to nine decimals from 60 bohr out (1e-9 at 40);
+    Klopman-Ohno still
     drifts monotonically over a 5x cutoff range even with the Coulomb tail
     Ewald-summed, which is D1's own point that the Ewald half alone does not
     fix this.  The functional form is what supplies the thermodynamic limit.
@@ -821,7 +823,7 @@ def test_periodic_scc_dftb_gamma_sum_converges_with_cutoff():
         f"gamma lattice sum unconverged in the cutoff: {energies}"
     )
     assert abs(energies[1] - energies[0]) < 1.0e-5
-    assert energies[2] == pytest.approx(-0.450188859, abs=1.0e-8)
+    assert energies[2] == pytest.approx(-0.591204008, abs=1.0e-8)
 
     # The form is what converges it, not the Ewald split alone: the same
     # Ewald-summed Coulomb tail with the Klopman-Ohno remainder still drifts.

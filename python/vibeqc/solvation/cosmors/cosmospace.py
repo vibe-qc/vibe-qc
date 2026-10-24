@@ -4,12 +4,13 @@ Klamt, Krooshof & Taylor, *AIChE J.* **48**, 2332 (2002),
 doi:10.1002/aic.690481023: "COSMOSPACE: Alternative to conventional
 activity-coefficient models".
 
-COSMO-RS as implemented in :mod:`vibeqc.solvation.cosmors.potential` treats
-surface patches as *thermodynamically independent* entities (Klamt 1998
-section 3.2). COSMOSPACE drops that approximation: it solves the statistics of
-an ensemble of **pairwise** interacting segments exactly, giving segment
-activity coefficients that satisfy the Gibbs-Duhem relation by construction
-(2002 Appendix B).
+COSMOSPACE solves the statistics of an ensemble of **pairwise** interacting,
+geometrically independent surface segments exactly, giving segment activity
+coefficients that satisfy the Gibbs-Duhem relation by construction (2002
+Appendix B). It is the explicit form of the equation COSMO-RS already solves:
+the 2002 abstract says the solution "in an implicit form ... was initially
+developed for" COSMO-RS, and Appendix A derives the COSMO-RS self-consistency
+equation from the same pair statistics.
 
 The equation (eq. 16) is beautifully compact::
 
@@ -31,12 +32,24 @@ driving force is how unlike they are. Pinned in the tests, because getting the
 self-energy subtraction wrong silently converts a difference into a sum and
 still converges.
 
-Why both models are kept
-------------------------
-COSMOSPACE is the exact solution of the same pairing problem the sigma
-potential approximates, but the shipped parameterization was fitted with the
-independent-patch sigma potential, so the two are not interchangeable at fixed
-parameters. They are exposed side by side rather than one replacing the other.
+It is the same equation as the sigma potential
+-----------------------------------------------
+With ``G_nu = gamma^nu exp(a_eff u_nu nu / 2 kT)``, eq. 16 becomes
+
+    1 / G_nu = sum_mu Theta^mu exp(-a_eff u_{mu nu} / kT) G_mu
+
+which is the segment sigma potential of
+:func:`~vibeqc.solvation.cosmors.potential.sigma_potential_segments` with
+``G = exp(mu~)`` and ``Theta`` the area fraction. The self-energy terms cancel
+in eq. 13's difference, so the residual activity coefficient from this module
+equals the COSMO-RS chemical-potential difference on the same segments,
+``sum_nu a_nu [mu_S(sigma_nu) - mu_X(sigma_nu)] / kT``: measured equal to
+5e-13 for water in methanol, benzene in water and propanone in
+tetrachloromethane. An earlier docstring here said the two were "not
+interchangeable at fixed parameters"; that was wrong. The module is kept as an
+independent solver: the tests check the segment chemical potentials against
+it exactly, and ``run_job``'s activity coefficient, which integrates the
+binned profile, against it to the binning error.
 """
 
 from __future__ import annotations

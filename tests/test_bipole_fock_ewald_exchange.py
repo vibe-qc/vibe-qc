@@ -8,7 +8,7 @@ Covers the corrected BIPOLE Γ exchange convention::
 and the accompanying gauge changes (full-Bloch density — no Γ-locality
 projection — and no EXT EL-SPHEROPOLE term in the total).
 
-External references (PySCF 2.13 GDF, run OUT-OF-PROCESS per
+External references (PySCF GDF and AFTDF, run OUT-OF-PROCESS per
 CLAUDE.md §10; export scripts in examples/regression/bipole_parity/):
 
 * MgO fcc primitive (a = 4.21 Å), STO-3G, Γ, RHF exxdiv='ewald':
@@ -21,16 +21,15 @@ CLAUDE.md §10; export scripts in examples/regression/bipole_parity/):
 * PySCF ``tools.pbc.madelung`` on the MgO cell: ξ = 0.576295611599.
 
 **Validation status — method-family policy (docs/periodic_jk_routes.md).**
-These PySCF ``exxdiv='ewald'`` pins are a **secondary cross-family check** of
-BIPOLE's Γ exchange-split *convention* (the ξ_M·S·D·S finite-size exchange
-correction), not BIPOLE's primary parity gate. BIPOLE belongs to the CRYSTAL
-method family (bipolar/multipole expansion + TOLINTEG truncation + SHRINK
-k-sampling); its **primary** gate is the same-family BIPOLE↔CRYSTAL
-total-energy parity at a matched k-net, in
-``examples/regression/crystal_parity/`` (MgO anchor, SHRINK 8 8). The PySCF Γ
-comparison stays here because it is still informative for the
-exchange-divergence convention — but its tolerance is the method spread, not
-a bug bound, so it is not the gating same-family assertion.
+These PySCF ``exxdiv='ewald'`` pins are secondary numerical checks.
+BIPOLE uses exact erfc short-range integrals and reciprocal AO-pair Fourier
+transforms; CRYSTAL can use a bipolar quartet approximation. Route names
+alone do not define equal numerical supports or finite-size conventions.
+The primary CRYSTAL comparison lives in ``examples/regression/crystal_parity/``
+and must match the basis, k net, gauge, exchange convention and converged
+supports. Historical GDF pins below retain their approximation tolerances;
+the UKS AFTDF check instead resolves total and component errors after
+explicit plane-wave and XC-grid convergence. Neither certifies speed parity.
 """
 
 from __future__ import annotations
@@ -38,6 +37,10 @@ from __future__ import annotations
 import numpy as np
 import pytest
 import vibeqc as vq
+from vibeqc import bipole_fock_ewald as ewald
+from vibeqc._aopair_ft import ao_pair_fourier_transform_at_cells
+from vibeqc.lattice_screening import ao_pair_support_mask
+
 from vibeqc._vibeqc_core import (
     InitialGuess,
     PeriodicRHFOptions,
@@ -217,6 +220,7 @@ def test_exchange_split_legacy_optout_keeps_old_gauge():
         _rhf_opts(4.0, max_iter=30),
         ewald_precision=1e-6,
         use_exchange_ewald_split=False,
+        historical_domain=True,
         progress=False,
     )
     assert r.converged
@@ -254,7 +258,13 @@ def test_exchange_split_multik_rejects_torus_uncovering_cutoff():
     """At multi-k the (2×-cutoff) density list must span the BvK torus;
     a 12-bohr box at cutoff 4 (wide list radius 8) cannot host the
     (−1,0,0) torus cell of a [2,1,1] mesh and must fail loudly rather
-    than fold a wrong density."""
+    than fold a wrong density.
+
+    The production ``sr_image_precision`` policy pads the density
+    support to the resolved erfc range (13.2 bohr here), which covers
+    the torus and lets the run converge; the unpadded opt-out keeps
+    the 2x-cutoff list this guard is about (#503).
+    """
     sysp = _h2_box()
     basis = vq.BasisSet(sysp.unit_cell_molecule(), "sto-3g")
     with pytest.raises(ValueError, match="BvK torus"):
@@ -265,6 +275,7 @@ def test_exchange_split_multik_rejects_torus_uncovering_cutoff():
             _rhf_opts(4.0, max_iter=5),
             use_exchange_ewald_split=True,
             ewald_precision=1e-6,
+            sr_image_precision=None,
             progress=False,
         )
 
@@ -665,6 +676,7 @@ def test_rks_legacy_gauge_optout_keeps_spheropole():
         _rks_opts("svwn"),
         use_ewald_j_split=True,
         use_exchange_ewald_split=False,
+        historical_domain=True,
         ewald_precision=1e-8,
         progress=False,
     )
@@ -721,6 +733,8 @@ def test_rks_routes_through_shared_restricted_fock_builder(monkeypatch):
         coeffs_for_rho,
         alpha_hf,
         exchange_assembly=None,
+        _chi_exchange=False,
+        _chi_density_k=None,
         use_incremental=True,
         reseed_incremental=False,
     ):
@@ -730,6 +744,7 @@ def test_rks_routes_through_shared_restricted_fock_builder(monkeypatch):
                 "exact_j_for_pure_rks": bool(ctx.exact_j_for_pure_rks),
                 "n_cells": len(density.cells),
                 "use_incremental": bool(use_incremental),
+                "chi_exchange": bool(_chi_exchange),
                 "is_screened": bool(
                     exchange_assembly is not None
                     and exchange_assembly.is_screened
@@ -795,6 +810,8 @@ def test_rks_routes_through_shared_restricted_fock_builder(monkeypatch):
         assert not new_calls[-1]["use_incremental"]
         # Neither functional is a screened hybrid.
         assert not any(call["is_screened"] for call in new_calls)
+    # The ordinary (non-chi) route never asks the builder for chi exchange.
+    assert calls and not any(call["chi_exchange"] for call in calls)
 
 
 # ---------------------------------------------------------------------------
@@ -900,6 +917,7 @@ def test_exchange_split_historical_domain_omega_drift_pinned():
         basis,
         kmesh,
         _rhf_opts(14.0),
+        historical_domain=True,  # This test explicitly pins the legacy operator.
         use_ewald_j_split=True,
         ewald_precision=1e-8,
         sr_image_precision=None,
@@ -920,6 +938,7 @@ def test_exchange_split_historical_domain_omega_drift_pinned():
             basis,
             kmesh,
             opts,
+            historical_domain=True,  # This test explicitly pins the legacy operator.
             use_ewald_j_split=True,
             ewald_omega=w,
             ewald_precision=1e-8,
@@ -1106,6 +1125,54 @@ def test_probe_charge_madelung_supercell_pyscf_pins():
     )
 
 
+@pytest.mark.parametrize("relabel", [False, True])
+@pytest.mark.parametrize("finite_k", [False, True])
+def test_physical_exchange_channel_stream_and_cache(relabel, finite_k, monkeypatch):
+    """Cache keeps the dense masked operator, phase and normalization once."""
+    from vibeqc import bipole_fock_ewald as ewald
+    from vibeqc._aopair_ft import ao_pair_fourier_transform_at_cells
+    from vibeqc.lattice_screening import ao_pair_support_mask
+
+    lattice = np.array([[5., .4, .2], [.3, 5.2, .5], [.1, .6, 5.4]])
+    pos = np.array([2.1, .3, .2]) + (lattice[:, 0] if relabel else 0.)
+    atoms = [vq.Atom(3, [0., 0., 0.]), vq.Atom(1, pos)]
+    system = vq.PeriodicSystem(3, lattice, atoms)
+    basis = vq.BasisSet(vq.Molecule(atoms), "sto-3g")
+    cells = np.array([lattice[:, 0], np.zeros(3), -lattice[:, 1]])
+    vectors = np.array([[.3, .2, .1], [-.2, .4, .1]])
+    kernel = np.array([.4, .2])
+    correction = ewald._libint_ylm_correction_per_ao(basis)
+
+    def dense_on(vectors):
+        ft = ao_pair_fourier_transform_at_cells(basis, vectors, cells)
+        for g, shift in enumerate(cells):
+            ft[g] *= ao_pair_support_mask(basis, shift, 5.3)[:, :, None]
+        return ft * correction[None, :, None, None] * correction[None, None, :, None]
+
+    j_cache = ewald.JLongRangeCache(vectors, kernel, dense_on(vectors), cells, .3, 5.3)
+    cache = ewald.KExchangeLongRangeCache(basis, system, cells, .3, .9, j_cache)
+    reciprocal = 2 * np.pi * np.linalg.inv(lattice).T
+    q = reciprocal @ np.array([.25, -.125, 0.])
+    kp = reciprocal @ np.array([.125, 0., .125]) if finite_k else np.zeros(3)
+    actual_kernel, actual = cache.channel_tables(q, kp)
+    chan = next(iter(cache.q_channels.values()))
+    expected = np.einsum("g,gmnk->mnk", np.exp(-1j * (cells @ kp)), dense_on(chan.K_vectors))
+    np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-12)
+    assert actual_kernel is chan.kernel
+    assert cache.channel_tables(q, kp)[1] is actual
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("The diagonal channel must reuse the J cache")
+
+    monkeypatch.setattr(ewald, "_masked_bloch_pair_fourier_transform", unexpected)
+    diagonal_kernel, diagonal = cache.channel_tables(np.zeros(3), kp)
+    assert diagonal_kernel is j_cache.kernel
+    np.testing.assert_allclose(
+        diagonal, np.einsum("g,gmnk->mnk", np.exp(-1j * (cells @ kp)), j_cache.ft_per_cell),
+        rtol=1e-12, atol=1e-12,
+    )
+
+
 def test_bvk_torus_density_matrices_inverts_bloch_fold():
     """Synthesize TR-consistent per-k densities on the actual mesh,
     store the real-space fold D(g) = Σ_k w_k·Re[e^{−ik·R_g}·D(k)] (the
@@ -1182,6 +1249,119 @@ def test_bvk_torus_density_matrices_inverts_bloch_fold():
     recovered = bvk_torus_density_matrices(density, k_points, mesh)
     for D_rec, D_ref in zip(recovered, D_k_ref):
         assert np.abs(D_rec - D_ref).max() < 1e-12
+
+
+@pytest.mark.parametrize("nbf", [2, 3, 13])
+def test_native_inverse_bloch_hermitizes_asymmetric_complex_fold(nbf):
+    from vibeqc import _vibeqc_core as core
+
+    rng = np.random.default_rng(828)
+    blocks = [rng.normal(size=(nbf, nbf)) for _ in range(3)]
+    origins = [np.array([float(i), 0., 0.]) for i in range(3)]
+    kpoints = [np.zeros(3), np.array([.71, 0., 0.])]
+    actual = core.inverse_bloch_multi_k(blocks, origins, kpoints)
+    for k, result in zip(kpoints, actual):
+        raw = sum(np.exp(1j * np.dot(k, r)) * b
+                  for r, b in zip(origins, blocks))
+        assert np.max(np.abs(raw - raw.conj().T)) > .1
+        expected = .5 * (raw + raw.conj().T)
+        np.testing.assert_allclose(result, expected, atol=1e-13, rtol=1e-13)
+        np.testing.assert_allclose(result, np.asarray(result).conj().T,
+                                   atol=1e-13, rtol=1e-13)
+
+
+@pytest.mark.parametrize("native_available", [True, False])
+@pytest.mark.parametrize("shift", [0, 1])
+def test_bvk_torus_density_native_dispatch_and_fallback(
+    monkeypatch, native_available, shift,
+):
+    from types import SimpleNamespace
+    from vibeqc import _vibeqc_core as core
+    from vibeqc.pbc_bipole_common import bvk_torus_density_matrices
+
+    # Full three-point character mesh, with a genuinely complex TR pair.
+    kpoints = [np.array([2 * np.pi * (j + shift / 2) / 3, 0., 0.])
+               for j in range(3)]
+    expected = [np.array([[1., .2], [.2, .8]], dtype=complex),
+                np.array([[.7, .1 + .3j], [.1 - .3j, .5]]),
+                np.array([[.7, .1 - .3j], [.1 + .3j, .5]])]
+    if shift:
+        expected[0], expected[1] = expected[1], expected[0]
+    cells = [SimpleNamespace(index=(i, 0, 0), r_cart=np.array([float(i), 0., 0.]))
+             for i in (-1, 0, 1)]
+    blocks = [sum(np.real(np.exp(-1j * np.dot(k, c.r_cart)) * d)
+                  for k, d in zip(kpoints, expected)) / 3 for c in cells]
+    density = SimpleNamespace(cells=cells, blocks=blocks)
+    original = core.inverse_bloch_multi_k
+    calls = []
+
+    def capture(*args):
+        calls.append(args)
+        return original(*args)
+
+    if native_available:
+        monkeypatch.setattr(core, "inverse_bloch_multi_k", capture)
+    else:
+        monkeypatch.delattr(core, "inverse_bloch_multi_k")
+    result = bvk_torus_density_matrices(density, kpoints, (3, 1, 1))
+    assert len(calls) == int(native_available)
+    np.testing.assert_allclose(result, expected, atol=1e-13, rtol=1e-13)
+
+
+@pytest.mark.parametrize("native_available", [False, True])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_bvk_native_selects_live_blocks_with_stable_ties_and_duplicate_keys(
+    monkeypatch, native_available, reverse,
+):
+    from vibeqc import _vibeqc_core as core
+    from vibeqc.pbc_bipole_common import bvk_torus_density_matrices, bvk_torus_covered
+
+    system = vq.PeriodicSystem(3, np.eye(3), [vq.Atom(2, [0., 0., 0.])])
+    keys = [(1, 0, 0), (-1, 0, 0), (0, 0, 0), (3, 0, 0), (1, 0, 0)]
+    values = [11., 22., 33., 44., 55.]
+    if reverse:
+        keys, values = keys[::-1], values[::-1]
+    density = core.make_lattice_matrix_set(
+        2, [core.LatticeCell(system, key) for key in keys],
+        [np.eye(2) * value for value in values],
+    )
+    original = core.LatticeMatrixSet.get_blocks
+    selected = []
+
+    def capture(self, indices):
+        selected.append(list(indices))
+        return original(self, indices)
+
+    monkeypatch.setattr(core.LatticeMatrixSet, "get_blocks", capture)
+    if not native_available:
+        monkeypatch.delattr(core, "inverse_bloch_multi_k")
+    assert bvk_torus_covered(density, (2, 1, 1))
+    # +1 and -1 tie in distance: the first distinct key wins; repeated +1
+    # retains that key's position but supplies its LAST block, as before.
+    last_one = max(i for i, key in enumerate(keys) if key == (1, 0, 0))
+    kpoints = [np.zeros(3), np.array([np.pi, 0., 0.])]
+    for value in (values[last_one], 66.):
+        density.set_block(last_one, np.eye(2) * value)
+        result = bvk_torus_density_matrices(density, kpoints, (2, 1, 1))
+        np.testing.assert_allclose(result, [np.eye(2) * (33. + value),
+                                            np.eye(2) * (33. - value)], atol=1e-13, rtol=0.)
+    assert selected == [[2, last_one]] * 2
+
+
+def test_bvk_missing_residue_fails_before_native_block_export(monkeypatch):
+    from vibeqc import _vibeqc_core as core
+    from vibeqc.pbc_bipole_common import bvk_torus_density_matrices, bvk_torus_covered
+
+    system = vq.PeriodicSystem(3, np.eye(3), [vq.Atom(2, [0., 0., 0.])])
+    density = core.make_lattice_matrix_set(
+        1, [core.LatticeCell(system, (i, 0, 0)) for i in (0, 2)], [np.ones((1, 1))] * 2,
+    )
+    def forbidden(*args):
+        raise AssertionError("missing torus must be diagnosed before exporting blocks")
+    monkeypatch.setattr(core.LatticeMatrixSet, "get_blocks", forbidden)
+    assert not bvk_torus_covered(density, (2, 1, 1))
+    with pytest.raises(ValueError, match="no cell in"):
+        bvk_torus_density_matrices(density, [np.zeros(3)], (2, 1, 1))
 
 
 def test_exchange_split_multik_h2_211_matches_pyscf_krhf():
@@ -1287,7 +1467,7 @@ def test_exchange_split_multik_matches_explicit_supercell_gamma():
     )
 
 
-# PySCF 2.13 KRKS/KUHF/KUKS multi-k references (out-of-process; same
+# PySCF 2.13 KRKS/KUHF multi-k references (out-of-process; same
 # generator script). OPEN-SHELL TRAP: PySCF interprets cell.spin at
 # multi-k as the TOTAL spin imbalance over the BvK supercell — KUHF
 # with spin=2 at [2,1,1] fills nelec=(3,1), a mixed state, NOT the
@@ -1297,8 +1477,28 @@ E_PYSCF_H2_KRKS_SVWN_211 = -1.1212703585
 E_PYSCF_H2_KRKS_PBE0_211 = -1.1552192298
 E_PYSCF_H2_KUHF_TRIPLET_211 = -0.5337291457
 E_PYSCF_H2_KUHF_TRIPLET_GAMMA = -0.5358505084
-E_PYSCF_H2_KUKS_PBE0_TRIPLET_211 = -0.5415218581
-E_PYSCF_H2_KUKS_PBE0_TRIPLET_GAMMA = -0.5420559972
+
+
+# PySCF 2.14.0 / LibXC 7.0.0 AFTDF, exxdiv="ewald", cell precision
+# 1e-10, 101^3 Fourier mesh, unpruned Becke 150 radial x 590 angular.
+# Refining to 121^3 / 220 x 974 changes either total by less than 4e-11 Ha.
+# Regenerate with multik_exchange_split_refs_pyscf.py --uks-aft-only.
+# This removes the historical default-GDF fitting error; J and scaled K
+# are checked separately so cancellation cannot hide an operator error.
+PYSCF_AFT_H2_KUKS_PBE0_TRIPLET = {
+    "gamma": {
+        "energy": -0.5412195286366139,
+        "e_coulomb": 0.8891001976173338,
+        "e_hf_exchange": -0.21784153662336625,
+        "e_xc": -0.6589414799747884,
+    },
+    "211": {
+        "energy": -0.5406849537256424,
+        "e_coulomb": 0.8891031033789265,
+        "e_hf_exchange": -0.21731245929484233,
+        "e_xc": -0.658942754109322,
+    },
+}
 
 
 def _ks_opts(cutoff: float, functional: str, max_iter: int = 60):
@@ -1381,36 +1581,57 @@ def test_exchange_split_multik_uhf_triplet_matches_pyscf_kuhf():
 
 
 def test_exchange_split_multik_uks_pbe0_matches_pyscf_kuks():
-    """UKS multi-k split (per-spin α_HF-scaled channels) on the
-    uniform PBE0 triplet lattice: absolute +0.77 mHa at cutoff 7 (the
-    documented Γ grid/truncation offset — mesh-independent) and
-    k-sampling shift agreement to 0.013 mHa vs PySCF KUKS
-    (+0.521 vs +0.534 mHa, 2026-06-12)."""
+    """Converged AFTDF checks distinguish J, scaled K and semilocal XC.
+
+    The former GDF pin was low by 0.837 mHa at [2,1,1], rather than
+    diagnosing a BIPOLE grid/truncation offset. See the reference generator
+    and its Sun et al. (2017), Secs. II A/III convergence discussion.
+    """
+    from vibeqc._vibeqc_core import AngularScheme
     from vibeqc.pbc_bipole_uks import run_pbc_bipole_uks
 
     sysp = _h2_triplet_box()
     basis = vq.BasisSet(sysp.unit_cell_molecule(), "sto-3g")
     energies = {}
     for label, mesh in (("gamma", [1, 1, 1]), ("211", [2, 1, 1])):
+        opts = _ks_opts(18.0, "pbe0")
+        opts.becke_image_radius_bohr = 16.0
+        opts.grid.angular = AngularScheme.ProductGaussLegendre
+        opts.grid.n_radial = 150
+        opts.grid.n_theta = 29
+        opts.grid.n_phi = 60
         r = run_pbc_bipole_uks(
             sysp,
             basis,
             monkhorst_pack(sysp, mesh),
-            _ks_opts(7.0, "pbe0"),
+            opts,
             use_exchange_ewald_split=True,
-            ewald_precision=1e-6,
+            ewald_omega=7.0 / 30.0,
+            ewald_precision=1e-8,
             progress=False,
         )
         assert r.converged, label
+        assert r.exchange_ewald_split is True
+        assert r.s_squared == pytest.approx(2.0, abs=1e-10)
+        assert r.xc_grid_electrons == pytest.approx(2.0, abs=1e-7)
+        ref = PYSCF_AFT_H2_KUKS_PBE0_TRIPLET[label]
+        for component, tolerance in (
+            ("energy", 1e-8),
+            ("e_coulomb", 1e-9),
+            ("e_hf_exchange", 1e-9),
+            ("e_xc", 1e-8),
+        ):
+            assert getattr(r, component) == pytest.approx(
+                ref[component], abs=tolerance, rel=0
+            ), (label, component)
         energies[label] = float(r.energy)
-    assert energies["211"] == pytest.approx(
-        E_PYSCF_H2_KUKS_PBE0_TRIPLET_211, abs=2e-3
-    )
     shift_pyscf = (
-        E_PYSCF_H2_KUKS_PBE0_TRIPLET_211 - E_PYSCF_H2_KUKS_PBE0_TRIPLET_GAMMA
+        PYSCF_AFT_H2_KUKS_PBE0_TRIPLET["211"]["energy"]
+        - PYSCF_AFT_H2_KUKS_PBE0_TRIPLET["gamma"]["energy"]
     )
-    shift_bipole = energies["211"] - energies["gamma"]
-    assert shift_bipole == pytest.approx(shift_pyscf, abs=3e-4)
+    assert energies["211"] - energies["gamma"] == pytest.approx(
+        shift_pyscf, abs=1e-8, rel=0
+    )
 
 
 def test_bvk_torus_fold_uses_minimal_norm_residue_reps_on_fcc():
@@ -1714,6 +1935,107 @@ def test_incremental_jk_seed_resyncs_the_chain_to_an_exact_build():
     np.testing.assert_allclose(np.asarray(j3.blocks[0]), np.asarray(j2.blocks[0]), atol=1e-14)
 
 
+@pytest.mark.parametrize("with_exchange", [False, True])
+def test_incremental_full_density_policy_survives_seed_and_paired_builds(with_exchange):
+    from types import SimpleNamespace
+    from vibeqc._vibeqc_core import direct_lattice_cells, make_lattice_matrix_set
+    from vibeqc.bipole_fock_ewald import IncrementalJK
+
+    cells = list(direct_lattice_cells(_h2_box(), 1.0))
+
+    def density(value):
+        return make_lattice_matrix_set(1, cells, [np.array([[value]])])
+
+    def build(d):
+        value = float(d.blocks[0][0, 0])
+        return SimpleNamespace(
+            J=density(2 * value),
+            K=density(0.5 * value) if with_exchange else None,
+        )
+
+    first, second = IncrementalJK(), IncrementalJK()
+    first.build(density(1), build)
+    second.build(density(2), build)
+    assert first.require_full_density()
+    assert not first.require_full_density()
+    exact = build(density(1))
+    first.seed(density(1), exact.J, exact.K)
+    seen = []
+
+    def paired(a, b):
+        seen.append((float(a.blocks[0][0, 0]), float(b.blocks[0][0, 0])))
+        return build(a), build(b)
+
+    for value in (3, 4):
+        results = IncrementalJK.build_pair(
+            first, second, density(value), density(value + 2), paired,
+        )
+        for (j, k), expected in zip(results, (value, value + 2)):
+            assert j.blocks[0][0, 0] == 2 * expected
+            if with_exchange:
+                assert k.blocks[0][0, 0] == 0.5 * expected
+            else:
+                assert k is None
+    # Only the rejected chain changes policy. The other spin still uses delta D.
+    assert seen == [(3, 3), (4, 1)]
+
+
+@pytest.mark.parametrize("method,functional", [
+    ("rhf", None), ("uhf", None), ("rks", "PBE"), ("uks", "PBE"),
+    ("rks", "PBE0"), ("uks", "PBE0"),
+])
+def test_failed_confirmation_finishes_with_full_density_builds(monkeypatch, method, functional):
+    """Exercise every driver and total-density/paired-spin chain after rejection."""
+    import importlib
+    from vibeqc.bipole_fock_ewald import IncrementalJK
+
+    module = importlib.import_module(
+        "vibeqc.pbc_bipole" + ("" if method == "rhf" else "_" + method)
+    )
+    driver = getattr(module, "run_pbc_bipole_" + method)
+    system = _h2_box()
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    mesh = monkhorst_pack(system, [2, 1, 1], use_symmetry=False)
+    opts = vq.PeriodicKSOptions() if functional else vq.PeriodicRHFOptions()
+    opts.lattice_opts.cutoff_bohr = 8.0
+    opts.lattice_opts.nuclear_cutoff_bohr = 8.0
+    opts.max_iter = 30
+    opts.initial_guess = InitialGuess.HCORE
+    kwargs = dict(progress=False, ewald_precision=1e-6)
+    if functional:
+        kwargs["functional"] = functional
+    reference = driver(system, basis, mesh, opts, use_incremental_fock=False, **kwargs)
+    assert reference.converged
+
+    original_check = module.bipole_terminal_check
+    original_input = IncrementalJK._build_input
+    rejected = False
+    full_chains = set()
+
+    def check(*args, **kwargs):
+        nonlocal rejected
+        passed, delta = original_check(*args, **kwargs)
+        if kwargs["phase"] == "in_loop" and not rejected:
+            rejected = True
+            return False, delta  # inject one exact-confirmation failure
+        return passed, delta
+
+    def build_input(self, density):
+        source, full = original_input(self, density)
+        if rejected:
+            assert full, "a rejected differential chain must not resume after reseeding"
+            full_chains.add(id(self))
+        return source, full
+
+    monkeypatch.setattr(module, "bipole_terminal_check", check)
+    monkeypatch.setattr(IncrementalJK, "_build_input", build_input)
+    result = driver(system, basis, mesh, opts, **kwargs)
+    assert rejected and result.converged
+    paired_spin = method == "uhf" or (method == "uks" and functional == "PBE0")
+    assert len(full_chains) == (2 if paired_spin else 1)
+    assert result.energy == pytest.approx(reference.energy, rel=0.0, abs=opts.conv_tol_energy)
+
+
 def _beh2_box_9():
     return vq.PeriodicSystem(
         3,
@@ -1819,3 +2141,368 @@ def test_terminal_check_stays_silent_when_nothing_drifted(tmp_path):
     assert [e["passed"] for e in checks] == [True, True]
     assert [e["phase"] for e in checks] == ["in_loop", "post_loop"]
     assert checks[0]["energy_exact"] == pytest.approx(checks[1]["energy_exact"], abs=1e-12)
+
+
+@pytest.mark.parametrize("physical", [False, True])
+def test_j_cache_normalization_does_not_duplicate_the_stack(monkeypatch, physical):
+    """Normalization must not double the large resident reciprocal cache."""
+    import tracemalloc
+    from vibeqc import bipole_fock_ewald as ewald
+    from vibeqc.lattice_screening import ao_pair_support_mask
+
+    atoms = [vq.Atom(3, [0., 0., 0.]), vq.Atom(1, [1.4, 0., 0.])]
+    system = vq.PeriodicSystem(3, np.eye(3) * 6., atoms)
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    vectors = np.zeros((512, 3))
+    vectors[:, 0] = np.linspace(.1, 2., len(vectors))
+    cells = np.zeros((64, 3))
+    cells[:, 0] = np.arange(len(cells)) * .25
+    shape = (len(cells), basis.nbasis, basis.nbasis, len(vectors))
+
+    def fresh_ft(*args):
+        result = np.empty(shape, dtype=np.complex128)
+        result.fill(.7 + .3j)
+        return result
+
+    monkeypatch.setattr(ewald, "ao_pair_fourier_transform_at_cells", fresh_ft)
+    monkeypatch.setattr(
+        ewald, "compute_reciprocal_lattice_vectors", lambda *args: vectors.copy()
+    )
+    opts = vq.LatticeSumOptions()
+    opts.cutoff_bohr = 5.
+    opts.pair_complete_1e = physical
+    tracemalloc.start()
+    try:
+        cache = ewald._build_j_long_range_cache(
+            basis, system, cells, .3, 1e-8, K_max=2., lattice_opts=opts
+        )
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    # Leave room for small kernels/masks while excluding a second full stack.
+    assert peak < 1.5 * cache.ft_per_cell.nbytes
+
+    correction = ewald._libint_ylm_correction_per_ao(basis)
+    normalized = (.7 + .3j) * (correction[:, None] * correction[None, :])
+    expected = np.broadcast_to(normalized[None, :, :, None], shape).copy()
+    if physical:
+        for cell, shift in enumerate(cells):
+            expected[cell] *= ao_pair_support_mask(basis, shift, 5.)[:, :, None]
+    np.testing.assert_array_equal(cache.ft_per_cell, expected)
+
+
+def _exchange_mesh_fixture(relabel=False, gamma=False, physical=True):
+    lattice = np.array([[5.0, 0.4, 0.2], [0.3, 5.2, 0.5], [0.1, 0.6, 5.4]])
+    position = np.array([2.1, 0.3, 0.2]) + (lattice[:, 0] if relabel else 0.0)
+    atoms = [vq.Atom(3, [0.0, 0.0, 0.0]), vq.Atom(1, position)]
+    system = vq.PeriodicSystem(3, lattice, atoms)
+    basis = vq.BasisSet(vq.Molecule(atoms), "sto-3g")
+    cells = np.array([lattice[:, 0], np.zeros(3), -lattice[:, 1]])
+    vectors = np.array([[0.3, 0.2, 0.1], [-0.2, 0.4, 0.1]])
+    correction = ewald._libint_ylm_correction_per_ao(basis)
+
+    def dense(vectors):
+        ft = ao_pair_fourier_transform_at_cells(basis, vectors, cells)
+        if physical:
+            for i, shift in enumerate(cells):
+                ft[i] *= ao_pair_support_mask(basis, shift, 5.3)[:, :, None]
+        return ft * correction[None, :, None, None] * correction[None, None, :, None]
+
+    j = ewald.JLongRangeCache(
+        vectors,
+        np.array([0.4, 0.2]),
+        dense(vectors),
+        cells,
+        0.3,
+        5.3 if physical else None,
+    )
+    cache = ewald.KExchangeLongRangeCache(basis, system, cells, 0.3, 0.9, j)
+    fractional = (
+        np.zeros((1, 3))
+        if gamma
+        else np.array(
+            [
+                [0.125, 0.125, 0.0],
+                [0.125 + 1 / 3, 0.125, 0.0],
+                [0.125 + 2 / 3, 0.125, 0.0],
+            ]
+        )
+    )
+    points = fractional @ (2 * np.pi * np.linalg.inv(lattice))
+    weights = np.ones(1) if gamma else np.array([0.2, 0.3, 0.5])
+    rng = np.random.default_rng(811)
+    d = rng.normal(size=(2, len(points), basis.nbasis, basis.nbasis)) + 1j * rng.normal(
+        size=(2, len(points), basis.nbasis, basis.nbasis)
+    )
+    d = d + d.conj().swapaxes(-1, -2)
+    expected = np.zeros_like(d)
+    for i, k in enumerate(points):
+        for p, kp in enumerate(points):
+            key, q = cache._canonical_q(k - kp)
+            if np.any(np.frombuffer(key, dtype=float)):
+                ch = cache._nonzero_channel(key, q)
+                kernel = ch.kernel
+                ft = dense(ch.K_vectors)
+            else:
+                kernel = j.kernel
+                ft = j.ft_per_cell
+            b = np.einsum("g,gmnx->mnx", np.exp(-1j * cells @ kp), ft)
+            for spin in range(2):
+                # Direct reciprocal sum of matrix sandwiches, independent
+                # of production einsum and batch traversal.
+                for x, value in enumerate(kernel):
+                    expected[spin, i] += (
+                        weights[p]
+                        * value
+                        * b[:, :, x].conj()
+                        @ d[spin, p]
+                        @ b[:, :, x].T
+                    )
+    return cache, points, weights, d, expected
+
+
+@pytest.mark.parametrize("relabel", [False, True])
+@pytest.mark.parametrize("gamma", [False, True])
+@pytest.mark.parametrize("physical", [False, True])
+@pytest.mark.parametrize("cache_cap", [0, 1, 2**20])
+def test_mesh_exchange_dense_oracle_and_repeated_density(
+    relabel, gamma, physical, cache_cap
+):
+    cache, k, w, d, expected = _exchange_mesh_fixture(relabel, gamma, physical)
+    size = max(
+        [p.kernel.size * cache.basis.nbasis**2 * 16 for p in cache.q_channels.values()]
+        or [1]
+    )
+    if cache_cap == 1:
+        cache_cap = size
+    actual = ewald.compute_K_long_range_mesh(
+        cache, k, w, d, max_cached_bytes=cache_cap, max_batch_bytes=size
+    )
+    np.testing.assert_allclose(actual, expected, rtol=3e-12, atol=3e-12)
+    count = sum(p.nbytes for c in cache.q_channels.values() for p in c.b_per_k.values())
+    assert count <= cache_cap
+    changed = ewald.compute_K_long_range_mesh(
+        cache, k, w, -0.7 * d, max_cached_bytes=cache_cap, max_batch_bytes=3 * size
+    )
+    np.testing.assert_allclose(changed, -0.7 * expected, rtol=3e-12, atol=3e-12)
+    for spin in range(2):
+        old = [ewald.compute_K_long_range_at_k(cache, p, k, w, d[spin]) for p in k]
+        np.testing.assert_allclose(old, expected[spin], rtol=3e-12, atol=3e-12)
+    # Lowering the cap also handles a cache filled by the legacy API.
+    again = ewald.compute_K_long_range_mesh(
+        cache, k, w, d, max_cached_bytes=0, max_batch_bytes=size
+    )
+    np.testing.assert_allclose(again, expected, rtol=3e-12, atol=3e-12)
+    assert not any(c.b_per_k for c in cache.q_channels.values())
+
+
+def test_mesh_exchange_shared_spin_batches_and_cache_hits(monkeypatch):
+    import vibeqc._aopair_ft as ft
+
+    cache, k, w, d, expected = _exchange_mesh_fixture()
+    calls = []
+    original = ft.ao_pair_fourier_transform_bloch_multi
+
+    def observe(*args, **kwargs):
+        calls.append(len(args[3]))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(ft, "ao_pair_fourier_transform_bloch_multi", observe)
+    result = ewald.compute_K_long_range_mesh(cache, k, w, d)
+    np.testing.assert_allclose(result, expected, rtol=3e-12, atol=3e-12)
+    assert calls == [3, 3]
+    calls.clear()
+    ewald.compute_K_long_range_mesh(cache, k, w, d)
+    assert calls == []
+
+
+@pytest.mark.parametrize("value", [True, -1, 1.2])
+def test_mesh_exchange_invalid_caps_refuse(value, monkeypatch):
+    cache, k, w, d, _ = _exchange_mesh_fixture()
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Fourier called before refusal")
+
+    monkeypatch.setattr(ewald, "_bloch_pair_ft_from_cache", forbidden)
+    with pytest.raises(ValueError):
+        ewald.compute_K_long_range_mesh(cache, k, w, d, max_cached_bytes=value)
+    with pytest.raises(ValueError):
+        ewald.compute_K_long_range_mesh(cache, k, w, d, max_batch_bytes=value)
+
+
+def test_mesh_exchange_one_short_refuses_before_fourier_and_retains_existing(
+    monkeypatch,
+):
+    import vibeqc._aopair_ft as ft
+
+    cache, k, w, d, _ = _exchange_mesh_fixture()
+    ewald.compute_K_long_range_at_k(cache, k[0], k, w, d[0])
+    before = [[id(p) for p in c.b_per_k.values()] for c in cache.q_channels.values()]
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Fourier called before refusal")
+
+    monkeypatch.setattr(ft, "ao_pair_fourier_transform_bloch_multi", forbidden)
+    monkeypatch.setattr(ewald, "_bloch_pair_ft_from_cache", forbidden)
+    size = cache.basis.nbasis**2 * 16
+    with pytest.raises(MemoryError):
+        ewald.compute_K_long_range_mesh(
+            cache, k, w, d, max_cached_bytes=0, max_batch_bytes=size - 1
+        )
+    assert before == [
+        [id(p) for p in c.b_per_k.values()] for c in cache.q_channels.values()
+    ]
+
+
+@pytest.mark.parametrize("fallback", ["python", "unsupported-batch"])
+def test_mesh_exchange_reference_fallback(fallback, monkeypatch):
+    import vibeqc._aopair_ft as ft
+
+    cache, k, w, d, expected = _exchange_mesh_fixture(True)
+    if fallback == "python":
+        monkeypatch.setenv("VIBEQC_AOPAIR_FT_BACKEND", "python")
+    else:
+
+        def unavailable(*args, **kwargs):
+            raise NotImplementedError("unsupported basis")
+
+        monkeypatch.setattr(ft, "ao_pair_fourier_transform_bloch_multi", unavailable)
+    actual = ewald.compute_K_long_range_mesh(cache, k, w, d)
+    np.testing.assert_allclose(actual, expected, rtol=3e-12, atol=3e-12)
+
+
+@pytest.mark.parametrize(
+    "bad", ["points", "weights", "density", "missing-spin", "wrong-shape"]
+)
+def test_mesh_exchange_input_validation_before_fourier(bad, monkeypatch):
+    import vibeqc._aopair_ft as ft
+
+    cache, k, w, d, _ = _exchange_mesh_fixture()
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Fourier called before refusal")
+
+    monkeypatch.setattr(ft, "ao_pair_fourier_transform_bloch_multi", forbidden)
+    monkeypatch.setattr(ewald, "_bloch_pair_ft_from_cache", forbidden)
+    if bad == "points":
+        k[0, 0] = np.nan
+    if bad == "weights":
+        w[0] = np.inf
+    if bad == "density":
+        d[0, 0, 0, 0] = np.nan
+    if bad == "missing-spin":
+        d = d[:0]
+    if bad == "wrong-shape":
+        d = d[:, :, :-1]
+    with pytest.raises(ValueError):
+        ewald.compute_K_long_range_mesh(cache, k, w, d)
+
+
+@pytest.mark.parametrize("offset", [-1, 0, 1])
+def test_mesh_exchange_sharp_physical_boundary(offset):
+    from vibeqc._aopair_ft import ao_pair_fourier_transform_bloch_multi
+
+    cache, _, _, _, _ = _exchange_mesh_fixture()
+    radius = 5.3
+    cutoff = (
+        radius if offset == 0 else np.nextafter(radius, np.inf if offset > 0 else 0.0)
+    )
+    cells = np.array([[radius, 0.0, 0.0], [0.0, 0.0, 0.0], [-radius, 0.0, 0.0]])
+    vectors = np.array([[0.3, 0.2, 0.1], [-0.2, 0.4, 0.1]])
+    ks = np.array([[0.2, -0.1, 0.3], [-0.4, 0.2, 0.1]])
+    expected = np.array(
+        [
+            ewald._masked_bloch_pair_fourier_transform(
+                cache.basis, vectors, cells, k, cutoff
+            )
+            for k in ks
+        ]
+    )
+    actual = np.array(
+        ao_pair_fourier_transform_bloch_multi(
+            cache.basis, vectors, cells, ks, pair_cutoff_bohr=cutoff
+        )
+    )
+    np.testing.assert_allclose(actual, expected, rtol=3e-12, atol=3e-12)
+
+
+@pytest.mark.parametrize("slice_count", [1, 2])
+def test_mesh_exchange_reciprocal_slicing_matches_dense_operator(
+    slice_count, monkeypatch
+):
+    import vibeqc._aopair_ft as ft
+
+    cache, k, w, d, expected = _exchange_mesh_fixture(True)
+    unit = cache.basis.nbasis**2 * 16
+    budget = slice_count * unit
+    observed = []
+    original = ft.ao_pair_fourier_transform_bloch_multi
+
+    def observe(*args, **kwargs):
+        result = original(*args, **kwargs)
+        payload = sum(p.nbytes for p in result)
+        assert payload <= budget
+        observed.append((len(args[1]), len(args[3]), payload))
+        return result
+
+    monkeypatch.setattr(ft, "ao_pair_fourier_transform_bloch_multi", observe)
+    for factor in [1.0, -0.3]:
+        actual = ewald.compute_K_long_range_mesh(
+            cache, k, w, factor * d, max_batch_bytes=budget
+        )
+        np.testing.assert_allclose(actual, factor * expected, rtol=3e-12, atol=3e-12)
+    assert observed
+    for channel in cache.q_channels.values():
+        if channel.kernel.size * unit > budget:
+            assert not channel.b_per_k
+
+
+def test_long_range_j_density_is_restricted_to_the_cache_cells():
+    """#503: the long-range J sees exactly the cache's operator cells.
+
+    The KS drivers widen their density list by the exact XC difference
+    cells (#434) while the Ewald long-range J cache stays on the operator
+    list. Without a precomputed ``rho_hat`` (legacy gauge, first-cycle,
+    damped or mixed densities) the J kernel refused the wider list with
+    "cache cell count ... does not match P_real cells". The density handed
+    to it is now the operator-cell restriction, in the cache's order; an
+    already matching list passes through unchanged, and a list that lacks
+    an operator cell is refused.
+    """
+    from types import SimpleNamespace
+
+    from vibeqc._vibeqc_core import direct_lattice_cells, make_lattice_matrix_set
+    from vibeqc.pbc_bipole_fock import _cell_key, _density_on_cache_cells
+
+    sysp = _h2_box()
+    nbf = 2
+    narrow = list(direct_lattice_cells(sysp, 12.5))
+    wide = list(direct_lattice_cells(sysp, 18.0))
+    assert 1 < len(narrow) < len(wide)
+
+    def _block(cell):
+        index = np.asarray(cell.index, dtype=float)
+        return np.full((nbf, nbf), 1.0 + index @ np.array([1.0, 10.0, 100.0]))
+
+    density = make_lattice_matrix_set(nbf, wide, [_block(c) for c in wide])
+    cache_cells = list(reversed(narrow))
+    cache = SimpleNamespace(
+        cells_r_cart=np.asarray([c.r_cart for c in cache_cells], dtype=float),
+        ft_per_cell=np.zeros((len(cache_cells), nbf, nbf, 1)),
+    )
+
+    restricted = _density_on_cache_cells(density, cache, sysp)
+    assert [_cell_key(c) for c in restricted.cells] == [
+        _cell_key(c) for c in cache_cells
+    ]
+    for cell, block in zip(restricted.cells, restricted.blocks):
+        np.testing.assert_array_equal(np.asarray(block), _block(cell))
+
+    matching = make_lattice_matrix_set(
+        nbf, cache_cells, [_block(c) for c in cache_cells]
+    )
+    assert _density_on_cache_cells(matching, cache, sysp) is matching
+
+    home_only = make_lattice_matrix_set(nbf, narrow[:1], [_block(narrow[0])])
+    with pytest.raises(ValueError, match="lacks cache cell"):
+        _density_on_cache_cells(home_only, cache, sysp)

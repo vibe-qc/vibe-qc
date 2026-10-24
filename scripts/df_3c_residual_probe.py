@@ -2,7 +2,7 @@
 
 Compares analytic 3c gradient (via compute_3c_eri_gradient_contribution
 with fixed γ, D) against FD on the same contracted-with-fixed-γD
-expression. Per HANDOVER_DF_GRADIENT_RESIDUAL.md the analytic kernel
+expression. Per the original investigation the analytic kernel
 is ~2.8 mHa off FD on heavy-atom z components.
 """
 

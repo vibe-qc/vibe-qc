@@ -74,8 +74,8 @@ meta-GGA analytic gradient, native D4 backend, GFN2-xTB, JD/GPLHR eigensolvers,
 MS-CASPT2 gradient (preliminary, SA->MS shift limitation documented),
 slab-Ewald-2D.
 
-Carried-forward open bugs: see handovers/HANDOVER_OPEN_BUGS_V015.md (+ the
-still-open v0.14 entries it references).
+
+
 
 ## Codename -- Neese's Cheetah (decided 2026-06-25)
 

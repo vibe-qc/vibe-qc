@@ -139,14 +139,15 @@ def _periodic_scf_energy_and_forces(
     (energy + forces from a single SCF). Parameter docs live on
     :func:`periodic_forces`.
     """
+    from .kpoints import _integer_counts
+
+    kpts = _integer_counts([1, 1, 1] if kpts is None else kpts, name="ASE kpts")
     sys = atoms_to_periodic_system(atoms, charge=charge,
                                       multiplicity=multiplicity)
     is_dft = functional is not None
     is_open_shell = (multiplicity != 1)
 
-    if kpts is None:
-        kpts = [1, 1, 1]
-    is_gamma_only = (tuple(int(k) for k in kpts) == (1, 1, 1))
+    is_gamma_only = (tuple(kpts) == (1, 1, 1))
 
     if str(backend) not in ("ewald", "gdf"):
         raise ValueError(
@@ -193,7 +194,7 @@ def _periodic_scf_energy_and_forces(
             # Monkhorst-Pack mesh for even kpts instead — the two
             # backends disagree on even meshes by construction (~44
             # mHa on MgO (2,2,2); see the production-k-sampling audit).
-            kmesh_t = tuple(int(k) for k in kpts)
+            kmesh_t = tuple(kpts)
             mk_driver = (
                 run_kuhf_periodic_gdf if is_open_shell
                 else run_krhf_periodic_gdf
@@ -286,9 +287,13 @@ def _periodic_scf_energy_and_forces(
             # identical to 4e-16 Ha). (run_rhf_periodic also can't be
             # called here regardless: its binding accepts only
             # PeriodicSCFOptions, not the PeriodicRHFOptions built above.)
+            # exchange_exxdiv='none' keeps the molecular-limit exchange of
+            # the Gamma-only driver, which the multi-k default no longer is
+            # at a single Gamma point (GitLab #23); the gradient follows the
+            # gauge the result records.
             opts.lattice_opts.coulomb_method = CoulombMethod.EWALD_3D
             result = run_rhf_periodic_multi_k_ewald3d(
-                sys, basis, kmesh, opts)
+                sys, basis, kmesh, opts, exchange_exxdiv="none")
             if not result.converged:
                 raise RuntimeError(
                     "periodic_forces: Γ-only RHF SCF did not converge.")

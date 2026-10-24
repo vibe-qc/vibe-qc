@@ -40,7 +40,9 @@ from vibeqc.kpoints import (
     GAP_INSULATOR_EV,
     GAP_METAL_EPS_EV,
     KPointConvergence,
+    _hexagonal_plane_axes,
     _is_hexagonal_like,
+    _k_commensurate_mesh,
     _spacegroup_number,
 )
 from vibeqc.smearing import VALID_FLAVORS, SmearingOptions
@@ -255,6 +257,58 @@ def test_non_hexagonal_even_mesh_uses_mp_shift():
     assert kp.shift == (1, 1, 1)
 
 
+def _graphene():
+    """Graphene, a = 2.46 Å, 30-bohr vacuum: Dirac points at K and K'."""
+    a = 2.46 * ANGSTROM_TO_BOHR
+    a1 = np.array([a, 0.0, 0.0])
+    a2 = np.array([0.5 * a, 0.5 * np.sqrt(3.0) * a, 0.0])
+    lat = np.column_stack([a1, a2, [0.0, 0.0, 30.0]])
+    return vq.PeriodicSystem(
+        2, lat, [vq.Atom(6, [0.0, 0.0, 0.0]), vq.Atom(6, ((a1 + a2) / 3.0).tolist())]
+    )
+
+
+def test_hexagonal_plane_axes_need_exactly_one_hexagonal_pair():
+    assert _hexagonal_plane_axes(_hexagonal()) == (0, 1)
+    assert _hexagonal_plane_axes(_graphene()) == (0, 1)
+    # Every pair of FCC primitive vectors meets at 60°: no single plane.
+    assert _hexagonal_plane_axes(_si_diamond()) == ()
+    assert _hexagonal_plane_axes(_w_bcc()) == ()
+
+
+def test_k_commensurate_mesh_rounds_the_hexagonal_plane_up_to_multiples_of_3():
+    assert _k_commensurate_mesh(_hexagonal(), (4, 4, 5)) == (6, 6, 5)
+    assert _k_commensurate_mesh(_hexagonal(), (9, 9, 4)) == (9, 9, 4)
+    # A Gamma-only axis stays Gamma-only.
+    assert _k_commensurate_mesh(_hexagonal(), (1, 1, 2)) == (1, 1, 2)
+    assert _k_commensurate_mesh(_si_diamond(), (4, 4, 4)) == (4, 4, 4)
+
+
+@pytest.mark.parametrize("system", [_hexagonal, _graphene], ids=["hcp-like", "graphene"])
+def test_hexagonal_recommendation_samples_the_zone_corners(system):
+    """#129: K = (1/3, 1/3) lies on a Γ-centred n x n mesh only when 3 | n."""
+    cell = system()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        kp = vq.KPoints.recommend(cell, is_metal=True)
+        raw = vq.KPoints.from_kspacing(
+            cell, DELTA_K_METAL, units="angstrom", gamma_centred=True
+        ).mesh
+    assert kp.grid_type == "gamma"
+    assert kp.mesh[0] % 3 == 0 and kp.mesh[1] % 3 == 0
+    assert kp.mesh[0] >= raw[0] and kp.mesh[1] >= raw[1]
+    assert kp.mesh[2] == raw[2]
+    assert "K-commensurate" in kp.rationale
+
+
+def test_k_commensuration_needs_a_gamma_centred_mesh():
+    """A forced MP shift cannot reach K, so it is left as requested."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        kp = vq.KPoints.recommend(_hexagonal(), is_metal=True, gamma_centred=False)
+    assert "K-commensurate" not in kp.rationale
+
+
 # ---------------------------------------------------------------------------
 # 6. Large supercell — Γ-only collapse
 # ---------------------------------------------------------------------------
@@ -391,6 +445,78 @@ def test_verify_reports_non_convergence():
 def test_verify_requires_energy_fn():
     with pytest.raises(ValueError, match="scf_energy_fn"):
         vq.KPoints.recommend(_si_diamond(), band_gap=1.1, verify=True)
+
+
+def test_verify_ladder_on_a_hexagonal_cell_keeps_every_rung_k_commensurate():
+    """A parity-split energy (lower whenever the mesh holds K) never sees a
+    rung without K, so the ladder converges smoothly (#129)."""
+
+    def energy(kpts):
+        n = kpts.mesh[0]
+        return -7.5 - 1e-3 * (n % 3 == 0) + 0.05 / n**3
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        kp = vq.KPoints.recommend(
+            _graphene(), is_metal=True, verify=True, scf_energy_fn=energy,
+            tolerance_meV_per_atom=1.0,
+        )
+    meshes = [mesh for _, mesh, _ in kp.verification.rungs]
+    assert all(m[0] % 3 == 0 and m[1] % 3 == 0 for m in meshes)
+    assert kp.mesh[0] % 3 == 0
+    assert kp.verification.converged is True
+
+
+def test_dftb0_graphene_ladder_converges_monotonically():
+    """DFTB0 graphene is a semimetal: on meshes that miss K its energy can
+    land below the converged value, and the old ladder stopped at 25 x 25
+    (25 -> 35 changed by 7e-6 Ha, with E(25) 1.1e-5 Ha below the 72 x 72
+    value). On K-commensurate rungs the energy decreases monotonically:
+    18, 27, 36, 51, 72, measured -3.11604010 ... -3.11613492 Ha."""
+    from vibeqc._vibeqc_core import semiempirical as _se
+
+    cell = _graphene()
+    params = _se.SemiempiricalParameters.dftb0_default()
+
+    def energy(kpts):
+        return _se.run_dftb0_kpoints(cell, params, kpts.to_bloch_kmesh(), 15.0).energy
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        kp = vq.KPoints.recommend(
+            cell, is_metal=True, symmetry=False, verify=True,
+            scf_energy_fn=energy, tolerance_meV_per_atom=0.1,
+        )
+    rungs = kp.verification.rungs
+    assert all(mesh[0] % 3 == 0 and mesh[1] % 3 == 0 for _, mesh, _ in rungs)
+    energies = [e for _, _, e in rungs]
+    assert all(b < a for a, b in zip(energies, energies[1:]))
+    assert kp.verification.converged is True
+    assert kp.mesh[0] % 3 == 0
+
+
+def test_verify_ladder_steps_past_a_repeated_mesh():
+    """Rounding can map two spacings to one mesh (raw 4 -> 6, then raw
+    6 -> 6). That rung would compare the mesh with itself and pass any
+    tolerance, so the ladder keeps refining until the mesh changes."""
+    from vibeqc.kpoints import ANGSTROM_TO_BOHR as KP_ANGSTROM_TO_BOHR
+
+    cell = _graphene()
+    b = float(np.linalg.norm(np.asarray(cell.reciprocal_lattice())[:, 0]))
+    delta_k = b / 3.8 * KP_ANGSTROM_TO_BOHR  # ceil(3.8) = 4 -> 6; ceil(3.8 sqrt 2) = 6
+
+    def energy(kpts):
+        return -7.5 - 0.01 * kpts.mesh[0]  # never converges
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        kp = vq.KPoints.recommend(
+            cell, is_metal=True, delta_k=delta_k, verify=True,
+            scf_energy_fn=energy, tolerance_meV_per_atom=1.0,
+        )
+    refinements = [mesh for _, mesh, _ in kp.verification.rungs[1:]]
+    assert refinements[0][0] == 6
+    assert all(a != b for a, b in zip(refinements, refinements[1:]))
 
 
 # ---------------------------------------------------------------------------
@@ -668,6 +794,9 @@ def test_runner_dispatch_rhf_accepts_bz_integration():
     kmesh = vq.KPoints.monkhorst_pack(sys, (1, 1, 1))
     opts = PeriodicSCFOptions()
     opts.lattice_opts.coulomb_method = CoulombMethod.DIRECT_TRUNCATED
+    # _h2_gdf_smoke_system is a dilute molecular-limit cell (18 bohr, default
+    # cutoff 15: only g = 0); declare it for the #133 guard (#430).
+    opts.lattice_opts.gamma_only_0 = True
     opts.max_iter = 1
     result = run_rhf_periodic_scf(sys, basis, kmesh, opts, bz_integration=None)
     assert result is not None
@@ -928,7 +1057,11 @@ def test_scf_result_multik_classifies_correctly():
 # ---------------------------------------------------------------------------
 
 def test_pre_scf_classifier_insulator():
-    """classifier='pre-scf' classifies Si diamond as insulator."""
+    """classifier='pre-scf' classifies Si diamond as insulator.
+
+    The compact cell runs the bulk GDF Hamiltonian at Gamma (#468); the
+    three-cycle gap is about 11.6 eV with STO-3G.
+    """
     sys = _si_diamond()
     basis = vq.BasisSet(sys.unit_cell_molecule(), "sto-3g")
     spec = vq.KPoints.recommend(sys, classifier="pre-scf", basis=basis)

@@ -197,3 +197,82 @@ class TestMRCIDeterminantSpace:
         """
         singles = _generate_singles_unrestricted((0, 1, 2), (0, 1), 5)
         assert ((0, 1, 2), (0, 2)) in singles
+
+
+def _random_integrals(norb, seed):
+    """A symmetric h and a physicist-order g with the 8-fold ERI symmetry."""
+    rng = np.random.default_rng(seed)
+    h = rng.standard_normal((norb, norb))
+    h = h + h.T
+    x = rng.standard_normal((norb,) * 4)
+    chem = x + x.transpose(1, 0, 2, 3)
+    chem = chem + chem.transpose(0, 1, 3, 2)
+    chem = chem + chem.transpose(2, 3, 0, 1)
+    return h, chem.transpose(0, 2, 1, 3).copy()
+
+
+def _cas_reference_space(norb, n_core, n_act_e, n_act_o, ms2):
+    from itertools import combinations
+
+    from vibeqc.solvers._mrci import _full_det_from_cas, _generate_mrci_space
+
+    na, nb = (n_act_e + ms2) // 2, (n_act_e - ms2) // 2
+    refs = [_full_det_from_cas(a, b, n_core)
+            for a in combinations(range(n_act_o), na)
+            for b in combinations(range(n_act_o), nb)]
+    return _generate_mrci_space(refs, norb)
+
+
+class TestMRCISparseHamiltonian:
+    """#326: the string-table sparse builder and the Lanczos lowest root."""
+
+    @pytest.mark.parametrize("norb,n_core,cas,ms2,seed", [
+        (8, 1, (4, 4), 0, 1), (8, 1, (3, 3), 1, 2), (9, 2, (4, 4), 2, 3), (7, 0, (2, 2), 0, 4)])
+    def test_sparse_builder_is_the_dense_matrix(self, norb, n_core, cas, ms2, seed):
+        from vibeqc.solvers._slater_condon import (
+            build_hamiltonian_matrix_unrestricted, build_hamiltonian_sparse_unrestricted)
+
+        h, g = _random_integrals(norb, seed)
+        dets = _cas_reference_space(norb, n_core, *cas, ms2)
+        dense = build_hamiltonian_matrix_unrestricted(dets, h, g)
+        sparse = build_hamiltonian_sparse_unrestricted(dets, h, g)
+        np.testing.assert_array_equal(sparse.toarray(), dense)
+
+    @pytest.mark.parametrize("norb,n_core,cas,ms2,seed", [
+        (8, 1, (4, 4), 0, 1), (8, 1, (3, 3), 1, 2), (9, 2, (4, 4), 2, 3)])
+    def test_lanczos_root_matches_dense_eigh(self, monkeypatch, norb, n_core, cas, ms2, seed):
+        import vibeqc.solvers._mrci as mrci_module
+
+        h, g = _random_integrals(norb, seed)
+        monkeypatch.setattr(mrci_module, "_DENSE_DIAGONALIZATION_MAX_DET", 10**9)
+        dense = mrci(h, g, *cas, n_core=n_core, ms2=ms2, max_det=None)
+        monkeypatch.setattr(mrci_module, "_DENSE_DIAGONALIZATION_MAX_DET", 0)
+        lanczos = mrci(h, g, *cas, n_core=n_core, ms2=ms2, max_det=None)
+        assert lanczos.e_total == pytest.approx(dense.e_total, abs=1e-10)
+        assert lanczos.e_total_q == pytest.approx(dense.e_total_q, abs=1e-9)
+        assert lanczos.ref_weight == pytest.approx(dense.ref_weight, abs=1e-12)
+        assert abs(np.dot(lanczos.ci_coeffs, dense.ci_coeffs)) == pytest.approx(1.0, abs=1e-10)
+
+
+def test_h2s_lanl2dz_mrci_reproduces_the_dense_path_through_lanczos(tmp_path, monkeypatch):
+    """#326: the deck whose MRCI ran past the 300 s cap. Its 15100-determinant
+    space now goes to Lanczos; the old dense builder plus dense eigh gave
+    -11.0694286285 Ha in 264 s on the same build (1.5 s now)."""
+    import scipy.sparse.linalg as sparse_linalg
+
+    from vibeqc import run_job
+
+    calls = []
+    real_eigsh = sparse_linalg.eigsh
+
+    def spy(matrix, *args, **kwargs):
+        calls.append(matrix.shape[0])
+        return real_eigsh(matrix, *args, **kwargs)
+
+    monkeypatch.setattr(sparse_linalg, "eigsh", spy)
+    h2s = Molecule([Atom(16, [0.0, 0.0, 0.0]), Atom(1, [0.0, 1.815, 1.425]),
+                    Atom(1, [0.0, -1.815, 1.425])], charge=0, multiplicity=1)
+    result = run_job(h2s, basis="lanl2dz", method="mrci", active_space=(4, 4),
+                     output=tmp_path / "h2s-mrci", progress=False)
+    assert calls == [15100]
+    assert float(result.energy) == pytest.approx(-11.0694286285, abs=1e-9)

@@ -66,6 +66,18 @@ void bind_symmetry_shared(py::module_& m) {
         }
         return bytes;
     });
+    m.def("_plan_symmetry_cartesian_rotation",&plan_symmetry_cartesian_rotation);
+    m.def("_symmetry_cartesian_rotation",[](int l,py::array rotation,double tolerance,
+                                           const SymmetryBudget& budget) {
+        plan_symmetry_cartesian_rotation(l,budget); // before scans or allocations
+        if (rotation.ndim()!=2 || rotation.shape(0)!=3 || rotation.shape(1)!=3)
+            throw std::invalid_argument("Cartesian symmetry rotation shape mismatch");
+        const auto result=symmetry_cartesian_rotation(l,payload<double>(rotation),tolerance,budget);
+        const py::ssize_t n=(l+1)*(l+2)/2;
+        py::array_t<double> out({n,n});
+        std::copy(result.begin(),result.end(),out.mutable_data());
+        return out;
+    },py::arg("l"),py::arg("rotation").noconvert(),py::arg("tolerance"),py::arg("budget"));
     m.def("_plan_symmetry_group",&plan_symmetry_group);
     m.def("_make_symmetry_group",[](py::array table,py::array anti,U identity,
                                   py::object rotation,py::object cocycle,const SymmetryBudget& budget) {

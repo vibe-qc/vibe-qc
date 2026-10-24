@@ -121,6 +121,22 @@ def test_element_missing_from_basis_raises():
         vq.BasisSet(pb, "cc-pvdz")
 
 
+@pytest.mark.parametrize("z", [19, 36, 86])
+def test_def2_sv_beyond_argon_is_refused_per_element(z):
+    """def2-SV ships H-Ar only: BSE has no def2-SV record past Ar (#30).
+
+    A molecule made only of uncovered atoms used to get "no matching .g94
+    file", which is false: the file exists. It now names the element,
+    exactly as the per-atom guard does for a partly covered molecule.
+    """
+    mol = vq.Molecule([vq.Atom(z, [0.0, 0.0, 0.0])], 0, 1 if z % 2 == 0 else 2)
+    with pytest.raises(RuntimeError, match=rf"'def2-sv' has no functions for Z={z}:") as info:
+        vq.BasisSet(mol, "def2-sv")
+    assert "matching .g94 file" not in str(info.value)
+    # Argon, the last covered element, still loads.
+    assert vq.BasisSet(vq.Molecule([vq.Atom(18, [0.0, 0.0, 0.0])], 0, 1), "def2-sv").nbasis == 13
+
+
 def test_element_missing_from_a_multi_atom_basis_names_it():
     """cc-pvdz ships no Pb block. In a molecule with covered atoms libint
     returns a non-empty basis that simply has no functions on lead; the

@@ -320,3 +320,83 @@ def test_j_lr_default_keeps_the_pinned_g0_gauge():
     assert not np.allclose(default, restored), (
         "the opt-in must actually change J_LR"
     )
+
+
+@pytest.mark.parametrize("physical", [False, True])
+@pytest.mark.parametrize("angular", [0, 1, 2])
+def test_finite_ft_hartree_derivative_matches_its_energy(physical, angular, monkeypatch):
+    """Signed, image-dependent densities test the finite sum and AO scaling."""
+    import vibeqc.ewald_composed as ew
+    import vibeqc._aopair_ft as ft
+    core = vq._vibeqc_core
+    lattice = np.array([[4., .3, 0.], [0., 4.5, .2], [.1, 0., 5.]])
+    positions = np.array([[.7, .8, .9], [2., 1.2, 1.1]])
+    opts = vq.LatticeSumOptions()
+    opts.cutoff_bohr = 3.4
+    opts.pair_complete_1e = physical
+    rng = np.random.default_rng(1927 + angular)
+    nbf = 2*(2*angular + 1)
+    raw = rng.normal(size=(nbf, nbf)) * .05
+    symmetric, antisymmetric = raw + raw.T, raw - raw.T
+
+    def frame(xyz):
+        system = vq.PeriodicSystem(3, lattice, [vq.Atom(1, list(p)) for p in xyz])
+        basis = core.BasisSet(system.unit_cell_molecule(), [
+            core.ShellInfo(a, angular, True, [.7], [1.], list(p))
+            for a, p in enumerate(xyz)
+        ], "explicit", coefficients_pre_normalized=False)
+        density = vq.compute_overlap_lattice(basis, system, opts)
+        for i, cell in enumerate(density.cells):
+            phase = np.dot(cell.r_cart, [.43, .27, .19])
+            density.set_block(i, np.cos(phase)*symmetric + np.sin(phase)*antisymmetric)
+        return system, basis, density
+
+    system, basis, density = frame(positions)
+    keys = {tuple(c.index) for c in density.cells}
+    if physical:
+        from vibeqc.lattice_screening import ao_pair_support_mask
+        assert any(not ao_pair_support_mask(basis, c.r_cart, opts.cutoff_bohr).all()
+                   for c in density.cells)
+    # Both value and contracted derivative must obey the one-cell/G budget.
+    original_value = ft.ao_pair_fourier_transform_bloch
+    original_gradient = core.ao_pair_fourier_transform_gamma_gradient_weighted
+    seen = []
+
+    def value(b, g, r, **kwargs):
+        seen.append((len(r), len(g)))
+        return original_value(b, g, r, **kwargs)
+
+    def derivative(b, g, r, *args):
+        seen.append((len(r), len(g)))
+        return original_gradient(b, g, r, *args)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(ft, "ao_pair_fourier_transform_bloch", value)
+        patch.setattr(core, "ao_pair_fourier_transform_gamma_gradient_weighted", derivative)
+        patch.setattr(ew, "_ewald_j_ft_cell_chunk_size", lambda *args: 7)
+        actual = ew.compute_j_ewald_3d_ft_lattice_gradient(
+            basis, system, density, lattice_opts=opts, ke_cutoff=6., chunk_size=17,
+        )
+    assert seen and all(c == 1 and g <= 7 for c, g in seen)
+    alternate = ew.compute_j_ewald_3d_ft_lattice_gradient(
+        basis, system, density, lattice_opts=opts, ke_cutoff=6., chunk_size=128,
+    )
+    np.testing.assert_allclose(actual, alternate, atol=1e-12, rtol=0)
+    np.testing.assert_allclose(actual.sum(axis=0), 0., atol=1e-12, rtol=0)
+
+    def energy(xyz):
+        sy, ba, de = frame(xyz)
+        assert {tuple(c.index) for c in de.cells} == keys
+        j = ew.compute_j_ewald_3d_ft_lattice(ba, sy, de, .4, lattice_opts=opts, ke_cutoff=6.)
+        return .5*sum(np.sum(np.asarray(d)*v) for d, v in zip(de.blocks, j))
+
+    fd = np.zeros_like(actual)
+    h = 1e-5
+    for a in range(2):
+        for d in range(3):
+            plus, minus = positions.copy(), positions.copy()
+            plus[a, d] += h
+            minus[a, d] -= h
+            fd[a, d] = (energy(plus) - energy(minus))/(2*h)
+    assert np.max(np.abs(fd)) > 1e-5
+    np.testing.assert_allclose(actual, fd, atol=2e-8, rtol=0)

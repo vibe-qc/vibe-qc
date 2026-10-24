@@ -32,7 +32,7 @@ Format
 
 The archive layout is:
 
-* ``kind`` -- ``"gpw_scf"`` or ``"gpw_multi_k_scf"`` (a numpy
+* ``kind`` -- ``"gpw_scf"``, ``"gpw_ro_scf"`` or ``"gpw_multi_k_scf"`` (a numpy
   string).
 * ``format_version`` -- integer; currently ``1``.
 * ``energy`` -- total energy (Ha).
@@ -60,6 +60,10 @@ The archive layout is:
   ``scf_trace_e_xc`` -- 1D arrays of per-iter SCF records (one
   entry per iteration; may be empty for legacy results).
 
+Restricted-open extras (``kind == "gpw_ro_scf"``) include both spin
+densities, the overlap, charge/multiplicity, evaluated orbital factors and
+JSON scalar build provenance. Legacy MO fields remain reporting orbitals.
+
 Multi-k extras (``kind == "gpw_multi_k_scf"``):
 
 * ``kpoints`` -- ``(n_k, 3)`` fractional k-point coordinates.
@@ -82,6 +86,7 @@ from pathlib import Path
 from typing import Any, Union
 
 import numpy as np
+import json
 
 from .periodic_gapw_grid import PlaneWaveGrid
 
@@ -108,6 +113,8 @@ def _trace_arrays(scf_trace: tuple) -> dict[str, np.ndarray]:
     grad_norm: list[float] = []
     e_xc: list[float] = []
     for rec in scf_trace or ():
+        if not isinstance(rec, dict):
+            rec = vars(rec)
         iters.append(int(rec.get("iter", -1)))
         energies.append(float(rec.get("energy", float("nan"))))
         delta_e.append(float(rec.get("delta_e", float("nan"))))
@@ -172,10 +179,12 @@ def save_gpw_result(
     # module-import time.
     from .periodic_gapw_j import GpwMultiKScfResult, GpwScfResult
 
-    if not isinstance(result, (GpwScfResult, GpwMultiKScfResult)):
+    from .periodic_gapw_open_shell import GpwRohfScfResult
+
+    if not isinstance(result, (GpwScfResult, GpwMultiKScfResult, GpwRohfScfResult)):
         raise TypeError(
             f"save_gpw_result: result must be GpwScfResult or "
-            f"GpwMultiKScfResult; got {type(result).__name__}."
+            f"GpwMultiKScfResult or GpwRohfScfResult; got {type(result).__name__}."
         )
 
     lattice, Z, xyz = _system_arrays(system)
@@ -238,6 +247,27 @@ def save_gpw_result(
             result.mo_energies, dtype=float
         )
 
+    if isinstance(result, GpwRohfScfResult):
+        payload.update(kind=np.str_("gpw_ro_scf"),
+                       density_alpha=np.asarray(result.density_alpha),
+                       density_beta=np.asarray(result.density_beta),
+                       overlap=np.asarray(result.overlap),
+                       n_alpha=np.int64(result.n_alpha), n_beta=np.int64(result.n_beta),
+                       method=np.str_(result.method),
+                       charge=np.int64(getattr(system, "charge", 0)),
+                       multiplicity=np.int64(getattr(system, "multiplicity", 1)),
+                       run_fields=np.str_(json.dumps(result.run_fields)))
+        orbitals = result.density_orbitals
+        if orbitals is not None:
+            payload["density_orbital_representation"] = np.str_(orbitals.representation)
+            for index, spin in enumerate(("alpha", "beta")):
+                payload["density_coefficients_"+spin] = orbitals.coefficients[index]
+                payload["density_occupations_"+spin] = orbitals.occupations[index]
+                payload["density_energies_"+spin] = orbitals.energies[index]
+
+    if isinstance(result, GpwRohfScfResult):
+        _validate_ro_restart(payload)
+
     out_path = Path(path)
     # np.savez_compressed appends '.npz' if missing.
     np.savez_compressed(out_path, **payload)
@@ -259,13 +289,13 @@ def _rebuild_system(lattice: np.ndarray, Z: np.ndarray,
     return system
 
 
-def _rebuild_basis(Z: np.ndarray, xyz: np.ndarray, basis_name: str):
+def _rebuild_basis(Z: np.ndarray, xyz: np.ndarray, basis_name: str, *, charge=0, multiplicity=1):
     # Import lazily -- keeps the module light.
     from . import Atom, BasisSet, Molecule
 
     atoms = [Atom(int(z), [float(c) for c in pos])
              for z, pos in zip(Z, xyz)]
-    mol = Molecule(atoms, charge=0, multiplicity=1)
+    mol = Molecule(atoms, charge=charge, multiplicity=multiplicity)
     return BasisSet(mol, str(basis_name))
 
 
@@ -354,12 +384,31 @@ def load_gpw_result(path: Union[str, Path]) -> dict[str, Any]:
             out["mo_coeffs_k"] = np.asarray(arr["mo_coeffs_k"])
             out["mo_energies_k"] = np.asarray(arr["mo_energies_k"])
 
+        if out["kind"] == "gpw_ro_scf":
+            for key in ("density_alpha", "density_beta", "overlap"):
+                out[key] = np.asarray(arr[key])
+            for key in ("n_alpha", "n_beta", "charge", "multiplicity"):
+                out[key] = int(arr[key])
+            out["method"] = str(arr["method"])
+            out["run_fields"] = json.loads(str(arr["run_fields"]))
+            if "density_orbital_representation" in arr:
+                out["density_orbital_representation"] = str(arr["density_orbital_representation"])
+                for spin in ("alpha", "beta"):
+                    for field in ("coefficients", "occupations", "energies"):
+                        key = "density_"+field+"_"+spin
+                        out[key] = np.asarray(arr[key])
+            _validate_ro_restart(out)
+
         # Reconstruct objects.
         out["system"] = _rebuild_system(
             out["lattice"], out["unit_cell_Z"], out["unit_cell_xyz"]
         )
+        if out["kind"] == "gpw_ro_scf":
+            out["system"].charge = out["charge"]
+            out["system"].multiplicity = out["multiplicity"]
         out["basis"] = _rebuild_basis(
-            out["unit_cell_Z"], out["unit_cell_xyz"], out["basis_name"]
+            out["unit_cell_Z"], out["unit_cell_xyz"], out["basis_name"],
+            charge=out.get("charge", 0), multiplicity=out.get("multiplicity", 1),
         )
         out["grid"] = _rebuild_grid(arr)
     return out
@@ -374,7 +423,7 @@ def describe_gpw_result(path: Union[str, Path]) -> str:
     """
     data = load_gpw_result(path)
     kind = data["kind"]
-    label = "GPW SCF" if kind == "gpw_scf" else "GPW multi-k SCF"
+    label = {"gpw_scf": "GPW SCF", "gpw_ro_scf": "GPW restricted-open SCF"}.get(kind, "GPW multi-k SCF")
     n_atoms = int(data["unit_cell_Z"].shape[0])
     n_basis = int(data["density"].shape[0])
     nx, ny, nz = data["grid_nx"], data["grid_ny"], data["grid_nz"]
@@ -392,3 +441,40 @@ def describe_gpw_result(path: Union[str, Path]) -> str:
         f"  grid: {nx}x{ny}x{nz}\n"
         f"  energy = {data['energy']:.10f} Ha"
     )
+
+
+def _validate_ro_restart(data):
+    s = data["overlap"]
+    for spin in ("alpha", "beta"):
+        d = data["density_"+spin]
+        if (d.shape != s.shape or d.ndim != 2 or s.shape[0] != s.shape[1]
+                or not np.all(np.isfinite(d)) or not np.all(np.isfinite(s))
+                or not np.allclose(d, d.T, atol=1e-10, rtol=0)):
+            raise ValueError("Invalid restricted-open GPW restart density/metric")
+        if not np.isclose(np.trace(d @ s), data["n_"+spin], atol=1e-8, rtol=0):
+            raise ValueError("Restricted-open GPW restart spin population differs")
+        if "density_coefficients_"+spin in data:
+            c, o = data["density_coefficients_"+spin], data["density_occupations_"+spin]
+            if not np.allclose((c*o) @ c.T, d, atol=1e-9, rtol=1e-10):
+                raise ValueError("Restricted-open GPW restart orbitals differ from density")
+    if not np.allclose(data["density_alpha"]+data["density_beta"], data["density"], atol=1e-10, rtol=0):
+        raise ValueError("Restricted-open GPW restart total density differs")
+
+
+def gpw_restart_density(data, method, system, basis):
+    """Select a Gamma restart without collapsing an evaluated spin pair."""
+    if data["kind"] != "gpw_ro_scf":
+        if method.upper() in ("ROHF", "ROKS", "UHF", "UKS"):
+            raise ValueError("Open-shell GPW restart requires saved spin densities")
+        return np.asarray(data["density"], dtype=float)
+    if method.upper() not in ("ROHF", "ROKS"):
+        raise ValueError("Restricted-open GPW restart requires ROHF or ROKS")
+    lattice, z, xyz = _system_arrays(system)
+    if (str(basis.name) != data["basis_name"] or not np.array_equal(z, data["unit_cell_Z"])
+            or not np.allclose(xyz, data["unit_cell_xyz"], atol=1e-12, rtol=0)
+            or not np.allclose(lattice, data["lattice"], atol=1e-12, rtol=0)
+            or int(getattr(system, "charge", 0)) != data["charge"]
+            or int(getattr(system, "multiplicity", 1)) != data["multiplicity"]):
+        raise ValueError("Restricted-open GPW restart basis, geometry or spin differs")
+    _validate_ro_restart(data)
+    return data["density_alpha"].copy(), data["density_beta"].copy()

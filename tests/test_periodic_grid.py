@@ -183,44 +183,101 @@ def test_point_partition_is_invariant_to_skew_lattice_reparametrization():
     np.testing.assert_allclose(skew.weights, original.weights, rtol=0, atol=3e-12)
 
 
-def test_point_partition_matches_independent_periodic_image_normalization():
+@pytest.mark.parametrize("lebedev_order", [None, 59, 65, 77, 95])
+def test_point_partition_matches_independent_periodic_image_normalization(lebedev_order):
     from itertools import product
 
     lattice = np.array([[6., .3, .1], [.4, 8., .2], [.1, .2, 9.]])
     origins = np.array([[.1, .2, .3], [1.4, .3, .1]])
     system = vq.PeriodicSystem(3, lattice, [vq.Atom(1, p) for p in origins])
     opts = _small_grid_options()
+    if lebedev_order is not None:
+        opts.angular = "lebedev"
+        opts.lebedev_order = lebedev_order
+        opts.n_radial = 4
     radius = 10.
     grid = vq.build_periodic_becke_grid(system, grid_options=opts, image_radius_bohr=radius)
     # Oversized, independent image enumeration followed by the physical
     # point predicate; normalized products follow Becke 1988 Eqs. 13/22.
+    # Images switch off smoothly across a band of 0.1 R beyond the point
+    # radius (#482): inclusion chi, pair factor 1 - chi_j (1 - s_ij).
+    band = .1*radius
+
+    def becke_step(mu):
+        for _ in range(3):
+            mu = .5*mu*(3-mu*mu)
+        return .5*(1-mu)
+
     indices = np.array(list(product(range(-6, 7), repeat=3)))
     centers = (origins[None, :, :]+(indices@lattice.T)[:, None, :]).reshape(-1, 3)
     home = 2*np.flatnonzero(np.all(indices == 0, axis=1))[0]
     selected = np.random.default_rng(772).choice(len(grid.weights), size=64, replace=False)
     nonzero = 0
+    banded = 0
     for p in selected:
         point = np.asarray(grid.points)[p]
         owner = grid.atom_of_point[p]
         image_distances = np.linalg.norm(centers-point, axis=1)
         point_radius = max(radius, 2*float(image_distances.min()))
-        if np.linalg.norm(point-origins[owner]) > point_radius:
+        if np.linalg.norm(point-origins[owner]) >= point_radius+band:
             assert grid.weights[p] == 0.
             continue
-        keep = np.flatnonzero(image_distances <= point_radius)
+        keep = np.flatnonzero(image_distances < point_radius+band)
         distances = np.linalg.norm(centers[keep]-point, axis=1)
-        weights = np.ones(len(keep))
+        chi = np.array([
+            1. if d <= point_radius else becke_step(2*(d-point_radius)/band-1)
+            for d in distances
+        ])
+        banded += bool(np.any(chi < 1.))
+        weights = chi.copy()
         for i, j in product(range(len(keep)), repeat=2):
             if i == j:
                 continue
             mu = (distances[i]-distances[j])/np.linalg.norm(centers[keep[i]]-centers[keep[j]])
-            for _ in range(3):
-                mu = .5*mu*(3-mu*mu)
-            weights[i] *= .5*(1-mu)
+            weights[i] *= 1-chi[j]*(1-becke_step(mu))
         expected = weights[np.flatnonzero(keep == home+owner)[0]]/weights.sum()
         assert grid.weights[p]/grid.atomic_weights[p] == pytest.approx(expected, rel=0, abs=2e-13)
         nonzero += expected > 1e-5
     assert nonzero >= 10
+    assert banded >= 10
+
+
+def test_point_partition_is_continuous_in_atom_positions():
+    """#482: an image crossing a point's neighbourhood radius must not step
+    the weights. On this LiH cell the H image two cells down reaches exactly
+    10 bohr from a ring of eight Li points at dz = -6.3934e-4; the hard
+    cutoff stepped their partition factor by 1.1e-6 there, and a central
+    difference of a fixed function's quadrature at h = 1e-3 straddling it
+    was off by 5.6e-4 against h = 2e-4."""
+    opts = vq.GridOptions()
+    opts.n_radial = 20
+    opts.angular = "lebedev"
+    opts.lebedev_order = 17
+    li = np.array([3.5, 3.5, 2.6])
+
+    def grid(dz):
+        system = vq.PeriodicSystem(3, 7.*np.eye(3), [
+            vq.Atom(3, li.tolist()), vq.Atom(1, [3.5, 3.5, 5.6+dz]),
+        ])
+        return vq.build_periodic_becke_grid(system, grid_options=opts, image_radius_bohr=10.)
+
+    below, above = grid(-6.393418153748e-4), grid(-6.393418144435e-4)
+    factor = [np.asarray(g.weights)/np.asarray(g.atomic_weights) for g in (below, above)]
+    assert np.max(np.abs(factor[1]-factor[0])) < 1e-10
+
+    # A fixed smooth periodic function on the static Li site: its exact
+    # integral does not move, so its quadrature must be smooth in dz.
+    shifts = 7.*np.array([[i, j, k] for i in range(-4, 5) for j in range(-4, 5)
+                          for k in range(-4, 5)], dtype=float)
+
+    def quadrature(dz):
+        g = grid(dz)
+        points = np.asarray(g.points)
+        f = sum(np.exp(-.1*np.sum((points-li-s)**2, axis=1)) for s in shifts)
+        return float(np.asarray(g.weights)@f)
+
+    fd = {h: (quadrature(h)-quadrature(-h))/(2*h) for h in (2e-4, 1e-3)}
+    assert fd[1e-3] == pytest.approx(fd[2e-4], rel=0, abs=1e-5)
 
 
 # ---------------------------------------------------------------------------
@@ -544,6 +601,9 @@ def test_run_rks_periodic_periodic_becke_loose_box_equals_molecular():
         o.grid.n_phi = 12
         o.use_periodic_becke = periodic_becke
         o.becke_image_radius_bohr = 8.0
+        # 30-bohr loose cell at cutoff 12: only g = 0, the molecular
+        # limit this test compares against; declared for #133 (#430).
+        o.lattice_opts.gamma_only_0 = True
         return o
 
     r_mol = vq.run_rks_periodic(sysp, basis, km, _opts(False))

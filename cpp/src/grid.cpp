@@ -263,10 +263,33 @@ double becke_switch(double mu, int k) {
     return 0.5 * (1.0 - mu);
 }
 
+// Partition atoms may enter with a fractional inclusion chi_B in [0, 1]
+// (the periodic point neighbourhood switches images in smoothly at its
+// radius). chi_B = 1 keeps the scheme's own pair factor s_AB; chi_B = 0
+// removes B from every product, as if B were absent; in between the factor
+// is 1 - chi_B (1 - s_AB). The owner's own product is scaled by chi_A in
+// include_partition_atoms. With no inclusion list, or chi = 1 throughout,
+// the partition is the unmodified scheme bit for bit.
+double included_pair_factor(double s, const std::vector<double>* inclusion,
+                            std::size_t B) {
+    if (inclusion == nullptr) return s;
+    const double chi = (*inclusion)[B];
+    return chi == 1.0 ? s : 1.0 - chi * (1.0 - s);
+}
+
+void include_partition_atoms(std::vector<double>& P,
+                             const std::vector<double>* inclusion) {
+    if (inclusion == nullptr) return;
+    for (std::size_t A = 0; A < P.size(); ++A) {
+        if ((*inclusion)[A] != 1.0) P[A] *= (*inclusion)[A];
+    }
+}
+
 std::vector<double> becke_cell_weights(
     const Eigen::Vector3d& r,
     const std::vector<Eigen::Vector3d>& atom_positions,
-    int k_smooth) {
+    int k_smooth,
+    const std::vector<double>* inclusion = nullptr) {
     const std::size_t N = atom_positions.size();
     std::vector<double> dist(N);
     for (std::size_t A = 0; A < N; ++A) {
@@ -278,9 +301,11 @@ std::vector<double> becke_cell_weights(
             if (A == B) continue;
             const double RAB = (atom_positions[A] - atom_positions[B]).norm();
             const double mu = (dist[A] - dist[B]) / RAB;
-            P[A] *= becke_switch(mu, k_smooth);
+            P[A] *= included_pair_factor(
+                becke_switch(mu, k_smooth), inclusion, B);
         }
     }
+    include_partition_atoms(P, inclusion);
     double Z = 0.0;
     for (const double p : P) Z += p;
     // Normalize so Σ_A P_A = 1.
@@ -309,7 +334,8 @@ double pyscf_treutler_pair_adjustment(int Zi, int Zj) {
 std::vector<double> pyscf_becke_cell_weights(
     const Eigen::Vector3d& r,
     const std::vector<Eigen::Vector3d>& atom_positions,
-    const std::vector<int>& numbers) {
+    const std::vector<int>& numbers,
+    const std::vector<double>* inclusion = nullptr) {
     const std::size_t N = atom_positions.size();
     if (numbers.size() != N) {
         throw std::invalid_argument(
@@ -338,10 +364,11 @@ std::vector<double> pyscf_becke_cell_weights(
             s = (3.0 - s * s) * s * 0.5;
             s = (3.0 - s * s) * s * 0.5;
             s = ((3.0 - s * s) * s * 0.5) * 0.5;
-            P[i] *= 0.5 - s;
-            P[j] *= 0.5 + s;
+            P[i] *= included_pair_factor(0.5 - s, inclusion, j);
+            P[j] *= included_pair_factor(0.5 + s, inclusion, i);
         }
     }
+    include_partition_atoms(P, inclusion);
     double norm = 0.0;
     for (double value : P) norm += value;
     if (norm > 0.0) {
@@ -383,7 +410,8 @@ double stratmann_switch(double mu) {
 
 std::vector<double> stratmann_cell_weights(
     const Eigen::Vector3d& r,
-    const std::vector<Eigen::Vector3d>& atom_positions) {
+    const std::vector<Eigen::Vector3d>& atom_positions,
+    const std::vector<double>* inclusion = nullptr) {
     const std::size_t N = atom_positions.size();
     std::vector<double> dist(N);
     for (std::size_t A = 0; A < N; ++A) {
@@ -397,10 +425,11 @@ std::vector<double> stratmann_cell_weights(
                 (atom_positions[A] - atom_positions[B]).norm();
             const double mu = (dist[A] - dist[B]) / RAB;
             const double s = stratmann_switch(mu);
-            P[A] *= s;
+            P[A] *= included_pair_factor(s, inclusion, B);
             if (P[A] == 0.0) break;  // hard cutoff — no more work for A
         }
     }
+    include_partition_atoms(P, inclusion);
     double Z = 0.0;
     for (const double p : P) Z += p;
     if (Z > 0) {
@@ -895,7 +924,7 @@ Grid build_grid_core(
 
     if (opts.angular == AngularScheme::Lebedev) {
         // Lebedev-Laikov rule. The static dispatch table holds every
-        // bundled tier (orders 5..53); we look up by exact ``order``.
+        // bundled tier; we look up by exact ``order``.
         // Higher orders integrate higher-degree spherical harmonics
         // exactly — see ``cpp/include/vibeqc/lebedev_data.hpp``.
         const auto* tiers = lebedev_tiers();
@@ -1350,11 +1379,26 @@ Grid build_periodic_point_grid(const PeriodicSystem& system,
     // products of pair cell functions over the same atoms at each point.
     // Our periodic extension selects that set by physical distance from
     // the point, independently of the owning atom's lattice image label.
+    // An image at distance d from the point enters with the inclusion
+    // chi(d) = 1 up to the neighbourhood radius rho and switches off
+    // smoothly across a band of width periodic_partition_switch_fraction * R beyond it.
+    // A hard cutoff at rho made every weight, and so every periodic KS
+    // energy, jump wherever an image crossed rho as atoms moved (#482).
     if (!std::isfinite(image_radius) || !std::isfinite(4*image_radius*image_radius)
         || image_radius < 0.0)
         throw std::invalid_argument("Periodic partition radius must be finite and nonnegative");
     const Molecule molecule = system.unit_cell_molecule();
     if (image_radius == 0.0) return build_grid(molecule, opts);
+    // The 2R owner atlas must reach R/2 + R + band; keep band <= R/2.
+    static_assert(periodic_partition_switch_fraction <= 0.5);
+    const double band = periodic_partition_switch_fraction*image_radius;
+    // Becke's k = 3 polynomial as the switch: 1 at d <= rho, 0 at
+    // d >= rho + band, with its first seven derivatives zero at both ends.
+    const auto inclusion = [band](double distance, double rho) {
+        if (distance <= rho) return 1.0;
+        if (distance >= rho+band) return 0.0;
+        return becke_switch(2*(distance-rho)/band-1, 3);
+    };
     if (system.dim < 1 || system.dim > 3 || !system.lattice.allFinite())
         throw std::invalid_argument("Periodic partition requires a finite lattice in dimension 1..3");
     const Eigen::MatrixXd lattice = system.lattice.leftCols(system.dim);
@@ -1435,24 +1479,29 @@ Grid build_periodic_point_grid(const PeriodicSystem& system,
             const Eigen::Vector3d point = grid.points.row(index).transpose()-origins[owner];
             // Most atomic points lie inside R/2. Then the nearest image
             // is at most R/2 away and the effective radius is exactly R;
-            // the precomputed 2R atlas contains the whole neighborhood.
+            // the precomputed 2R atlas contains the whole neighborhood,
+            // switching band included.
             if (point.squaredNorm() <= image_radius*image_radius/4) {
                 std::vector<Eigen::Vector3d> neighbors;
                 std::vector<int> neighbor_numbers;
+                std::vector<double> chi;
                 std::size_t selected_owner = 0;
+                const double outer = image_radius+band;
                 for (std::size_t image = 0; image < atlas.size(); ++image) {
-                    if ((point-atlas[image]).squaredNorm() > image_radius*image_radius) continue;
+                    const double distance2 = (point-atlas[image]).squaredNorm();
+                    if (distance2 >= outer*outer) continue;
                     if (image == owner_image) selected_owner = neighbors.size();
                     neighbors.push_back(atlas[image]);
                     neighbor_numbers.push_back(atlas_numbers[image]);
+                    chi.push_back(inclusion(std::sqrt(distance2), image_radius));
                 }
                 std::vector<double> weights;
                 if (opts.atomic_grid_profile == AtomicGridProfile::PySCFLevel3)
-                    weights = pyscf_becke_cell_weights(point, neighbors, neighbor_numbers);
+                    weights = pyscf_becke_cell_weights(point, neighbors, neighbor_numbers, &chi);
                 else if (opts.partition == AtomicPartition::Stratmann)
-                    weights = stratmann_cell_weights(point, neighbors);
+                    weights = stratmann_cell_weights(point, neighbors, &chi);
                 else
-                    weights = becke_cell_weights(point, neighbors, opts.becke_k);
+                    weights = becke_cell_weights(point, neighbors, opts.becke_k, &chi);
                 grid.weights[index] = grid.atomic_weights[index]*weights[selected_owner];
                 continue;
             }
@@ -1524,20 +1573,25 @@ Grid build_periodic_point_grid(const PeriodicSystem& system,
                 grid.weights[index] = 0.0;
                 continue;
             }
-            if (point.squaredNorm() > radius*radius) {
+            // The owner itself switches off across the same band, so a
+            // point leaves its owner's quadrature continuously.
+            const double outer = radius+band;
+            if (point.squaredNorm() >= outer*outer) {
                 grid.weights[index] = 0.0;
                 continue;
             }
             std::vector<Eigen::Vector3d> neighbors;
             std::vector<int> neighbor_numbers;
+            std::vector<double> chi;
             std::size_t selected_owner = std::numeric_limits<std::size_t>::max();
-            valid = visit_images(radius,
+            valid = visit_images(outer,
                 [&](const Eigen::Vector3d& center, std::size_t atom,
                     bool home, double distance2) {
-                    if (distance2 > radius*radius) return;
+                    if (distance2 >= outer*outer) return;
                     if (atom == owner && home) selected_owner = neighbors.size();
                     neighbors.push_back(center);
                     neighbor_numbers.push_back(numbers[atom]);
+                    chi.push_back(inclusion(std::sqrt(distance2), radius));
                 });
             if (!valid || selected_owner == std::numeric_limits<std::size_t>::max()) {
                 invalid_images.store(true, std::memory_order_relaxed);
@@ -1546,11 +1600,11 @@ Grid build_periodic_point_grid(const PeriodicSystem& system,
             }
             std::vector<double> weights;
             if (opts.atomic_grid_profile == AtomicGridProfile::PySCFLevel3)
-                weights = pyscf_becke_cell_weights(point, neighbors, neighbor_numbers);
+                weights = pyscf_becke_cell_weights(point, neighbors, neighbor_numbers, &chi);
             else if (opts.partition == AtomicPartition::Stratmann)
-                weights = stratmann_cell_weights(point, neighbors);
+                weights = stratmann_cell_weights(point, neighbors, &chi);
             else
-                weights = becke_cell_weights(point, neighbors, opts.becke_k);
+                weights = becke_cell_weights(point, neighbors, opts.becke_k, &chi);
             grid.weights[index] = grid.atomic_weights[index]*weights[selected_owner];
         }
         begin = end;
@@ -1561,3 +1615,40 @@ Grid build_periodic_point_grid(const PeriodicSystem& system,
 }
 
 }  // namespace vibeqc
+
+namespace vibeqc {
+Grid build_vv10_grid(const Molecule& mol,const GridOptions& opts) {
+    if(!std::isfinite(opts.vv10_grid_factor) || opts.vv10_grid_factor<=0.)
+        throw std::invalid_argument("VV10 coarse-grid factor must be finite and positive");
+    GridOptions vv10_opts = opts;
+    // Scale radial and angular resolution down by the factor.
+    const double f = opts.vv10_grid_factor;
+    vv10_opts.n_radial = std::max(5, static_cast<int>(
+        std::lround(opts.n_radial / f)));
+    if (vv10_opts.angular == AngularScheme::Lebedev) {
+        // Step down to the next lower bundled Lebedev order (29→17,
+        // 35→23, etc.).  The bundled orders are 11, 17, 23, 29, 35,
+        // 41, 47, 53.
+        int order = vv10_opts.lebedev_order;
+        if (order > 11) {
+            // Reduce by roughly factor f; at least one tier down.
+            int steps = std::max(1, static_cast<int>(std::lround(
+                static_cast<double>(order - 11) / f)));
+            order = std::max(11, order - steps * 6);
+            // Snap to the nearest bundled order.
+            if (order <= 14) order = 11;
+            else if (order <= 20) order = 17;
+            else if (order <= 26) order = 23;
+            else if (order <= 32) order = 29;
+            else if (order <= 38) order = 35;
+        }
+        vv10_opts.lebedev_order = order;
+    } else {
+        vv10_opts.n_theta = std::max(3, static_cast<int>(
+            std::lround(opts.n_theta / f)));
+        vv10_opts.n_phi = std::max(4, static_cast<int>(
+            std::lround(opts.n_phi / f)));
+    }
+    return build_grid(mol, vv10_opts);
+}
+} // namespace vibeqc

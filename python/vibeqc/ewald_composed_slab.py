@@ -22,7 +22,7 @@ parameter ``a`` shared with ``V_ne`` / ``E_nn``::
   exactly, so no reciprocal cutoff has to resolve the core (the old
   full-reciprocal build needed ``ke >> 200`` and still under-converged the
   ``F 1s``-type core by ~0.1 Ha -- the v0.15 surface-dipole "bug" that was in
-  fact this convergence failure; see ``handovers/HANDOVER_SLAB_EWALD_2D.md``).
+  fact this convergence failure).
 * **J_long** -- the smooth long-range ``erf`` tail, a 1D ``G_z`` quadrature of
   the **damped** ``4pi/G^2 . e^{-G^2/4a^2}`` kernel over the in-plane
   ``g != 0`` reciprocal lattice (a 2D slab is a 3D crystal with ``L_z -> inf``,
@@ -75,6 +75,7 @@ from .periodic_v_ne_slab import (
     _g0_kernel,
     _inplane_g_mesh,
     _slab_geometry,
+    _slab_pair_cutoff,
     _z_resolved_pair_profiles,
     _z_resolved_pair_profiles_at_cells,
 )
@@ -187,7 +188,7 @@ def build_j_slab_ewald_2d_gamma_cache(
     gauge consistency). ``alpha <= 0`` selects :data:`_DEFAULT_ALPHA`.
     """
     from ._aopair_ft import ao_pair_fourier_transform_bloch
-    from ._vibeqc_core import compute_overlap_lattice, direct_lattice_cells
+    from ._vibeqc_core import compute_overlap_lattice
     from .aux_basis import _ao_scales_for_rsgdf
 
     if system.dim != 2:
@@ -201,7 +202,11 @@ def build_j_slab_ewald_2d_gamma_cache(
     nbf = int(basis.nbasis)
     area, nhat, b1, b2 = _slab_geometry(system)
 
-    cells = direct_lattice_cells(system, float(opts.cutoff_bohr))
+    # Match both Fourier channels to the overlap and short-range pair support.
+    # Legacy mode retains the origin ball and includes every pair in each cell.
+    overlap_template = compute_overlap_lattice(basis, system, opts)
+    cells = overlap_template.cells
+    pair_cutoff = _slab_pair_cutoff(opts)
     R_g = np.array([list(c.r_cart) for c in cells], dtype=float)
     if R_g.size == 0:
         R_g = np.zeros((1, 3), dtype=float)
@@ -219,7 +224,9 @@ def build_j_slab_ewald_2d_gamma_cache(
     G_recip = (
         g_list[:, None, :] + Gz[None, :, None] * nhat[None, None, :]
     ).reshape(-1, 3)
-    pair_ft = ao_pair_fourier_transform_bloch(basis, G_recip, R_g, k_gamma)
+    pair_ft = ao_pair_fourier_transform_bloch(
+        basis, G_recip, R_g, k_gamma, pair_cutoff_bohr=pair_cutoff
+    )
     pair_ft = pair_ft * pair_scales[:, :, None]
     G2 = (G_recip**2).sum(axis=1)
     v_G = (dGz / (2.0 * np.pi * area)) * (4.0 * np.pi / G2) * np.exp(
@@ -245,6 +252,7 @@ def build_j_slab_ewald_2d_gamma_cache(
         profile_tol=profile_tol,
         z_spacing=z_spacing,
         context="build_j_slab_ewald_2d_gamma_cache",
+        pair_cutoff_bohr=pair_cutoff,
     )
     # w_g0[z, z'] = -(2pi/A).dz.dz'.g0(z-z',a) folds both quadrature weights and
     # the screened Parry kernel, so J_g0_muν = S_z n_muν(z) (w_g0 @ rho_n)[z],
@@ -252,8 +260,6 @@ def build_j_slab_ewald_2d_gamma_cache(
     # erfc real-space cusp (its a->inf limit is the bare |z|), shared with V_g0.
     g0_zz = _g0_kernel(z_grid[:, None] - z_grid[None, :], alpha)
     w_g0 = -(2.0 * np.pi / area) * (dz * dz) * g0_zz
-
-    overlap_template = compute_overlap_lattice(basis, system, opts)
 
     return SlabEwald2DJCache(
         pair_ft, v_G, n_prof, w_g0, nbf, alpha, opts, overlap_template

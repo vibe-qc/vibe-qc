@@ -1,9 +1,16 @@
 # Semiempirical Structure-Optimization Stack, Handover Document
 
-**Status: historical v0.9.0 DFTB handover; audited 2026-05-31**
-**Current snapshot:** DFTB covers 91 in-house elements; GFN2-xTB is gated
-experimental; PM6/OMx are present but must be validated per use. See
-`docs/user_guide/semiempirical.md` and `docs/roadmap.md` for the live full-stack map.
+**Historical v0.9.0 DFTB handover, not the live roadmap.** The code examples,
+parameter counts, file sizes, limitations and next-step list below describe
+that development snapshot. They must not be used as current API or readiness
+claims. Reconciled navigation: 2026-10-19.
+
+Current coverage is in [the semiempirical guide](user_guide/semiempirical.md),
+[the feature matrix](features.md) and [the roadmap](roadmap.md). Molecular
+analytic SCC gradients, unrestricted molecular/Gamma DFTB, experimental
+full-k DFTB, GFN2 and the NDDO/SECCM routes now exist. Production eligibility
+remains method- and parameter-specific; experimental routes are not promoted
+by this historical document.
 
 ---
 
@@ -137,7 +144,7 @@ Python utilities
 - Finite-difference gradients
 
 ### Stage 2, Analytic molecular gradients
-- dE/dR = Σ [D·½κ·h̄ - W] · dS/dR + dE_rep/dR
+- dE/dR = Σ [D·κ·h̄ - W] · dS/dR + dE_rep/dR
 - Uses libint overlap derivative engine (deriv_order=1)
 - Geometry optimization converges
 
@@ -187,7 +194,7 @@ Python utilities
 ### DFTB0
 ```
 H⁰_{μν} = ε_l                    (on-site, same atom)
-H⁰_{μν} = ½κ · S_{μν} · h̄_{AB}  (two-center, Wolfsberg-Helmholtz)
+H⁰_{μν} = κ · S_{μν} · h̄_{AB}  (two-center, Wolfsberg-Helmholtz)
 E = 2 Σ_i^{occ} ε_i + Σ_{A<B} V_rep(R_AB)
 ```
 
@@ -203,7 +210,7 @@ E = Σ_i n_i ε_i + E_rep + ½ Σ_{AB} γ_{AB} Δq_A Δq_B
 ### Analytic gradient (DFTB0)
 ```
 W = 2 C_occ diag(ε_occ) C_occ^T
-M_{μν} = D_{μν} · ½κ · h̄_{AB} − W_{μν}     (two-center)
+M_{μν} = D_{μν} · κ · h̄_{AB} − W_{μν}     (two-center)
 M_{μν} = −W_{μν}                             (on-site)
 dE/dR_A = Σ_{μν} M_{μν} · dS_{μν}/dR_A + dE_rep/dR_A
 ```
@@ -342,11 +349,12 @@ performed.
 
 ---
 
-## Resumption Notes
+## Historical resumption notes (superseded)
 
 To continue development:
 
-1. **Read this file in full**, it's the single source of truth.
+1. For current development use the linked live guides above. The following
+   original next-step list is retained only as history.
 2. **Build and test:** `pip install -e . --no-build-isolation && pytest tests/test_semiempirical_dftb0.py`
 3. **Key source files to study first:**
    - `cpp/include/vibeqc/semiempirical/parameters.hpp`, the data model

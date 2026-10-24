@@ -136,6 +136,8 @@ KPointSCCDFTBResult run_scc_dftb_kpoints(
                 eikr * lattice.overlap[ci].cast<std::complex<double>>();
         }
         overlap = 0.5 * (overlap + overlap.adjoint().eval());
+        require_positive_definite_bloch_overlap(
+            overlap, kpoint, cutoff_bohr, "run_scc_dftb_kpoints");
         overlap_per_k.push_back(std::move(overlap));
     }
     for (int iter = 1; iter <= scc_opts.max_iter; ++iter) {
@@ -342,7 +344,8 @@ KPointSCCDFTBResult run_scc_dftb_kpoints(
             store_kpoint_band_edges(
                 result,
                 compute_kpoint_band_edges(
-                    result.eps_per_k, result.occupations_per_k));
+                    result.eps_per_k, result.occupations_per_k, 1.0e-8,
+                    kmesh.weights));
             for (const auto& energies : result.eps_per_k) {
                 for (int i = 0; i < energies.size(); ++i) {
                     result.band_energies.push_back(energies(i));

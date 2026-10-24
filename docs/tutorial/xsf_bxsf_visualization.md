@@ -166,7 +166,7 @@ vq.write_xsf_mo(
 ```
 
 ``write_xsf_mo`` constructs a primitive-cell grid, evaluates the Bloch
-orbital
+orbital (the LCAO crystalline orbital of {vibeqc-cite}`pisani_crystal_1988`)
 
 $$
 \psi_{n,k}(\mathbf{r}) = \sum_{\mathbf{T}} e^{i\mathbf{k} \cdot \mathbf{T}}
@@ -379,7 +379,7 @@ reference viewer for the format:
 xcrysden --xsf nacl.xsf
 
 # BXSF Fermi surface:
-xcrysden --bxsf nacl_bands.bxsf
+xcrysden --bxsf nacl_hcore_bands.bxsf
 ```
 
 XCrySDen's ``--bxsf`` mode opens the Brillouin-zone wireframe and
@@ -417,10 +417,14 @@ system, and vibe-qc writes it from ``system.dim``:
 | ``POLYMER`` | 1 | the first row only (the *x* axis) |
 
 This keyword matters more than it looks.  A slab or a polymer still
-needs a full-rank 3×3 lattice for the AO integrals and for spglib, so
+needs a full-rank 3×3 lattice for the AO integrals and for spglib
+({vibeqc-cite}`togo_shinohara_tanaka_2024`), so
 vibe-qc pads the unused ``PRIMVEC`` rows with an arbitrary long vector.
-That padding is **not a vacuum gap and not a cell edge**: the SCF total
-energy is provably invariant to it.  Yet it is numerically
+That padding is **not a vacuum gap and not a cell edge**: on the
+vacuum-free 2-D Ewald slab route the SCF total energy is provably
+independent of it.  An ab-initio `dim=1` cell has no SCF route with a consistent 1-D Coulomb
+gauge; wires are run as `dim=3` cells with transverse vacuum, which write
+``CRYSTAL``.  Yet the padding is numerically
 indistinguishable from a real vacuum gap in a 3D cell.  No amount of
 inspecting the matrix can tell them apart; the keyword is the only
 signal.  A viewer that ignores it will draw a 2D slab as a thin sheet
@@ -432,8 +436,9 @@ The block then contains:
   primitive-cell lattice.  vibe-qc converts from its internal bohr
   representation at write time.  For ``SLAB`` and ``POLYMER`` only the
   first ``dim`` rows are physical.
-* **PRIMCOORD**, atom count, a format flag (``1`` for fractional
-  coordinates), and one line per atom (``Z  x  y  z`` in ångström).
+* **PRIMCOORD**, atom count followed by the integer ``1`` (always ``1``
+  in XSF), and one line per atom (``Z  x  y  z``, Cartesian, in
+  ångström).
 * **DATAGRID_3D_<name>** (optional), a 3D scalar grid spanning
   a chosen real-space volume.  The volume is specified by an
   ``origin`` (ångström) and three ``span`` vectors (ångström);
@@ -476,7 +481,7 @@ span vectors, and the units.
 | | XSF | BXSF |
 |---|---|---|
 | **Domain** | Real space $\mathbf{r} \in$ unit cell | Reciprocal space $\mathbf{k} \in$ BZ |
-| **Grid** | Primitive-cell fractional coordinates | Monkhorst-Pack fractional coordinates |
+| **Grid** | Primitive-cell fractional coordinates | Unshifted regular grid over $[0, 1)$ in fractional reciprocal coordinates, starting at Γ |
 | **Scalar** | ρ(r), ψ_{n,k}(r), or any f(r) | ε_n(k), band energy |
 | **Isosurface meaning** | Shape of the density / orbital | Shape of the Fermi surface |
 | **Span vectors** | Lattice $\mathbf{a}_1, \mathbf{a}_2, \mathbf{a}_3$ | Reciprocal lattice $\mathbf{b}_1, \mathbf{b}_2, \mathbf{b}_3$ |
@@ -501,7 +506,9 @@ bands all lie above it, so the BXSF isosurface is empty.  In a
 **metal**, at least one band crosses $E_F$, and the resulting
 isosurface encloses the occupied region of k-space, the Fermi
 sea.  The shape of the Fermi surface determines transport
-properties (conductivity, thermopower, magnetoresistance) and is
+properties (conductivity, thermopower, magnetoresistance; the
+band-structure route to them is Boltzmann transport theory as in
+{vibeqc-cite}`madsen_boltztrap_2006`) and is
 the central object of metallic electronic structure.
 
 The mesh density `nk` controls the smoothness of the isosurface.
@@ -515,8 +522,8 @@ For publication-quality figures, 32³ or denser is recommended;
   Mater. Sci.* **28**, 155 (2003).  The XSF format specification.
   Updated at <http://www.xcrysden.org/doc/XSF.html>.
 * **Bloch, F.** "Über die Quantenmechanik der Elektronen in
-  Kristallgittern," *Z. Phys.* **52**, 555 (1928).  Bloch's theorem
-  - the foundation of crystalline orbitals and band theory.
+  Kristallgittern," *Z. Phys.* **52**, 555 (1929).  Bloch's theorem,
+  the foundation of crystalline orbitals and band theory.
 * **Ashcroft, N. W.; Mermin, N. D.** *Solid State Physics*.  Holt,
   Rinehart and Winston (1976), Chapters 8-10 and 15.  The standard
   textbook on Bloch states, band structures, and Fermi surfaces.

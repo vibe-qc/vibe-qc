@@ -15,9 +15,7 @@ assert every requested name is present on the loaded extension module.
 If a chat's ``.so`` is stale, the test fails on the first missing symbol
 with a clear ``rebuild required`` message naming what to do.
 
-Per CLAUDE.md §9 (every commit ships green) and the integrals-chat
-notes now retained in ``handovers/HANDOVER_GDF_V0_11_2026_05_29.md``
-(Item 2b).
+This pins the native binding contract for every green commit.
 """
 
 from __future__ import annotations

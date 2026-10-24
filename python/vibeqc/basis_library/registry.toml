@@ -22,23 +22,12 @@
 
 schema = 1
 
-# ---------------------------------------------------------------------------
-# Spellings that resolve to the same bundled file.
-# ---------------------------------------------------------------------------
-[aliases]
-# Every entry here must have a matching line in the C++ ``basis_data_name``
-# (cpp/src/basis.cpp), which resolves the same spellings for the file libint
-# opens. tests/test_basis_alias_parity.py pins that agreement: before #743 the
-# two disagreed, so ``sto3g`` was a known alias here and still failed in
-# BasisSet. Only spellings whose file ships under another stem belong here.
-"sto6g" = "sto-6g"
-"6-31g(d)" = "6-31g*"
-"6-31g(d,p)" = "6-31g**"
-"6-311g(d,p)" = "6-311g**"
-"6-31+g(d,p)" = "6-31+g**"
-"6-311+g(d,p)" = "6-311+g**"
-"6-311+g(3df,2p)" = "6-311+g3df2p"
-"sto3g" = "sto-3g"
+# Spellings are NOT listed here. Alternative spellings of a name ("sto3g",
+# "6-31G(d)", "6-311+G(3df, 2p)") are resolved by one function, the C++
+# ``vibeqc::basis_data_name`` (cpp/src/basis.cpp), which both ``BasisSet``
+# and ``basis_registry.canonical_basis_name`` call. Until #30 this file carried
+# an [aliases] table that a second, differently normalising resolver read;
+# the two disagreed on spellings such as "631gd" and "sto_3g".
 
 # ---------------------------------------------------------------------------
 # Family rules. Matched in order against the canonical name; the first
@@ -105,6 +94,13 @@ pattern = '^pob-tzvp$'
 role = "orbital"
 ecp_required_above_z = 36
 note = "pob-TZVP carries the same Stuttgart-Cologne ECPs on Rb-I (Laun 2018 CRYSTAL Z+200 records)."
+
+[[families]]
+name = "pob-dzvp-rev2"
+pattern = '^pob-dzvp-rev2$'
+role = "orbital"
+ecp_required_above_z = 36
+note = "pob-DZVP-rev2 carries the same Stuttgart-Cologne ECPs on Rb-I (Laun 2018 pob-DZVP Z+200 records, #292)."
 
 # The threshold is 28, not 30: the bundled records start at Cu (Z=29), and
 # Cu and Zn both carry a 10-electron ECP ("CU-ECP 4 10"). A threshold of 30

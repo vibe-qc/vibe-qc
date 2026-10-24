@@ -9,7 +9,7 @@ Two capability gates (2026-08-21):
    entry that guarantees SCF-and-cderi come from one kernel, plus the
    ``reference="direct"`` option so the correlation does not inherit the
    strict-zero reference distortion that GROWS with cluster size
-   (HANDOVER_D2_EXXDIV.md).
+   (the original investigation).
 
 2. **WSC/q-axis parallelism of the fold** (``fold_threads``), the CCM
    analogue of k-point parallelism (CLAUDE.md § 15). Measured 2026-08-21

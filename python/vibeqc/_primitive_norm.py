@@ -4,7 +4,7 @@ Four vibe-qc modules need the factor by which libint2 scales a stored
 contraction coefficient: the QVF writer, the molden writer, the basis
 filter, and the BIPOLE external-pole primitive splitter. Each previously
 carried its own copy with its own paragraph of explanation; the 2026-08-05
-AO-convention arc (handovers/HANDOVER_AO_CONVENTION.md) showed how long a
+AO-convention arc (the original investigation) showed how long a
 divergence between such near-copies can survive unnoticed, so the
 definition now lives here once.
 

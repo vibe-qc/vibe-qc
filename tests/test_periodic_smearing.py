@@ -46,6 +46,7 @@ import numpy as np
 import pytest
 
 import vibeqc as vq
+from tests.refusal_receipt import assert_preflight_refusal
 
 
 # ---------------------------------------------------------------------------
@@ -472,7 +473,7 @@ def test_run_periodic_job_bipole_optimizer_rejects_smearing_before_dispatch(
             citations=False,
             progress=False,
         )
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 @pytest.mark.parametrize(

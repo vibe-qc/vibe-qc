@@ -28,6 +28,8 @@ optimizer; the BIPOLE entry points do not currently provide one.
 
 from __future__ import annotations
 
+from .bipole_domain import DEFAULT_BIPOLE_SR_IMAGE_PRECISION
+
 from typing import TYPE_CHECKING, Any, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -510,7 +512,7 @@ def relax_atoms(
     scf_options: Optional[Union[PeriodicRHFOptions, PeriodicKSOptions]] = None,
     cutoff_bohr: float = 8.0,
     nuclear_cutoff_bohr: Optional[float] = None,
-    sr_image_precision: Optional[float] = 1e-6,
+    sr_image_precision: Optional[float] = DEFAULT_BIPOLE_SR_IMAGE_PRECISION,
     freeze_indices: Optional[Sequence[int]] = None,
     output_trajectory: Optional["str | Path"] = None,
     progress: Any = None,
@@ -560,7 +562,7 @@ def relax_atoms(
         Lattice cutoff for integrals.
     sr_image_precision : float or None
         Precision for the production BIPOLE padded ket-image domain. The
-        default ``1e-6`` is forwarded to every objective and finite-difference
+        default ``1e-8`` is forwarded to every objective and finite-difference
         SCF. ``None`` is the explicit historical-domain diagnostic opt-out;
         it is appropriate for bounded-cost dispatch/QVF tests whose numerical
         accuracy is not under test, not for production relaxation results.

@@ -1,5 +1,6 @@
 // Tiny algebra diagnostics only; arrays do not construct a physical source.
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 #include <pybind11/numpy.h>
 #include <array>
 #include <stdexcept>

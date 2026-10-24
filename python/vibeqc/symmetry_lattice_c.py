@@ -381,8 +381,8 @@ def reconstruct_lattice_matrix_set_c(
     operations: Sequence[SymmetryOp],
     *,
     cells: Sequence[LatticeCell],
-    into_blocks: Optional[List[np.ndarray]] = None,
-) -> List[np.ndarray]:
+    into_blocks: Optional[List[np.ndarray] | np.ndarray] = None,
+) -> List[np.ndarray] | np.ndarray:
     """Rebuild the full per-cell block list from orbit representative
     sub-blocks.
 
@@ -415,7 +415,8 @@ def reconstruct_lattice_matrix_set_c(
         caller template wider than the orbit space), pass the
         caller's live blocks (parallel to ``cells``): orbit members
         are scattered in place and uncovered sub-blocks keep their
-        existing content.
+        existing content. A dense ``(n_cells, n_bf, n_bf)`` array also
+        supports batched scatter without copying the full target.
 
     Returns
     -------
@@ -445,6 +446,11 @@ def reconstruct_lattice_matrix_set_c(
 
     # Initialise full blocks to zero (or scatter into the caller's).
     if into_blocks is not None:
+        if isinstance(into_blocks, np.ndarray) and into_blocks.shape != (len(cells), n_bf, n_bf):
+            raise ValueError(
+                "reconstruct_lattice_matrix_set_c: dense into_blocks must have "
+                "shape (n_cells, n_bf, n_bf)."
+            )
         if len(into_blocks) != len(cells):
             raise ValueError(
                 f"reconstruct_lattice_matrix_set_c: into_blocks has "
@@ -454,21 +460,41 @@ def reconstruct_lattice_matrix_set_c(
     else:
         blocks = [np.zeros((n_bf, n_bf), dtype=float) for _ in range(len(cells))]
 
+    # Dovesi (1986), doi:10.1002/qua.560290608, Eq. (32): the two
+    # on-atom rotations are common to all members with the same atom action.
+    # Batch those independent products, retaining the two matrix multiplies
+    # and scattering only the covered sub-blocks into the caller's arrays.
+    groups = {}
+    rep_arrays = [np.asarray(reps[i], dtype=float) for i in range(len(orbits.orbits))]
     for orb_idx, orb in enumerate(orbits.orbits):
-        rep_sub = np.asarray(reps[orb_idx], dtype=float)
         a_rep, b_rep, _ = orb.representative
         for member, op_idx in zip(orb.members, orb.ops):
             a_mem, b_mem, h_mem = member
-            P = _get_P(op_idx)
-            # Extract D_a = P[slices[a_mem], slices[a_rep]], and
-            # D_b = P[slices[b_mem], slices[b_rep]]. These are the
-            # on-atom Wigner-D blocks that rotate the sub-block from
-            # (a_rep -> a_mem, b_rep -> b_mem).
-            D_a = P[slices[a_mem], :][:, slices[a_rep]]
-            D_b = P[slices[b_mem], :][:, slices[b_rep]]
-            member_sub = D_a @ rep_sub @ D_b.T
-            # Place into the correct cell block at (a_mem, b_mem) slot.
-            cell_slot = cell_to_slot[h_mem]
-            blocks[cell_slot][slices[a_mem], slices[b_mem]] = member_sub
+            groups.setdefault((op_idx, a_rep, b_rep, a_mem, b_mem), []).append(
+                (orb_idx, cell_to_slot[h_mem]),
+            )
+    for (op_idx, a_rep, b_rep, a_mem, b_mem), members in groups.items():
+        P = _get_P(op_idx)
+        D_a = P[slices[a_mem], :][:, slices[a_rep]]
+        D_b = P[slices[b_mem], :][:, slices[b_rep]]
+        # Bound the stacked input and two products to about 1 MiB (or one
+        # unavoidable matrix triple). Never stack every lattice block.
+        elements = (D_a.shape[1] * D_b.shape[1]
+                    + D_a.shape[0] * D_b.shape[1]
+                    + D_a.shape[0] * D_b.shape[0])
+        batch_size = max(1, min(256, (1024 * 1024) // max(1, 8 * elements)))
+        for first in range(0, len(members), batch_size):
+            batch = members[first:first + batch_size]
+            values = np.asarray([rep_arrays[i] for i, _ in batch])
+            transformed = D_a @ values @ D_b.T
+            if isinstance(blocks, np.ndarray):
+                slots = [cell_slot for _, cell_slot in batch]
+                if len(set(slots)) == len(slots):
+                    blocks[slots, slices[a_mem], slices[b_mem]] = transformed
+                    continue
+            # Keep ordered last-write behavior for repeated destinations,
+            # and in-place array identities for ordinary list callers.
+            for (_, cell_slot), member_sub in zip(batch, transformed):
+                blocks[cell_slot][slices[a_mem], slices[b_mem]] = member_sub
 
     return blocks

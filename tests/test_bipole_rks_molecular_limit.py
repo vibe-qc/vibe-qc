@@ -175,8 +175,10 @@ def test_bipole_ewald_state_real_cutoff_converges_the_erfc_image_tail(
     assert abs(energy - exact) * box_bohr < 1.0e-8
 
 
-def test_gamma_bipole_rks_molecular_limit_has_no_monopole_self_image():
-    """GitLab #478: no uncancelled ``N_e^2 / L`` term in the molecular limit.
+@pytest.mark.parametrize("ewald_precision", [1e-8, 1e-10, 1e-12])
+@pytest.mark.parametrize("sparse", [False, True])
+def test_gamma_bipole_rks_molecular_limit_has_no_monopole_self_image(ewald_precision, sparse):
+    """Current #531 (historical #478): no uncancelled ``N_e^2 / L`` term.
 
     A neutral Gamma-only cell must reduce to the molecular result faster
     than 1/L: the electron-electron (+N_e^2), electron-nuclear (-2 N_e Z)
@@ -192,7 +194,12 @@ def test_gamma_bipole_rks_molecular_limit_has_no_monopole_self_image():
     dipole/quadrupole image term (1/L^3) or SCF noise. Measured pre-fix:
     2.27e-4 Ha.bohr at both rungs. Measured post-fix: 1.7e-11, and it
     tracks ``ewald_precision`` (9.4e-8 at 1e-6, -2.2e-13 at 1e-12) instead
-    of being bit-identical across it.
+    of being bit-identical across it. The physical midpoint domain later
+    exposed a separate 9.21e-8 Ha residual at 100 bohr with the old 1e-6
+    electronic SR default. Its 1e-8 replacement retains the next image
+    shell without relying on absolute atom-origin padding. Tighter Ewald
+    requests must also pass this unchanged coefficient gate; the SR setting
+    remains an independent radial tolerance, not a total-error certificate.
     """
     atomic_number = 10  # Ne: spherical, so zero dipole and zero quadrupole.
     molecule = vq.Molecule([vq.Atom(atomic_number, [0.0, 0.0, 0.0])])
@@ -218,6 +225,7 @@ def test_gamma_bipole_rks_molecular_limit_has_no_monopole_self_image():
         periodic_options.functional = "lda"
         periodic_options.lattice_opts.cutoff_bohr = 15.0
         periodic_options.lattice_opts.nuclear_cutoff_bohr = 15.0
+        periodic_options.lattice_opts.sr_sparse_traversal = sparse
         periodic_options.max_iter = 80
         periodic_options.initial_guess = InitialGuess.HCORE
         periodic = run_pbc_bipole_rks(
@@ -226,6 +234,7 @@ def test_gamma_bipole_rks_molecular_limit_has_no_monopole_self_image():
             monkhorst_pack(system, [1, 1, 1]),
             periodic_options,
             progress=False,
+            ewald_precision=ewald_precision,
         )
         assert periodic.converged
         # One direct cell at both rungs: the residual cannot be blamed on a
@@ -243,3 +252,22 @@ def test_gamma_bipole_rks_molecular_limit_has_no_monopole_self_image():
 
     assert coefficients[0] < 1.0e-8, coefficients
     assert coefficients[1] < 1.0e-8, coefficients
+
+
+def test_public_bipole_default_preserves_molecular_limit(tmp_path):
+    """The job dispatcher must not override the corrected electronic reach."""
+    molecule = vq.Molecule([vq.Atom(10, [0., 0., 0.])])
+    options = vq.RKSOptions()
+    options.functional = "lda"
+    molecular = vq.run_rks(molecule, vq.BasisSet(molecule, "sto-3g"), options)
+    system = vq.PeriodicSystem(3, 100. * np.eye(3), [vq.Atom(10, [50.] * 3)])
+    periodic = vq.run_periodic_job(
+        system, vq.BasisSet(system.unit_cell_molecule(), "sto-3g"),
+        method="RKS", functional="lda", jk_method="bipole", kpoints=(1, 1, 1),
+        bipole_cutoff_bohr=15., bipole_nuclear_cutoff_bohr=15.,
+        initial_guess="HCORE", convergence="off", progress=False,
+        output=tmp_path / "neutral-limit", output_qvf=False, citations=False,
+        record_hostname=False,
+    )
+    assert molecular.converged and periodic.converged
+    assert abs(periodic.energy - molecular.energy) < 1e-8

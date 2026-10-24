@@ -68,7 +68,7 @@ class ReactionField:
         ``q = f q0``, ``q0 = -A^-1 V_total``. This is what the rest of
         vibe-qc stores and what the gradient convention assumes.
     V_elec, V_core, V_total : ndarray, shape (n_seg,)
-        The surface potential, kept decomposed. The handover's result
+        The surface potential, kept decomposed. the original investigation's result
         contract requires the split, and Direct COSMO-RS consumes it: its
         feedback acts on the electronic part alone.
     fock : ndarray

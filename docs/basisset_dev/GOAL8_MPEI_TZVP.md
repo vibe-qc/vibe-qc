@@ -61,7 +61,7 @@ coefficient parametrization in log-space, carries over verbatim.
         │
         │  per evaluation x_k = (exponents, coefs):
         │
-        ├─ python/vibeqc/basis_optimization/mpei/
+        ├─ basis-optimization candidate builder
         │    └── candidate_basis.py
         │       ↓ writes per-element CRYSTAL basis files
         │       ↓ to ./mpei-cN/ basis/

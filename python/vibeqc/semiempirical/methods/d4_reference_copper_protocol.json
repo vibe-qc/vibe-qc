@@ -1,0 +1,79 @@
+{
+  "element": 29,
+  "functional": "pbe38",
+  "basis": "aug-cc-pvtz",
+  "grid_level": "orca-defgrid3",
+  "frequency_grid": {
+    "points": 23,
+    "omega_scale": 0.5
+  },
+  "references": [
+    {
+      "label": "Cu/atom",
+      "atoms_angstrom": [
+        [
+          29,
+          0,
+          0,
+          0
+        ]
+      ],
+      "charge": 0,
+      "multiplicity": 2,
+      "nominal_cn": 0,
+      "energy_tolerance": 1e-12,
+      "gradient_tolerance": 1e-10,
+      "geometry_source": "free atom"
+    },
+    {
+      "label": "Cu/CuH",
+      "atoms_angstrom": [
+        [
+          29,
+          0,
+          0,
+          0
+        ],
+        [
+          1,
+          0,
+          0,
+          1.46263
+        ]
+      ],
+      "charge": 0,
+      "multiplicity": 1,
+      "nominal_cn": 1,
+      "energy_tolerance": 1e-12,
+      "gradient_tolerance": 1e-10,
+      "geometry_source": "https://webbook.nist.gov/cgi/cbook.cgi?ID=C13517005&Mask=3F92"
+    }
+  ],
+  "hydrogen_partner": {
+    "label": "H/H2",
+    "atoms_angstrom": [
+      [
+        1,
+        0,
+        0,
+        0
+      ],
+      [
+        1,
+        0,
+        0,
+        0.7414
+      ]
+    ],
+    "charge": 0,
+    "multiplicity": 1,
+    "energy_tolerance": 1e-10,
+    "gradient_tolerance": 1e-06,
+    "geometry_source": "NIST CCCBDB; bundled H/H2 catalogue geometry"
+  },
+  "extraction": "Caldeweyher et al., JCP 150,154122 (2019), Eq.5; CuH minus charge-scaled H2/2 on the same frequency grid; neutral Cu atom directly.",
+  "charge_model": "native EEQ for reference charges and extraction scaling",
+  "source": "Independent vibe-qc RKS/UKS and coupled response; no upstream reference polarizability table copied.",
+  "cross_coefficients": "Casimir-Polder quadrature against current frozen reference polarizabilities. Cu atomic reference spectra and self coefficients are preserved; cross coefficients follow the light-element protocol when its spectra change.",
+  "scope": "Neutral Cu atom and monohydride references only. Full Z<=86 coverage and GFN2 total-energy parity remain incomplete."
+}

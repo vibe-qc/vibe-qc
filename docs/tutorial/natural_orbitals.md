@@ -5,8 +5,9 @@ matrix $\mathbf{F}$. They diagonalize the *one-electron Hamiltonian*,
 which makes them the right basis for orbital energies, Koopmans'
 ionisation potentials, and SCF convergence.
 
-**Natural orbitals (NOs)** are eigenvectors of the *one-particle
-reduced density matrix* $\hat\gamma$. They diagonalize the
+**Natural orbitals (NOs)** ({vibeqc-cite}`lowdin_natural_orbitals_1955`)
+are eigenvectors of the *one-particle reduced density matrix*
+$\hat\gamma$. They diagonalize the
 *observable*, the electron density, which makes them the right
 basis for population analysis, multireference diagnostics, and any
 question of the form "where do the electrons actually live?"
@@ -73,7 +74,7 @@ no_spin  = vq.natural_orbitals(res_o2, basis_o2, kind="uhf-spin")
 
 print(no_total.occupations[:10])
 # [2.000 2.000 1.9999 1.9991 ... 1.000 1.000 0.0067]
-#                                ^^^^^^^^^^^ two singly-occupied πg
+#                                ^^^^^^^^^^^ two singly-occupied πg*
 print(no_spin.occupations[:4])
 # [+1.000 +1.000 +0.115 +0.115]
 #  ^^^^^^^^^^^^ the two unpaired α electrons in πg*
@@ -139,7 +140,8 @@ density doesn't see. NO occupations come out at exactly $\{0, 2\}$
 (or $\{0, 1\}$ for per-spin UHF), and $\Delta = 0$ to numerical
 precision.
 
-For a **correlated wavefunction** (CASSCF, MP2 natural orbitals,
+For a **correlated wavefunction** (CASSCF,
+{vibeqc-cite}`roos_taylor_siegbahn_casci_1980`; MP2 natural orbitals,
 DLPNO-CCSD natural orbitals, …) the eigenvalues of $\hat\gamma$
 spread between 0 and 2. Strongly correlated orbitals have occupations
 near 1 (most informative), weakly correlated ones near 0 or 2. NO
@@ -170,17 +172,20 @@ diagonalized:
 |---|---|---|
 | ``rhf`` / ``uhf-total`` | $\tfrac{1}{2}\sum_i n_i (2 - n_i)$ | Density is close to a single closed-shell determinant |
 | ``uhf-alpha`` / ``uhf-beta`` | $\sum_i n_i (1 - n_i)$ | Density is close to an idempotent per-spin density (always true for UHF) |
-| ``uhf-spin`` | $\tfrac{1}{2}\sum_i (1 - n_i^2)$ | **Yamaguchi-style spin contamination across the AO basis**, *not* $N_{\text{unpaired}}$ |
+| ``uhf-spin`` | $\tfrac{1}{2}\sum_i (1 - n_i^2)$ | **Mostly a count of basis functions**: every spin NO with $n_i \approx 0$ adds ½, so it is neither a spin-contamination measure nor $N_{\text{unpaired}}$ |
 
 The triplet-O₂ example has $\Delta = 1.04$ for ``uhf-total`` and
 $\Delta \approx 13$ for ``uhf-spin``. **Neither indicates a problem.**
 $\Delta_{\text{total}} \approx 1$ comes from the two singly-occupied
 NOs each contributing $\tfrac{1}{2} \cdot 1 \cdot (2 - 1) = 0.5$;
-$\Delta_{\text{spin}} \approx 13$ measures spin density spread
-across the AO basis (~26 spin-polarized orbitals each contributing
-$\sim 0.5$). To recover the correct $N_{\text{unpaired}} = 2$ from
-the spin NOs, **count eigenvalues with $|n_i| > 0.95$**, don't sum the
-Yamaguchi $\Delta$. The proper Head-Gordon $N_{\text{unpaired}}$ is
+$\Delta_{\text{spin}} \approx 13$ is close to $(N_\text{bf} - 2)/2$:
+O₂/6-31G\* has 28 spin NOs, and the 26 besides the two unpaired ones
+sit near $n_i = 0$ and contribute $\sim 0.5$ each. To recover the
+correct $N_{\text{unpaired}} = 2$ from the spin NOs, **count
+eigenvalues with $|n_i| > 0.95$**, don't use the ``uhf-spin``
+$\Delta$. The proper Head-Gordon $N_{\text{unpaired}}$
+(M. Head-Gordon, *Chem. Phys. Lett.* **372**, 508 (2003),
+doi:10.1016/S0009-2614(03)00422-6) is
 $\sum_i \min(n_i, 2 - n_i)$ for the *total* NOs, equal to 2 for our
 O₂.
 
@@ -195,7 +200,8 @@ $$
 $$
 
 The **electron density** is its diagonal: $\rho(\mathbf{r}) =
-\gamma(\mathbf{r}, \mathbf{r})$. Löwdin's 1955 theorem says the
+\gamma(\mathbf{r}, \mathbf{r})$. Löwdin's 1955 theorem
+({vibeqc-cite}`lowdin_natural_orbitals_1955`) says the
 operator $\hat\gamma$ has a complete set of eigenfunctions, 
 the natural orbitals $\phi_i^{\text{NO}}$, whose eigenvalues
 $n_i \in [0, 2]$ (in [0, 1] for spin-orbitals) are the *natural
@@ -208,18 +214,23 @@ $$
 
 In a finite AO basis the operator equation becomes the generalised
 eigenproblem $\mathbf{D} \mathbf{S} \mathbf{c}_i = n_i \mathbf{c}_i$,
-which vibe-qc solves via Löwdin's symmetric route: form
+which vibe-qc solves via Löwdin's symmetric route
+({vibeqc-cite}`lowdin_1950`): form
 $\tilde{\mathbf{D}} = \mathbf{S}^{1/2} \mathbf{D} \mathbf{S}^{1/2}$,
 diagonalize, and back-transform. This avoids the non-symmetric
-eigenproblem $\mathbf{D} \mathbf{S}$ (whose eigenvalues are real but
-whose eigenvectors require complex arithmetic).
+eigenproblem $\mathbf{D} \mathbf{S}$ (its eigenvalues and eigenvectors
+are real, because $\mathbf{D}\mathbf{S}$ is similar to the symmetric
+$\tilde{\mathbf{D}}$, but a general non-symmetric solver neither
+exploits that nor returns $\mathbf{S}$-orthonormal vectors).
 
-A Hartree-Fock density is **idempotent** in the orthonormal basis:
+A closed-shell Hartree-Fock density is **idempotent** in the
+orthonormal basis up to its occupation factor of 2 (the per-spin
+density $\tfrac12 \mathbf{D}$ is idempotent):
 
 $$
-\mathbf{D}_{\text{ortho}}^2 = \mathbf{D}_{\text{ortho}}
+\mathbf{D}_{\text{ortho}}^2 = 2\,\mathbf{D}_{\text{ortho}}
 \quad\Longleftrightarrow\quad
-\mathbf{D} \mathbf{S} \mathbf{D} \mathbf{S} = \mathbf{D} \mathbf{S}
+\mathbf{D} \mathbf{S} \mathbf{D} \mathbf{S} = 2\,\mathbf{D} \mathbf{S}
 $$
 
 That algebraic statement *is* the statement that $n_i \in \{0, 2\}$
@@ -264,8 +275,8 @@ labeling.
   for the *leading* NOs.
 - **Active-space picking.** When NO occupations are used to define a
   CASSCF active space, the standard rule is "include any NO with
-  $0.02 < n < 1.98$." vibe-qc ships CASSCF as
-  `run_job(method="casscf", active_space=(...))`, and the NO output
+  $0.02 < n < 1.98$" ({vibeqc-cite}`pulay_hamilton_uno_1988`).
+  vibe-qc ships CASSCF as `run_job(method="casscf", active_space=(...))`, and the NO output
   here is exactly the right input for choosing that active space.
 
 ## References

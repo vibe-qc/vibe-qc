@@ -129,6 +129,9 @@ class TestDFTBWellShapes:
         )
         assert_interior_minimum(r_min, es, 1.50, 2.30, "DFTB0 water")
 
+    # Strict xfail (#306) until the #478 H0 normalization (406dcb25): with the
+    # second 1/2 removed from H_AB the A/R^12 placeholder repulsive reproduces
+    # the well and the wall. The production repulsive fit itself is still #306.
     def test_scc_dftb_water_oh_well(self):
         params = self._params()
         r_min, es = scan_minimum(
@@ -137,6 +140,7 @@ class TestDFTBWellShapes:
         )
         assert_interior_minimum(r_min, es, 1.50, 2.30, "SCC-DFTB water")
 
+    # Strict xfail (#306) until #478; see test_scc_dftb_water_oh_well.
     def test_scc_dftb_water_has_repulsive_wall_and_binding(self):
         """Compressed and stretched geometries must both sit above the
         equilibrium region (pre-fix: E fell monotonically with stretch)."""

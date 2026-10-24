@@ -168,6 +168,28 @@ private:
     std::vector<int> shell_to_atom_;
 };
 
+// --- Basis-name resolution (one implementation, #30) -----------------------
+//
+// basis_lookup_key: lowercase alphanumerics plus '+', everything else
+// dropped. It is the normalisation key every spelling of a name shares.
+std::string basis_lookup_key(const std::string& name);
+
+// The file stem libint opens for a user spelling: alias-resolved via
+// basis_lookup_key, otherwise the trimmed lowercase name. BasisSet, the SAD
+// guess and vibeqc.basis_registry.canonical_basis_name (through the
+// binding) all call this, so metadata and the loaded file cannot disagree.
+std::string basis_data_name(const std::string& basis_name);
+
+// Full path of ``<data_name>.g94`` in the libint data directory
+// ($LIBINT_DATA_PATH[/basis]), or empty when the file is absent.
+std::string basis_data_file(const std::string& data_name);
+
+// libint2::BasisSet for a resolved data name. It works around libint's
+// aug-cc-pv* name splitting: a set that ships whole under its own name is
+// read from that file. Every by-name load goes through here.
+libint2::BasisSet load_named_libint_basis(
+    const std::string& data_name, const std::vector<libint2::Atom>& atoms);
+
 // Build a "softened" BasisSet by dropping tight primitives (exponent >
 // ``exponent_cutoff``) from each shell of ``basis``. Native fast path for
 // vibeqc.periodic_gapw_augment.softened_basis, kept bit-for-bit identical

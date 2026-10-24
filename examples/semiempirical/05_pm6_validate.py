@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """PM6 validation: compare old vs MOPAC-loaded parameters against references.
 
-Before this session the handover notes:
+Before this session the original investigation notes:
   H2O: -6.72 Ha, CH4: -1.47 Ha, H2: -0.71 Ha  (single-term Ohno-Klopman γ)
   Overbinding ~0.35 Ha for H2O vs published benchmarks.
 

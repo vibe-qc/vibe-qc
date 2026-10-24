@@ -2,6 +2,7 @@
 // factor provider callback, or caller-controlled source qualification.
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 #include <array>
 #include <limits>
 #include "vibeqc/periodic_gaussian_pair_ccsd_physical_particle_hole.hpp"

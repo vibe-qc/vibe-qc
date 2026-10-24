@@ -1,3 +1,10 @@
+---
+myst:
+  html_meta:
+    "description": "Periodic semiempirical methods in vibe-qc (DFTB0, SCC-DFTB, GFN2-xTB, PM6) under Bloch-periodic boundary conditions, with their status labels: Gamma DFTB is a preview, full-k Bloch DFTB, Gamma GFN2-xTB and periodic PM6 are experimental. A compact theory of Bloch-periodic tight binding versus the SECCM cyclic cluster, the molecular-limit check, and how the project's cross-method validation scripts should be read."
+    "og:title": "vibe-qc tutorial - periodic semiempirical methods and cross-method validation"
+---
+
 # Periodic semiempirical methods and cross-method validation
 
 **You'll learn:** how vibe-qc's semiempirical methods (DFTB0, SCC-DFTB,
@@ -6,6 +13,28 @@ periodic result against its own molecular limit, and how the project's
 internal cross-method and cross-reference comparisons are structured,
 including the one rule that matters most when reading them: **never
 compare absolute energies across method families.**
+
+```{admonition} Status: experimental (most of what this page runs)
+:class: warning
+
+Three of the four periodic routes on this page are experimental, and the
+label is repeated beside each run. **Full-k Bloch DFTB0/SCC-DFTB** (the
+k-mesh and band-path calls) is experimental: the `.system` manifest records
+`route_maturity = "experimental"` with `route_status = "periodic-dftb0-kpoint"`,
+its gradients and stress are one batched finite-difference pass, and DFTB+
+parity is pending. **Gamma-point GFN2-xTB** is experimental: it emits
+`GFN2ExperimentalWarning`, faithful periodic multipole electrostatics remain a
+production gate, and general k-points fail closed. **Periodic PM6** (Gamma
+only) is experimental with a native batched finite-difference gradient and
+stress, and full-k PM6 fails closed. Only the **Gamma-point DFTB0/SCC-DFTB**
+route is a maintained preview (in-house parameters, $A/R^{12}$ placeholder
+repulsive for every pair, issue #306). Experimental numbers are research
+output, not validated results, and are not part of the release gate. The label
+vocabulary is defined in
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+The numbers on this page come from a vibe-qc 0.17.x development build on
+Apple M2.
+```
 
 This page assumes the molecular-level methods already covered in
 [Semiempirical DFTB](semiempirical_dftb.md) (which also has the basic
@@ -19,7 +48,97 @@ end to end in the [MSINDO tutorial](msindo.md) and the
 Runnable scripts for everything below live in
 [`examples/semiempirical/`](https://github.com/vibe-qc/vibe-qc/tree/main/examples/semiempirical/).
 
+## Theory: Bloch-periodic tight binding versus the cyclic cluster
+
+Every semiempirical Hamiltonian on this page (DFTB0,
+{vibeqc-cite}`porezag_dftb0_1995`; SCC-DFTB, {vibeqc-cite}`elstner_scc_dftb_1998`;
+GFN2-xTB, {vibeqc-cite}`bannwarth_gfn2_2019`; PM6, {vibeqc-cite}`stewart_pm6_2007`)
+is a tight-binding matrix
+$H_{\mu\nu}$ over a minimal valence basis, plus a pair repulsion. Making it
+periodic can be done in two ways, and vibe-qc ships both.
+
+**Bloch-periodic tight binding.** The route used on this page treats the
+crystal exactly as the ab initio periodic SCF does
+({vibeqc-cite}`pisani_crystal_1988`). Each basis function
+$\chi_\mu$ of the reference cell is replaced by its Bloch sum over lattice
+translations $\mathbf T$, and the Hamiltonian and overlap become
+$\mathbf k$-dependent Fourier sums of real-space blocks,
+
+$$
+H_{\mu\nu}(\mathbf k) = \sum_{\mathbf T} e^{i\mathbf k\cdot\mathbf T}\,
+H_{\mu\nu}(\mathbf 0, \mathbf T),
+\qquad
+S_{\mu\nu}(\mathbf k) = \sum_{\mathbf T} e^{i\mathbf k\cdot\mathbf T}\,
+S_{\mu\nu}(\mathbf 0, \mathbf T),
+$$
+
+with the generalised eigenproblem
+$\mathbf H(\mathbf k)\mathbf C(\mathbf k) = \mathbf S(\mathbf k)\mathbf C(\mathbf k)\boldsymbol\varepsilon(\mathbf k)$
+solved at every point of a Monkhorst-Pack mesh
+({vibeqc-cite}`monkhorst_pack_1976`) and the band energy
+$\sum_{\mathbf k} w_{\mathbf k}\sum_i n_i(\mathbf k)\,\varepsilon_i(\mathbf k)$
+accumulated with the mesh weights $w_{\mathbf k}$. Because a semiempirical
+$H(\mathbf 0,\mathbf T)$ contains only one- and two-centre terms that decay
+with distance, the lattice sum is truncated by a real-space pair cutoff
+(`cutoff_bohr`, 15 bohr by default): every image pair with
+$|\mathbf R_A - \mathbf R_B - \mathbf T| \le$ cutoff is summed, none beyond it.
+The diffuse Li and Ga functions still overlap beyond 15 bohr. The
+truncated $\mathbf S(\mathbf k)$ is then not positive definite, and the DFTB0
+and SCC-DFTB full-k drivers refuse the run and name `cutoff_bohr` as the
+remedy; rock-salt LiH needs 25 bohr.
+The self-consistent flavours (SCC-DFTB, GFN2-xTB, PM6) add their
+charge-dependent terms with the same lattice-summed kernels and iterate the
+Mulliken charges ({vibeqc-cite}`mulliken_1955`) to self-consistency; only the Gamma point
+($\mathbf k = \mathbf 0$, all phases equal to one, real matrices) is
+implemented for GFN2-xTB and PM6, while DFTB0 and SCC-DFTB also carry the
+complex full-k route. At Gamma the calculation is equivalent to a
+supercell that repeats the unit cell with identical phase in every image;
+a k-mesh is equivalent to a proportionally larger Born-von Karman supercell,
+which is why the 4x1x1 energy of the carbon chain below differs so much from
+its Gamma value: a one-atom cell sampled at one k-point is a very small
+supercell. A metallic chain needs fractional occupations (`run_scc_dftb_kpoints`
+accepts Fermi-Dirac occupation options) for the same reason a metal needs
+[smearing](fermi_dirac_smearing.md) in the ab initio code.
+
+**The cyclic cluster (SECCM).** The alternative, used by MSINDO
+({vibeqc-cite}`ahlswede_jug_msindo_1_1999`) and available
+as gated experimental adapters for the four methods on this page, never
+forms a Bloch sum ({vibeqc-cite}`bredow_geudtner_jug_ccm_2001`;
+the DFTB0 adapter follows {vibeqc-cite}`claff_dftb_ccm_2012`). It takes one finite cluster of $N$ atoms, imposes cyclic
+(Born-von Karman) boundary conditions on it in real space, and lets each atom
+interact only with the single nearest image of every other atom that falls
+inside its own Wigner-Seitz cell, weighting an image on the cell boundary by
+$1/n$ if $n$ equivalent images tie. The resulting Hamiltonian is a finite,
+real, molecule-like matrix diagonalised once, and it equals the Bloch route
+evaluated on the $N$-cell torus at $\Gamma$ whenever each pair interacts
+through a single image, that is, when the interaction range stays within half
+a translation, which is the regime two-centre semiempirical terms are built
+for. The two constructions therefore agree in that regime, and differ in what
+they make easy: the Bloch route converges the infinite crystal
+by refining the k-mesh at fixed cell, the cyclic cluster converges it by
+growing the cluster, and the latter treats a defect or an adsorbate on a
+surface without any Brillouin-zone bookkeeping. For ionic systems the SECCM
+adds an Ewald (Madelung) embedding ({vibeqc-cite}`ewald_lattice_sum_1921`,
+{vibeqc-cite}`janetzko_ccm_long_range_2002`) to restore the long-range field its
+truncated sum misses. The [cyclic cluster model tutorial](cyclic_cluster_model.md)
+develops the weighting rule; the [MSINDO tutorial](msindo.md) runs it.
+
+**What the labels mean physically.** The molecular-limit check in the PM6
+section is the one exact statement available for every route: a cell large
+enough that no image pair lies within the cutoff, evaluated with
+`gamma_only_0=True`, must reproduce the molecular energy to machine
+precision, because the lattice sum then contains the home cell only. Beyond
+that limit the periodic semiempirical energies inherit every approximation
+of the molecular Hamiltonian plus the truncation of the lattice sum, and
+for GFN2-xTB the periodic image sums of the anisotropic multipole terms are
+not yet faithful to the reference implementation. That is the content of the
+experimental labels: the machinery runs and is internally consistent, but no
+external periodic reference (DFTB+, `xtb`, MOPAC) has pinned it.
+
 ## Periodic DFTB0 beyond Gamma: k-meshes and band structure
+
+*Status: the k-mesh and band-path calls below are the experimental full-k
+Bloch DFTB route; the Gamma call is the preview route.*
 
 [Semiempirical DFTB](semiempirical_dftb.md#periodic-systems) already
 shows the Gamma-point-only case. The same 1D carbon-chain setup extends
@@ -44,16 +163,41 @@ mesh_result = _se.run_dftb0_kpoints(system, params, kmesh)
 print(f"Gamma:    {gamma.energy:.6f} Ha/cell")
 print(f"4x1x1 MP: {mesh_result.energy:.6f} Ha/cell")
 
-# Band path: eps_per_k is one eigenvalue array per k-point on the path
-kpath = monkhorst_pack(system, (8, 1, 1))   # dense sampling stands in for a real path
+# Band path: eps_per_k is one eigenvalue array per k-point on the path.
+# run_dftb0_bandpath takes a plain sequence of Cartesian k-vectors (bohr^-1),
+# not a BlochKMesh, so unpack the mesh's k-points (or build your own path).
+kpath = [np.asarray(k, dtype=float)
+         for k in monkhorst_pack(system, (8, 1, 1)).kpoints]
 band = _se.run_dftb0_bandpath(system, params, kpath)
 for k, eps in enumerate(band.eps_per_k):
     print(f"  k[{k}]: {eps[:3]}")           # lowest three bands at this k-point
 ```
 
+Output on a vibe-qc 0.17.17 development build:
+
+```text
+Gamma:    -1.821824 Ha/cell
+4x1x1 MP: -1.482994 Ha/cell
+  k[0]: [-0.55845087 -0.35296439 -0.35296439]
+  k[1]: [-0.54938388 -0.31335536 -0.31335536]
+  k[2]: [-0.51546936 -0.17477209 -0.17477209]
+  k[3]: [-0.43461151  0.08362689  0.08362689]
+  k[4]: [-0.3231393  -0.09561013  0.26642513]
+  k[5]: [-0.43461151  0.08362689  0.08362689]
+  k[6]: [-0.51546936 -0.17477209 -0.17477209]
+  k[7]: [-0.54938388 -0.31335536 -0.31335536]
+```
+
 `run_dftb0_kpoints` and `run_dftb0_bandpath` are the periodic siblings of
-`run_dftb0_gamma`, taking the same `(system, params)` pair plus a
-k-point set from `monkhorst_pack`.
+`run_dftb0_gamma`, taking the same `(system, params)` pair plus a k-mesh
+from `monkhorst_pack` (for `run_dftb0_kpoints`) or a list of k-vectors (for
+`run_dftb0_bandpath`). The 0.34 Ha difference between the Gamma and the
+4x1x1 energies is not a bug: a one-atom cell at Gamma is a one-cell
+supercell and samples the half-filled band at a single point, so the
+Gamma value is not a converged energy per cell for this chain. The same
+mesh is reachable through the public runner as
+`run_periodic_job(system, None, method="dftb0", kpoints=[4, 1, 1])`, which
+writes `route_maturity = "experimental"` into the `.system` manifest.
 
 The self-consistent k-routes (`run_scc_dftb_kpoints`, and
 `run_gfn2_xtb_kpoints` on its supported one-point Gamma mesh) fail loud:
@@ -66,16 +210,20 @@ DFTB0 is non-self-consistent, so its k-route has no such failure mode.
 
 ## Periodic PM6: cutoff convergence and the molecular limit
 
+*Status: periodic PM6 is experimental (Gamma only; full-k fails closed).*
+
 Periodic PM6 lives in `vibeqc.semiempirical.methods.periodic_pm6`. The
-production entry point is `run_pm6_gamma`, a real-space sum truncated at
-`cutoff_bohr`:
+entry point is `run_pm6_gamma`, a real-space sum truncated at
+`cutoff_bohr`. Helium is not in the five-element Stewart set that
+`load_pm6_params()` returns, so the He chain needs the element-aware
+loader, which falls back to the bundled MOPAC parameter file:
 
 ```python
 from vibeqc._vibeqc_core import Atom, PeriodicSystem
-from vibeqc.semiempirical.methods.pm6_params import load_pm6_params
+from vibeqc.semiempirical.methods.pm6_params import load_pm6_params_auto
 from vibeqc.semiempirical.methods.periodic_pm6 import run_pm6_gamma
 
-params = load_pm6_params()   # Stewart 2007, H/C/N/O/F
+params = load_pm6_params_auto([2])   # He is outside H/C/N/O/F -> MOPAC set
 he_chain = PeriodicSystem(
     1, np.diag([3.0, 30.0, 30.0]), [Atom(2, [0.0, 0.0, 0.0])], 0, 1,
 )
@@ -85,6 +233,17 @@ for cutoff in (3.0, 5.0, 10.0, 15.0):
     r = run_pm6_gamma(he_chain, params, cutoff_bohr=cutoff)
     print(f"cutoff={cutoff:>5.1f} bohr: E={r.energy:.8f} Ha  n_cells={r.n_cells}")
 ```
+
+```text
+cutoff=  3.0 bohr: E=-1.99028411 Ha  n_cells=3
+cutoff=  5.0 bohr: E=-1.99028411 Ha  n_cells=3
+cutoff= 10.0 bohr: E=-1.99027932 Ha  n_cells=7
+cutoff= 15.0 bohr: E=-1.99027932 Ha  n_cells=11
+```
+
+The energy is converged to 1e-8 Ha once the second-neighbour shell is
+inside the cutoff; a closed-shell He chain at 3 bohr is about as
+short-ranged as a periodic system gets.
 
 `PeriodicPM6Result` also carries `.e_electronic`, `.e_core`, `.converged`,
 `.n_iter`, `.n_basis`, and `.n_occ` if you need the SCF breakdown rather
@@ -130,6 +289,12 @@ print(f"periodic:  {e_per:.10f} Ha")
 print(f"match:     {abs(e_mol - e_per) < 1e-10}")   # True
 ```
 
+```text
+molecular: -1.0331779107 Ha
+periodic:  -1.0331779107 Ha
+match:     True
+```
+
 This is the same parity check `examples/semiempirical/08_periodic_pm6.py`
 and `09_periodic_pm6_tutorial.py` print for an isolated H₂ in a 10-bohr
 cubic cell: a useful sanity check any time you're unsure whether a
@@ -142,14 +307,20 @@ gradients and stresses (`compute_pm6_gamma_gradient_fd`,
 the relaxed `PeriodicSystem`.
 
 **Elements outside PM6's core set.** `load_pm6_params()` only covers
-H/C/N/O/F (Stewart 2007). For anything else,
-`load_pm6_params_auto(atomic_numbers)` auto-selects the broader MOPAC
-parameter set instead, and `run_pm6_gamma(system)` called with no
-`params` argument does the same element-based auto-selection internally,
-which is how a periodic system containing e.g. Mg or O falls back to
-MOPAC parameters without you having to check element coverage by hand.
+H/C/N/O/F (Stewart 2007, {vibeqc-cite}`stewart_pm6_2007`; the broader set is
+MOPAC's, {vibeqc-cite}`mopac_moussa_stewart_2026`), which is why the He sweep above used
+`load_pm6_params_auto([2])`: it auto-selects the broader MOPAC
+parameter set for anything outside that core, and `run_pm6_gamma(system)`
+called with no `params` argument does the same element-based
+auto-selection internally (on the He chain it returns the same
+-1.99027932 Ha at a 10-bohr cutoff), which is how a periodic system
+containing e.g. Mg or O falls back to MOPAC parameters without you having
+to check element coverage by hand.
 
 ## All four periodic families on one system: graphene
+
+*Status: Gamma DFTB0/SCC-DFTB preview; Gamma GFN2-xTB experimental
+(`GFN2ExperimentalWarning`); periodic PM6 experimental.*
 
 `examples/semiempirical/11_periodic_graphene.py` is the one place all
 four periodic semiempirical method families run on the same genuinely
@@ -187,7 +358,27 @@ gfn2 = _xtb.run_gfn2_xtb_gamma(graphene, gfn2_params, xtb_opts)
 from vibeqc.semiempirical import PeriodicPM6Model
 
 pm6_energy = PeriodicPM6Model(graphene).energy()
+
+print(f"DFTB0     {dftb0.energy:.6f} Ha/cell")
+print(f"SCC-DFTB  {scc.energy:.6f} Ha/cell   converged={scc.converged}")
+print(f"GFN2-xTB  {gfn2.energy:.6f} Ha/cell   converged={gfn2.converged}")
+print(f"PM6       {pm6_energy:.6f} Ha/cell")
 ```
+
+Output on a vibe-qc 0.17.17 development build:
+
+```text
+DFTB0     -2.740073 Ha/cell
+SCC-DFTB  -2.740073 Ha/cell   converged=True
+GFN2-xTB  -3.781163 Ha/cell   converged=True
+PM6       -8.696210 Ha/cell
+```
+
+The two DFTB energies coincide because both carbons are equivalent, so the
+SCC charges are zero by symmetry.
+
+Four numbers on four different reference scales: the spread says nothing
+about which method is "lower", which is the point of the next section.
 
 (`graphene` here is the `PeriodicSystem` built as described above; see
 the example script for the exact lattice/atom construction.) Each method

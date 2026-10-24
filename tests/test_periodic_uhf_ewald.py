@@ -347,3 +347,346 @@ def test_h_atom_pyscf_cross_check():
         f"H atom UHF disagrees with PySCF beyond box-shift bound: "
         f"vibe-qc {r.energy:.6f} vs PySCF {e_pyscf:.6f}"
     )
+
+
+def _previous_dense_fock(self, fock):
+    """The driver's previous projected dense solve, without shared dispatch."""
+    from vibeqc.solvers.operators import FockOperator
+    if isinstance(fock, FockOperator):
+        fock = fock.matrix
+    projected = self.X.T @ fock @ self.X
+    eps, vectors = np.linalg.eigh(.5 * (projected + projected.T))
+    return self.X @ vectors, eps
+
+
+@pytest.mark.parametrize("max_iter", [1, 80])
+def test_evaluated_build_drives_terminal_state_history_and_qvf(monkeypatch, tmp_path, max_iter):
+    import json
+    import zipfile
+    from vibeqc import periodic_uhf_ewald as driver
+    from vibeqc.guess_read import resolve_periodic_read_densities_open
+    from vibeqc.output import OutputPlan
+    from vibeqc.output.formats.qvf import write_qvf, qvf_wf_data, scf_history_from_result
+
+    system, basis = _li_atom_doublet()
+    options = _options()
+    options.max_iter = max_iter
+    options.level_shift = .2
+    options.conv_tol_energy, options.conv_tol_grad = 1e-12, 1e-10
+    builds = []
+    original = driver._GammaUHFBuilder.__call__
+
+    def observe(self, *densities):
+        state = original(self, *densities)
+        builds.append(state)
+        return state
+
+    monkeypatch.setattr(driver._GammaUHFBuilder, "__call__", observe)
+    result = driver.run_uhf_periodic_gamma_ewald3d(
+        system, basis, options, omega=.5, grid_shape=(24, 24, 24), auto_optimize_truncation=False)
+    state = result.fock_build
+    assert state is builds[-1]
+    assert result.converged == (max_iter > 1)
+    assert [b.generation for b in builds] == list(range(len(builds)))
+    assert len({b.source.identity for b in builds}) == 1
+    assert result.energy == state.energy.total == result.scf_trace[-1].energy
+    assert result.scf_trace[-1].grad_norm == pytest.approx(state.commutator_norm)
+    assert state.metric_electron_counts == pytest.approx((2., 1.))
+    assert len(result.evaluated_build_history) == result.n_iter
+    assert result.evaluated_build_history[-1]["build_id"] == state.identity
+    differences = []
+    for i, spin in enumerate(("alpha", "beta")):
+        channel = state.channels[i]
+        np.testing.assert_array_equal(getattr(result, "density_"+spin), channel.density)
+        np.testing.assert_array_equal(getattr(result, "fock_"+spin), channel.operator.matrix)
+        differences.append(np.max(abs(getattr(result, "next_density_"+spin) - channel.density)))
+    assert result.density_fixed_point_residual == max(differences)
+    if max_iter == 1:
+        assert result.density_fixed_point_residual > 1e-4
+    _assert_reported_spin_densities_match_orbitals(result)
+    stem = tmp_path / "evaluated"
+    plan = OutputPlan.from_run_job_kwargs(output=stem, method="uhf", basis="sto-3g", functional=None)
+    path = write_qvf(stem, plan, molecule=system.unit_cell_molecule(), system=system,
+                     result=result, method="uhf", basis="sto-3g", record_hostname=False,
+                     wf_data=qvf_wf_data(result, basis, system.unit_cell_molecule()),
+                     scf_history=scf_history_from_result(result))
+    with zipfile.ZipFile(path) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+    fields = manifest["provenance"]["run_fields"]
+    assert fields["fock_build_id"] == state.identity
+    assert fields["evaluated_density_id"] == state.density_id
+    assert fields["scf_stop_reason"] == ("converged" if result.converged else "iteration_limit")
+    assert manifest["provenance"]["scf_energy"]["value"] == state.energy.total
+    da, db = resolve_periodic_read_densities_open(basis, read_path=str(path))
+    np.testing.assert_allclose(da, state.channels[0].density, atol=1e-11)
+    np.testing.assert_allclose(db, state.channels[1].density, atol=1e-11)
+    # Legacy writable export arrays cannot mutate the canonical build.
+    result.fock_alpha[:] = 0.
+    assert np.linalg.norm(state.channels[0].operator.matrix) > .1
+
+
+def test_gamma_build_same_density_energy_derivative_and_source_invalidation(monkeypatch):
+    from vibeqc import periodic_uhf_ewald as driver
+
+    system, basis = _li_atom_doublet()
+    options = _options(); options.max_iter = 1
+    instances = []
+    original = driver._GammaUHFBuilder.__init__
+
+    def capture(self, *args, **kwargs):
+        original(self, *args, **kwargs)
+        instances.append(self)
+
+    monkeypatch.setattr(driver._GammaUHFBuilder, "__init__", capture)
+    result = driver.run_uhf_periodic_gamma_ewald3d(
+        system, basis, options, omega=.5, grid_shape=(24, 24, 24), auto_optimize_truncation=False)
+    builder = instances[0]
+    rng = np.random.default_rng(472)
+    directions = rng.normal(size=(2, basis.nbasis, basis.nbasis))
+    directions = .05*(directions + directions.swapaxes(1, 2))
+    ds = np.array([c.density for c in result.fock_build.channels])
+    before = [c.operator.matrix.copy() for c in result.fock_build.channels]
+    step = 1e-5
+    plus, minus = builder(*(ds+step*directions)), builder(*(ds-step*directions))
+    expected = sum(np.einsum("ij,ji->", f, direction) for f, direction in zip(before, directions))
+    assert (plus.energy.total-minus.energy.total)/(2*step) == pytest.approx(expected, abs=2e-9)
+    # Neither a later build nor mutation of a producer argument changes an epoch.
+    ds[:] = 0.
+    for channel, old in zip(result.fock_build.channels, before):
+        np.testing.assert_array_equal(channel.operator.matrix, old)
+    monkeypatch.setenv("VIBEQC_J_EWALD3D_KE", "201.0")
+    with pytest.raises(ValueError, match="numerical source changed"):
+        builder(*ds)
+
+
+def _assert_same_spin_state(actual, reference):
+    assert actual.converged == reference.converged
+    assert actual.energy == pytest.approx(reference.energy, abs=1e-9)
+    assert actual.s_squared == pytest.approx(reference.s_squared, abs=1e-9)
+    _assert_reported_spin_densities_match_orbitals(actual)
+    for spin in ("alpha", "beta"):
+        np.testing.assert_allclose(getattr(actual, f"density_{spin}"),
+                                   getattr(reference, f"density_{spin}"), atol=1e-9)
+        np.testing.assert_array_equal(getattr(actual, f"occupations_{spin}"),
+                                      getattr(reference, f"occupations_{spin}"))
+        np.testing.assert_allclose(getattr(actual, f"mo_energies_{spin}"),
+                                   getattr(reference, f"mo_energies_{spin}"), atol=1e-9)
+        c = getattr(actual, f"mo_coeffs_{spin}")
+        f = getattr(actual, f"fock_{spin}")
+        # Terminal reporting uses physical Rayleigh quotients even at a cap.
+        np.testing.assert_allclose(getattr(actual, f"mo_energies_{spin}"),
+                                   np.diag(c.T @ f @ c), atol=1e-12)
+        np.testing.assert_allclose(c.T @ actual.overlap @ c,
+                                   np.eye(c.shape[1]), atol=1e-12)
+
+
+@pytest.mark.parametrize("davidson", [False, True])
+@pytest.mark.parametrize("open_shell", [False, True])
+def test_gamma_uhf_shared_fock_preserves_state_and_separate_spin_history(
+    monkeypatch, davidson, open_shell,
+):
+    scipy = pytest.importorskip("scipy.linalg")
+    from vibeqc import periodic_uhf_ewald as driver
+    from vibeqc.solvers import _scf
+
+    system, basis = _li_atom_doublet() if open_shell else _h2_closed_shell()
+    options = _options()
+    options.initial_guess = vq.InitialGuess.PATOM if open_shell else vq.InitialGuess.HCORE
+    options.use_davidson = davidson
+    options.davidson_min_dim = 0
+    options.davidson.guess_vectors = np.eye(basis.nbasis)
+    options.davidson.conv_tol = 1e-10
+    options.level_shift = .2
+    options.conv_tol_energy = 1e-12
+    options.conv_tol_grad = 1e-10
+    options.max_iter = 100
+    guess = np.asarray(options.davidson.guess_vectors).copy()
+    original = _scf.solve_operator
+    previous_by_spin, generations = {}, {"alpha": [], "beta": []}
+    seeds = []
+
+    def checked(operator, solver_options, *, solver, previous=None):
+        spin = operator.metadata.spin
+        assert operator.metadata.kpoint == (0., 0., 0.)
+        assert solver == ("davidson" if davidson else "dense")
+        if operator.metadata.kind == "one_electron":
+            assert spin == "restricted"
+            assert previous is None
+            assert operator.metadata.generation == 0
+            seeds.append(operator)
+        else:
+            assert spin in generations
+            assert operator.metadata.kind == "fock"
+            assert previous is (previous_by_spin.get(spin) if davidson else None)
+        result = original(operator, solver_options, solver=solver, previous=previous)
+        expected = scipy.eigh(operator.matrix, operator.overlap, eigvals_only=True)
+        np.testing.assert_allclose(result.eigenvalues, expected, atol=1e-9)
+        assert max(result.residuals) < 1e-9
+        assert result.orthogonality_error < 1e-12
+        if operator.metadata.kind == "fock":
+            previous_by_spin[spin] = result
+            generations[spin].append(result.operator_metadata.generation)
+        return result
+
+    def run():
+        # Same finite Ewald source for both algorithms, not a grid convergence test.
+        return driver.run_uhf_periodic_gamma_ewald3d(
+            system, basis, options, omega=.5, grid_shape=(24, 24, 24),
+            auto_optimize_truncation=False,
+        )
+
+    monkeypatch.setattr(_scf, "solve_operator", checked)
+    result = run()
+    assert result.converged
+    assert len(seeds) == 1
+    for spin in generations:
+        assert len(generations[spin]) >= 3
+        assert generations[spin] == list(range(len(generations[spin])))
+    assert previous_by_spin["alpha"] is not previous_by_spin["beta"]
+    np.testing.assert_array_equal(options.davidson.guess_vectors, guess)
+    assert options.davidson.n_eig == 0
+    monkeypatch.setattr(_scf.FockDiagonalizer, "__call__", _previous_dense_fock)
+    reference = run()
+    _assert_same_spin_state(result, reference)
+
+
+@pytest.mark.parametrize("davidson", [False, True])
+@pytest.mark.parametrize("control", ["schedule", "pattern_hold", "quadratic", "reduced"])
+def test_gamma_uhf_shared_fock_preserves_control_and_terminal_paths(monkeypatch, davidson, control):
+    from vibeqc import periodic_uhf_ewald as driver
+    from vibeqc import quadratic_scf
+    from vibeqc.solvers import _scf
+
+    system, basis = _li_atom_doublet()
+    options = _options()
+    options.use_davidson = davidson
+    options.davidson_min_dim = 0
+    options.max_iter = 3
+    options.use_diis = False
+    options.conv_tol_energy = 1e-14
+    options.conv_tol_grad = 1e-12
+    calls = []
+    if control == "schedule":
+        options.level_shift_schedule = [.4, .2, 0.]
+        original_shift = driver.apply_level_shift
+
+        def shifted(*args):
+            calls.append(args[3])
+            return original_shift(*args)
+
+        monkeypatch.setattr(driver, "apply_level_shift", shifted)
+    elif control == "pattern_hold":
+        options.spinlock_mode = vq.SpinlockMode.PATTERN_HOLD
+        options.spinlock_iterations = 3
+        original_mom = driver._mom_reorder
+
+        def mom(*args):
+            calls.append(args[0].shape[1])
+            return original_mom(*args)
+
+        monkeypatch.setattr(driver, "_mom_reorder", mom)
+    elif control == "quadratic":
+        options.quadratic_fallback_iter = 1
+        original_step = quadratic_scf.quadratic_step
+
+        def quadratic(*args, **kwargs):
+            calls.append(args[1].shape[1])
+            return original_step(*args, **kwargs)
+
+        monkeypatch.setattr(quadratic_scf, "quadratic_step", quadratic)
+    else:
+        original_frame = driver._canonical_orthogonalizer
+
+        def reduced(*args, **kwargs):
+            x, rank = original_frame(*args, **kwargs)
+            # Li/STO-3G has two s AOs followed by three p AOs. Retain
+            # both occupied s candidates and drop a p-only direction;
+            # removing an occupied candidate would put the occupation
+            # boundary in a degenerate p shell with no unique density.
+            np.testing.assert_allclose(x[:2, 2], 0., atol=1e-12)
+            return np.delete(x, 2, axis=1), rank - 1
+
+        monkeypatch.setattr(driver, "_canonical_orthogonalizer", reduced)
+
+    def run():
+        return driver.run_uhf_periodic_gamma_ewald3d(
+            system, basis, options, omega=.5, grid_shape=(12, 12, 12),
+            auto_optimize_truncation=False,
+        )
+
+    result = run()
+    assert not result.converged
+    assert result.n_iter == options.max_iter
+    if control == "schedule":
+        assert calls == [.4, .4, .2, .2]
+    elif control in ("pattern_hold", "quadratic"):
+        assert calls and all(rank == basis.nbasis for rank in calls)
+    else:
+        assert result.mo_coeffs_alpha.shape[1] == basis.nbasis - 1
+    monkeypatch.setattr(_scf.FockDiagonalizer, "__call__", _previous_dense_fock)
+    reference = run()
+    _assert_same_spin_state(result, reference)
+
+
+@pytest.mark.parametrize("defect", ["occupied", "excess", "pattern_hold", "quadratic", "max_refine", "complex_guess"])
+def test_gamma_uhf_rejects_incompatible_solver_before_jk(monkeypatch, defect):
+    from vibeqc import periodic_uhf_ewald as driver
+
+    system, basis = _li_atom_doublet()
+    options = _options()
+    options.use_davidson = True
+    options.davidson_min_dim = 0
+    options.davidson.n_eig = 2
+    error, message = ValueError, "Requested Fock roots"
+    if defect == "occupied":
+        options.davidson.n_eig = 1
+    elif defect == "excess":
+        options.davidson.n_eig = basis.nbasis + 1
+    elif defect == "pattern_hold":
+        options.spinlock_mode = vq.SpinlockMode.PATTERN_HOLD
+        options.spinlock_iterations = 2
+    elif defect == "quadratic":
+        options.quadratic_fallback_iter = 1
+    elif defect == "max_refine":
+        options.davidson.max_refine = 6
+        error, message = NotImplementedError, "max_refine"
+    else:
+        options.davidson.guess_vectors_cplx = np.eye(basis.nbasis, 2) * np.exp(.4j)
+        error, message = NotImplementedError, "complex Davidson guesses"
+
+    def fail(*args, **kwargs):
+        pytest.fail("Solver admission must precede J/K construction")
+
+    monkeypatch.setattr(driver, "make_ewald_3d_gamma_j_builder", fail)
+    monkeypatch.setattr(driver, "build_jk_gamma_molecular_limit", fail)
+    with pytest.raises(error, match=message):
+        driver.run_uhf_periodic_gamma_ewald3d(
+            system, basis, options, grid_shape=(8, 8, 8),
+            auto_optimize_truncation=False,
+        )
+
+
+def test_gamma_uhf_partial_roots_preserve_occupied_densities():
+    system, basis = _li_atom_doublet()
+    options = _options()
+    options.use_davidson = True
+    options.davidson_min_dim = 0
+    options.max_iter = 1
+
+    def run():
+        return vq.run_uhf_periodic_gamma_ewald3d(
+            system, basis, options, grid_shape=(12, 12, 12),
+            auto_optimize_truncation=False,
+        )
+
+    full = run()
+    options.davidson.n_eig = 2
+    partial = run()
+    assert not full.converged and not partial.converged
+    assert partial.energy == pytest.approx(full.energy, abs=1e-10)
+    for spin in ("alpha", "beta"):
+        assert getattr(partial, f"mo_coeffs_{spin}").shape == (basis.nbasis, 2)
+        np.testing.assert_allclose(getattr(partial, f"density_{spin}"),
+                                   getattr(full, f"density_{spin}"), atol=1e-10)
+    assert options.davidson.n_eig == 2
+    assert np.asarray(options.davidson.guess_vectors).size == 0

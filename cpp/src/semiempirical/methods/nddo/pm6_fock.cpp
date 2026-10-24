@@ -984,11 +984,20 @@ PM6Result run_pm6_impl(
     const std::size_t DIIS_MAX = 8;
     // Hard Aufbau occupations can leave a near-degenerate closed-shell
     // density in a persistent Pulay cycle.  A bounded damped-mixing window
-    // helps cross that nonlinear region; damping starts at max_iter/3
-    // (instead of max_iter/2) so the post-damping DIIS restart has room.
+    // helps cross that nonlinear region.
+    //
+    // The window is a FIXED schedule, deliberately independent of max_iter
+    // (#154).  Deriving damping_start from max_iter/3 made the converged
+    // answer a function of the iteration budget rather than of the input:
+    // PM6/norbornadiene converges at iteration 49 for max_iter >= 150, but
+    // for max_iter <= 100 damping began at max_iter/3 < 49, derailed that
+    // same trajectory, and the SCF then failed to converge at all -- a
+    // smaller budget changed the result instead of merely bounding the work.
+    // With a fixed schedule every budget walks the same iterate sequence, so
+    // a larger max_iter can only ever take more steps along one path.
     const int damping_length = 32;
-    const int damping_start = std::min(64, std::max(2, max_iter / 3));
-    const int diis_restart = std::min(max_iter, damping_start + damping_length);
+    const int damping_start = 64;
+    const int diis_restart = damping_start + damping_length;
 
     for (int iter = 1; iter <= max_iter; ++iter) {
         Eigen::MatrixXd F = Eigen::MatrixXd::Zero(n_basis, n_basis);
