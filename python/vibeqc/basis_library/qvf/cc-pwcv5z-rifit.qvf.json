@@ -1,8 +1,8 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
-  "role": "orbital",
+  "schema_version": "1.1.0",
+  "name": "cc-pwcv5z-rifit",
+  "description": "Basis Set Exchange\nVersion 0.12\nhttps://www.basissetexchange.org\nOriginating publication: Weigend, Kohn, Hattig, J. Chem. Phys. 116, 3175 (2002); DOI: 10.1063/1.1445115\n  Basis set: cc-pwCV5Z-RIFIT\nDescription: RI Fitting basis for use with cc-pwCV5Z\n       Role: rifit\n    Version: 1  (Data from Turbomole 7.3/bross2013a)",
+  "role": "fitting",
   "elements": {
     "Li": {
       "element": "Li",
@@ -18321,7 +18321,46 @@
       ]
     }
   },
+  "basis_family": "dunning",
+  "references": [
+    {
+      "key": "peterson_dunning_wcv_2002",
+      "description": "K. A. Peterson, T. H. Dunning, Journal of Chemical Physics 117, 10548-10560 (2002)",
+      "doi": "10.1063/1.1520138"
+    },
+    {
+      "key": "haettig_aux_5z_2005",
+      "description": "C. Hättig, Physical Chemistry Chemical Physics 7, 59-66 (2005)",
+      "doi": "10.1039/B415208E"
+    },
+    {
+      "key": "weigend_ccpvxz_rifit_2002",
+      "description": "F. Weigend, A. Köhn, C. Hättig, Journal of Chemical Physics 116, 3175-3183 (2002)",
+      "doi": "10.1063/1.1445115"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "bse",
+    "upstream": [
+      {
+        "name": "basis-set-exchange",
+        "version": "0.12",
+        "url": "https://www.basissetexchange.org",
+        "identifier": "cc-pwcv5z-rifit"
+      }
+    ],
+    "retrieval_date": "2026-09-08",
+    "content_sha256": "4855a4ac30055b4e026a6debced707d4972299d96489b66381103c682be1866b",
+    "citations": [
+      {
+        "keys": [
+          "peterson_dunning_wcv_2002",
+          "haettig_aux_5z_2005",
+          "weigend_ccpvxz_rifit_2002"
+        ]
+      }
+    ],
+    "notes": "The date is when the file entered this repository's history; the import date was not recorded."
   }
 }

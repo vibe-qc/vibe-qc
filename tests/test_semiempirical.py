@@ -40,12 +40,16 @@ from vibeqc.semiempirical.io import (
 # ---------------------------------------------------------------------------
 # Pinned reference energies (Hartree), in-house dftb0_default parameter set.
 # Re-pinned 2026-07-09 after the SCC Hamiltonian sign + valence-electron
-# filling fixes; see the per-test docstrings.
+# filling fixes; re-pinned again for the corrected Stewart basis (#373), which
+# restores the near-absent hopping of the old broken tables; and again for the
+# Wolfsberg-Helmholz normalization (#478, 406dcb25), which removed a second
+# factor 1/2 from H_AB (pre-#478 pins -4.266131498522225, -4.151089784783034,
+# -3.256525792344494).
 # ---------------------------------------------------------------------------
 
-REF_DFTB0_H2O = -3.791166
-REF_SCC_H2O = -3.641743
-REF_SCC_CH4 = -2.321850
+REF_DFTB0_H2O = -4.050940845244514
+REF_SCC_H2O = -4.003504920261704
+REF_SCC_CH4 = -2.775253530445884
 
 # ---------------------------------------------------------------------------
 # Test fixtures
@@ -358,6 +362,114 @@ class TestPublicAPI:
                 fmax=0.01,
                 max_steps=7,
             )
+
+    @pytest.mark.parametrize("method", ["dftb0", "scc_dftb"])
+    def test_molecular_preoptimize_analytic_minimum(self, monkeypatch, h2o, method):
+        """The ASE adapter minimizes a known asymmetric potential in bohr."""
+        pytest.importorskip("ase")
+        import vibeqc.semiempirical.preoptimize as preopt_module
+
+        initial = np.array([atom.xyz for atom in h2o.atoms])
+        target = initial + np.array(
+            [[0.08, -0.03, 0.05], [0.15, 0.10, -0.04], [-0.11, 0.06, 0.09]]
+        )
+        stiffness = 0.02  # Hartree/bohr^2; positive definite, exact minimum at target.
+
+        def analytic_energy_gradient(mol, method_key):
+            assert method_key == method
+            assert [atom.Z for atom in mol.atoms] == [8, 1, 1]
+            assert (mol.charge, mol.multiplicity) == (0, 1)
+            displacement = np.array([atom.xyz for atom in mol.atoms]) - target
+            return (
+                0.5 * stiffness * float(np.sum(displacement**2)),
+                stiffness * displacement,
+            )
+
+        monkeypatch.setattr(
+            preopt_module, "_molecular_preopt_energy_gradient", analytic_energy_gradient
+        )
+        result = preopt_module.preoptimize_molecule(
+            h2o, method=method, fmax=0.001, max_steps=100
+        )
+        np.testing.assert_allclose(
+            np.array([atom.xyz for atom in result.atoms]), target, atol=1e-3
+        )
+        np.testing.assert_array_equal(np.array([atom.xyz for atom in h2o.atoms]), initial)
+        assert [atom.Z for atom in result.atoms] == [8, 1, 1]
+        assert (result.charge, result.multiplicity) == (0, 1)
+
+    @pytest.mark.parametrize("method", ["dftb0", "scc_dftb"])
+    def test_molecular_preoptimize_ase_callback_units(self, monkeypatch, h2o, method):
+        """Check nonstationary ASE energy, force, and position conversions."""
+        pytest.importorskip("ase")
+        import ase.optimize
+        from ase.units import Bohr, Hartree
+
+        import vibeqc.semiempirical.preoptimize as preopt_module
+
+        initial = np.array([atom.xyz for atom in h2o.atoms])
+        target = initial + np.array(
+            [[0.08, -0.03, 0.05], [0.15, 0.10, -0.04], [-0.11, 0.06, 0.09]]
+        )
+        probe = initial + np.array(
+            [[0.02, 0.01, -0.03], [-0.04, 0.02, 0.01], [0.03, -0.02, 0.04]]
+        )
+        stiffness = 0.02  # Hartree/bohr^2.
+        expected_position = [initial]
+
+        def analytic_energy_gradient(mol, method_key):
+            assert method_key == method
+            positions = np.array([atom.xyz for atom in mol.atoms])
+            np.testing.assert_allclose(
+                positions, expected_position[0], atol=1e-12, rtol=0,
+                err_msg="ASE position units",
+            )
+            displacement = positions - target
+            return (
+                0.5 * stiffness * float(np.sum(displacement**2)),
+                stiffness * displacement,
+            )
+
+        class ProbeOptimizer:
+            def __init__(self, atoms, logfile=None):
+                self.atoms = atoms
+                np.testing.assert_array_equal(atoms.numbers, [8, 1, 1])
+                np.testing.assert_allclose(
+                    atoms.positions, initial * Bohr,
+                    atol=1e-12, rtol=0, err_msg="ASE initial position units",
+                )
+
+            def run(self, *, fmax, steps):
+                assert (fmax, steps) == (0.001, 2)
+                for positions in (initial, probe):
+                    expected_position[0] = positions
+                    self.atoms.set_positions(positions * Bohr)
+                    displacement = positions - target
+                    expected_energy = (
+                        0.5 * stiffness * float(np.sum(displacement**2)) * Hartree
+                    )
+                    expected_forces = -stiffness * displacement * (Hartree / Bohr)
+                    assert self.atoms.get_potential_energy() == pytest.approx(
+                        expected_energy, rel=1e-12, abs=1e-12
+                    ), "ASE energy units"
+                    np.testing.assert_allclose(
+                        self.atoms.get_forces(), expected_forces,
+                        atol=1e-12, rtol=1e-12, err_msg="ASE force sign and units",
+                    )
+                self.atoms.set_positions(target * Bohr)
+                return True
+
+        monkeypatch.setattr(
+            preopt_module, "_molecular_preopt_energy_gradient", analytic_energy_gradient
+        )
+        monkeypatch.setattr(ase.optimize, "BFGSLineSearch", ProbeOptimizer)
+        result = preopt_module.preoptimize_molecule(
+            h2o, method=method, fmax=0.001, max_steps=2
+        )
+        np.testing.assert_allclose(
+            np.array([atom.xyz for atom in result.atoms]), target,
+            atol=1e-12, rtol=0, err_msg="ASE output position units",
+        )
 
     def test_gfn2_periodic_preoptimize_fixed_cell_dispatch(self):
         pytest.importorskip("ase")
@@ -947,8 +1059,18 @@ class TestSCCDFTB:
         assert result.converged
         assert result.n_iter > 0
 
-    def test_thiel_pyrrole_converges_with_native_default(self, default_params):
-        """BUG67: bounded Aitken mixing recovers after early charge sloshing."""
+    def test_thiel_pyrrole_converges(self, default_params):
+        """BUG67: bounded Aitken mixing recovers after early charge sloshing.
+
+        With the corrected Stewart basis (#373), and until the #478 H0
+        normalization, pyrrole's frontier was near-degenerate, so the T = 0
+        integer-occupation SCC map had no stable fixed point: the charge
+        residual never settled at any charge-mixing fraction or DIIS
+        subspace. A small Mermin electronic temperature
+        resolves the crossing -- the same finite-T mechanism the retry-ladder
+        rows use -- while the bounded-Aitken mixing path BUG67 fixed is still
+        what drives the SCF (use_diis stays at its default).
+        """
         # Exact archived Thiel ground-state geometry from article job
         # c96dc92000e6 (bohr). The one-way damping rule reached its 0.01
         # floor and missed the native 100-iteration limit.
@@ -969,15 +1091,25 @@ class TestSCCDFTB:
             multiplicity=1,
         )
 
-        result = _se.run_scc_dftb(mol, default_params, _se.SCCOptions())
+        opts = _se.SCCOptions()
+        opts.electronic_temperature = 1.0e-3
+        opts.max_iter = 500
+        result = _se.run_scc_dftb(mol, default_params, opts)
 
         assert result.converged
-        assert result.n_iter < 100
-        assert result.energy == pytest.approx(-9.08550910, abs=5e-7)
+        assert result.n_iter < 300
+        # Mermin free energy at the T = 1e-3 Ha rung, re-pinned for the
+        # corrected Stewart basis (#373) (old broken-basis pin was -9.08550910)
+        # and for the #478 H0 normalization (pre-#478 pin -13.134198793).
+        # Since #478 the frontier is gapped: the T = 0 SCC also converges, to
+        # the same energy within 1e-10.
+        assert result.energy == pytest.approx(-10.151968281, abs=5e-7)
         assert result.charges.sum() == pytest.approx(0.0, abs=1e-10)
 
         warm_opts = _se.SCCOptions()
         warm_opts.initial_charges = result.charges
+        warm_opts.electronic_temperature = 1.0e-3
+        warm_opts.max_iter = 500
         warm = _se.run_scc_dftb(mol, default_params, warm_opts)
         assert warm.converged
         assert warm.n_iter < result.n_iter
@@ -1051,7 +1183,7 @@ class TestSCCDFTBRunnerRetry:
     no DIIS, mix=0.05) and reports the finite temperature, the cumulative
     iteration count, and E_free vs E_internal.
 
-    See handovers/HANDOVER_SCC_DFTB_CONVERGENCE.md for the root cause
+    The root cause is
     (discontinuous zero-T charge response in pi-conjugated N/O systems).
     """
 
@@ -1066,6 +1198,22 @@ class TestSCCDFTBRunnerRetry:
             Atom(1, [-3.92307115, 0.00000000, 1.54768558]),
             Atom(1, [2.63994721, 0.00000000, -3.37883007]),
             Atom(1, [-2.63994721, 0.00000000, -3.37883007]),
+        ]
+    )
+
+    # Square cyclobutadiene (D4h, C-C 1.44 A, C-H 1.089 A; bohr below): two
+    # electrons in an exactly degenerate pair, so no T = 0 SCC fixed point.
+    # Furan, which held this role, converges at T = 0 since #478 (#562).
+    _CYCLOBUTADIENE = Molecule(
+        [
+            Atom(6, [1.3606028097, 1.3606028097, 0.0]),
+            Atom(6, [-1.3606028097, 1.3606028097, 0.0]),
+            Atom(6, [-1.3606028097, -1.3606028097, 0.0]),
+            Atom(6, [1.3606028097, -1.3606028097, 0.0]),
+            Atom(1, [2.8156919257, 2.8156919257, 0.0]),
+            Atom(1, [-2.8156919257, 2.8156919257, 0.0]),
+            Atom(1, [-2.8156919257, -2.8156919257, 0.0]),
+            Atom(1, [2.8156919257, -2.8156919257, 0.0]),
         ]
     )
 
@@ -1117,30 +1265,30 @@ class TestSCCDFTBRunnerRetry:
         assert result.n_iter == direct.n_iter
         assert result.n_iter < 500
 
-    def test_pi_conjugated_furan_converges_via_finite_temperature_retry(
+    def test_degenerate_frontier_converges_via_finite_temperature_retry(
         self, tmp_path
     ):
-        """Furan (1 O, aromatic pi system) has no converged integer-
-        occupation SCC fixed point at T=0; the public route must reach it
-        on the first Mermin rung (T=0.001 Ha, no DIIS, mix=0.05)."""
-        zero_temperature = SCCDFTBModel(self._FURAN, max_iter=500)
+        """Square cyclobutadiene has no converged integer-occupation SCC
+        fixed point at T=0; the public route must reach it on the first
+        Mermin rung (T=0.001 Ha, no DIIS, mix=0.05)."""
+        zero_temperature = SCCDFTBModel(self._CYCLOBUTADIENE, max_iter=500)
         zero_temperature.energy()
         assert not zero_temperature.converged
 
-        result = self._run(self._FURAN, tmp_path, "furan")
+        result = self._run(self._CYCLOBUTADIENE, tmp_path, "cyclobutadiene")
 
         assert result.converged
         assert result.electronic_temperature == pytest.approx(0.001)
         assert result.n_iter > 500
-        assert result.energy == pytest.approx(-9.7519736134, abs=5.0e-7)
+        assert result.energy == pytest.approx(-7.286063797988252, abs=5.0e-7)
         assert sum(result.mulliken_charges) == pytest.approx(0.0, abs=1.0e-10)
 
     def test_retry_reports_mermin_e_free_and_e_internal(self, tmp_path):
         """At T > 0 the reported energy is the Mermin free energy
         E_free = E_internal - T*S with S > 0, so E_internal > E_free, and the
         .out labels both plus the temperature and cumulative iterations."""
-        stem = tmp_path / "furan"
-        result = self._run(self._FURAN, tmp_path, "furan")
+        stem = tmp_path / "cyclobutadiene"
+        result = self._run(self._CYCLOBUTADIENE, tmp_path, "cyclobutadiene")
 
         assert result.converged
         assert result.electronic_temperature == pytest.approx(0.001)
@@ -1221,11 +1369,16 @@ class TestUSCCDFTB:
         assert not np.any(np.isnan(grad))
 
     def test_nonconverged_result_is_populated(self, no2, default_params):
-        """NO2's SOMO sits at a level crossing: integer-occupation USCC has
-        no stable fixed point, so the SCF honestly reports converged=False.
-        The result must still carry the last iterate — the pre-fix empty
-        matrices made compute_uscc_dftb_gradient segfault."""
+        """A non-converged USCC result must still carry the last iterate --
+        the pre-fix empty matrices made compute_uscc_dftb_gradient segfault.
+
+        Historically NO2's SOMO sat at a level crossing with no stable
+        integer-occupation fixed point, so it did not converge naturally; with
+        the corrected Stewart basis (#373) it now does. We force a non-converged
+        state with a one-iteration budget so the populated-result contract is
+        still exercised."""
         opts = _se.SCCOptions()
+        opts.max_iter = 5
         result = _se.run_uscc_dftb(no2, default_params, opts)
         assert not result.converged
         assert result.n_basis == 12
@@ -3319,7 +3472,7 @@ class TestOMxV2:
         """OM2 v2 H2O: scan minimum interior, within the documented window.
 
         Published r(O-H) is 1.81 bohr; the documented integral residuals
-        put ours at ~2.2 (see omx_fock.cpp header + HANDOVER §4).
+        put ours at ~2.2 (see omx_fock.cpp header).
         """
         from vibeqc.semiempirical.methods.omx_params import load_om2_params
 
@@ -3611,3 +3764,225 @@ class TestUPM6:
         assert restricted.converged
         assert r.energy == pytest.approx(restricted.energy, abs=1e-8)
         assert np.max(np.abs(Da - Db)) < 1e-6
+
+
+class TestOMxGaussianPairOperands:
+    """Algebraic integral tests, not published-Hamiltonian or SCF acceptance.
+
+    Synthetic primitives avoid redistributing a published contraction table.
+    Analytic s/p moments follow differentiation of the Gaussian product
+    integral (Dral et al. 2016, section 2.3 and equations 18-20).
+    """
+
+    @staticmethod
+    def contraction(exponents=(0.7,), s=(1.0,), p=(1.0,), zeta=1.0):
+        c = _se.nddo._OMxGaussianContraction()
+        c.exponents, c.s_coefficients, c.p_coefficients = exponents, s, p
+        c.zeta = zeta
+        return c
+
+    @classmethod
+    def pair(cls, a=None, b=None, origin_a=(0., 0., 0.), origin_b=(0., 0., 3.),
+             gamma_ss=0.25, core_charge_a=4., core_charge_b=3.):
+        return _se.nddo._evaluate_omx_gaussian_pair(
+            a if a is not None else cls.contraction(),
+            b if b is not None else cls.contraction((1.1,)),
+            origin_a, origin_b, gamma_ss, core_charge_a, core_charge_b)
+
+    @staticmethod
+    def boys(t):
+        import math
+        f0 = 0.5 * math.sqrt(math.pi / t) * math.erf(math.sqrt(t))
+        f1 = (f0 - math.exp(-t)) / (2 * t)
+        f2 = (3 * f1 - math.exp(-t)) / (2 * t)
+        return f0, f1, f2
+
+    @pytest.mark.parametrize("distance", [2., 3., 4.])
+    def test_primitive_analytic_channels(self, distance):
+        """Discriminate ss, sp/ss, pp/ss and sp/sp, including signs."""
+        a, b = 0.7, 1.1
+        p, q = 2*a, 2*b
+        rho = p*q/(p+q)
+        f0, f1, f2 = self.boys(rho*distance**2)
+        norm = (2*a/np.pi)**1.5 * (2*b/np.pi)**1.5
+        pref = norm * 2*np.pi**2.5 / (p*q*np.sqrt(p+q))
+        pair = self.pair(origin_b=(0, 0, distance))
+        j = pair.eri_unscaled.reshape(4, 4, 4, 4)
+        # Absolute bounds cover floating-point integral evaluation (~1 Ha).
+        # They are not tolerances for gradients or published molecular energies.
+        atol = 3e-13
+        assert j[0, 0, 0, 0] == pytest.approx(pref*f0, abs=atol, rel=0)
+        assert j[0, 3, 0, 0] == pytest.approx(
+            pref*2*np.sqrt(a)*q*distance/(p+q)*f1, abs=atol, rel=0)
+        assert j[0, 0, 0, 3] == pytest.approx(
+            -pref*2*np.sqrt(b)*p*distance/(p+q)*f1, abs=atol, rel=0)
+        for i in range(3):
+            di = distance if i == 2 else 0.
+            assert j[i+1, i+1, 0, 0] == pytest.approx(
+                pref*4*a*(f0/(2*p)-rho*f1/(2*p*p)
+                          +rho*rho*di*di*f2/(p*p)), abs=atol, rel=0)
+            assert j[0, i+1, 0, i+1] == pytest.approx(
+                pref*4*np.sqrt(a*b)*(f1/(2*(p+q))
+                                    -p*q*di*di*f2/(p+q)**2), abs=atol, rel=0)
+        sss = (4*a*b)**0.75/(a+b)**1.5 * np.exp(-a*b/(a+b)*distance**2)
+        assert pair.overlap[0, 0] == pytest.approx(sss, abs=atol, rel=0)
+        assert pair.overlap[0, 3] == pytest.approx(
+            -sss*2*np.sqrt(b)*a*distance/(a+b), abs=atol, rel=0)
+        vf0, vf1, _ = self.boys(p*distance**2)
+        vpref = -3*(2*a/np.pi)**1.5*2*np.pi/p
+        assert pair.attraction_a_unscaled[0, 0] == pytest.approx(vpref*vf0, abs=atol, rel=0)
+        assert pair.attraction_a_unscaled[0, 3] == pytest.approx(
+            vpref*2*np.sqrt(a)*distance*vf1, abs=atol, rel=0)
+        assert pair.eri_scaled[0, 0] == pytest.approx(0.25, abs=atol, rel=0)
+        assert pair.core_energy == pytest.approx(pair.f_ko*12/distance, abs=atol, rel=0)
+        np.testing.assert_allclose(pair.eri_scaled, pair.f_ko*pair.eri_unscaled, atol=atol, rtol=0)
+        np.testing.assert_allclose(pair.attraction_a_scaled,
+                                   pair.f_ko*pair.attraction_a_unscaled, atol=atol, rtol=0)
+        np.testing.assert_allclose(pair.attraction_b_scaled,
+                                   pair.f_ko*pair.attraction_b_unscaled, atol=atol, rtol=0)
+
+    def test_complete_tensor_rotation_exchange_translation(self):
+        a = self.contraction((0.4, 1.2), (0.8, -0.15), (0.2, 0.9), 1.3)
+        b = self.contraction((0.6, 1.5), (0.3, 0.7), (0.8, -0.1), 0.9)
+        pair = self.pair(a, b)
+        j = pair.eri_unscaled.reshape(4, 4, 4, 4)
+        np.testing.assert_allclose(j, j.swapaxes(0, 1), atol=3e-13, rtol=0)
+        np.testing.assert_allclose(j, j.swapaxes(2, 3), atol=3e-13, rtol=0)
+        exchanged = self.pair(b, a, (0, 0, 3), (0, 0, 0), core_charge_a=3, core_charge_b=4)
+        np.testing.assert_allclose(exchanged.eri_unscaled, pair.eri_unscaled.T, atol=3e-13, rtol=0)
+        np.testing.assert_allclose(exchanged.overlap, pair.overlap.T, atol=3e-13, rtol=0)
+        np.testing.assert_allclose(exchanged.attraction_a_scaled, pair.attraction_b_scaled, atol=3e-13, rtol=0)
+        shift = np.array([0.5, -0.3, 0.7])
+        shifted = self.pair(a, b, shift, shift+[0, 0, 3])
+        np.testing.assert_allclose(shifted.eri_unscaled, pair.eri_unscaled, atol=3e-13, rtol=0)
+        # A general proper rotation mixes every Cartesian p channel.
+        axis = np.array([1., 2., 3.]); axis /= np.linalg.norm(axis)
+        x, y, z = axis
+        k = np.array([[0, -z, y], [z, 0, -x], [-y, x, 0]])
+        angle = 0.71
+        rotation = np.eye(3)+np.sin(angle)*k+(1-np.cos(angle))*(k@k)
+        u = np.eye(4); u[1:, 1:] = rotation
+        rotated = self.pair(a, b, origin_b=rotation@np.array([0, 0, 3.]))
+        expected = np.einsum("ai,bj,ck,dl,ijkl->abcd", u, u, u, u, j)
+        np.testing.assert_allclose(rotated.eri_unscaled.reshape(4, 4, 4, 4), expected, atol=3e-13, rtol=0)
+        np.testing.assert_allclose(rotated.overlap, u@pair.overlap@u.T, atol=3e-13, rtol=0)
+        np.testing.assert_allclose(rotated.attraction_a_scaled, u@pair.attraction_a_scaled@u.T, atol=3e-13, rtol=0)
+
+    def test_normalization_primitive_permutation_and_zeta(self):
+        a = self.contraction((0.4, 1.2), (0.8, -0.15), (0.2, 0.9), 1.3)
+        permuted = self.contraction((1.2, 0.4), (-0.15, 0.8), (0.9, 0.2), 1.3)
+        scaled = self.contraction(tuple(np.array([0.4, 1.2])*1.3**2), (1.6, -0.3), (0.4, 1.8))
+        original = self.pair(a=a)
+        for equivalent in [permuted, scaled]:
+            result = self.pair(a=equivalent)
+            np.testing.assert_allclose(result.eri_unscaled, original.eri_unscaled, atol=3e-13, rtol=0)
+            np.testing.assert_allclose(result.overlap, original.overlap, atol=3e-13, rtol=0)
+        np.testing.assert_allclose(self.pair(a=scaled).raw_norms_a,
+                                   4*np.array(original.raw_norms_a), atol=3e-13, rtol=0)
+        neg_p = self.contraction((0.4, 1.2), (0.8, -0.15), (-0.2, -0.9), 1.3)
+        phase = np.diag([1, -1, -1, -1])
+        changed = self.pair(a=neg_p)
+        np.testing.assert_allclose(changed.overlap, phase@original.overlap, atol=3e-13, rtol=0)
+        expected = np.einsum("ai,bj,ijkl->abkl", phase, phase, original.eri_unscaled.reshape(4, 4, 4, 4))
+        np.testing.assert_allclose(changed.eri_unscaled.reshape(4, 4, 4, 4), expected, atol=3e-13, rtol=0)
+
+    def test_coulomb_keeps_offdiagonal_density_channels(self):
+        pair = self.pair()
+        j = pair.eri_scaled.reshape(4, 4, 4, 4)
+        p = np.zeros((4, 4)); p[0, 0] = 2
+        response = pair.coulomb_a(p)
+        assert response[0, 3] == pytest.approx(2*j[0, 3, 0, 0], abs=3e-13, rel=0)
+        assert abs(response[0, 3]) > 0.01  # Omission must fail by a large margin.
+        p[0, 3] = p[3, 0] = 0.3
+        p[3, 3] = 0.2
+        np.testing.assert_allclose(pair.coulomb_a(p), np.einsum("ijkl,kl->ij", j, p), atol=3e-13, rtol=0)
+        np.testing.assert_allclose(pair.coulomb_b(p), np.einsum("ijkl,ij->kl", j, p), atol=3e-13, rtol=0)
+        diagonal_only = pair.coulomb_a(np.diag(np.diag(p)))
+        assert abs(pair.coulomb_a(p)[0, 0]-diagonal_only[0, 0]) > 0.001
+        with pytest.raises(ValueError, match="shape"):
+            pair.coulomb_a(np.eye(3))
+        p[0, 3] += 1
+        with pytest.raises(ValueError, match="symmetric"):
+            pair.coulomb_b(p)
+
+    @pytest.mark.parametrize("p_a,p_b", [((), ()), ((), (1.,)), ((1.,), ())])
+    def test_s_only_and_mixed_pair_shapes(self, p_a, p_b):
+        pair = self.pair(self.contraction(p=p_a), self.contraction(p=p_b))
+        na, nb = (4 if p_a else 1), (4 if p_b else 1)
+        assert pair.overlap.shape == (na, nb)
+        assert pair.eri_scaled.shape == (na*na, nb*nb)
+        assert pair.coulomb_a(np.eye(nb)).shape == (na, na)
+        assert pair.coulomb_b(np.eye(na)).shape == (nb, nb)
+
+    @pytest.mark.parametrize("kwargs", [
+        {"exponents": ()}, {"exponents": (0.,)}, {"exponents": (np.nan,)},
+        {"s": ()}, {"s": (0.,)}, {"s": (np.inf,)}, {"p": (1., 2.)},
+        {"zeta": 0.}, {"zeta": np.inf},
+    ])
+    def test_invalid_contractions_refused(self, kwargs):
+        with pytest.raises(ValueError, match="OMx Gaussian pair"):
+            self.pair(a=self.contraction(**kwargs))
+
+    @pytest.mark.parametrize("kwargs", [
+        {"origin_b": (0., 0., 0.)}, {"origin_b": (np.nan, 0., 3.)},
+        {"gamma_ss": 0.}, {"gamma_ss": np.inf}, {"core_charge_a": -1.},
+    ])
+    def test_invalid_pair_inputs_refused(self, kwargs):
+        with pytest.raises(ValueError, match="OMx Gaussian pair"):
+            self.pair(**kwargs)
+
+    @pytest.mark.parametrize("variant,zeta", [("om2", 1.42036892), ("om3", 1.27811536)])
+    def test_unchanged_legacy_overlap_and_missing_sp_response(self, variant, zeta):
+        """Measure the legacy defect without claiming the pair API fixes SCF."""
+        from vibeqc.semiempirical.methods.omx_params import load_omx_params
+        mol = Molecule([Atom(6, [0, 0, 0]), Atom(6, [0, 0, 3])], charge=6, multiplicity=1)
+        p = np.zeros((8, 8)); p[4, 4] = 2
+        result = _se.nddo._evaluate_omx_legacy_pair_operands(mol, load_omx_params(variant), p)
+        x = 3*zeta
+        expected = np.exp(-x)*(1+x+4*x*x/9+x**3/9+x**4/45)
+        assert result.overlap[0, 4] == pytest.approx(expected, abs=3e-13, rel=0)
+        assert result.fock_delta[0, 3] == pytest.approx(0., abs=3e-13, rel=0)
+
+class TestRestrictedNDDOOrbitalResult:
+    """Returned solver arrays are observable; no physical-Fock claim (#493)."""
+
+    def test_empty_orbital_fields_are_exposed_readonly(self):
+        result = _se.nddo.PM6Result()
+        assert np.asarray(result.mo_energies).shape == (0,)
+        assert np.asarray(result.mo_coeffs).shape == (0, 0)
+        for field in ("mo_energies", "mo_coeffs"):
+            with pytest.raises(AttributeError):
+                setattr(result, field, np.empty(0))
+
+    @pytest.mark.parametrize("method", ["pm6", "om2", "om3"])
+    def test_retained_solver_orbital_arrays(self, method):
+        from vibeqc.semiempirical.methods.omx_params import (
+            load_om2_params,
+            load_om3_params,
+        )
+        from vibeqc.semiempirical.methods.pm6_params import load_pm6_params
+
+        loaders = {"pm6": load_pm6_params, "om2": load_om2_params, "om3": load_om3_params}
+        mol = Molecule([Atom(1, [0.0, 0.0, 0.0]), Atom(1, [0.0, 0.0, 1.4])],
+                       charge=0, multiplicity=1)
+        driver = _se.nddo.run_pm6 if method == "pm6" else _se.nddo.run_omx_v2
+        result = driver(mol, loaders[method](), max_iter=200, conv_tol=1e-7)
+        assert result.converged
+        assert result.n_basis == 2 and result.n_occ == 1
+        before = (result.energy, np.array(result.density, copy=True),
+                  result.parameter_identity, result.parameter_sha256)
+        energies = np.asarray(result.mo_energies)
+        coefficients = np.asarray(result.mo_coeffs)
+        assert energies.shape == (2,)
+        assert coefficients.shape == (2, 2)
+        assert np.all(np.isfinite(energies)) and np.all(np.isfinite(coefficients))
+        assert energies[0] <= energies[1]
+        # Roundoff-only orthogonality check for a two-column eigensolver result.
+        # Returned orbitals need not diagonalize a rebuilt physical Fock or
+        # reconstruct a density returned during damped SCF recovery.
+        np.testing.assert_allclose(coefficients.T @ coefficients, np.eye(2),
+                                   atol=1e-12, rtol=0.0)
+        assert result.energy == before[0]
+        np.testing.assert_array_equal(result.density, before[1])
+        assert result.parameter_identity == before[2]
+        assert result.parameter_sha256 == before[3]

@@ -1953,6 +1953,8 @@ def _scf_rhf(
     conv_tol=1e-9,
     fock_extra=None,
     initial_density=None,
+    optimize_orbitals_after=0,
+    diagnostics=None,
 ):
     """Closed-shell (RHF) MSINDO SCF with Pulay DIIS.
 
@@ -1992,6 +1994,11 @@ def _scf_rhf(
         else np.asarray(initial_density, dtype=float).copy()
     )
     e_elec, converged, it = 0.0, False, 0
+    orbital_optimizer = None
+    orbital_optimization_used = False
+    if optimize_orbitals_after > 0:
+        from .msindo_soscf import OrbitalOptimizer
+        orbital_optimizer = OrbitalOptimizer()
     f_hist, e_hist = [], []
     DIIS_MAX = 8
     for it in range(1, max_iter + 1):
@@ -2006,6 +2013,11 @@ def _scf_rhf(
             e_elec, converged = e_cur, True
             break
         e_elec = e_cur
+        if orbital_optimizer is not None and it >= optimize_orbitals_after:
+            orbital_optimization_used = True
+            Cmo, eps = orbital_optimizer.step(F, Cmo, eps, nocc)
+            P = 2.0 * Cmo[:, :nocc] @ Cmo[:, :nocc].T
+            continue
         f_hist.append(F)
         e_hist.append(err)
         if len(f_hist) > DIIS_MAX:
@@ -2037,6 +2049,8 @@ def _scf_rhf(
     F, e_add = _fock(P)
     e_elec = 0.5 * float(np.sum(P * (H + F))) + e_add
     eps = np.linalg.eigh(F)[0]
+    if diagnostics is not None:
+        diagnostics["orbital_optimization_used"] = orbital_optimization_used
     return P, F, e_elec, eps, converged, it
 
 

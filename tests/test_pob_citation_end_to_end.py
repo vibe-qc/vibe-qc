@@ -47,12 +47,20 @@ import vibeqc as vq
 #   entries.peintinger_pob_tzvp_2013      → 10.1002/jcc.23153
 #   entries.vilela_oliveira_pob_rev2_2019 → 10.1002/jcc.26013
 #   entries.laun_pob_fifth_period_2018    → 10.1002/jcc.25195
+#   entries.laun_pob_rev2_fifth_period_2022   → 10.1002/jcc.26839
+#   entries.laun_pob_rev2_sixth_period_2021   → 10.1002/jcc.26521
+#   entries.seidler_pob_rev2_lanthanides_2023 → 10.1002/jcc.27097
 # The -rev2 bases route to *both* 2013 and 2019 papers; pob-tzvp routes
 # to the 2013 paper and the 2018 one that published its Rb-I records.
+# pob-tzvp-rev2 also routes the three papers its Rb-I, Cs-Ba + Hf-Po and
+# La-Lu records come from (#288).
 POB_DOI_FINGERPRINTS: dict[str, tuple[str, ...]] = {
     "pob-tzvp":      ("10.1002/jcc.23153", "10.1002/jcc.25195"),
-    "pob-tzvp-rev2": ("10.1002/jcc.23153", "10.1002/jcc.26013"),
-    "pob-dzvp-rev2": ("10.1002/jcc.23153", "10.1002/jcc.26013"),
+    "pob-tzvp-rev2": (
+        "10.1002/jcc.23153", "10.1002/jcc.26013", "10.1002/jcc.26839",
+        "10.1002/jcc.26521", "10.1002/jcc.27097",
+    ),
+    "pob-dzvp-rev2": ("10.1002/jcc.23153", "10.1002/jcc.26013", "10.1002/jcc.25195"),
 }
 
 

@@ -19,7 +19,7 @@ const ACTION = `${base}contact.php`;
 const topics = [
   { id: 'access', label: 'Repository access request' },
   { id: 'bug', label: 'Bug report' },
-  { id: 'question', label: 'Question about using vibe-qc' },
+  { id: 'question', label: 'Technical question about a tool' },
   { id: 'sponsorship', label: 'Sponsorship' },
   { id: 'other', label: 'Something else' },
 ];
@@ -43,12 +43,12 @@ const errors = {
 >
   <Nav />
 
-  <main class="wrap contact">
+  <main id="main-content" class="wrap contact">
     <section class="contact-head">
       <span class="eyebrow">contact</span>
       <h1>Get in touch.</h1>
       <p>
-        vibe-qc is built and maintained by one person. Messages go straight to the
+        Contact the maintainer about vibe-qc, vibe-sketch, vibe-view or vibe-queue. Include the product, version and relevant input when reporting a problem. Messages go straight to the
         maintainer's mailbox — no ticketing system, no third-party form service, and
         nothing stored on this site.
       </p>
@@ -81,7 +81,7 @@ const errors = {
             </select>
             <p class="hint">
               Requesting repository access? Include your public SSH key in the message —
-              see the <a href={`${DOCS}/installation.html`}>installation guide</a>.
+              see the <a href={`${DOCS}/installation.html#request-repository-access`}>installation guide</a>.
             </p>
           </div>
 
@@ -146,6 +146,9 @@ const errors = {
 </Base>
 
 <script is:inline define:vars={{ errors }}>
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('topic') === 'access') document.getElementById('topic').value = 'access';
+  if (params.get('product') === 'vibe-sketch') document.getElementById('message').value = 'I would like access to vibe-sketch.\n\nMy intended use: ';
   // These pages are static, so the handler communicates failures through
   // the query string and this script renders the matching banner. The
   // mailto: route in the sidebar stays visible either way, so a visitor

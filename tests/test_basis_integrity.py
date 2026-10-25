@@ -1,13 +1,15 @@
 """Basis-library integrity regression checks.
 
-These tests verify that the mechanically generated basis library
-remains structurally sound after a regeneration.  They guard against:
+These tests verify that the basis library rendered from its QVF-Basis
+records remains structurally sound after a regeneration.  They guard
+against:
 
 * accidental deletion of known sidecars (e.g. ``vdzp.ecp``).
 * ECP-orbital base-pair mismatches (an ``.ecp`` without a sibling
   ``.g94``, or vice versa for ECP-bearing bases).
-* private-machine paths leaking into the bundled data.
-* citation-database routes going stale when custom bases change.
+* a bundled set silently shorter than the Basis Set Exchange's record.
+
+The record-to-rendering pin itself lives in ``tests/test_basis_qvf_parity.py``.
 
 Run as:  ``pytest tests/test_basis_integrity.py``
 """
@@ -31,7 +33,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]  # repo root
 BASIL_PATH = ROOT / "python" / "vibeqc" / "basis_library"
 BASIS_DIR = BASIL_PATH / "basis"
-CUSTOM_DIR = BASIL_PATH / "custom"
+QVF_DIR = BASIL_PATH / "qvf"
 
 # Known-tracked sidecars that must never vanish.
 _DEF2_HEAVY = frozenset({
@@ -66,6 +68,7 @@ KNOWN_SIDECARS: Set[str] = {
     "def2-mtzvp.ecp",
     "def2-mtzvpp.ecp",
     "pob-tzvp-rev2.ecp",
+    "pob-dzvp-rev2.ecp",
     "pob-tzvp.ecp",
     "def2-sv(p).ecp",
     "def2-svp.ecp",
@@ -302,7 +305,7 @@ def test_ecp_bearing_bases_have_sidecar() -> None:
         # composite bases and pob-TZVP{,-rev2} (valence-only beyond Kr).
         if any(
             base.startswith(fam) for fam in ("lanl", "dhf", "vdzp", "def2-m")
-        ) or base in ("pob-tzvp", "pob-tzvp-rev2") or base in _DEF2_HEAVY:
+        ) or base in ("pob-tzvp", "pob-tzvp-rev2", "pob-dzvp-rev2") or base in _DEF2_HEAVY:
             assert base in ecp_bases, (
                 f"{base}.g94 appears to be an ECP family but "
                 f"no {base}.ecp sidecar found"
@@ -324,89 +327,6 @@ def test_known_sidecars_present() -> None:
 
 
 # ------------------------------------------------------------------
-# Citation coverage
-# ------------------------------------------------------------------
-
-
-def test_citation_routes_cover_custom_families() -> None:
-    """Every custom basis (in custom/) must have a matching route in
-    the citation database, so published runs can cite it."""
-    custom_files = list(CUSTOM_DIR.glob("*.g94"))
-    assert custom_files, "custom/ must contain at least one .g94"
-
-    db_path = ROOT / "python" / "vibeqc" / "output" / "citations" / "database.toml"
-    assert db_path.exists(), f"citation database not found at {db_path}"
-
-    db_text = db_path.read_text()
-
-    # Extract all route keys from the TOML.
-    in_routes = False
-    route_entries: List[str] = []
-    for line in db_text.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("[routes"):
-            in_routes = True
-            continue
-        if in_routes:
-            if stripped.startswith("["):
-                in_routes = False
-                continue
-            if "=" in stripped:
-                key = stripped.split("=")[0].strip().strip('"')
-                route_entries.append(key)
-
-    # Each custom basis (minus the .g94 extension) should map to
-    # at least one route entry.  We check the family prefix rather
-    # than the exact name, since routes are typically family-level.
-    missing_families: List[str] = []
-    for custom_file in custom_files:
-        base = custom_file.stem
-        # Check if any route entry covers this base name.
-        covered = any(base in route for route in route_entries)
-        # Also check the first word / family prefix (e.g. "cc-pvdz"
-        # from "cc-pvdz-rifit" or "aug-cc-pvdz").
-        family_prefix = base.split("-")[0] if "-" in base else base
-        if not covered:
-            covered_any = any(family_prefix in route for route in route_entries)
-            if not covered_any:
-                # Allow custom bases that are explicitly documented
-                # as "no citation needed" in the database.
-                if (
-                    base not in route_entries
-                    and f"basis_sets.{base}" not in route_entries
-                ):
-                    # Check if it's a custom vibe-qc basis (pob, etc.)
-                    # that should have an entry in entries/ instead.
-                    pass  # family-level routes may not cover every variant
-            missing_families.append(base)
-
-    # This is a soft check: routes are family-level, so we only warn
-    # (not fail) for variants that are subsumed under a family route.
-    # The hard gate is that each custom .g94 must have a *some* route.
-
-
-# ------------------------------------------------------------------
-# Custom-vs-basis sync check
-# ------------------------------------------------------------------
-
-
-def test_custom_g94_files_exist_in_basis() -> None:
-    """Every .g94 in custom/ must land in basis/ after generation.
-    A mismatch means setup_basis_library.sh needs an update or the
-    file was added to custom/ but not regenerated."""
-    # Compare stems on both sides. _list_g94 returns file *names*, so the
-    # original stem-vs-name difference was the whole custom set and this
-    # assertion could never pass -- invisible while the module was skipping.
-    custom_g94 = {f.stem for f in CUSTOM_DIR.glob("*.g94")}
-    basis_g94 = {Path(n).stem for n in _list_g94(BASIS_DIR)}
-    missing_in_basis = custom_g94 - basis_g94
-    assert not missing_in_basis, (
-        f"custom/ files not in basis/ (run setup_basis_library.sh):\n"
-        + "\n".join(f"  - {n}.g94" for n in missing_in_basis)
-    )
-
-
-# ------------------------------------------------------------------
 # Integrity summary (for CI / pre-commit)
 # ------------------------------------------------------------------
 
@@ -415,14 +335,14 @@ def test_basis_library_integrity_summary(capsys: pytest.CaptureFixture) -> None:
     """Human-readable summary — useful for CI logs and pre-commit."""
     g94 = _list_g94(BASIS_DIR)
     ecp = _list_ecp(BASIS_DIR)
-    custom = list(CUSTOM_DIR.glob("*.g94"))
+    records = list(QVF_DIR.glob("*.qvf.json"))
 
     # Known-tracked ECPs.
     tracked_present = KNOWN_SIDECARS & set(ecp)
     tracked_missing = KNOWN_SIDECARS - set(ecp)
 
     print(f"basis/: {len(g94)} .g94, {len(ecp)} .ecp")
-    print(f"custom/: {len(custom)} files")
+    print(f"qvf/: {len(records)} records")
     if tracked_missing:
         print(f"WARNING: tracked sidecars missing: {tracked_missing}")
     else:
@@ -432,3 +352,39 @@ def test_basis_library_integrity_summary(capsys: pytest.CaptureFixture) -> None:
     assert len(captured.out) > 0
     if tracked_missing:
         pytest.fail(f"Tracked sidecars missing: {tracked_missing}")
+
+
+@pytest.mark.parametrize("name,source_dir", [
+    ("pob-dzvp-rev2", "pob-DZVP-rev2"),
+    ("pob-tzvp-rev2", "pob-TZVP-rev2"),
+    ("pob-tzvp", "pob-TZVP"),
+])
+def test_pob_orbital_elements_have_bundled_sources(name, source_dir):
+    import json
+    from vibeqc.basis_crystal import parse_crystal_atom_basis_file
+    record = json.loads((QVF_DIR / f"{name}.qvf.json").read_text())
+    atoms = {a.element_symbol: a for p in (BASIL_PATH / "sources" / source_dir).iterdir()
+             if p.is_file() and p.name[:2].isdigit()
+             for a in [parse_crystal_atom_basis_file(p)]}
+    assert set(record["elements"]) <= set(atoms)
+    for symbol in record["elements"]:
+        atom = atoms[symbol]
+        assert atom.has_ecp == (atom.Z >= 37)
+        assert (atom.ecp is not None) == atom.has_ecp
+
+
+def test_pob_dzvp_restored_sources_preserve_orbital_coefficients():
+    import json
+    from vibeqc.basis_crystal import parse_crystal_atom_basis_file
+    record = json.loads((QVF_DIR / "pob-dzvp-rev2.qvf.json").read_text())
+    for path in (BASIL_PATH / "sources" / "pob-DZVP-rev2").iterdir():
+        if not path.name[:2].isdigit() or int(path.name.split("_")[0]) not in [14, *range(24, 36)]:
+            continue
+        atom = parse_crystal_atom_basis_file(path)
+        assert not atom.has_ecp
+        shells = record["elements"][atom.element_symbol]["shells"]
+        assert len(shells) == len(atom.shells)
+        for source, target in zip(atom.shells, shells):
+            assert target["angular_momentum"] == ["SPDFG".index(source.shell_type)]
+            assert [p["exponent"] for p in target["primitives"]] == source.exponents
+            assert [p["coefficient"] for p in target["primitives"]] == source.coefficients

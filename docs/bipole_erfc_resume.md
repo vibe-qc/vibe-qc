@@ -23,7 +23,7 @@ candidate was based on monorepo commit `5d49d0c28573`.
 
 The 50 surviving source, documentation and test files were restored from
 `codex-bipole-full-wip-paused-20260908.patch` under
-`~/vqruns/bipole-erfc-20260906/physical-coupled-wip/`. The old handover
+`~/vqruns/bipole-erfc-20260906/physical-coupled-wip/`. The old historical design record
 directory was removed in the split; the archived patch retains its history.
 The suite manifest was regenerated from this repository's current inventory
 instead of restoring the monorepo's generated manifest.

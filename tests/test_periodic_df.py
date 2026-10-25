@@ -58,7 +58,7 @@ def gdf_ref():
     opts = _opts()
     ref = vq.run_pbc_gdf_rhf(
         sysp, basis, opts, aux_basis=_AUX, exxdiv="ewald",
-        compcell_eta=_ETA, progress=False,
+        gdf_method="compcell", compcell_eta=_ETA, progress=False,
     )
     assert ref.converged, "reference compcell-GDF RHF must converge"
     return {"system": sysp, "basis": basis, "opts": opts, "ref": ref}

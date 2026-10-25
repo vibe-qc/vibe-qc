@@ -1130,12 +1130,19 @@ class TestPeriodicStressCubicSymmetry:
     """Ideal diamond Si: degenerate Gamma frontier gets equal occupations.
 
     The two-atom primitive fixture cuts through a threefold-degenerate
-    frontier manifold: its Gamma HOMO-LUMO gap is about 5e-15 Ha. The
-    Gamma-only drivers now occupy the whole manifold with equal fractional
-    occupations (Weinert & Davenport T -> 0 ensemble, issue #339), so the
-    density, energy-weighted density, and every analytic derivative are
-    unique and symmetry-preserving; representation or translation changes
-    can no longer rotate the selected eigenspace into different answers.
+    frontier manifold. The Gamma-only drivers occupy the whole manifold with
+    equal fractional occupations (Weinert & Davenport T -> 0 ensemble, issue
+    #339), so the density, energy-weighted density, and every analytic
+    derivative are unique and symmetry-preserving; representation or
+    translation changes can no longer rotate the selected eigenspace into
+    different answers.
+
+    The cell carries charge +2 (#561). Neutral Si has the p triplet at Gamma
+    fully occupied since #478 (6.3 eV gap); the cut manifold existed only
+    under the old Wolfsberg-Helmholz hopping with the duplicated 1/2. Six
+    valence electrons fill the s level and leave four for the threefold p
+    manifold, 4/3 each: the same four-electrons-in-three-states manifold
+    these tests were written for.
     """
 
     @staticmethod
@@ -1148,7 +1155,7 @@ class TestPeriodicStressCubicSymmetry:
             3,
             lattice,
             [Atom(14, [0.0, 0.0, 0.0]), Atom(14, [a / 4, a / 4, a / 4])],
-            0,
+            2,
             1,
         )
 
@@ -1340,10 +1347,10 @@ class TestPeriodicStressCubicSymmetry:
         ``compute_periodic_dftb0_stress`` returns.  A central difference of
         that objective -- the manifold entering as a block trace, so the
         strain-split members need no identification -- must reproduce all
-        nine analytic components.  Measured before pinning: relative deviation
-        1.7e-5, 4.3e-6, 1.1e-6, 2.7e-7 at h = 4e-3, 2e-3, 1e-3, 5e-4, the
-        textbook O(h^2) sequence, against 10.9 % for the re-filled
-        hard-Aufbau energy (see the cusp test below).
+        nine analytic components.  Measured on the charged cell after #478
+        (#561): relative deviation 4.3e-6, 1.1e-6, 2.7e-7, 6.8e-8 at h = 4e-3,
+        2e-3, 1e-3, 5e-4, the textbook O(h^2) sequence, against 15.6 % for the
+        re-filled hard-Aufbau energy (see the cusp test below).
         """
         system = self._si_primitive()
         result = _se.run_dftb0_gamma(system, params)
@@ -1387,6 +1394,8 @@ class TestPeriodicStressCubicSymmetry:
         hard-Aufbau energy and the ensemble energy coincide on both sides of
         the step and their common derivative is the analytic trace.  This is
         the derivative a lattice optimizer of an ideal cubic cell consumes.
+        The central difference is Richardson-extrapolated over h and h/2: since
+        #478 its O(h^2) term is 3e-8 at h = 5e-4, above the 1e-9 check (#561).
         """
         system = self._si_primitive()
         result = _se.run_dftb0_gamma(system, params)
@@ -1394,18 +1403,21 @@ class TestPeriodicStressCubicSymmetry:
         analytic = np.asarray(
             _se.compute_periodic_dftb0_stress(system, result, params)
         )
-        h = 5.0e-4
-        iso = np.eye(3) * h
-        fd_trace = (
-            _se.run_dftb0_gamma(self._strained(system, iso), params).energy
-            - _se.run_dftb0_gamma(self._strained(system, -iso), params).energy
-        ) / (2.0 * h * volume)
+
+        def central(h):
+            iso = np.eye(3) * h
+            return (
+                _se.run_dftb0_gamma(self._strained(system, iso), params).energy
+                - _se.run_dftb0_gamma(self._strained(system, -iso), params).energy
+            ) / (2.0 * h * volume)
+
+        fd_trace = (4.0 * central(2.5e-4) - central(5.0e-4)) / 3.0
         assert fd_trace == pytest.approx(float(np.trace(analytic)), abs=1.0e-9)
 
     def test_bulk_si_dftb0_hard_aufbau_cusp_is_the_level_splitting_term(
         self, params
     ):
-        """Issue #529: the 10.9 % offset is the cusp of the re-filled energy.
+        """Issue #529: the 15.6 % offset is the cusp of the re-filled energy.
 
         A symmetry-breaking strain eps_xx splits the threefold manifold into a
         singlet (slope s) and a doublet (slope d).  Re-filling four electrons
@@ -1415,10 +1427,14 @@ class TestPeriodicStressCubicSymmetry:
 
             dE_hard/deps_xx = sigma_xx * V + (d - s) / 3,
 
-        not to the analytic ensemble derivative.  Measured before pinning:
-        s = -1.4215e-4, d = 3.0249e-3 Ha, predicted 3.97133e-5 vs measured
-        3.97274e-5 Ha/bohr^3 (analytic 3.58071e-5).  The executed energy has
-        no derivative there; a central difference of it is not a stress.
+        not to the analytic ensemble derivative.  The finite step adds an O(h)
+        term (unequal occupations weight the level curvatures on the two
+        sides), so the central difference is extrapolated linearly over h and
+        h/2.  Measured on the charged cell after #478 (#561): s = -0.65877,
+        d = -0.11848 Ha, predicted -3.60077e-3 vs extrapolated -3.60077e-3
+        Ha/bohr^3 (analytic -4.26716e-3; 10.9 % with the opposite sign before
+        #478).  The executed energy has no derivative there; a central
+        difference of it is not a stress.
         """
         system = self._si_primitive()
         result = _se.run_dftb0_gamma(system, params)
@@ -1454,57 +1470,81 @@ class TestPeriodicStressCubicSymmetry:
         predicted = analytic[0, 0] + (slope_doublet - slope_singlet) / (
             3.0 * volume
         )
-        measured = (plus.energy - minus.energy) / (2.0 * h * volume)
+        half = np.zeros((3, 3))
+        half[0, 0] = 0.5 * h
+        plus_half = _se.run_dftb0_gamma(self._strained(system, half), params)
+        minus_half = _se.run_dftb0_gamma(self._strained(system, -half), params)
+        measured = 2.0 * (plus_half.energy - minus_half.energy) / (h * volume) - (
+            plus.energy - minus.energy
+        ) / (2.0 * h * volume)
         assert measured == pytest.approx(predicted, abs=2.0e-8)
-        # The cusp is real, not a step-size artefact: 10.9 % of the stress.
+        # The cusp is real, not a step-size artefact: 15.6 % of the stress.
         assert abs(measured - analytic[0, 0]) > 3.0e-6
 
     def test_bulk_si_scc_dftb_shares_the_ensemble_stress_contract(self, params):
         """Issue #529: SCC-DFTB shares the residual for the same reason.
 
-        Ideal Si is homonuclear, so the converged SCC charges vanish and the
-        SCC functional coincides with DFTB0: the analytic SCC stress equals the
-        DFTB0 one, the isotropic-strain derivative of the executed SCC energy
-        matches the analytic trace, and the symmetry-breaking hard-Aufbau
-        central difference carries the same 10.9 % cusp.  The residual lives
-        in the T=0 re-filling of the split manifold, not in either kernel.
+        The two Si atoms are equivalent, so the converged SCC charges are equal
+        (+1 each on this charged cell, #561) and stay equal under the strains
+        below. Their potential is the same on every orbital: the SCC spectrum
+        is the DFTB0 spectrum shifted uniformly, and the SCC stress differs
+        from the DFTB0 one only by the isotropic Coulomb term of those charges.
+        The isotropic-strain derivative of the executed SCC energy matches the
+        analytic trace, and the symmetry-breaking hard-Aufbau central
+        difference carries the DFTB0 cusp: the residual lives in the T=0
+        re-filling of the split manifold, not in either kernel.
         """
         system = self._si_primitive()
         options = _se.PeriodicSCCOptions()
-        options.max_iter = 200
+        options.max_iter = 400
+        options.conv_tol_charge = 1.0e-12
         result = _se.run_scc_dftb_gamma(system, params, options)
+        dftb0_result = _se.run_dftb0_gamma(system, params)
         assert result.converged
-        assert np.max(np.abs(np.asarray(result.charges))) < 1.0e-12
+        charges = np.asarray(result.charges)
+        np.testing.assert_allclose(charges, [1.0, 1.0], rtol=0.0, atol=1.0e-10)
+        shift = np.asarray(result.mo_energies) - np.asarray(dftb0_result.mo_energies)
+        np.testing.assert_allclose(shift, shift[0], rtol=0.0, atol=1.0e-10)
         volume = abs(np.linalg.det(np.asarray(system.lattice)))
         analytic = np.asarray(
             _se.compute_periodic_scc_dftb_stress(system, result, params)
         )
         dftb0 = np.asarray(
-            _se.compute_periodic_dftb0_stress(
-                system, _se.run_dftb0_gamma(system, params), params
-            )
+            _se.compute_periodic_dftb0_stress(system, dftb0_result, params)
         )
-        np.testing.assert_allclose(analytic, dftb0, rtol=0.0, atol=1.0e-12)
+        coulomb = analytic - dftb0
+        np.testing.assert_allclose(
+            coulomb, np.eye(3) * coulomb[0, 0], rtol=0.0, atol=1.0e-12
+        )
 
-        def energy(strained):
+        def energy(strained, scc):
+            if not scc:
+                return float(_se.run_dftb0_gamma(strained, params).energy)
             strained_result = _se.run_scc_dftb_gamma(strained, params, options)
             assert strained_result.converged
             return float(strained_result.energy)
 
-        h = 5.0e-4
-        iso = np.eye(3) * h
-        fd_trace = (
-            energy(self._strained(system, iso)) - energy(self._strained(system, -iso))
-        ) / (2.0 * h * volume)
+        def central(direction, h, scc):
+            return (
+                energy(self._strained(system, direction * h), scc)
+                - energy(self._strained(system, -direction * h), scc)
+            ) / (2.0 * h * volume)
+
+        iso = np.eye(3)
+        fd_trace = (4.0 * central(iso, 2.5e-4, True) - central(iso, 5.0e-4, True)) / 3.0
         assert fd_trace == pytest.approx(float(np.trace(analytic)), abs=1.0e-9)
-        eps = np.zeros((3, 3))
-        eps[0, 0] = h
-        fd_xx = (
-            energy(self._strained(system, eps)) - energy(self._strained(system, -eps))
-        ) / (2.0 * h * volume)
-        assert (fd_xx - analytic[0, 0]) / analytic[0, 0] == pytest.approx(
-            0.1095, abs=2.0e-3
-        )
+        xx = np.zeros((3, 3))
+        xx[0, 0] = 1.0
+
+        def cusp(scc, stress):
+            # Linear extrapolation removes the O(h) term of the hard-Aufbau
+            # difference (see the DFTB0 cusp test above).
+            extrapolated = 2.0 * central(xx, 1.25e-4, scc) - central(xx, 2.5e-4, scc)
+            return extrapolated - stress[0, 0]
+
+        scc_cusp = cusp(True, analytic)
+        assert abs(scc_cusp) > 3.0e-6
+        assert scc_cusp == pytest.approx(cusp(False, dftb0), abs=1.0e-9)
 
     def test_bulk_si_dftb0_stress_invariant_under_lattice_translation(
         self, params
@@ -1536,8 +1576,8 @@ class TestPeriodicStressCubicSymmetry:
                     ),
                 ),
             ],
-            0,
-            1,
+            base.charge,
+            base.multiplicity,
         )
         result1 = _se.run_dftb0_gamma(shifted, params)
         stress1 = np.asarray(
@@ -2013,7 +2053,7 @@ def _tight_periodic_scc_options():
     # and oscillated against the |dq| = 1 AO-capacity wall at 15-25 bohr.
     # That note predicted its own fix -- "the long-range gamma needs
     # Ewald/compensation, not a bigger ball" -- and since 2026-09-07 (D1,
-    # #425) the gamma is the Ewald-split Elstner form.  Measured now, the
+    # former-tracker issue 425) the gamma is the Ewald-split Elstner form.  Measured now, the
     # cutoff no longer matters: 12, 15, 20 and 25 bohr all converge in 34
     # iterations to -4.9033518, agreeing to 1e-7 from 15 bohr out.  The
     # value is kept only so the pins in this file stay comparable.

@@ -84,7 +84,15 @@ def test_run_job_with_functional_name_dispersion(tmp_path):
     assert "Dispersion correction (D3-BJ)" in out_text
     for field in ("s6", "s8", "a1", "a2", "E_disp", "E_SCF", "E_total"):
         assert field in out_text, field
-    assert re.search(r"^\s+SCF energy\s+-?\d+\.\d+", out_text, re.MULTILINE)
+    # #347: the components block ends with the SCF component under an
+    # explicit label (it was "SCF energy" before); the dispersion-inclusive
+    # total is E_total in the dispersion block below.
+    m_scf = re.search(
+        r"^\s+E_SCF \(excl\. dispersion\)\s+(-?\d+\.\d+)\s*$", out_text, re.MULTILINE,
+    )
+    assert m_scf is not None
+    assert float(m_scf.group(1)) == pytest.approx(r.energy, abs=1e-8)
+    assert not re.search(r"^\s+SCF energy\s+-?\d+\.\d+", out_text, re.MULTILINE)
     assert not re.search(r"^\s+Total energy\s+-?\d+\.\d+", out_text, re.MULTILINE)
     m_total = re.search(r"^\s+E_total\s+(-?\d+\.\d+) Ha$", out_text, re.MULTILINE)
     assert m_total is not None

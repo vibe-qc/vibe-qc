@@ -64,5 +64,5 @@ test('empty recognition data renders honest open states', () => {
 test('sponsorship does not imply scientific or roadmap control', () => {
   assert.match(sponsorHtml, /does not buy the result/i);
   assert.match(sponsorHtml, /do not control the roadmap/i);
-  assert.match(sponsorHtml, /no sponsor-only features/i);
+  assert.match(sponsorHtml, /software features do not depend on sponsorship/i);
 });

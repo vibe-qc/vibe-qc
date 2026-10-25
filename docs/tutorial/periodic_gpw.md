@@ -1,7 +1,7 @@
 ---
 myst:
   html_meta:
-    "description": "Tutorial for vibe-qc's GPW (Gaussian + plane-wave) periodic route: the FFT-Poisson Hartree build derived in reciprocal space, how to invoke it with jk_method='gpw', its experimental status, and why it assumes a smooth (pseudopotential) density. The all-electron fix is GAPW."
+    "description": "Tutorial for vibe-qc's GPW (Gaussian + plane-wave) periodic route: the FFT-Poisson Hartree build derived in reciprocal space, how to invoke it with jk_method='gpw', its production envelope and how its status shows up at runtime, and why it assumes a smooth (pseudopotential) density. The all-electron fix is GAPW (experimental)."
     "og:title": "vibe-qc tutorial - the GPW periodic route (plane-wave Hartree by FFT-Poisson)"
 ---
 
@@ -13,12 +13,26 @@ by FFT in reciprocal space. It is the foundation of vibe-qc's plane-wave
 family, and it assumes a smooth, pseudopotential-like density; the
 all-electron fix is [GAPW](periodic_gapw.md).
 
-```{warning}
-**GPW is experimental.** It emits a `GAPWExperimentalWarning` that you have
-to opt past, and its absolute energies are not yet validated for production
-work. For production periodic SCF use **GDF** or **BIPOLE** (see
-[choosing a periodic method](periodic_methods_compared.md)). Reach for GPW
-to explore the plane-wave family or to validate vibe-qc's grid kernels.
+GPW is a **production** route within its shipped envelope: Gamma-point RHF,
+UHF, RKS and UKS; multi-k pure-DFT RKS, ROKS and UKS; Gamma analytic
+gradients; DFT+U; D3-BJ dispersion. GPW ROHF and ROKS are a maintained
+preview, multi-k UHF and multi-k hybrids fail closed, and the all-electron
+augmentation [GAPW](periodic_gapw.md) is experimental. GDF and BIPOLE remain
+the longer-validated periodic routes and the reference for cross-checks
+([choosing a periodic method](periodic_methods_compared.md)).
+
+```{note}
+**How the status shows up at runtime.** GPW is production within its shipped
+envelope. The `.out` route description for `jk_method="gpw"` still ends in the
+word "experimental", and the plane-wave grid and J-builder infrastructure emit
+`GAPWExperimentalWarning` once per grid build (three notices per run through
+`run_periodic_job`; the runner's `quiet=True` silences only the driver-level
+warning), while the GPW/GAPW family is completed. Read both as scope reminders
+for the parts not yet in the envelope above, not as a verdict on the envelope
+itself; the shipped example silences the notices with
+`warnings.simplefilter("ignore", GAPWExperimentalWarning)`. GDF and BIPOLE are
+the longer-validated periodic routes. The label vocabulary is defined in
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels).
 ```
 
 GPW, **Gaussian + plane-wave**, is the first of vibe-qc's two plane-wave
@@ -26,7 +40,9 @@ periodic routes (the second, all-electron one, is
 [GAPW](periodic_gapw.md)). The orbitals are still Gaussians, but the
 Coulomb (Hartree) potential is built on a uniform real-space grid by
 solving Poisson's equation with an FFT. The construction goes back to
-Lippert and Hutter (1997) and is the engine underneath codes like CP2K.
+Lippert and Hutter (1997, {vibeqc-cite}`lippert_hutter_gpw_1997`) and is the
+engine underneath codes like CP2K (Quickstep,
+{vibeqc-cite}`vandevondele_hutter_quickstep_2005`).
 
 ## Why a grid: Poisson in reciprocal space
 
@@ -67,7 +83,7 @@ import numpy as np
 import vibeqc as vq
 from vibeqc import GAPWExperimentalWarning
 
-warnings.simplefilter("ignore", GAPWExperimentalWarning)   # opt in to the route
+warnings.simplefilter("ignore", GAPWExperimentalWarning)   # silence the grid notices
 
 # H2 in a 16-bohr cube
 lattice = 16.0 * np.eye(3)
@@ -86,22 +102,36 @@ result = vq.run_periodic_job(
 print(result.energy, result.converged, result.n_iter)
 ```
 
-The SCF converges (`result.converged is True`), and `result.energy` is the
-periodic GPW total energy in the Ewald gauge. Because a periodic cell
-carries gauge terms that a finite molecule does not, that number is **not**
-the molecular H₂ energy and should not be compared with one; treat it as a
-method demonstration while the route is experimental. The production routes,
-where the absolute energy *is* the validated physical quantity, are
-[GDF and BIPOLE](periodic_methods_compared.md).
+The SCF converges in three iterations (`result.converged is True`) to
+`result.energy = -1.11671345 Ha` on a vibe-qc 0.17.x development build
+(Apple M2), the periodic GPW total energy in the Ewald gauge. Because a
+periodic cell carries gauge terms that a finite molecule does not, that
+number is **not** the molecular H₂ energy and should not be compared with
+one; the meaningful cross-check is the same cell on
+[GDF or BIPOLE](periodic_methods_compared.md), the longer-validated routes.
+Two practical notes: the default plane-wave cutoff (`cutoff_ha=300.0`) puts
+a 192x192x192 grid on this 16-bohr cube, about 1.7 GB of grid caches (the
+`.out` memory block itemises them) and several minutes of wall time on a
+busy machine, and the `.out` route line reads
+`J/K method: GPW -- Gaussian + plane-wave J via FFT-Poisson ... ; experimental)`,
+the tag discussed at the top of the page. Lower `cutoff_ha` or shrink the
+box for a quicker first run.
 
 ## The catch: GPW wants a smooth density
 
 GPW assumes the density is **smooth**. It is built for the
 pseudopotential picture, where the sharp $1s$ core has been removed and what
-is left varies gently enough to sit on a uniform grid. With an
+is left varies gently enough to sit on a uniform grid (in CP2K, the
+Goedecker-Teter-Hutter pseudopotentials: S. Goedecker, M. Teter and
+J. Hutter, *Phys. Rev. B* **54**, 1703 (1996),
+doi:[10.1103/PhysRevB.54.1703](https://doi.org/10.1103/PhysRevB.54.1703);
+C. Hartwigsen, S. Goedecker and J. Hutter, *Phys. Rev. B* **58**, 3641
+(1998), doi:[10.1103/PhysRevB.58.3641](https://doi.org/10.1103/PhysRevB.58.3641)). With an
 all-electron Gaussian basis, the cusp at the nucleus is expensive to
 resolve on any uniform grid. The fix is a per-atom augmentation that treats
-the hard core on its own fine radial grid: that is [GAPW](periodic_gapw.md),
+the hard core on its own fine radial grid: that is [GAPW](periodic_gapw.md)
+({vibeqc-cite}`lippert_hutter_parrinello_gapw_1999`,
+{vibeqc-cite}`krack_parrinello_allelectron_2000`),
 and it is the route to use when you want all-electron accuracy without
 pseudopotential files.
 

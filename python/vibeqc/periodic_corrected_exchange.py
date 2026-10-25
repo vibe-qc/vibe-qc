@@ -65,9 +65,12 @@ from ._vibeqc_core import BasisSet, PeriodicSystem
 
 __all__ = [
     "CorrectedEwaldExchange",
+    "ExchangeGauge",
     "corrected_ewald_reciprocal_cutoff",
     "corrected_exchange_unavailable_reason",
+    "is_single_gamma_mesh",
     "is_unsupported_gauge",
+    "resolve_exchange_gauge",
 ]
 
 
@@ -196,6 +199,111 @@ def corrected_exchange_unavailable_reason(
             f"assumes w_k = 1/{n_k}); got a non-uniform weight set"
         )
     return None
+
+
+def is_single_gamma_mesh(kmesh) -> bool:
+    """True for a one-point mesh at k = 0 carrying the full weight."""
+    k_points = list(kmesh.kpoints)
+    weights = np.asarray(kmesh.weights, dtype=float)
+    return (
+        len(k_points) == 1
+        and bool(np.isclose(float(weights[0]), 1.0))
+        and bool(
+            np.allclose(np.asarray(k_points[0], dtype=float), 0.0, atol=1e-12)
+        )
+    )
+
+
+@dataclass(frozen=True)
+class ExchangeGauge:
+    """The exact-exchange ``q -> 0`` convention a multi-k EWALD_3D HF run takes.
+
+    ``molecular_limit`` is True when the run takes the molecular-limit kernel:
+    at a single Gamma point every image density block is zeroed and the bare
+    exchange sum has exactly one term, with no ``q + G = 0`` contribution.
+    Otherwise the full-range arm is the corrected Ewald split of this module
+    wherever it exists. ``log_line`` states the choice for the ``.out``.
+    """
+
+    molecular_limit: bool
+    log_line: str
+
+
+def resolve_exchange_gauge(
+    system: PeriodicSystem,
+    kmesh,
+    *,
+    exchange_exxdiv: Optional[str],
+    slab_mode: bool,
+    pair_complete_1e: bool,
+    where: str,
+) -> ExchangeGauge:
+    """Resolve and validate a multi-k EWALD_3D HF driver's exchange gauge.
+
+    One rule for the RHF and UHF drivers, which used to carry identical
+    copies of it (GitLab #23, #399):
+
+    * ``None`` (default) and ``'ewald'`` take the corrected Ewald split
+      (PySCF's ``exxdiv='ewald'``) at every mesh, a single Gamma point
+      included. The default falls back to the molecular-limit kernel only at
+      a single Gamma point on a gauge the split does not exist for (2D slab,
+      ``dim != 3``) and says so; ``'ewald'`` never falls back, and the driver
+      fails closed wherever the split is unavailable.
+    * ``'none'`` takes the molecular-limit kernel and is accepted only at a
+      single Gamma point, where that sum has exactly one term.
+
+    Until #23 the default took the molecular-limit kernel at a single Gamma
+    point and the corrected split on every other mesh, so a k-convergence
+    sequence run with defaults silently changed gauge at (1,1,1): 21.67 mHa
+    on H2/STO-3G in an 8-bohr cube, 75.6 mHa in a 6-bohr one. The two
+    conventions share the infinite-k limit (Carrier, Rohra & Goerling,
+    Phys. Rev. B 75, 205126 (2007), doi:10.1103/PhysRevB.75.205126,
+    Sec. IV), the corrected one converging far faster.
+    """
+    if exchange_exxdiv not in (None, "ewald", "none"):
+        raise ValueError(
+            f"{where}: exchange_exxdiv must be 'ewald', 'none', or None for "
+            f"the default ('ewald' wherever it exists); got {exchange_exxdiv!r}"
+        )
+    single_gamma = is_single_gamma_mesh(kmesh)
+    if exchange_exxdiv == "none" and not single_gamma:
+        raise NotImplementedError(
+            f"{where}: exchange_exxdiv='none' is available only at a single "
+            "Gamma point, where the exchange sum has exactly one term. On a "
+            "real k mesh the SCF density is Born-von-Karman-torus periodic, "
+            "D(g) does not decay, and the uncorrected image sum does not "
+            "converge -- H2/STO-3G in a 12-bohr cube on a (2,1,1) mesh moved "
+            "from -1.4505 to -1.6863 Ha over a 12-to-20-bohr lattice cutoff "
+            "sweep. Use exchange_exxdiv='ewald' or the default."
+        )
+    if exchange_exxdiv == "none" and pair_complete_1e:
+        raise NotImplementedError(
+            "Physical quartet support uses the periodic density at Gamma "
+            "and requires corrected exchange; use exchange_exxdiv='ewald' "
+            "or the default."
+        )
+    if not single_gamma or pair_complete_1e:
+        return ExchangeGauge(False, "")
+    if exchange_exxdiv == "none":
+        return ExchangeGauge(
+            True,
+            "exact-exchange q->0 gauge: molecular-limit kernel, no q+G=0 "
+            "term (exchange_exxdiv='none')",
+        )
+    unavailable = corrected_exchange_unavailable_reason(
+        system, kmesh, slab_mode=slab_mode
+    )
+    if exchange_exxdiv is None and unavailable is not None:
+        return ExchangeGauge(
+            True,
+            "exact-exchange q->0 gauge: molecular-limit kernel, no q+G=0 "
+            f"term, because {unavailable}",
+        )
+    return ExchangeGauge(
+        False,
+        "exact-exchange q->0 gauge: corrected Ewald split (exxdiv='ewald'; "
+        "exchange_exxdiv='none' selects the molecular-limit kernel)",
+    )
 
 
 @dataclass
@@ -415,7 +523,7 @@ class CorrectedEwaldExchange:
         read and threads cleanly.
 
         This is also an MPI seam, and a **different one** from the k-point
-        farming already landed under ``HANDOVER_MPI.md`` next-step 4: that
+        farming already landed for setup: that
         partitions the GDF cderi q-groups once per SCF *setup* and has
         nothing per iteration. This loop runs every iteration and is where
         the O(n_k^2) cost actually lives, so it is the one that rewards

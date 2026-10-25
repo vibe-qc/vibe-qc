@@ -6,7 +6,7 @@ smoke test::
     structures → emit_input → transport.run → parse_output → compare
 
 This driver is the immediate next milestone from the 2026-05-14
-handover.  It proves the CRYSTAL14 + vq + output-parser pipeline
+historical design record.  It proves the CRYSTAL14 + vq + output-parser pipeline
 works end-to-end *before* touching the basis.
 
 Acceptance gate (per :ref:`go8-stage0`):

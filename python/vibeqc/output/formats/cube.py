@@ -143,6 +143,9 @@ def requested_mo_indices(
     them from, so the caller's surrounding try/except can surface
     the error to the user.
     """
+    if (getattr(result, "orbital_kind", "canonical") == "natural"
+            and any(not isinstance(label, int) for label in labels)):
+        raise ValueError("Natural orbitals require explicit MO indices; canonical frontier labels are undefined")
     # HOMO index = largest occupied MO. For restricted closed-shell,
     # occupation 2.0 => occupied; for unrestricted vibe-qc currently
     # exposes only the alpha block through ``result.mo_energies`` --
@@ -150,6 +153,8 @@ def requested_mo_indices(
     # Plain ``a or b`` short-circuit doesn't work for numpy arrays
     # (they raise on truthiness check), so test for None explicitly.
     occ_attr = getattr(result, "mo_occupations", None)
+    if occ_attr is None:
+        occ_attr = getattr(result, "occupations", None)
     if occ_attr is None:
         occ_attr = getattr(result, "mo_occ", None)
     if occ_attr is None:

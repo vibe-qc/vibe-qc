@@ -77,7 +77,7 @@ vibe-qc number); the `/FU` column normalises (÷4 for rocksalt,
 **1. The gauge fix is validated.** Where both vibe-qc paths
 converge (LiH, MgO), **GDF reproduces EWALD_3D bit-for-bit**.
 That was the whole point of the 2026-05-13/14 gauge regression
-fix (Steps 1+2+3′ on `origin/main`; the in-tree handover brief
+fix (Steps 1+2+3′ on `origin/main`; the in-tree historical design record brief
 was removed in the 2026-05-17 archive sweep — recover via
 `git log --diff-filter=D --name-only -- docs/`):
 the native GDF driver's V_ne / e_nuc / J / K are now all in one

@@ -104,10 +104,9 @@ def chemical_potential(
     restoring = params.beta(temperature_k) * float(
         np.sum(solute_profile.p * mu_tilde) * solute_profile.dsigma
     )
-    kT = R_KCAL * float(temperature_k)
-    if solvent_area <= 0.0:
-        raise ValueError("chemical_potential: solvent area must be positive.")
-    combinatorial = -params.lambda_comb * kT * math.log(solvent_area)
+    combinatorial = combinatorial_chemical_potential(
+        params, solvent_area=solvent_area, temperature_k=temperature_k
+    )
     return ChemicalPotential(
         total=restoring + combinatorial,
         restoring=restoring,
@@ -119,6 +118,25 @@ def chemical_potential(
     )
 
 
+def combinatorial_chemical_potential(
+    params: Parameterization,
+    *,
+    solvent_area: float,
+    temperature_k: float = T_ROOM_K,
+) -> float:
+    """``-lambda k T ln A^S``, kcal/mol: the combinatorial term of eq. 19.
+
+    It depends on the solvent's surface area only, not on the solute's
+    density, which is why the Direct COSMO-RS free energy of Klamt &
+    Diedenhofen 2015 (doi:10.1021/jp511158y, eq. 4, ``mu_C^X(S)``) adds it
+    unchanged. One implementation for both the profile chain and that one.
+    """
+    if solvent_area <= 0.0:
+        raise ValueError("chemical_potential: solvent area must be positive.")
+    kT = R_KCAL * float(temperature_k)
+    return -params.lambda_comb * kT * math.log(solvent_area)
+
+
 def gas_phase_chemical_potential(
     surface,
     descriptors: SegmentDescriptors,
@@ -128,20 +146,46 @@ def gas_phase_chemical_potential(
     n_ring_atoms: int = 0,
     temperature_k: float = T_ROOM_K,
 ) -> float:
-    """``mu'^X_gas`` of eq. 21, kcal/mol.
+    """``mu'^X_gas`` of eq. 21, kcal/mol: the gas phase at 1 bar, relative to
+    the ideally screened state.
 
-        mu'^X_gas = -Delta'^X - sum_k gamma_k A^X_k - omega n^X_ra - eta R T
+        mu'^X_gas = (E_gas - E_COSMO) - sum_k gamma_k A^X_k - omega n^X_ra + eta R T
 
-    The first term is the negative of the ideal screening energy: the cost of
-    stripping a molecule of its perfect conductor screening. The second is
-    dispersion, taken as proportional to exposed area per element. The third
-    is Klamt's empirical ring correction, and the fourth the gas-to-liquid
-    entropy constant of the paper's chosen reference state.
+    The first term is the cost of stripping the molecule of its perfect
+    conductor screening, so it is positive. The second is dispersion, taken as
+    proportional to exposed area per element (``gamma_k < 0``, so it is
+    positive too). The third is Klamt's empirical ring correction
+    (``omega < 0``), and the fourth the gas-to-liquid standard-state entropy
+    constant (``eta k T = -5.4`` kcal/mol at 298 K), which lowers the gas side.
+
+    **Two signs differ from eq. 21 as printed** (#435), and both were fixed
+    against the literature, not guessed:
+
+    * Eq. 21 reads ``-Delta'``, and eq. 4 prints ``Delta = E_gas - E_COSMO``,
+      but Klamt's own numbers carry ``Delta`` negative: water's ideal screening
+      energy is -9.3 kcal/mol (Klamt 1995, doi:10.1021/j100007a062, p. 2229),
+      Fig. 2 of the 1998 paper plots ``Delta'`` from -12 to 0 and its eq. 13
+      needs it negative, and Klamt 2000 (doi:10.1016/S0378-3812(00)00357-5)
+      eq. 19 writes ``mu_gas = E_gas - E_COSMO - ...`` outright. This function
+      takes ``E_gas - E_COSMO``, positive, and adds it.
+    * Eq. 21 reads ``- eta R T`` with ``eta = -9.15`` (Table 4), which would
+      raise the gas side by 5.4 kcal/mol. Section 5.1 defines eta as the
+      standard-state entropy difference between gas (1 bar) and liquid
+      (1 mol/mol) with ``eta k T = -5.4`` kcal/mol, and Klamt & Diedenhofen
+      2015 (doi:10.1021/jp511158y) eq. 9 puts its ``eta_gas`` (about -7) on
+      the gas side, where it lowers it. Only that sign reproduces experiment:
+      eight pure-liquid vapour pressures of Klamt 1995 Table 2 at RHF/STO-3G
+      come out with rms 1.2 kcal/mol, against 7.7 with both signs as printed
+      and worse still with only the first one fixed.
 
     Raises when an element has no dispersion constant rather than treating it
     as zero: a silent zero would read as "this element does not disperse",
     which is a physical claim the parameterization is not making. It simply
     was not fitted for that element.
+
+    ``ideal_screening_energy_hartree`` overrides the surface's
+    ``E_gas - E_COSMO`` and has the same sign: positive for a solute the
+    conductor stabilizes.
     """
     if ideal_screening_energy_hartree is None:
         delta = surface.ideal_screening_energy
@@ -166,10 +210,10 @@ def gas_phase_chemical_potential(
 
     dispersion = sum(params.dispersion[z] * a for z, a in areas.items())
     return (
-        -delta * HARTREE_TO_KCAL
+        delta * HARTREE_TO_KCAL
         - dispersion
         - params.omega_ring * float(n_ring_atoms)
-        - params.eta_entropy * R_KCAL * float(temperature_k)
+        + params.eta_entropy * R_KCAL * float(temperature_k)
     )
 
 
@@ -248,6 +292,7 @@ __all__ = [
     "ChemicalPotential",
     "activity_coefficient",
     "chemical_potential",
+    "combinatorial_chemical_potential",
     "gas_phase_chemical_potential",
     "ln_activity_coefficient",
     "log_partition_coefficient",

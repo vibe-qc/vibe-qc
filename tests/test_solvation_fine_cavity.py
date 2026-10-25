@@ -1092,7 +1092,7 @@ def _scf_water_untied(vq):
     measure whether the chain rule is right. Lengthening one bond by 0.1 bohr
     removes the tie and leaves everything else about the test unchanged. What
     the tie itself costs is measured by
-    ``test_the_gradient_is_ill_conditioned_near_a_frame_tie``.
+    ``test_the_frame_tie_is_projected_out_of_the_gradient``.
     """
     return vq.Molecule(
         [vq.Atom(8, (0.0, 0.0, 0.0)),
@@ -1337,7 +1337,7 @@ def test_the_frames_tie_is_invisible_in_the_energy():
 
     An *accidental* tie -- two atoms equidistant from the centroid with no
     symmetry relating them -- is a different matter and remains an open
-    question; see the handover. This test pins the case that actually occurs.
+    question. This test pins the case that actually occurs.
     """
     vq = pytest.importorskip("vibeqc")
     pos, z, _ = _water()
@@ -1383,7 +1383,7 @@ def test_an_accidental_frame_tie_is_a_measured_discontinuity():
     ten times its size in energy.
 
     That is the argument against flipping the default to ``"molecular"``
-    unconditionally, and for a smooth frame if one is wanted; see the handover.
+    unconditionally, and for a smooth frame if one is wanted.
     Pinned here so it cannot grow unnoticed, and so the next reader gets a
     number instead of a caveat. The assertions are a ceiling on the jump and the
     statement that it is *localized* -- the slopes away from the crossing agree
@@ -1649,43 +1649,50 @@ def test_the_atom_partition_rejects_bad_input():
         atom_partition(pts, pos, rho, 0.0)
 
 
-def test_the_gradient_is_ill_conditioned_near_a_frame_tie():
-    """What step 1's tie costs the gradient, which is not what it costs the energy.
+def test_the_frame_tie_is_projected_out_of_the_gradient():
+    """What step 1's tie costs the gradient, and what removes it (#535).
 
-    #769 established that a *symmetry-induced* tie is invisible in the energy:
-    the two candidate frames are related by a symmetry operation of the solute,
-    so they discretize the same surface and the energy is smooth across the
-    crossing. That is still true and still tested.
+    #769 established that a *symmetry-induced* tie is invisible in the energy's
+    value: the two candidate frames are related by a symmetry operation of the
+    solute, so they discretize the same surface and the energy is continuous
+    across the crossing. It is **not** smooth there. The candidates have
+    different discretization errors, and the error changes linearly with the
+    displacement, so the energy has a cusp: a V in the antisymmetric
+    coordinate, which a scan across the tie shows as a second difference at the
+    tie several times its neighbours (0.808 against 0.095 microhartree for
+    Direct COSMO-RS on water, a slope change of 1.4e-3 Ha/bohr).
 
-    The gradient is a different matter, and this pins it. At the tie the frame
-    does not vary steeply, it **jumps** between two finite directions, so the
-    chain rule through it is not a route to the energy's derivative there.
-    Measured on symmetric water: the analytic gradient reports a force on the
-    oxygen along the tie-breaking direction of 1.9e-05 Ha/bohr, in a component
-    the molecule's mirror symmetry requires to vanish and which a converged
-    finite difference puts at 1e-11.
+    The raw analytic gradient is one branch's slope, so on symmetric water it
+    reports a force on the oxygen along the tie-breaking direction of
+    1.9e-05 Ha/bohr, in a component the mirror symmetry requires to vanish.
+    A central finite difference reports the average of the two branches, and
+    that average is the point-group projection of the raw gradient. So the
+    gradient is projected onto the totally symmetric subspace
+    (:mod:`vibeqc.solvation.point_group`), which the model does by default and
+    ``gradient_symmetry_tol_bohr=0`` turns off. This pins both halves: the raw
+    gradient still has the artifact, which is the cause, and the projected one
+    has not, and agrees with the finite difference.
 
-    It is a local defect, not a global one. Lengthening one bond to break the
-    tie -- 0.1 bohr is ample -- brings analytic and finite difference back to
-    4.7e-07 Ha/bohr, better than the lab frame manages on the same solute. And
-    it is below the convergence thresholds an optimizer uses, so what it costs
-    in practice is that a symmetric structure is not exactly a stationary point
-    of the analytic gradient.
+    Away from a tie nothing changes, because the raw gradient is already the
+    energy's derivative: lengthening one bond brings analytic and finite
+    difference to 4.7e-07 Ha/bohr either way.
 
-    Averaging the frame Jacobian over the tied atoms was tried, and is recorded
+    Averaging the frame *Jacobian* over the tied atoms was tried, and is recorded
     in ``molecular_frame_jacobian`` as wrong: there are no two one-sided
-    derivatives to average across a jump, and the averaged Jacobian breaks the
-    exact rotation identity that the real one satisfies to 1e-16.
+    derivatives of the frame to average across a jump. The projection averages
+    the *gradients* of two genuine smooth energies instead, each of which
+    satisfies the exact rotation identity.
     """
     vq = pytest.importorskip("vibeqc")
     from vibeqc.solvation.fine_cavity import _leading_set
     from vibeqc.solvation.gradient import cpcm_gradient_fd
 
-    def analytic_gradient(mol):
+    def analytic_gradient(mol, tol):
         basis = vq.BasisSet(mol, "sto-3g")
         sm = vq.SolventModel(
             epsilon=78.39, cavity="fine", fine_grid_spacing_ang=0.4,
             fine_frame="molecular", max_macro_iter=80, tol_e_solv=1e-12,
+            gradient_symmetry_tol_bohr=tol,
         )
         sol = vq.run_cpcm_scf(mol, basis, method="rhf", solvent=sm)
         return vq.cpcm_gradient(sol.scf, mol, basis, sol, method="rhf"), sm
@@ -1698,8 +1705,22 @@ def test_the_gradient_is_ill_conditioned_near_a_frame_tie():
     # No finite difference needed on this half: the solute is mirror-symmetric
     # about the plane the oxygen would move out of, so that force is zero by
     # symmetry and any value the gradient reports is the defect itself.
-    at_tie, _ = analytic_gradient(tied)
-    assert abs(at_tie[0, 1]) > 1e-6, at_tie
+    raw, _ = analytic_gradient(tied, 0.0)
+    assert abs(raw[0, 1]) > 1e-6, raw
+    projected, sm_default = analytic_gradient(tied, 1e-4)
+    assert abs(projected[0, 1]) < 1e-12, projected
+    # ... and it is the finite difference's answer, which is the symmetric
+    # average, to the floor that reference has.
+    fd_tied = cpcm_gradient_fd(tied, "sto-3g", method="rhf", solvent=sm_default,
+                               step_bohr=2e-3)
+    assert float(np.max(np.abs(projected - fd_tied))) < FD_TIED_PROJECTED_BOUND
+    assert float(np.max(np.abs(raw - fd_tied))) > 3.0 * float(
+        np.max(np.abs(projected - fd_tied))
+    )
+    # Projection keeps the exact invariants: no net force, no net torque.
+    assert np.abs(projected.sum(axis=0)).max() < 1e-12
+    assert np.abs(np.cross(pos - pos.mean(axis=0), projected).sum(axis=0)).max() < 1e-9
+
     # The lab frame, which has no step-1 selection to tie, gets it right.
     lab_sm = vq.SolventModel(
         epsilon=78.39, cavity="fine", fine_grid_spacing_ang=0.4,
@@ -1710,15 +1731,24 @@ def test_the_gradient_is_ill_conditioned_near_a_frame_tie():
     lab = vq.cpcm_gradient(lab_sol.scf, tied, lab_basis, lab_sol, method="rhf")
     assert abs(lab[0, 1]) < 1e-12
 
-    # Break the tie and the composed chain is back to agreeing with the
-    # outermost oracle, better than the lab frame does on the same solute.
+    # Break the tie and nothing changed: the projection is the identity up to
+    # roundoff (the molecular plane is the only symmetry left), and the composed
+    # chain agrees with the outermost oracle better than the lab frame does.
     untied = _scf_water_untied(vq)
-    off_tie, sm = analytic_gradient(untied)
+    off_tie, sm = analytic_gradient(untied, 1e-4)
+    off_tie_raw, _ = analytic_gradient(untied, 0.0)
+    assert np.abs(off_tie - off_tie_raw).max() < 1e-12
     fd = cpcm_gradient_fd(untied, "sto-3g", method="rhf", solvent=sm,
                           step_bohr=2e-3)
     worst = float(np.max(np.abs(off_tie - fd)))
     assert worst < 5e-6
-    assert worst < 0.1 * abs(at_tie[0, 1])
+    assert worst < 0.1 * abs(raw[0, 1])
+
+
+#: The projected gradient's agreement with the central difference at the tie, at
+#: the floor that reference has there. Measured 5.7e-07 (the raw gradient's is
+#: 1.4e-05); the bound keeps about five times that.
+FD_TIED_PROJECTED_BOUND = 3.0e-6
 
 
 def test_analytic_gradient_on_a_fine_cavity_matches_full_scf_fd():
@@ -1964,3 +1994,79 @@ def test_conductor_surface_and_cosmors_consume_a_fine_cavity():
     assert prof.area() == pytest.approx(desc.total_area, rel=1e-9)
     pot = rs.sigma_potential_segments([desc], np.array([1.0]), rs.KLAMT_1998)
     assert np.all(np.isfinite(pot.mu_tilde))
+
+
+# ---------------------------------------------------------------------
+# Citations follow the cavity that ran, not only the variant.
+#
+# The registry fires one solvation row per run, keyed on the variant alone.
+# A fine-cavity COSMO job through run_job therefore cited exactly what a
+# Lebedev CPCM job cites: Scalmani-Frisch's switched point-charge diagonal,
+# which it never used, and not Klamt & Diedenhofen 2018, the cavity it did.
+# ---------------------------------------------------------------------
+
+
+def test_the_citation_key_carries_the_cavity():
+    import math
+
+    from vibeqc.solvation.driver import SolventModel, solvation_citation_key
+
+    assert solvation_citation_key(None) == "cpcm"
+    assert solvation_citation_key("water") == "cpcm"
+    assert solvation_citation_key({"epsilon": 78.39, "variant": "cosmo"}) == "cosmo"
+    fine = dict(cavity="fine", fine_grid_spacing_ang=0.40)
+    assert solvation_citation_key(SolventModel(epsilon=math.inf, variant="cosmo", **fine)) == "cosmo_fine"
+    assert solvation_citation_key(SolventModel(epsilon=78.39, variant="cpcm", **fine)) == "cpcm_fine"
+
+
+@pytest.mark.parametrize("key", ["cosmo_fine", "cpcm_fine"])
+def test_fine_cavity_rows_cite_the_fine_cavity_and_not_the_lebedev_diagonal(key):
+    from vibeqc.output.citations import load_default_database
+
+    db = load_default_database()
+    fine = db.assemble(uses_cpcm=True, solvent_variant=key)
+    got = {c.key for c in fine.citations}
+    assert not any("solvent variant" in w for w in fine.warnings), fine.warnings
+    assert {
+        "klamt_fine_cavity_2018", "york_karplus_smooth_cosmo_1999",
+        "lange_herbert_swig_2010", "klamt_schuurmann_cosmo_1993",
+    } <= got
+    assert "scalmani_frisch_csc_2010" not in got
+    (yk,) = [c for c in fine.citations if c.key == "york_karplus_smooth_cosmo_1999"]
+    assert yk.doi == "10.1021/jp992097l"
+
+    # The Lebedev row of the same variant is untouched.
+    lebedev = {c.key for c in db.assemble(uses_cpcm=True, solvent_variant=key.split("_")[0]).citations}
+    assert "scalmani_frisch_csc_2010" in lebedev
+    assert "klamt_fine_cavity_2018" not in lebedev
+
+
+@pytest.mark.parametrize("entry", ["run_job", "run_cpcm_scf"])
+def test_a_fine_cavity_job_cites_the_cavity_it_used(entry, tmp_path):
+    """Both entry points write the fine-cavity bibliography.
+
+    Measured before the fix: a run_job fine-cavity COSMO job cited
+    cossi_cpcm_2003, klamt_schuurmann_cosmo_1993, lange_herbert_swig_2010 and
+    scalmani_frisch_csc_2010 -- the Lebedev CPCM bundle, bit for bit.
+    """
+    import math
+
+    vq = pytest.importorskip("vibeqc")
+    mol = vq.Molecule(
+        [vq.Atom(8, [0.0, 0.0, 0.0]), vq.Atom(1, [0.0, 1.43, 1.11]),
+         vq.Atom(1, [0.0, -1.43, 1.11])], 0, 1,
+    )
+    solvent = vq.SolventModel(
+        epsilon=math.inf, variant="cosmo", cavity="fine", fine_grid_spacing_ang=0.40
+    )
+    stem = tmp_path / "fine"
+    if entry == "run_job":
+        vq.run_job(mol, basis="sto-3g", method="rhf", solvent=solvent,
+                   output=str(stem), progress=False, write_molden_file=False)
+    else:
+        vq.run_cpcm_scf(mol, vq.BasisSet(mol, "sto-3g"), method="rhf",
+                        solvent=solvent, output=stem)
+    bib = stem.with_suffix(".bibtex").read_text()
+    assert "klamt_fine_cavity_2018" in bib
+    assert "york_karplus_smooth_cosmo_1999" in bib
+    assert "scalmani_frisch_csc_2010" not in bib

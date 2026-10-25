@@ -96,17 +96,40 @@ def test_actual_real_coefficients_original_metric_fock_and_every_trim(mesh,reduc
     assert not result.original_operators_unchanged_certified
 
 
+def _complex_degenerate_gauge(z,energies):
+    """Mix the exactly degenerate pair of ``z`` by a unitary with i/sqrt(2).
+
+    The (3,1,1) reduced domain is real (time-reversal-symmetric reference)
+    with a degenerate projected Fock pair. Its semicanonical gauge inside
+    that pair is arbitrary; the deterministic native solver happens to
+    return a real one. Earlier builds returned a complex one, set by
+    roundoff-sized off-diagonal elements, which these tests relied on
+    (#498). Constructing the complex gauge explicitly keeps the case.
+    """
+    pair = np.flatnonzero(abs(energies-energies[np.argmin(np.diff(energies))]) < 1e-10)
+    assert pair.size == 2
+    u = np.eye(z.shape[1],dtype=complex)
+    u[np.ix_(pair,pair)] = np.array([[1,1j],[1j,1]])/np.sqrt(2)
+    return z@u
+
+
 def test_complex_degenerate_fixture_is_resolved_without_changing_default_complex_path():
     reference,domain = _geometry((3,1,1),reduced=True)
     complex_before = _complex_space(reference,domain)
-    assert np.max(abs(complex_before.coefficients_copy().imag)) > 1e-3
     owner = _make(reference,domain)
     c = owner.space.coefficients_copy()
     np.testing.assert_array_equal(c.imag,0)
+    # A genuinely complex, equally valid semicanonical gauge of the same space.
+    z,s,f = complex_before.coefficients_copy(),domain.overlap_copy(),domain.fock_copy()
+    energies = complex_before.energies_copy()
+    z = _complex_degenerate_gauge(z,energies)
+    assert np.max(abs(z.imag)) > 1e-3
+    np.testing.assert_allclose(z.conj().T@s@z,np.eye(z.shape[1]),atol=3e-10)
+    np.testing.assert_allclose(z.conj().T@f@z,np.diag(energies),atol=3e-10)
     # The exact same physical subspace is compared by its gauge-invariant
     # AO-domain metric projector, not by individual degenerate eigenvectors.
-    z,s = complex_before.coefficients_copy(),domain.overlap_copy()
     np.testing.assert_allclose(c@c.conj().T@s,z@z.conj().T@s,atol=4e-10)
+    z = complex_before.coefficients_copy()
     complex_after = _complex_space(reference,domain)
     np.testing.assert_array_equal(complex_after.coefficients_copy(),z)
     assert complex_after.pao_space_identity_sha256 == complex_before.pao_space_identity_sha256

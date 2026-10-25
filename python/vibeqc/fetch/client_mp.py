@@ -18,7 +18,7 @@ import urllib.request
 from dataclasses import replace as _replace
 from typing import Optional
 
-from examples.regression.core.spec import PeriodicSpec
+from vibeqc_spec import PeriodicSpec
 
 from .client_optimade import fetch_optimade
 from .heuristics import open_shell_default

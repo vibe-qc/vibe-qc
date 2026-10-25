@@ -12,7 +12,8 @@ numbers mean, and what must be converged before interpreting a plot.
 
 ## The eigenvalue problem
 
-For an LCAO periodic calculation, each sampled wave vector solves
+For an LCAO periodic calculation (the crystalline-orbital formulation of
+{vibeqc-cite}`pisani_crystal_1988`), each sampled wave vector solves
 
 $$
 \mathbf{F}(\mathbf{k})\mathbf{C}_n(\mathbf{k})
@@ -47,6 +48,9 @@ self-consistent band gap.
 |---|---|---|
 | Labeled k-path | dispersion and crossings along chosen symmetry lines | path convention and points per segment |
 | Monkhorst-Pack mesh | DOS, PDOS, occupations, and Brillouin-zone averages | mesh density in every periodic direction |
+
+The uniform mesh is the Monkhorst-Pack construction ({vibeqc-cite}`monkhorst_pack_1976`);
+standard path conventions are discussed in [k-point meshes](k_points.md).
 
 A smooth line on a k-path does not prove that the global valence maximum or
 conduction minimum lies on that path. Determine an indirect gap from a
@@ -204,27 +208,130 @@ Current route-specific choices include:
 
 For projected fat bands on explicit lattice blocks, import
 `band_structure_projected` from `vibeqc.bands`. The top-level namespace
-currently exports the DOS projection helpers but not this fat-band function.
+currently exports the DOS projection helpers but not this fat-band function;
+the next section shows the call.
+
+## Fat bands: projected band weights
+
+A fat-band plot draws every band with a width, or a colour, proportional to
+its character on a chosen atom or angular-momentum channel. vibe-qc computes
+that character with the same Mulliken partition ({vibeqc-cite}`mulliken_1955`)
+it uses for the projected DOS, delivered band by band at every sampled k point instead of integrated
+over energy. For band $n$ at $\mathbf k$ with coefficient vector
+$\mathbf C_n(\mathbf k)$, the weight on AO $\mu$ and on a channel $c$ (an
+(atom, $l$) group of AOs) are
+
+$$
+w_{\mu,n\mathbf k} = \operatorname{Re}\Big[\,C^{*}_{\mu n}(\mathbf k)\,
+\big(\mathbf S(\mathbf k)\,\mathbf C_n(\mathbf k)\big)_{\mu}\Big],
+\qquad
+W_{c,n\mathbf k} = \sum_{\mu\in c} w_{\mu,n\mathbf k},
+\qquad
+\sum_{c} W_{c,n\mathbf k} = \mathbf C_n^\dagger\mathbf S\,\mathbf C_n = 1 .
+$$
+
+The weights sum to one per band because the channels partition the AO set
+exactly once, which `band_structure_projected` checks before it runs.
+Mulliken weights can be negative for strongly overlapping diffuse functions;
+that is a property of the partition, not a bug, and a large negative weight
+is a hint to look at the basis rather than at the band.
+
+`band_structure_projected(F_real, S_real, system, basis, kpath,
+n_electrons_per_cell=None)` in `vibeqc.bands` takes the real-space lattice
+blocks of the operator and the overlap, a `KPath`, and returns a
+`BandStructure` whose `projections` array has shape `(n_kpoints, n_bands,
+n_channels)` and whose `channels` list carries labels such as `"Si1-s"` or
+`"O2-p"` (atom symbol, one-based atom index, angular momentum). The
+following complete example builds the Hcore fat bands of the 1-D H chain from
+the page's first example; the kinetic and nuclear blocks are added cell by
+cell with the core binding `make_lattice_matrix_set`, since the projected
+helper takes one operator rather than a list of terms:
+
+```python
+import numpy as np
+import vibeqc as vq
+from vibeqc._vibeqc_core import make_lattice_matrix_set
+from vibeqc.bands import band_structure_projected
+
+# 1-D H chain: two H atoms per cell, 6 bohr period, vacuum along y and z.
+system = vq.PeriodicSystem(
+    dim=1,
+    lattice=[[6.0, 0.0, 0.0], [0.0, 30.0, 0.0], [0.0, 0.0, 30.0]],
+    unit_cell=[vq.Atom(1, [0.0, 0.0, 0.0]), vq.Atom(1, [1.4, 0.0, 0.0])],
+)
+basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+
+# Real-space lattice blocks of S, T and V; Hcore = T + V block by block.
+opts = vq.LatticeSumOptions()
+S_real = vq.compute_overlap_lattice(basis, system, opts)
+T_real = vq.compute_kinetic_lattice(basis, system, opts)
+V_real = vq.compute_nuclear_lattice(basis, system, opts)
+H_real = make_lattice_matrix_set(
+    S_real.nbf, list(T_real.cells),
+    [np.asarray(t) + np.asarray(v) for t, v in zip(T_real.blocks, V_real.blocks)],
+)
+
+kpath = vq.kpath_from_segments(
+    system, [((0.0, 0.0, 0.0), "Γ", (0.5, 0.0, 0.0), "X")], points_per_segment=20,
+)
+bands = band_structure_projected(H_real, S_real, system, basis, kpath, n_electrons_per_cell=2)
+print(bands.channels)                       # ['H1-s', 'H2-s']
+print(bands.projections.shape)              # (21, 2, 2): (n_k, n_bands, n_channels)
+print(np.allclose(bands.projections.sum(axis=2), 1.0))   # True: Mulliken weights sum to 1 per band
+print(np.round(bands.projections[0], 3))    # band characters at Γ: 0.5 / 0.5 on each H
+```
+
+On the vibe-qc 0.17.x development build (Apple M2) this prints the two
+channel labels, the `(21, 2, 2)` shape, `True`, and a $2\times 2$ block of
+`0.5`: both Hcore bands of the symmetric chain are shared equally between the
+two hydrogens at every k, as they must be. For a self-consistent fat band,
+pass the converged Fock lattice blocks of a route that exposes them (the
+explicit real-space F/S workflow in the table above) in place of `H_real`; the
+weights are then the character of the converged crystal orbitals.
+
+The projections travel with the band object. A `BandStructure` carrying
+`projections` and `channels`, passed to `run_periodic_job(...,
+band_structure=bands, output_qvf=True)`, is written into the QVF `bands`
+section as `bands/projections.bin` (float64, `(n_kpoints, n_bands,
+n_channels)`) next to `bands/eigenvalues.bin`, with the channel labels stored
+in `bands/kpath.json` under `"channels"`. That is the payload vibe-view's
+band panel reads to colour bands by character; a band object without
+projections produces the same section without those two members. Keep the
+operator conventions straight when you do this: an Hcore fat band beside an
+SCF DOS is two different spectra, and the QVF does not merge them.
 
 ## Fermi reference and band gaps
 
 When `n_electrons_per_cell` is an even integer, `BandStructure.e_fermi` is
-the highest occupied eigenvalue found on the sampled path. For an odd
-electron count it is left unset because separate spin channels are required.
+the highest occupied eigenvalue found on the sampled path, and
+`DensityOfStates.e_fermi` the highest occupied eigenvalue on the mesh under
+one Fermi level for the whole mesh (the same zero-temperature fill the SCF
+uses). On an insulator both are the valence-band maximum. For an odd electron
+count they are left unset because separate spin channels are required. A
+path is not a Brillouin-zone sample, so the path reference is not reliable
+for a metal.
 
-This reference is convenient for plotting, but it is not a finite-temperature
-chemical potential and it is not reliable for a metal. For a semiconductor or
-insulator, report
+For a semiconductor or insulator, with $n$ occupied bands, report
 
 $$
-E_g = \min_{n\in\mathrm{unocc},\mathbf{k}}\varepsilon_{n\mathbf{k}}
-- \max_{n\in\mathrm{occ},\mathbf{k}}\varepsilon_{n\mathbf{k}},
+E_g = \min_{\mathbf{k}}\varepsilon_{n\mathbf{k}}
+- \max_{\mathbf{k}}\varepsilon_{n-1,\mathbf{k}},
 $$
 
-using a converged mesh or a path that includes both extrema. State whether the
-gap is direct or indirect and identify the k points. For a metal, converge the
-k mesh, occupation model, electronic temperature, entropy term, and
-energy/free-energy convention together; see [Smearing](smearing.md).
+bands counted from zero in the energy-sorted spectrum, using a converged mesh
+or a path that includes both extrema. State whether the gap is direct or
+indirect and identify the k points.
+
+Do not compute it as "lowest empty state minus highest occupied state" of a
+zero-temperature SCF on a mesh. With one Fermi level for the whole mesh, a
+metal whose bands overlap has every occupied sampled level below every empty
+one, so that difference is positive: it is the spacing of the sampled levels
+around the Fermi level, and it shrinks to zero as the mesh is refined. A band
+that is occupied at some k-points and empty at others is the signature of a
+metal; the band-index formula above then returns the negative band overlap.
+For a metal, converge the k mesh, occupation model, electronic temperature,
+entropy term, and energy/free-energy convention together; see
+[Smearing](smearing.md).
 
 Combined plotting helpers shift each panel by that object's own `e_fermi`.
 A path-derived occupied reference and a mesh-derived reference can differ even
@@ -247,16 +354,35 @@ Use the accessors:
 import vibeqc as vq
 
 bands = vq.per_k_band_energies(result)      # list of 1-D arrays, one per k
-frontier = vq.frontier_bands(result, n_occ=n_electrons // 2)
-print(frontier.homo, frontier.lumo, frontier.gap)
+frontier = vq.frontier_bands(result)        # reads the result's occupations
+print(frontier.homo, frontier.lumo, frontier.gap, frontier.is_metallic)
 print(frontier.homo_k, frontier.lumo_k)     # direct vs indirect
 ```
 
-`frontier_bands` takes the VBM as a maximum over every sampled k and the CBM as
-a minimum, so an indirect gap is found correctly and a degenerate manifold
-reduces to a scalar rather than raising. `n_occ` is validated against the number
-of **bands**, not the number of k-points, and a ragged per-k set is refused
-rather than silently misaligned.
+`frontier_bands(result)` classifies the states from the occupations the SCF
+actually used, through `vibeqc.band_edges.result_band_edges`. That is the
+same classifier the `.out` "Band extrema (multi-k)" block, the `.system`
+`[run]` band-edge fields (`indirect_gap`, `direct_gap`, `valence_band_max`,
+`conduction_band_min`, `gap_above_fermi_manifold`, `is_metallic`, the same
+keys on every periodic route) and the semiempirical k-route result fields read,
+so every surface reports the same numbers. A metal reports
+`is_metallic=True` and a gap `<= 0`: the band overlap when the Fermi level
+crosses a band, or minus the spread of a fractionally occupied Fermi group.
+Screen on `is_metallic`, not on the sign of the gap. `gap_above_fermi_manifold`
+is the distance to the next entirely empty state; it is never the band gap.
+
+`frontier_bands(result, n_occ=n)` is the band-index reading, bands `n - 1` and
+`n` at every k, for a result without occupations. It agrees with the default
+on every insulator and every band-overlap metal. `n_occ` is validated against
+the number of **bands**, not the number of k-points, and a ragged per-k set is
+refused rather than silently misaligned. Both forms take the VBM as a maximum
+over every sampled k and the CBM as a minimum, so an indirect gap is found
+correctly and a degenerate manifold reduces to a scalar rather than raising.
+
+For an unrestricted result, `frontier_bands(result)` combines both spin
+channels (the per-spin edges are in `frontier.edges.channels`), and
+`spin="alpha"` or `spin="beta"` selects one; `per_k_band_energies` requires
+`spin=` there, since the two channels are different spectra.
 
 A worked example of what guessing costs: on H₂/STO-3G in a 6-bohr cube at
 k = (2,1,1), flattening the per-k list into one array and reading positions

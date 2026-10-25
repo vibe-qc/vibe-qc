@@ -9,6 +9,7 @@ import {
   sponsorshipProgram,
 } from '../data/sponsors.mjs';
 
+const base = import.meta.env.BASE_URL;
 const priorities = [
   {
     number: '01',
@@ -40,7 +41,7 @@ const monthlyCheckoutUrl = publicMonthlyCheckoutUrl(sponsorshipProgram);
 >
   <Nav />
 
-  <main class="support">
+  <main id="main-content" class="support">
     <header class="support-hero">
       <div class="wrap support-hero-inner">
         <div>
@@ -56,7 +57,7 @@ const monthlyCheckoutUrl = publicMonthlyCheckoutUrl(sponsorshipProgram);
           <span class="open-dot" aria-hidden="true"></span>
           <div>
             <strong>Open stays open</strong>
-            <p>MPL-2.0 licensed, no contributor license agreement, and no sponsor-only features.</p>
+            <p>The four applications use MPL-2.0; QVF uses Apache-2.0. Published source can be built without a membership, and software features do not depend on sponsorship.</p>
           </div>
         </aside>
       </div>
@@ -290,7 +291,7 @@ const monthlyCheckoutUrl = publicMonthlyCheckoutUrl(sponsorshipProgram);
       <ul>
         <li>Scientific conclusions and validation criteria remain independent.</li>
         <li>Sponsors do not control the roadmap, release priorities, or public claims.</li>
-        <li>Support does not change the license or unlock private functionality.</li>
+        <li>Support does not change the software licenses or unlock private functionality. Linux desktop downloads for vibe-view and vibe-sketch are public; planned paid Mac App Store and Microsoft Store purchases are separate. <a href={`${base}download`}>See distribution plans and availability</a>.</li>
       </ul>
       <p class="maintainer">// maintained by Michael F. Peintinger · mpei@vibe-qc.com</p>
     </section>

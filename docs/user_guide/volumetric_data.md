@@ -20,8 +20,11 @@ solid-state or molecular viewer is what you need:
   molecular orbitals, and ESP. Read by VMD, Avogadro, PyMOL,
   ChimeraX, and moltui.
 * **XCrySDen XSF** (``.xsf``), periodic crystal structures and
-  volumetric data on a primitive-cell grid.  Read by VESTA,
-  XCrySDen, and moltui (since v0.8.x+ moltui).
+  volumetric data on a primitive-cell grid.  Read by VESTA
+  (K. Momma, F. Izumi, *J. Appl. Crystallogr.* **44**, 1272 (2011),
+  doi:10.1107/S0021889811038970), XCrySDen (A. Kokalj, *J. Mol. Graphics
+  Modell.* **17**, 176 (1999), doi:10.1016/S1093-3263(99)00028-5), and
+  moltui (since v0.8.x+ moltui).
 * **XCrySDen BXSF** (``.bxsf``), band energies on a 3D k-mesh
   for Fermi-surface plots. Read by XCrySDen and moltui.
 
@@ -56,8 +59,8 @@ $$
 the same evaluator is invoked, but the values written are
 $\phi_i(\mathbf{r})$ (signed amplitude) rather than $|\phi_i|^2$,
 so isosurface viewers (Avogadro, VMD, ChimeraX) can render both
-lobes of a $\pi$ orbital. To render a density-of-states-like view
-of a single MO, square the file post-hoc in your viewer.
+lobes of a $\pi$ orbital. To render the orbital density
+$|\phi_i|^2$ of a single MO, square the file post-hoc in your viewer.
 
 The file format itself is documented in Gaussian's
 [cube specification](https://gaussian.com/cubegen/);
@@ -147,6 +150,23 @@ The density grid spans the primitive cell with ``density_spacing_bohr``
 voxel spacing (default 0.2 bohr).  The lattice vectors are written in
 Ångström; VESTA / XCrySDen / moltui will tile the cell automatically.
 
+The same spacing sets the density volume in the `.qvf` archive. That
+volume is written only if the grid sum over the primitive cell,
+``sum(rho) * dV``, equals the cell's electron count (excluding ECP
+cores) within 0.005 electrons. A uniform grid integrates a periodic
+function with an error made of the function's Fourier components at the
+grid's reciprocal vectors (aliasing; Trefethen and Weideman, *SIAM Rev.*
+**56**, 385 (2014), Sec. 2). The all-electron cores of second-row and
+heavier atoms still have large components there at 0.2 bohr, so the sum
+can be off by whole electrons in either direction. Ne/STO-3G in a 7-bohr
+cube gives 11.98 instead of 10 electrons at 0.2 bohr and 10.00002 at
+0.05 bohr, with the same SCF energy. When the check fails, the archive
+is still written without the volume, a warning names the integral, and
+the file's outcome records the error under ``volume.density``. Decrease
+``density_spacing_bohr`` until the volume is written. Heavier cores need
+finer grids, and the number of grid points grows with the cube of the
+refinement.
+
 ### 2. Structure-only via `write_xsf_structure`
 
 ```python
@@ -171,7 +191,7 @@ rows are bookkeeping, not cell edges; see
 import numpy as np
 
 # Evaluate your scalar field on a primitive-cell grid …
-rho = evaluate_density_on_grid(...)  # shape (n1, n2, n3), in bohr
+rho = evaluate_density_on_grid(...)  # shape (n1, n2, n3), in bohr^-3
 
 vq.write_xsf_volume(
     "rho.xsf", system,

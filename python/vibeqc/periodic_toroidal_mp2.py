@@ -1,21 +1,21 @@
 """Toroidal (Born-von Kármán) megacell periodic Γ RI-MP2 -- Stages 5a, 5b, 5c.
 
 The toroidal megacell route (maintainer decision 2026-06-17;
-``handovers/HANDOVER_PERIODIC_LOCAL_CORRELATION.md`` Sec. 6) uses a **periodic** supercell
+the original investigation) uses a **periodic** supercell
 with exact translational symmetry. By the BvK theorem, a Γ-point calculation
 on an N-cell supercell is equivalent to an N-point k-mesh calculation on the
 unit cell when both calculations use the same finite Hamiltonian, Coulomb /
-exchange gauge, and fitted operator.  A cross-code KMP2 calculation with a
-different fitted Hamiltonian is therefore not an exact finite-N oracle for this
-legacy producer.
+exchange gauge, and fitted operator. The supercell HF is the GDF Hamiltonian
+at Γ with ``exxdiv='ewald'`` exchange, so it equals the unit-cell KRHF on the
+N-point mesh (#566); the correlation step refits the integrals separately.
 
 Stage 5a establishes the **toroidal canonical MP2**: periodic Γ HF on the
-supercell via the GDF-hosted driver with periodic Ewald-J / real-space-K
-routing -> C, e; a separately built periodic Γ compensated-cell DF tensor
-(Stage 4) -> MO transform (ia|jb); RI-MP2 energy.
+supercell (GDF, ``exxdiv='ewald'``) -> real C, e; a separately built periodic
+Γ compensated-cell DF tensor (Stage 4) -> MO transform (ia|jb); RI-MP2 energy.
 
 Stage 5b adds a **translational pair-family decomposition**: localise -> Wannier
-centroids -> cell tiles -> group occupied pairs (i,j) by relative cell L ->
+centroids -> cell tiles -> rotate the canonical MP2 amplitudes and integrals
+to the Wannier functions -> group Wannier pairs (k,l) by relative cell L ->
 per-L MP2, numerically equal to 5a all-pairs at the pinned tolerance.  The
 current implementation still evaluates every pair before partitioning the sum;
 representative-only family evaluation remains an efficiency follow-up.
@@ -29,12 +29,15 @@ counterpart of the open-megacell ``megacell_run_job``.
 Scope / boundary
 ----------------
 - Γ-point only (toroidal = Γ on the supercell). Multi-k generalization is Task 3.
-- Native vibe-qc Γ driver (``run_rhf_periodic_gamma_gdf``) with its periodic
-  Ewald-J / real-space-K branch forced for every toroidal supercell.
+- Native vibe-qc GDF HF at Γ (``run_krhf_periodic_gdf`` at kmesh (1, 1, 1),
+  :func:`_toroidal_bvk_hf`), translation invariant on the torus. Until #566
+  the route forced Ewald J with the molecular-limit exchange, which was not.
 - Periodic-HF ``exxdiv='ewald'`` orbital energies used as-is; bare finite-N
-  energy is size-dependent and is extrapolated in N. Exact finite-N character-
-  mesh equivalence requires a matched Hamiltonian; the matched AICCM-B route
-  carries that external KMP2 regression.
+  energy is size-dependent and is extrapolated in N. In a vacuum-padded cell
+  the HF energy converges only as 1/N along the replicated axis, to a limit
+  that depends on the transverse vacuum, consistent with the Madelung
+  correction of the elongated supercell (-1.115959 Ha per cell at 20 bohr and
+  -1.116296 at 40 bohr on the H2/STO-3G test chain).
 """
 
 from __future__ import annotations
@@ -474,6 +477,72 @@ def build_toroidal_supercell(system, nrep: Sequence[int]):
     )
 
 
+def _real_gamma_orbitals(result):
+    """``result`` with real canonical orbitals.
+
+    The k-mesh engine diagonalises the Gamma Fock matrix with a complex
+    solver, which may return a degenerate pair of a translation-symmetric
+    torus (the +k and -k states) as complex combinations. The Gamma Fock and
+    overlap matrices are real, so the generalised eigenproblem is solved again
+    in real arithmetic; the orbital energies, the density and the energy do
+    not change. The real-orbital MP2, localisation and DLPNO code below
+    requires real columns.
+    """
+    import dataclasses
+
+    from scipy.linalg import eigh
+
+    coefficients = np.asarray(result.mo_coeffs)
+    if not np.iscomplexobj(coefficients):
+        return result
+    fock = np.asarray(result.fock)
+    overlap = np.asarray(result.overlap)
+    imaginary = max(float(np.abs(np.imag(fock)).max()),
+                    float(np.abs(np.imag(overlap)).max()))
+    if imaginary > 1e-10:
+        raise RuntimeError(
+            "toroidal Gamma HF: the Fock or overlap matrix is complex "
+            f"(max |imag| = {imaginary:.1e}); real orbitals are undefined"
+        )
+    energies, real_coefficients = eigh(np.real(fock), np.real(overlap))
+    shift = float(np.abs(energies - np.real(np.asarray(result.mo_energies))).max())
+    if shift > 1e-8:
+        raise RuntimeError(
+            "toroidal Gamma HF: re-diagonalising the real Gamma Fock matrix "
+            f"moved an orbital energy by {shift:.1e} Ha"
+        )
+    return dataclasses.replace(
+        result, mo_coeffs=real_coefficients, mo_energies=energies,
+        fock=np.real(fock), overlap=np.real(overlap),
+        density=np.real(np.asarray(result.density)),
+    )
+
+
+def _toroidal_bvk_hf(super_system, basis, options, aux_name):
+    """Supercell HF on the BvK torus: the GDF Hamiltonian at Gamma.
+
+    ``run_krhf_periodic_gdf`` at kmesh ``(1, 1, 1)``, with ``exxdiv='ewald'``
+    exchange, so the Gamma supercell is the N-point k-mesh calculation of
+    the unit cell by the BvK theorem. On the H2/STO-3G test chain the
+    supercell energy equals the unit-cell k-mesh energy to 1.4e-13 Ha per
+    cell for N = 2 to 5, and every operator commutes with the torus
+    translation.
+
+    The route used Ewald J with the molecular-limit exchange until #566.
+    That exchange keeps each density element in the home image, so AOs that
+    neighbour across the seam exchanged as if N - 1 cells apart: K changed
+    by 3.2e-3 (N = 3) and 4.4e-3 (N = 4) under a one-cell translation, and
+    it was not the derivative of its energy (#534).
+    """
+    from . import periodic_rhf_gdf
+
+    return _real_gamma_orbitals(
+        periodic_rhf_gdf._bulk_gamma_k_gdf(
+            super_system, basis, options, aux_basis=aux_name,
+        )
+    )
+
+
 def _canonical_mp2_corr_from_M(
     M: np.ndarray,
     eps_occ: np.ndarray,
@@ -561,15 +630,15 @@ def toroidal_mp2_gamma(
     """Toroidal megacell periodic Γ RI-MP2 -- native vibe-qc periodic DF-MP2.
 
     Builds an ``n1xn2xn3`` **periodic** (toroidal) supercell, runs periodic
-    Γ GDF HF (vibe-qc's ``run_rhf_periodic_gamma_gdf``), builds the periodic
+    Γ GDF HF (:func:`_toroidal_bvk_hf`), builds the periodic
     Γ DF 3-index tensor via :func:`vibeqc.periodic_df.build_periodic_gamma_df`,
     transforms it to the MO basis, and computes the canonical RI-MP2 correlation
     energy per unit cell.
 
     The per-cell correlation energy at supercell size N is the toroidal (BvK)
-    finite-N MP2. It is exactly equivalent to an N-point character-mesh MP2 only
-    when both routes share the same finite Hamiltonian, gauge, and fitted
-    operator. Extrapolate in N (5b+) to approach the TDL.
+    finite-N MP2. Its HF reference is the unit-cell KRHF on the N-point mesh;
+    the MP2 equals an N-point KMP2 when that also uses the same fitted
+    integrals. Extrapolate in N (5b+) to approach the TDL.
 
     Parameters
     ----------
@@ -583,17 +652,16 @@ def toroidal_mp2_gamma(
         RI auxiliary basis for density fitting.  Auto-selected if omitted
         (the DF-RI auxiliary for *correlation*, distinct from the JK aux).
     rhf_options
-        Optional ``PeriodicRHFOptions`` override for the supercell HF.
+        Optional ``PeriodicRHFOptions`` for the supercell HF
+        (:func:`_toroidal_bvk_hf`).
 
     Returns
     -------
     ToroidalMP2Result
     """
     from . import BasisSet
-    from ._vibeqc_core import PeriodicRHFOptions as _PeriodicRHFOptions
     from .aux_basis import default_aux_for, make_aux_basis_set
     from .periodic_df import build_periodic_gamma_df
-    from .periodic_rhf_gdf import run_rhf_periodic_gamma_gdf
 
     nrep_tup = _to_int_tuple(nrep[:3])
     n_cells = nrep_tup[0] * nrep_tup[1] * nrep_tup[2]
@@ -614,14 +682,7 @@ def toroidal_mp2_gamma(
     aux = make_aux_basis_set(mol, aux_name=aux_name)
 
     # 3. Periodic Γ GDF HF on the supercell.
-    opts = rhf_options if rhf_options is not None else _PeriodicRHFOptions()
-    hf_res = run_rhf_periodic_gamma_gdf(
-        super_system,
-        basis,
-        opts,
-        aux_basis=aux_name,
-        _force_ewald_jk=True,
-    )
+    hf_res = _toroidal_bvk_hf(super_system, basis, rhf_options, aux_name)
     if not getattr(hf_res, "converged", False):
         raise RuntimeError(
             f"toroidal_mp2_gamma: periodic Γ HF on the {nrep_tup} "
@@ -758,7 +819,7 @@ class ToroidalPairResult:
     e_hf, e_hf_per_cell, e_total
         HF energies (whole supercell / per cell / total).
     unique_L : int
-        Number of unique relative-cell vectors ``L`` among the occupied pairs.
+        Number of unique relative-cell vectors ``L`` among the Wannier pairs.
     e_corr_total : float
         Total RI-MP2 correlation energy -- MUST equal the all-pairs value.
     e_corr_per_cell : float
@@ -767,10 +828,9 @@ class ToroidalPairResult:
         Per-``L`` MP2 contribution (Ha, whole supercell).  ``sum(e_corr_by_L)``
         agrees with ``e_corr_total`` to the pinned numerical tolerance.
     num_pairs_by_L : dict of ``(int,int,int) -> int``
-        Number of occupied-occupied pairs ``(i,j)`` at each ``L``.
+        Number of Wannier pairs ``(k,l)`` at each ``L``.
     wannier_cells : (n_occ, 3) int ndarray
-        Cell tile assignment for each canonical occupied orbital (mapped via
-        the dominant Wannier partner through the unitary mixing matrix).
+        Cell tile of each Wannier function (its centroid).
     """
 
     nrep: Tuple[int, int, int]
@@ -806,16 +866,16 @@ def toroidal_mp2_gamma_pairs(
 
     1. Localises the supercell occupied orbitals (Wannier functions).
     2. Assigns each Wannier orbital to a cell tile via its position centroid.
-    3. Maps canonical occupied orbitals to cells through the unitary mixing
-       matrix (Wannier rotation), so each canonical i is assigned the cell of
-       its dominant localised partner.
-    4. Groups all ``(i,j)`` canonical occupied pairs by their relative cell
-       vector ``L = cell(j) - cell(i) (mod nrep)``.
-    5. Computes per-``L`` MP2 correlation contributions.
+    3. Rotates the canonical MP2 amplitudes and integrals to the Wannier
+       functions and forms the Wannier pair energies ``e_kl``.
+    4. Groups all ``(k,l)`` Wannier pairs by their relative cell vector
+       ``L = cell(l) - cell(k) (mod nrep)``.
+    5. Sums the per-``L`` MP2 correlation contributions.
 
     The total ``e_corr_total = sum(e_corr_by_L)`` agrees with the all-pairs
-    :func:`toroidal_mp2_gamma` result to 1e-12 Ha; it is the same terms, summed
-    in a different partition order.  The per-``L`` breakdown reveals the
+    :func:`toroidal_mp2_gamma` result to 1e-12 Ha: the MP2 energy is invariant
+    under the occupied rotation, so the Wannier pair energies partition the
+    same total.  The per-``L`` breakdown reveals the
     distance decay of the correlation energy and provides infrastructure for a
     future screening-aware DLPNO driver.
 
@@ -832,11 +892,9 @@ def toroidal_mp2_gamma_pairs(
     ToroidalPairResult
     """
     from . import BasisSet
-    from ._vibeqc_core import PeriodicRHFOptions as _PeriodicRHFOptions
     from .aux_basis import default_aux_for, make_aux_basis_set
     from .periodic_df import build_periodic_gamma_df
     from .periodic_localise import localise_periodic_gamma
-    from .periodic_rhf_gdf import run_rhf_periodic_gamma_gdf
 
     nrep_tup = _to_int_tuple(nrep[:3])
     n_cells = nrep_tup[0] * nrep_tup[1] * nrep_tup[2]
@@ -851,14 +909,7 @@ def toroidal_mp2_gamma_pairs(
     _aux = make_aux_basis_set(mol, aux_name=aux_name)
 
     # 3. Periodic Γ GDF HF.
-    opts = rhf_options if rhf_options is not None else _PeriodicRHFOptions()
-    hf_res = run_rhf_periodic_gamma_gdf(
-        super_system,
-        basis,
-        opts,
-        aux_basis=aux_name,
-        _force_ewald_jk=True,
-    )
+    hf_res = _toroidal_bvk_hf(super_system, basis, rhf_options, aux_name)
     if not getattr(hf_res, "converged", False):
         raise RuntimeError(
             f"toroidal_mp2_gamma_pairs: periodic Γ HF on {nrep_tup} "
@@ -907,42 +958,40 @@ def toroidal_mp2_gamma_pairs(
     lattice_unit = np.asarray(system.lattice, dtype=float)
     wannier_cell = _assign_wannier_cells(centroids, lattice_unit, nrep_tup)
 
-    # 8. Map canonical orbitals to cells via the unitary mixing matrix.
-    #    Canonical i -> cell of its dominant Wannier partner l = argmax |U[i,l]|.
-    U_abs = np.abs(U)
-    dominant_loc = np.argmax(U_abs, axis=1)  # (n_occ,)
-    canonical_cell = wannier_cell[dominant_loc]  # (n_occ, 3)
+    # 8. Rotate the canonical amplitudes and integrals to the Wannier
+    #    functions k, l (C_loc = C_can @ U). The closed-shell MP2 energy
+    #    sum t^{ab}_{ij} [2 (ia|jb) - (ib|ja)] is invariant under a unitary
+    #    rotation of the occupied space applied to both, so the Wannier pair
+    #    energies e_kl sum to the canonical total. Assigning canonical
+    #    orbitals to cells instead (as before #566) is undefined on a
+    #    translation-symmetric torus, whose canonical orbitals are Bloch
+    #    states spread evenly over every cell.
+    eri = M.reshape(n_occ, n_vir, n_occ, n_vir)
+    denominators = (
+        eps_occ[:, None, None, None] - eps_vir[None, :, None, None]
+        + eps_occ[None, None, :, None] - eps_vir[None, None, None, :]
+    )
+    amplitudes = eri / denominators
+    eri_loc = np.einsum("ik,jl,iajb->kalb", U, U, eri, optimize=True)
+    amplitudes_loc = np.einsum("ik,jl,iajb->kalb", U, U, amplitudes, optimize=True)
+    e_pair_loc = np.einsum(
+        "kalb,kalb->kl",
+        amplitudes_loc,
+        2.0 * eri_loc - eri_loc.transpose(0, 3, 2, 1),
+    )
 
-    # 9. Group canonical occupied pairs by relative cell L, accumulating MP2.
+    # 9. Group Wannier pairs (k, l) by relative cell L = cell(l) - cell(k).
     e_corr_by_L: Dict[Tuple[int, int, int], float] = {}
     num_pairs_by_L: Dict[Tuple[int, int, int], int] = {}
-
-    for i in range(n_occ):
-        eps_i = float(eps_occ[i])
-        ci = canonical_cell[i]
-        for j in range(n_occ):
-            eps_j = float(eps_occ[j])
-            cj = canonical_cell[j]
-            # Relative cell vector L (mod nrep).
-            d = cj - ci
+    for k in range(n_occ):
+        for l in range(n_occ):
+            d = wannier_cell[l] - wannier_cell[k]
             L = (
                 int(d[0] % nrep_tup[0]),
                 int(d[1] % nrep_tup[1]),
                 int(d[2] % nrep_tup[2]),
             )
-            e_pair = 0.0
-            for a in range(n_vir):
-                eps_a = float(eps_vir[a])
-                ia_base = i * n_vir + a
-                for b in range(n_vir):
-                    eps_b = float(eps_vir[b])
-                    jb = j * n_vir + b
-                    iajb = float(M[ia_base, jb])
-                    ibja = float(M[i * n_vir + b, j * n_vir + a])
-                    denom = eps_i + eps_j - eps_a - eps_b
-                    # (ia|jb).[2(ia|jb) - (ib|ja)] / Δ
-                    e_pair += iajb * (2.0 * iajb - ibja) / denom
-            e_corr_by_L[L] = e_corr_by_L.get(L, 0.0) + e_pair
+            e_corr_by_L[L] = e_corr_by_L.get(L, 0.0) + float(e_pair_loc[k, l])
             num_pairs_by_L[L] = num_pairs_by_L.get(L, 0) + 1
 
     e_corr_total = sum(e_corr_by_L.values())
@@ -987,7 +1036,7 @@ def toroidal_mp2_gamma_pairs(
         e_corr_per_cell=e_corr_total / n_cells,
         e_corr_by_L=e_corr_by_L,
         num_pairs_by_L=num_pairs_by_L,
-        wannier_cells=canonical_cell,
+        wannier_cells=wannier_cell,
     )
 
 
@@ -1290,6 +1339,10 @@ def _pre_sweep_toroidal_dlpno_mp2_options():
         # occupation-number cut that only means what the density it was
         # applied to means -- so the density is pinned with the thresholds.
         pno_norm="legacy",
+        # The DOI domain default (#190) postdates this convention; its
+        # tcut_mkn=1e-3 domains are Mulliken domains, so the criterion is
+        # pinned with them.
+        domain_criterion="mulliken",
     )
 
 
@@ -1311,6 +1364,9 @@ def _pre_sweep_toroidal_dlpno_cc_options():
         # ... and predates the semicanonical MP2 PNO correction the
         # molecular CCSD route now applies, so that stays off too.
         pno_correction=False,
+        # ... and predates the ORCA singles-PNO scale on the diagonal pairs
+        # (#190), so the diagonal pairs keep the plain tcut_pno.
+        tcut_pno_diag_scale=1.0,
     )
 
 
@@ -1361,6 +1417,10 @@ class ToroidalDLPNOResult:
     e_total: float
     dlpno_result: object = None  # DLPNOMP2Result
     pair_classification: object = None  # ToroidalPairClassification
+    source_kind: str = ""
+    source_identity: str = ""
+    same_source: bool = False
+    exchange_q0: str = "unspecified"
 
 
 def toroidal_dlpno_mp2(
@@ -1398,11 +1458,10 @@ def toroidal_dlpno_mp2(
     ToroidalDLPNOResult
     """
     from . import BasisSet
-    from ._vibeqc_core import PeriodicRHFOptions as _PeriodicRHFOptions
     from .aux_basis import default_aux_for, make_aux_basis_set
     from .dlpno.mp2 import run_dlpno_mp2
+    from .dlpno.source import SourceConventions, _real_torus_source
     from .periodic_df import build_periodic_gamma_df
-    from .periodic_rhf_gdf import run_rhf_periodic_gamma_gdf
 
     nrep_tup = _to_int_tuple(nrep[:3])
     n_cells = nrep_tup[0] * nrep_tup[1] * nrep_tup[2]
@@ -1417,14 +1476,7 @@ def toroidal_dlpno_mp2(
     aux = make_aux_basis_set(mol, aux_name=aux_name)
 
     # 3. Periodic Γ GDF HF -- the toroidal reference.
-    opts = rhf_options if rhf_options is not None else _PeriodicRHFOptions()
-    hf_res = run_rhf_periodic_gamma_gdf(
-        super_system,
-        basis,
-        opts,
-        aux_basis=aux_name,
-        _force_ewald_jk=True,
-    )
+    hf_res = _toroidal_bvk_hf(super_system, basis, rhf_options, aux_name)
     if not getattr(hf_res, "converged", False):
         raise RuntimeError(
             f"toroidal_dlpno_mp2: periodic Γ HF on {nrep_tup} "
@@ -1435,38 +1487,27 @@ def toroidal_dlpno_mp2(
     pdf = build_periodic_gamma_df(super_system, basis, aux_basis=aux_name)
     df = _PeriodicDFAdapter(pdf, aux)
 
-    # 5. Run molecular DLPNO-MP2 with periodic reference.
-    #    The DLPNO code internally calls compute_overlap(basis), which returns
-    #    the molecular (home-cell-only) overlap.  The periodic MOs are
-    #    S_periodic-orthonormal, not S_molecular-orthonormal (they differ by
-    #    image-cell AO overlaps).  We patch the overlap to use the periodic
-    #    S(Γ) from the HF result so that all projections and orthogonalizations
-    #    in the DLPNO code are consistent with the periodic MO basis.
-    from contextlib import contextmanager
-
-    import vibeqc._vibeqc_core as _core
-
-    _S_periodic = np.asarray(hf_res.overlap, dtype=float)
-    _orig_compute_overlap = _core.compute_overlap
-
-    @contextmanager
-    def _patched_overlap():
-        def _patched(basis_arg):
-            return _S_periodic
-
-        _core.compute_overlap = _patched
-        try:
-            yield
-        finally:
-            _core.compute_overlap = _orig_compute_overlap
+    # 5. The periodic AO metric belongs to this calculation's source. The
+    # correlation fit is rebuilt separately from the GDF SCF reference,
+    # so it must not claim the retained same-source contract of chi.
+    source = _real_torus_source(
+        super_system, basis, hf_res, df,
+        kind="toroidal-compcell",
+        conventions=SourceConventions(
+            exchange_q0=str(getattr(hf_res, "exchange_q0", None) or "unspecified"),
+            kmesh=nrep_tup, bloch_normalisation="real-bvk-supercell",
+            same_source=False,
+        ),
+        factor_tensor=pdf.three_center, factor_representation="full-auxiliary",
+        aux_basis_name=aux_name,
+        provenance={"reference_backend": str(getattr(hf_res, "backend", "") or "")},
+    )
 
     # 6. Consume the toroidal pair classification: the driver's distant-pair
     #    dipole screen must use the toroidal minimum-image distance, not the
     #    open-cluster Euclidean centroid distance (which overestimates
     #    wrap-around separations and would falsely screen adjacent-on-torus
     #    pairs). A caller-supplied pair_distance_fn wins.
-    import dataclasses as _dataclasses
-
     # Preserve the finite-torus validation convention: its existing causal
     # pair-screening and per-cell energy anchors use the pre-#448 thresholds
     # and are all-electron evidence, separate from the molecular #140/#448
@@ -1476,15 +1517,9 @@ def toroidal_dlpno_mp2(
         if dlpno_options is not None
         else _pre_sweep_toroidal_dlpno_mp2_options()
     )
-    if getattr(dlpno_opts, "pair_distance_fn", None) is None:
-        dlpno_opts = _dataclasses.replace(
-            dlpno_opts,
-            pair_distance_fn=toroidal_pair_distance_fn(system, nrep_tup),
-        )
     classification = classify_toroidal_pairs(system, nrep_tup)
 
-    with _patched_overlap():
-        dlpno_res = run_dlpno_mp2(mol, basis, hf_res, df, options=dlpno_opts)
+    dlpno_res = run_dlpno_mp2(None, None, None, None, options=dlpno_opts, source=source)
 
     n_elec = super_system.n_electrons()
     n_occ = n_elec // 2
@@ -1506,6 +1541,10 @@ def toroidal_dlpno_mp2(
         e_total=float(hf_res.energy) + float(dlpno_res.e_corr),
         dlpno_result=dlpno_res,
         pair_classification=classification,
+        source_kind=source.kind,
+        source_identity=source.identity,
+        same_source=source.conventions.same_source,
+        exchange_q0=source.conventions.exchange_q0,
     )
 
 
@@ -1534,6 +1573,10 @@ class ToroidalDLPNOCCSDResult:
     e_total: float
     cc_result: object = None
     pair_classification: object = None  # ToroidalPairClassification
+    source_kind: str = ""
+    source_identity: str = ""
+    same_source: bool = False
+    exchange_q0: str = "unspecified"
 
 
 def _run_toroidal_dlpno_cc(
@@ -1547,16 +1590,13 @@ def _run_toroidal_dlpno_cc(
     with_triples: bool = False,
 ):
     """Shared setup for DLPNO-CCSD/(T) on the toroidal megacell."""
-    from contextlib import contextmanager
-
-    import vibeqc._vibeqc_core as _core
+    from dataclasses import replace
 
     from . import BasisSet
-    from ._vibeqc_core import PeriodicRHFOptions as _PeriodicRHFOptions
-    from .aux_basis import default_aux_for, make_aux_basis_set
+    from .aux_basis import default_aux_for
     from .dlpno.ccsd_local_solver import run_local_dlpno_ccsd
+    from .dlpno.source import SourceConventions, _real_torus_source
     from .periodic_df import build_periodic_gamma_df
-    from .periodic_rhf_gdf import run_rhf_periodic_gamma_gdf
 
     nrep_tup = _to_int_tuple(nrep[:3])
     n_cells = nrep_tup[0] * nrep_tup[1] * nrep_tup[2]
@@ -1565,40 +1605,34 @@ def _run_toroidal_dlpno_cc(
     mol = super_system.unit_cell_molecule()
     basis = BasisSet(mol, basis_name)
     aux_name = aux_basis or default_aux_for(basis_name)
-    aux = make_aux_basis_set(mol, aux_name=aux_name)
 
-    opts = rhf_options if rhf_options is not None else _PeriodicRHFOptions()
-    hf_res = run_rhf_periodic_gamma_gdf(
-        super_system,
-        basis,
-        opts,
-        aux_basis=aux_name,
-        _force_ewald_jk=True,
-    )
+    hf_res = _toroidal_bvk_hf(super_system, basis, rhf_options, aux_name)
     if not getattr(hf_res, "converged", False):
         raise RuntimeError(
             f"toroidal DLPNO-CC: periodic Γ HF on {nrep_tup} supercell did not converge"
         )
 
     pdf = build_periodic_gamma_df(super_system, basis, aux_basis=aux_name)
-    df = _PeriodicDFAdapter(pdf, aux)
-
-    _S_periodic = np.asarray(hf_res.overlap, dtype=float)
-    _orig = _core.compute_overlap
-
-    @contextmanager
-    def _patch():
-        _core.compute_overlap = lambda _: _S_periodic
-        try:
-            yield
-        finally:
-            _core.compute_overlap = _orig
+    source = _real_torus_source(
+        super_system, basis, hf_res, pdf,
+        kind="toroidal-compcell",
+        conventions=SourceConventions(
+            exchange_q0=str(getattr(hf_res, "exchange_q0", None) or "unspecified"),
+            kmesh=nrep_tup, bloch_normalisation="real-bvk-supercell",
+            # The Stage 4 compensated-cell correlation fit is rebuilt
+            # separately from the GDF SCF reference.
+            same_source=False,
+        ),
+        factor_tensor=pdf.three_center, factor_representation="full-auxiliary",
+        aux_basis_name=aux_name,
+        provenance={"reference_backend": str(getattr(hf_res, "backend", "") or "")},
+    )
 
     # Consume the toroidal pair classification: the CC solver's
     # coupling-radius occupied sets must use the toroidal minimum-image
     # distance (open-cluster Euclidean distances under-couple wrap-around
-    # pairs). A caller-supplied pair_distance_fn wins.
-    import dataclasses as _dataclasses
+    # pairs). The source carries this distance; the engine gives a
+    # caller-supplied pair_distance_fn precedence.
 
     # As above, the toroidal correctness ratchet retains its pre-#448
     # thresholds and remains explicitly all-electron until its own convention
@@ -1608,17 +1642,10 @@ def _run_toroidal_dlpno_cc(
         if cc_options is not None
         else _pre_sweep_toroidal_dlpno_cc_options()
     )
-    if getattr(cc_opts, "pair_distance_fn", None) is None:
-        cc_opts = _dataclasses.replace(
-            cc_opts,
-            pair_distance_fn=toroidal_pair_distance_fn(system, nrep_tup),
-        )
-    if with_triples:
-        cc_opts.compute_triples = True
+    cc_opts = replace(cc_opts, compute_triples=with_triples)
     classification = classify_toroidal_pairs(system, nrep_tup)
 
-    with _patch():
-        cc_res = run_local_dlpno_ccsd(mol, basis, hf_res, df, cc_opts)
+    cc_res = run_local_dlpno_ccsd(None, None, None, None, cc_opts, source=source)
 
     n_elec = super_system.n_electrons()
     n_occ = n_elec // 2
@@ -1643,6 +1670,10 @@ def _run_toroidal_dlpno_cc(
         e_total=float(hf_res.energy) + float(cc_res.e_corr) + (e_t or 0.0),
         cc_result=cc_res,
         pair_classification=classification,
+        source_kind=source.kind,
+        source_identity=source.identity,
+        same_source=source.conventions.same_source,
+        exchange_q0=source.conventions.exchange_q0,
     )
 
 

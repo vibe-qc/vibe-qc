@@ -9,7 +9,8 @@ marks a path periodic — never the manifest version. `qvf_version: 2` was
 withdrawn by the governance ruling of 2026-07-10 (an optional member is the
 additive case and must not bump the version); see qvf-writer/GOVERNANCE.md,
 "Version history". Archives stamped 2 by vibe-qc v0.10.0-v0.15.x remain
-readable, and the v2 schema is retained as a frozen artifact.
+readable: QVF spec Sec. 3.1 validates them as version 1 with the warning
+``W_VERSION_WITHDRAWN``, and vibe-qc carries no separate v2 schema.
 
 These tests cover:
 
@@ -21,7 +22,8 @@ These tests cover:
   [n_frames, 3, 3] (forward-compat with variable-cell scans).
 * a mixed molecular/periodic reaction.path is rejected at write time --
   "raise, don't drop" discipline.
-* an archive stamped qvf_version=2 still validates (deprecated read path).
+* an archive stamped qvf_version=2 validates as version 1 with the warning
+  ``W_VERSION_WITHDRAWN`` (spec Sec. 3.1); every other version is refused.
 """
 
 from __future__ import annotations
@@ -35,12 +37,14 @@ import pytest
 
 from vibeqc.output.formats.qvf import (
     QVF_FORMAT_VERSION,
-    QVF_FORMAT_VERSION_V2,
-    _SCHEMA_PATH_V2,
+    W_VERSION_WITHDRAWN,
     _load_canonical_schema,
+    qvf_read_version,
     validate_qvf,
     write_qvf,
 )
+
+_WITHDRAWN_VERSION = 2
 from vibeqc.output.plan import OutputPlan
 
 
@@ -310,15 +314,19 @@ class TestVibeViewReader:
             reader.close()
 
 
-class TestSchemaV2Available:
-    def test_v2_schema_loads_and_declares_version_2(self):
-        schema = _load_canonical_schema(2)
-        assert _SCHEMA_PATH_V2.is_file()
-        assert schema["properties"]["qvf_version"]["const"] == 2
-        # And the lattice extension is present.
+class TestOneSchema:
+    def test_v1_schema_carries_the_lattice_member(self):
+        schema = _load_canonical_schema(1)
+        assert schema["properties"]["qvf_version"]["const"] == 1
         assert "ReactionPathLattice" in schema["$defs"]
         rxn = schema["$defs"]["SectionReactionPath"]
         assert "lattice" in rxn["properties"]["members"]["properties"]
+
+    def test_there_is_no_v2_schema(self):
+        # Spec Sec. 3.1: version 2 is validated as version 1, so a consumer
+        # carries no v2 schema.
+        with pytest.raises(ValueError, match="unknown qvf_version 2"):
+            _load_canonical_schema(_WITHDRAWN_VERSION)
 
 
 # ---------------------------------------------------------------------------
@@ -428,11 +436,6 @@ class TestV2StrictSupersetOfV1:
         # raised at write time.)
         jsonschema.Draft202012Validator(_load_canonical_schema(1)).validate(manifest)
 
-        # Deprecated read path: the retained v2 schema still accepts the same
-        # manifest stamped qvf_version=2, as vibe-qc v0.10.0-v0.15.x wrote it.
-        # v2 is now v1 modulo this const, so it is trivially a superset.
-        legacy = dict(manifest, qvf_version=QVF_FORMAT_VERSION_V2)
-        jsonschema.Draft202012Validator(_load_canonical_schema(2)).validate(legacy)
         assert validate_qvf(path)["valid"]
 
         # And the reaction.path really is the periodic (v2) flavour.
@@ -441,12 +444,12 @@ class TestV2StrictSupersetOfV1:
 
 
 class TestLegacyV2ArchivesStillRead:
-    """The `qvf_version: 2` deprecation promise (governance ruling 2026-07-10).
+    """The withdrawn `qvf_version: 2` (QVF spec Sec. 3.1).
 
     Producers must not emit 2, but archives stamped 2 by vibe-qc
-    v0.10.0-v0.15.x exist in the wild and must keep validating. This rebuilds
-    such an archive byte-for-byte apart from the manifest's version stamp and
-    checks that `validate_qvf` still accepts it.
+    v0.10.0-v0.15.x exist in the wild. This rebuilds such an archive
+    byte-for-byte apart from the manifest's version stamp and checks that
+    `validate_qvf` checks it as version 1 and reports W_VERSION_WITHDRAWN.
     """
 
     def test_validate_qvf_accepts_a_qvf_version_2_archive(self, tmp_path):
@@ -472,7 +475,7 @@ class TestLegacyV2ArchivesStillRead:
         # itself, so only the version + schema_uri change).
         legacy_manifest = dict(
             manifest,
-            qvf_version=QVF_FORMAT_VERSION_V2,
+            qvf_version=_WITHDRAWN_VERSION,
             schema_uri="https://vibe-qc.org/spec/qvf/2/manifest.schema.json",
         )
         legacy_path = tmp_path / "legacy_v2.qvf"
@@ -485,3 +488,65 @@ class TestLegacyV2ArchivesStillRead:
 
         report = validate_qvf(legacy_path)
         assert report["valid"], report["errors"]
+        assert any(
+            w.startswith(W_VERSION_WITHDRAWN) for w in report["warnings"]
+        ), report["warnings"]
+
+    @staticmethod
+    def _restamp(source: Path, target: Path, version) -> Path:
+        with zipfile.ZipFile(source) as zf:
+            manifest = json.loads(zf.read("manifest.json"))
+            payloads = {n: zf.read(n) for n in zf.namelist()}
+        manifest["qvf_version"] = version
+        with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as zf:
+            for name, payload in payloads.items():
+                if name == "manifest.json":
+                    zf.writestr(name, json.dumps(manifest, indent=2))
+                else:
+                    zf.writestr(name, payload)
+        return target
+
+    def test_current_archive_has_no_version_warning(self, tmp_path):
+        frames = _slab_frames(3)
+        path = write_qvf(
+            tmp_path / "current",
+            _plan(tmp_path),
+            system=frames[0],
+            method="rhf",
+            basis="sto-3g",
+            reaction_path={"frames": frames, "waypoints": _waypoints_for(3)},
+        )
+        report = validate_qvf(path)
+        assert report["valid"], report["errors"]
+        assert report["warnings"] == []
+
+    @pytest.mark.parametrize("version", [0, 3, True, "1"])
+    def test_other_versions_are_refused(self, tmp_path, version):
+        frames = _slab_frames(3)
+        path = write_qvf(
+            tmp_path / "current",
+            _plan(tmp_path),
+            system=frames[0],
+            method="rhf",
+            basis="sto-3g",
+            reaction_path={"frames": frames, "waypoints": _waypoints_for(3)},
+        )
+        bad = self._restamp(path, tmp_path / "bad.qvf", version)
+        report = validate_qvf(bad)
+        assert not report["valid"]
+        assert any("qvf_version" in e for e in report["errors"]), report["errors"]
+        with pytest.raises(ValueError, match="unsupported qvf_version"):
+            qvf_read_version({"qvf_version": version})
+
+
+class TestReadVersion:
+    def test_version_1_reads_silently(self, recwarn):
+        assert qvf_read_version({"qvf_version": 1}) == 1
+        assert not [w for w in recwarn if W_VERSION_WITHDRAWN in str(w.message)]
+
+    def test_withdrawn_version_2_reads_as_1_with_warning(self):
+        with pytest.warns(UserWarning, match=W_VERSION_WITHDRAWN):
+            assert qvf_read_version({"qvf_version": 2}) == 1
+
+    def test_missing_version_keeps_reading_as_1(self):
+        assert qvf_read_version({}) == 1

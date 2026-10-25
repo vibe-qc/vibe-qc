@@ -184,7 +184,9 @@ def test_gamma_gdf_read_retains_route_and_caller_options(monkeypatch, restart_ca
         reached.append(True)
         if fail:
             raise RuntimeError("SCF failure witness")
-        return SimpleNamespace(guess_selection=None)
+        # A bound energy: the k entry applies its own energy guard to the
+        # delegated Gamma result (#458), and that guard must still run.
+        return SimpleNamespace(guess_selection=None, energy=-1.1)
     monkeypatch.setattr(gamma_gdf, "run_pbc_gdf_rhf", gamma_driver)
     monkeypatch.setattr(gdf, "_wrap_gamma_gdf_result", lambda result, *args, **kwargs: result)
     def run():
@@ -650,11 +652,16 @@ def test_spin_qvf_mo_only_sources(tmp_path, restart_case, representation):
 def test_native_bloch_qvf_restart_roundtrip(tmp_path,family):
     from vibeqc.output.formats.qvf import qvf_bloch_wf_data,write_qvf,validate_qvf
     from vibeqc.output.plan import OutputPlan
-    system=vq.PeriodicSystem(3,16*np.eye(3),[vq.Atom(1,[0,0,0]),vq.Atom(1,[0,0,1.4])])
+    # A 6-bohr cell, so the 8-bohr cutoff reaches the neighbouring images
+    # (#133 refuses an image list holding only the home cell) and the three
+    # k points carry distinct orbitals. Converged tightly, the restart
+    # reproduces the energy to about 1e-11 Ha (#500).
+    system=vq.PeriodicSystem(3,6*np.eye(3),[vq.Atom(1,[0,0,0]),vq.Atom(1,[0,0,1.4])])
     basis=vq.BasisSet(system.unit_cell_molecule(),'sto-3g')
     mesh=vq.monkhorst_pack(system,[1,1,3])
     opts=vq.PeriodicSCFOptions() if family=='rhf' else vq.PeriodicKSOptions()
-    opts.max_iter=30; opts.lattice_opts.cutoff_bohr=3; opts.lattice_opts.nuclear_cutoff_bohr=3
+    opts.max_iter=60; opts.lattice_opts.cutoff_bohr=8; opts.lattice_opts.nuclear_cutoff_bohr=8
+    opts.conv_tol_energy=1e-11; opts.conv_tol_grad=1e-8
     run=getattr(vq,'run_'+family+'_periodic')
     source=run(system,basis,mesh,opts)
     assert source.converged

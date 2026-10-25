@@ -7,16 +7,27 @@ myst:
 
 # AICCM visualization
 
+```{admonition} Status: experimental
+:class: warning
+
+Every route whose orbitals this page exports (both AICCM lines) is an experimental route. Every Γ-line SCF driver emits `vibeqc.AICCM2026DevAExperimentalWarning` and every χ-CCM driver emits `vibeqc.AICCM2026DevBExperimentalWarning`; the `.system` manifest records `method_status = "experimental"` for every AICCM job run through `run_periodic_job(method="aiccm", variant=...)`. Its numbers are research output, not validated results, and it is not part of the release gate. The label vocabulary is defined in [Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+```
+
 Both Γ-CCM and χ-CCM[^xccm-convention] write standard visualization formats
-that can be opened in vibe-view, VMD, VESTA, or any cube/Molden reader. Γ-CCM
-visualizes states from the union-and-weight construction; χ-CCM visualizes
+that can be opened in vibe-view, VMD, VESTA, or any cube/Molden reader. The
+Γ-CCM development line visualizes states from whichever of its routes ran
+(the neutral finite-torus construction, variants `real-gamma` and
+`neutral-bloch`, or the four-centre union-and-weight lineage); χ-CCM visualizes
 states from the finite-character construction, evaluated on its Γ-centred
 character mesh. Similar file formats do not imply that the two constructions
 supplied the same finite Hamiltonian. This page covers what each route writes
 and how to inspect it.
 
-[^xccm-convention]: Γ-CCM and χ-CCM are distinct CCM approaches. Γ-CCM uses
-    the union-and-weight/Wigner--Seitz integral-weighting construction; χ-CCM
+[^xccm-convention]: Γ-CCM and χ-CCM are distinct CCM approaches. Γ-CCM is
+    the neutral finite-torus construction with two producers, `variant="real-gamma"`
+    and `variant="neutral-bloch"` (ruling R1, 2026-08-21); the `four-center` variant
+    is the 2014 union-and-weight/Wigner-Seitz lineage, a different construction
+    kept in the same `aiccm2026dev-a` development line. χ-CCM
     uses the finite-translation-group character construction. They are compared
     at a declared common exchange-q=0 convention. Their distinction is not a
     choice of Coulomb kernels, and equality for a specified operator/route is
@@ -152,7 +163,7 @@ reader = QVFReader("c-diamond_canonical.qvf")
 print(len(reader.sections), "sections")
 ```
 
-The vibe-view [handover](https://github.com/vibe-qc/vibe-view/blob/main/HANDOVER.md) documents the
+The vibe-view the original investigation documents the
 current capabilities (orbital isosurfaces, density, bond analysis,
 COOP/COHP).
 
@@ -195,8 +206,6 @@ unit-cell outline).
 
 - [QVF format specification](../design_qvf_format.md)
 - [QVF consumer reference](../consumer_qvf_reference.md)
-- [Archived QVF writer handover](https://vibe-qc.com/docs/)
-- [vibe-view handover](https://github.com/vibe-qc/vibe-view/blob/main/HANDOVER.md)
 - [Orbital visualization tutorial](../tutorial/orbital_visualization.md)
 - [Periodic orbital cubes tutorial](../tutorial/periodic_orbital_cubes.md)
 - [vibe-view walkthrough](../tutorial/vibe_view_walkthrough.md)

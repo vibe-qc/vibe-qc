@@ -188,6 +188,11 @@ class MolecularGraph:
     n_atoms : int
     n_electrons : int
     is_organic : bool                (contains C and H as majority)
+    atom_stereo : dict of int -> str (caller-supplied R, S, r or s)
+    bond_stereo : dict of (int, int) -> str (caller-supplied E or Z)
+
+    The engine never assigns ``atom_stereo`` or ``bond_stereo``; names carry
+    them only when a caller supplies them (see :meth:`from_bonds`).
     """
 
     atoms: list[AtomInfo]
@@ -198,6 +203,87 @@ class MolecularGraph:
     n_atoms: int = 0
     n_electrons: int = 0
     is_organic: bool = False
+    atom_stereo: dict[int, str] = field(default_factory=dict)
+    bond_stereo: dict[tuple[int, int], str] = field(default_factory=dict)
+
+    @classmethod
+    def from_bonds(
+        cls,
+        elements,
+        bonds,
+        *,
+        positions=None,
+        atom_stereo=None,
+        bond_stereo=None,
+    ) -> MolecularGraph:
+        """Build a graph from known bonds instead of perceiving them.
+
+        Parameters
+        ----------
+        elements :
+            Atomic numbers or element symbols, hydrogens included.
+        bonds :
+            ``(i, j, order)`` triples with order 1, 2 or 3. Pass aromatic
+            rings in a Kekule form; the ring is recognised as aromatic the
+            way :func:`build_graph` recognises it.
+        positions :
+            Optional ``(x, y, z)`` per atom in Angstrom. Without them the
+            atoms sit at the origin and bond distances are zero; naming does
+            not use coordinates.
+        atom_stereo :
+            Optional ``{atom: label}`` with labels ``R``, ``S``, ``r``, ``s``.
+        bond_stereo :
+            Optional ``{(i, j): label}`` on double bonds, labels ``E``, ``Z``.
+
+        Adjacency, rings, aromatic rings, formula and electron count follow
+        :func:`build_graph`. Stereodescriptors are checked for structure but
+        never computed: see :mod:`vibeqc_naming._stereo`.
+        """
+        from ._stereo import validate_stereodescriptors
+
+        z_values = [_element_number(element) for element in elements]
+        if positions is None:
+            coords = [(0.0, 0.0, 0.0)] * len(z_values)
+        else:
+            coords = [tuple(float(c) for c in p) for p in positions]
+            if len(coords) != len(z_values) or any(len(c) != 3 for c in coords):
+                raise ValueError("positions must give one (x, y, z) per element")
+        atoms = [
+            AtomInfo(index=i, z=z, symbol=ATOMIC_NUMBER_TO_SYMBOL[z],
+                     x=c[0], y=c[1], z_coord=c[2])
+            for i, (z, c) in enumerate(zip(z_values, coords))
+        ]
+        bond_list: list[BondInfo] = []
+        seen: set[tuple[int, int]] = set()
+        for entry in bonds:
+            if len(entry) != 3:
+                raise ValueError(f"bond {entry!r} must be an (i, j, order) triple")
+            i, j, order = entry
+            for index in (i, j):
+                if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < len(atoms):
+                    raise ValueError(f"bond {entry!r}: {index!r} is not an atom index")
+            if i == j:
+                raise ValueError(f"bond {entry!r} joins an atom to itself")
+            if isinstance(order, bool) or order not in (1, 2, 3):
+                raise ValueError(
+                    f"bond {entry!r}: order must be 1, 2 or 3 (pass aromatic rings in a Kekule form)"
+                )
+            key = (min(i, j), max(i, j))
+            if key in seen:
+                raise ValueError(f"bond {key} is given twice")
+            seen.add(key)
+            a, b = atoms[i], atoms[j]
+            distance = math.dist((a.x, a.y, a.z_coord), (b.x, b.y, b.z_coord))
+            bond_list.append(BondInfo(i=i, j=j, order=int(order), distance=distance))
+        graph = _assemble_graph(atoms, bond_list)
+        graph.atom_stereo = dict(atom_stereo or {})
+        graph.bond_stereo = {}
+        for key, label in (bond_stereo or {}).items():
+            if isinstance(key, tuple) and len(key) == 2 and all(isinstance(k, int) for k in key):
+                key = (min(key), max(key))
+            graph.bond_stereo[key] = label  # malformed keys are refused below
+        validate_stereodescriptors(graph)
+        return graph
 
     def atom_degree(self, idx: int) -> int:
         """Number of bonded neighbours for atom *idx*."""
@@ -477,9 +563,26 @@ def build_graph(
         for i, (z, pos) in enumerate(zip(z_values, positions_bohr))
     ]
 
-    bonds = detect_bonds(atoms, tolerance)
+    return _assemble_graph(atoms, detect_bonds(atoms, tolerance))
 
-    # Build adjacency
+
+_SYMBOL_TO_ATOMIC_NUMBER = {s.lower(): z for z, s in ATOMIC_NUMBER_TO_SYMBOL.items()}
+
+
+def _element_number(element) -> int:
+    """Atomic number of an atomic number or element symbol."""
+    if isinstance(element, str):
+        z = _SYMBOL_TO_ATOMIC_NUMBER.get(element.strip().lower())
+        if z is None:
+            raise ValueError(f"unknown element symbol {element!r}")
+        return z
+    if isinstance(element, bool) or not isinstance(element, int) or element not in ATOMIC_NUMBER_TO_SYMBOL:
+        raise ValueError(f"unknown element {element!r}")
+    return element
+
+
+def _assemble_graph(atoms: list[AtomInfo], bonds: list[BondInfo]) -> MolecularGraph:
+    """Adjacency, rings, formula and metadata for atoms and their bonds."""
     adjacency: list[list[int]] = [[] for _ in atoms]
     for b in bonds:
         adjacency[b.i].append(b.j)

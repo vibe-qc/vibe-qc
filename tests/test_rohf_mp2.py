@@ -106,6 +106,88 @@ def _spatial_ump2_ref(fa, fb, Ba, Bb, na, nb):
                 e_doubles=e_ss + e_os, e_corr=es + e_ss + e_os)
 
 
+@pytest.mark.parametrize("n_occ", [0, 1, 3, 5])
+def test_semicanonical_spin_fock_contract(monkeypatch, n_occ):
+    """Empty blocks, block ordering and the f_ov/tensor rotation survive."""
+    from scipy.linalg import eigvalsh
+    from vibeqc.dlpno import _ccsd_ref as ref
+
+    rng = np.random.default_rng(12)
+    f = rng.normal(size=(5, 5))
+    f = (f + f.T) / 2
+    f[:n_occ, :n_occ] += 10 * np.eye(n_occ)
+    B = rng.normal(size=(7, 5, 5))
+    B = (B + B.transpose(0, 2, 1)) / 2
+    f_original, B_original = f.copy(), B.copy()
+    rotations = {}
+    solve = ref.solve_dense_fock
+
+    def checked_solve(matrix, **kwargs):
+        result = solve(matrix, **kwargs)
+        assert result.operator_metadata.kind == "fock"
+        assert result.operator_metadata.spin == "beta"
+        assert result.residual_frame == "orthogonal"
+        assert result.selection_verified
+        assert max(result.residuals) < 1e-11
+        assert result.orthogonality_error < 1e-12
+        rotations[result.operator_metadata.basis_id] = result.eigenvectors
+        np.testing.assert_allclose(result.eigenvalues, eigvalsh(matrix), atol=1e-12)
+        return result
+
+    monkeypatch.setattr(ref, "solve_dense_fock", checked_solve)
+    f_sc, B_sc, eps = ref._semicanonicalize_spin(f, B, n_occ, spin="beta")
+    U = np.zeros((5, 5))
+    for block, label in ((slice(0, n_occ), "occupied"), (slice(n_occ, 5), "virtual")):
+        key = f"semicanonical-mo-{label}"
+        if block.start == block.stop:
+            assert key not in rotations
+        else:
+            U[block, block] = rotations[key]
+            np.testing.assert_allclose(f_sc[block, block], np.diag(eps[block]), atol=1e-12)
+            assert np.all(np.diff(eps[block]) >= 0)
+    if 0 < n_occ < 5:
+        assert eps[n_occ - 1] > eps[n_occ]  # no global energy sort
+        assert np.linalg.norm(f_sc[:n_occ, n_occ:]) == pytest.approx(
+            np.linalg.norm(f[:n_occ, n_occ:]), abs=1e-12,
+        )
+    np.testing.assert_allclose(f_sc, U.T @ f @ U, atol=1e-12)
+    np.testing.assert_allclose(B_sc, np.einsum("Ppq,pi,qj->Pij", B, U, U), atol=1e-12)
+    np.testing.assert_array_equal(f, f_original)
+    np.testing.assert_array_equal(B, B_original)
+
+
+@pytest.mark.parametrize("n_alpha,n_beta", [(3, 0), (5, 2)])
+def test_ump2_empty_spin_partitions_match_spatial_reference(monkeypatch, n_alpha, n_beta):
+    from vibeqc.dlpno import _ccsd_ref as ref
+
+    rng = np.random.default_rng(6)
+    fa = np.diag(np.arange(5, dtype=float))
+    fb = fa + np.eye(5) * 0.2
+    B = rng.normal(size=(4, 5, 5))
+    B = (B + B.transpose(0, 2, 1)) / 2
+    spins = set()
+    solve = ref.solve_dense_fock
+
+    def track_spin(matrix, **kwargs):
+        result = solve(matrix, **kwargs)
+        spins.add(result.operator_metadata.spin)
+        return result
+
+    monkeypatch.setattr(ref, "solve_dense_fock", track_spin)
+    result = ref.run_ref_ump2(fa, fb, B, B, n_alpha, n_beta)
+    expected = _spatial_ump2_ref(fa, fb, B, B, n_alpha, n_beta)
+    for name, value in expected.items():
+        assert getattr(result, name) == pytest.approx(value, abs=1e-12)
+    assert spins == {"alpha", "beta"}
+
+
+def test_semicanonical_spin_rejects_nonhermitian_fock():
+    from vibeqc.dlpno._ccsd_ref import _semicanonicalize_spin
+
+    with pytest.raises(ValueError, match="Hermitian"):
+        _semicanonicalize_spin(np.array([[1., 1.], [0., 2.]]), np.zeros((1, 2, 2)), 2)
+
+
 def _sc_pt2_closed(h, B, nocc):
     """Gold-standard PT2 via the Slater-Condon CI engine (closed shell).
 

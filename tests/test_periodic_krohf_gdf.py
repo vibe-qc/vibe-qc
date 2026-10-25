@@ -10,11 +10,9 @@ Validation strategy (mirroring ``tests/test_periodic_kuhf_gdf.py``):
     fully polarised shell) ROHF and UHF describe the *same*
     determinant, so ``run_kuhf_periodic_gdf`` is an exact partner.
   * **external anchor** -- Li/STO-3G in a 10-bohr box at Gamma sits
-    +2.86e-5 Ha from out-of-process PySCF 2.13.1 ``KROHF/GDF``
-    (``exxdiv='ewald'``, ``def2-svp-jkfit``) at the default rsgdf mesh,
-    and the residual collapses with the mesh (see the pin below), which
-    is the signature of shared fit truncation rather than a convention
-    error.
+    +8.4e-10 Ha from out-of-process PySCF 2.13.1 ``KROHF/GDF``
+    (``exxdiv='ewald'``, ``def2-svp-jkfit``) on the range-separated
+    SR/LR fit of the dim-3 rsgdf route (see the pin below).
   * **spin** -- ``<S^2> = S(S+1)`` exactly, by construction.
   * **factored exchange** -- the occupied-index builder is the same
     operator as the density-form one, and damping (which reuses the
@@ -185,13 +183,16 @@ def test_krohf_li_box_matches_pyscf_krohf_gdf():
     .density_fit(auxbasis='def2-svp-jkfit')``, ``cell.unit='B'``,
     ``mf.nelec=(2, 1)``): ``-7.387277021304971 Ha``.
 
-    The default rsgdf mesh sits +2.86e-5 Ha from it. That residual is the
-    shared fit-truncation ladder, not a convention error -- measured on
-    this exact cell it collapses monotonically with the mesh:
-    ``ke=200 -> +2.860e-05``, ``ke=400 -> +3.987e-06``,
-    ``ke=800 (cutoff 40) -> +2.208e-07`` Ha. The tolerance below pins the
-    default rung; the collapse is recorded here rather than run in the
-    fast lane because the ke=800 leg is a fine-mesh FT.
+    Since f6815d9d (2026-09-08) the dim-3 ``gdf_method="rsgdf"`` route
+    builds its cderi from the range-separated SR/LR fit
+    (``_build_scf_range_separated_lpq_cache``). That fit plans its
+    reciprocal cutoff from ``rsgdf_g_precision`` and reads
+    ``rsgdf_ke_cutoff`` only as a floor. It lands +8.4e-10 Ha from the
+    reference (-7.387277020465892 Ha, measured 2026-10-20). The retired
+    all-FT rsgdf mesh this test used to pin sat +2.86e-5 Ha off at
+    ke=200 and only reached +2.2e-7 Ha at ke=800. The band below allows
+    thread and BLAS summation-order scatter and still catches a fit
+    regression an order of magnitude smaller than the old residual.
     """
     system, basis = _cell(
         [vq.Atom(3, [0, 0, 0])], np.diag([10.0] * 3), mult=2
@@ -201,7 +202,7 @@ def test_krohf_li_box_matches_pyscf_krohf_gdf():
     )
     assert got.converged
     e_pyscf = -7.387277021304971
-    assert got.energy - e_pyscf == pytest.approx(2.860e-5, abs=2e-6), (
+    assert got.energy - e_pyscf == pytest.approx(8.4e-10, abs=5e-10), (
         f"KROHF {got.energy!r} moved off the recorded PySCF residual"
     )
     assert got.s_squared == pytest.approx(0.75, abs=1e-12)

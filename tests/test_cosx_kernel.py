@@ -5,8 +5,7 @@ per grid point r_g, an analytical-integral block A_{μν}(r_g) for every
 surviving shell pair via libint's ``Operator::nuclear`` engine
 parameterised by a single pseudo-charge q = −1 at r_g. The libint call
 is > 99 % of the K-build wall — replacing it with an in-tree custom
-kernel is the remaining 5–10× perf lever (tracked in
-handovers/HANDOVER_PERF_OPT.md).
+kernel is the remaining 5–10× perf lever.
 
 This first landing (commit 1 of the kernel arc) covers (s, s) shells
 only — Boys-table tabulation + downward recursion + 6th-order Taylor

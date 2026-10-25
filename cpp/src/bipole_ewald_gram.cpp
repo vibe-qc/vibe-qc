@@ -277,8 +277,26 @@ ScaledProduct scaled_product(double a, double b, double weight) {
     return {value,error,ea+eb+ew};
 }
 bool exact_opposite_products(double a, double b, double c, double d) {
-    return (a==-c && b==d) || (a==c && b==-d) ||
-        (a==-d && b==c) || (a==d && b==-c);
+    const bool x_zero=a==0 || b==0, y_zero=c==0 || d==0;
+    if (x_zero || y_zero) return x_zero && y_zero;
+    if ((a==-c && b==d) || (a==c && b==-d) ||
+        (a==-d && b==c) || (a==d && b==-c)) return true;
+    if ((std::signbit(a)!=std::signbit(b)) ==
+        (std::signbit(c)!=std::signbit(d))) return false;
+    // Different factorizations can have exactly opposite products too.
+    // Ogita, Rump and Oishi (2005), Accurate Sum and Dot Product, Alg. 3.5
+    // (TwoProductFMA): hi+lo is the exact significand product. Normalizing
+    // the factors first keeps both hi and every nonzero lo normal, even
+    // when the original product would overflow or underflow binary64.
+    const auto product=[](double left, double right) {
+        int el=0, er=0, eh=0;
+        const double ml=std::frexp(left,&el), mr=std::frexp(right,&er);
+        const double hi=ml*mr, lo=std::fma(ml,mr,-hi);
+        const double normalized=std::frexp(hi,&eh);
+        return ScaledProduct{normalized,std::scalbn(lo,-eh),el+er+eh};
+    };
+    const auto x=product(a,b), y=product(c,d);
+    return x.exponent==y.exponent && x.value==-y.value && x.error==-y.error;
 }
 bool ordinary_component(double value, double a, double b, double c, double d) {
     if (std::isnormal(value)) return true;

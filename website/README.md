@@ -1,15 +1,17 @@
 # vibe-qc website
 
-Marketing / landing site for [vibe-qc](https://vibe-qc.com), built with
+Technical website for [vibe-qc](https://vibe-qc.com), built with
 [Astro](https://astro.build). Static output — no runtime, no database.
 
-One marketing site presents three independent products. Sphinx documentation
+One technical site presents four independent tools: vibe-qc, vibe-sketch,
+vibe-view and vibe-queue. The separate vibyverse.com site owns the broader
+marketing presentation. Sphinx documentation
 is published separately: core under `/docs/`, viewer under `/vibe-view/docs/`,
-and queue under `/vibe-queue/docs/`. Each repository publishes only its own
+queue under `/vibe-queue/docs/`, and sketcher under `/vibe-sketch/docs/`. Each repository publishes only its own
 subtree. Astro links to those sites and never imports their content.
 
-Marketing product pages live under `/products/<product>/`. Do not put them
-under `/vibe-view/` or `/vibe-queue/`: those subtrees are excluded from the
+Technical product pages live under `/products/<product>/`. Do not put them
+under `/vibe-view/`, `/vibe-queue/` or `/vibe-sketch/`: those subtrees are excluded from the
 root deploy and reserved for their independent publishers.
 
 ## Repository ownership
@@ -26,6 +28,29 @@ Website builds read package versions only from the core and vibe-basis
 own releases. Do not read files from assumed companion subdirectories or
 assume a core tag selects matching companion tags. The get-started page
 shows this repository map and links to the separate installation guides.
+
+
+## Technical content and product availability
+
+The homepage, documentation directory, workflows and product pages prioritize
+installation, supported interfaces, method scope and reproducible results.
+Keep broader marketing on vibyverse.com. The shared footer links there without
+copying its content or establishing a build dependency.
+
+vibe-sketch is a testing version licensed under MPL-2.0. Its manual is public
+at `/vibe-sketch/docs/`; source and release URLs remain unset. The product page
+links to the manual, local setup instructions for authorized users and the
+existing contact form for software access. Do not infer a public source URL from
+the product name, claim a desktop package is released, or extend MPL-2.0 to QVF. QVF remains a format project, not a fifth application.
+
+The queued workflow is sketch, submit, calculate, then analyze. Direct local
+calculations can skip submission. The homepage, workflow guide and shared
+artwork use that sequence.
+
+The methods catalog supports text and status filters. Without JavaScript all
+methods remain readable. Mobile navigation, keyboard focus, Escape handling,
+reduced motion and the skip-to-content target are part of the shared shell.
+Existing download qualification and contact-handler checks remain in force.
 
 ## Develop
 
@@ -46,53 +71,64 @@ npm run verify       # release-data tests + production build
 `dist/` is what gets rsynced to the web root in CI (alongside the Sphinx
 `/docs/` deploy). Both are plain static file trees.
 
-## Deploy
+## Publish
 
-The marketing site is **decoupled from version releases** — copy and fixes ship
-from `main` on their own. The CI jobs (see `../.gitlab-ci.yml`):
+The technical site is decoupled from engine releases. Website publication uses checked source on
+`main` and the configured website publication workflow. Manuals can include
+explicitly identified source updates newer than released packages. Each publisher owns a separate URL subtree:
 
-- **`website-deploy`** → the production root (`example-web-account@vibe-qc.com:/web/`). Runs
-  **automatically on every `main` push that changes `website/`**, and is also
-  available as a manual job on `main` to force a redeploy. `needs: []` runs it
-  immediately, gated only by its own `npm run build` — independent of the C++
-  test suite. `--delete-after` excludes `/docs/`, `/updates/`, `/preview/`,
-  `/vibe-view/`, `/vibe-queue/`, and
-  the server-managed cPanel/Apache files (incl. `.htaccess`).
-- **`website-staging`** → `/web/preview/` (**https://vibe-qc.com/preview/**,
-  `noindex`). Same `main` + `website/`-changed trigger, built with
-  `PREVIEW_BASE=/preview/`. A parallel preview of the same main push for reviewing the built site.
+| Public path | Content owner | Source |
+| --- | --- | --- |
+| `/` | vibe-qc | `website/` on `main` |
+| `/preview/` | vibe-qc | `website/` on `main`, built with `PREVIEW_BASE=/preview/` |
+| `/docs/` | vibe-qc | separately checked and published `docs/` snapshot |
+| `/vibe-view/docs/` | vibe-view | its own documentation and release process |
+| `/vibe-queue/docs/` | vibe-queue | its own documentation and release process |
+| `/vibe-sketch/docs/` | vibe-sketch | its own documentation from committed source |
 
-The **docs** are versioned, so they deploy differently:
+Ordinary development pushes skip CI under the repository policy. Website-only
+publication can use the configured operator workflow after local verification;
+do not launch full engine CI for a site edit. The product `.gitlab-ci.yml` contains portable validation jobs and imports the
+configured external deployment definition. Credentials, accounts, SSH setup,
+job dependencies and destination commands are maintained in private operations
+documentation. Do not copy those settings into this checkout or infer the
+current deployment job implementation from an old example here.
 
-- **`docs-deploy`** → `/web/docs/`. Runs **only on `release`**, which the
-  release owner fast-forwards from a tag on `main`. A docs edit on `main`
-  waits for the next release; manual main pipelines may build docs but cannot
-  publish them over the released site.
+The root publisher must preserve the independent `/docs/`, `/updates/`,
+`/preview/`, `/vibe-view/`, `/vibe-queue/` and `/vibe-sketch/` trees, along with server-managed
+configuration and verification files. Companion publishers must restrict
+deletion to their own subtree. Source clones or tags do not grant deployment
+access.
+
+Before proposing a site change, verify both URL layouts from `website/`:
+
+```sh
+npm run verify
+PREVIEW_BASE=/preview/ npm run verify
+```
+
+The preview is `noindex`; companion and core manual links remain rooted at
+their published documentation paths, outside `/preview/`. A manual change on
+`main` does not update `/docs/` until the manual is separately built and published.
 
 See [site publishing and shared appearance](../docs/site_publishing.md) for
-companion ownership, protected refs, CSS synchronization, and gallery policy.
-
-All jobs `--delete-after` within their own subtree only, and share the SSH setup
-via the `.deploy_ssh` `!reference` template. To reproduce a staging build
-locally: `PREVIEW_BASE=/preview/ npm run build`.
-
-**One-time server-side step (already applied 2026-07-17):** legacy root doc URLs
-(`/quickstart.html`, `/_static/…`) are 301-redirected to `/docs/` by Apache
-rewrite rules in `../deploy/htaccess-redirects.conf`. CI deploys deliberately
-exclude `.htaccess`, so those rules live in `/web/.htaccess` on the server and
-persist across deploys. **Re-apply only if the URL structure changes again.**
+CSS synchronization and per-product gallery policy. The portable legacy URL
+rules are in `deploy/htaccess-redirects.conf` at the repository root; applying
+or changing server configuration is an operator task.
 
 ## Structure
 
 ```
 src/
   data/products.mjs         # product ownership, copy, docs and source links
-  pages/products/[product].astro # three independently addressable product pages
+  pages/products/[product].astro # four independently addressable product pages
   layouts/Base.astro         # <html> shell, <head> meta, OG tags
-  components/OrbitalField.astro  # animated MO iso-contour hero canvas
+  components/WorkflowFigure.astro # accessible illustrative workflow schematic
   data/distributions.mjs     # download readiness + release coordinates
   data/sponsors.mjs          # tier prices + public recognition records
-  pages/index.astro          # the landing page (edit content here)
+  pages/index.astro          # technical home and tool directory
+  pages/documentation.astro  # manuals, APIs and reference links
+  pages/workflows.astro      # task-oriented routes through the tools
   pages/download.astro       # fail-closed distribution matrix
   pages/sponsor.astro        # sponsorship plans, public wall, priorities
   pages/contact.astro        # contact form (posts to public/contact.php)
@@ -101,62 +137,40 @@ src/
 public/
   contact.php                # the only server-side file on the site
   sponsors/                  # opt-in local sponsor logos, when present
-  favicon.svg                # placeholder — swap for the official mark
+  logo/                      # generated identities and social previews
 ```
 
 Content is edited as files in git — add a page by dropping a new
 `src/pages/<name>.astro`; it becomes `/<name>/`.
 
-## Activating distribution downloads
+## Maintaining installation and download claims
 
-`src/data/distributions.mjs` is the single source of truth for the download
-page. Its viewer 2.9.0 filenames and checksums are retained pre-split candidate
-records. They are not current viewer releases. Newly validated desktop packages
-must come from the [vibe-view release page](https://github.com/vibe-qc/vibe-view/releases).
-Candidate filenames and checksums can be recorded without exposing an active link. The rendering helpers fail closed unless an entry has both an
-explicit `status: 'available'` and a valid public location.
+The download page leads with each product's source installation and manual.
+It distinguishes implemented desktop tooling, released source and published
+binary artifacts. The current macOS viewer and sketcher package profiles
+include their Python runtime; this does not imply trusted signing, Store
+acceptance or a public download. Sketch source access remains separately
+arranged despite its MPL-2.0 license.
 
-The OCI contract is two explicit images, not a combined multi-platform
-manifest:
+The product distribution contracts describe planned Linux supporter downloads,
+paid Mac App Store packages and paid Microsoft Store packages. These channels
+must stay labelled planned until actual qualified packages are published.
+Building published source requires no membership. Required source and notices
+remain accessible without an active membership, and downloaded binaries do not
+need runtime activation after membership ends. QVF remains Apache-2.0.
 
-- `vibe-qc-suite:<version>-amd64` for Linux AMD64;
-- `vibe-qc-suite:<version>-arm64` for Linux ARM64.
+`src/data/distributions.mjs` retains the historical viewer 2.9.0 candidates and
+legacy OCI plan for provenance. They are not current offers. The download page
+renders package links only when `publicDownloadUrl` or `publicOciImage` accepts
+an explicitly available entry. Never add guessed URLs, package versions or
+registry digests. A registry image needs its architecture-qualified coordinate,
+registry-issued digest and provenance; a desktop package needs its actual
+HTTPS download URL after product/channel acceptance. Membership-controlled
+packages must use their authorized download service, not a public-storage URL.
 
-Planned images combine independently versioned vibe-qc, vibe-view, vq, and
-the retained vibe-basis (`vb`) toolkit with offline documentation, tutorials,
-and examples. Qualification must record each repository's exact tag or commit
-and the corresponding licenses; there is no shared monorepo release tree.
-The container entrypoint exposes `docs`, `tutorials`, and `examples` discovery,
-plus `docs copy /calculations/vibe-qc-docs` and
-`examples copy /calculations/vibe-qc-examples` for writable copies.
-
-To activate an OCI image:
-
-1. Complete that architecture's native Linux same-host calculation-performance
-   gate for the exact payload.
-2. Record each component repository and exact tag or commit, then publish
-   its corresponding source and retained licenses.
-3. Publish the explicit architecture-qualified tag.
-4. Record both the real registry coordinate and the final digest returned by
-   the registry in the matching `oci.images` entry. Set
-   `registryDigestSource` to `registry` and `status` to `available`.
-
-Both entries are activated independently. Never use a local Docker image ID as
-`registryDigest`; the helper deliberately requires registry provenance.
-
-To activate a desktop package:
-
-1. Finish its release gate. The macOS DMG must be signed and notarized; the
-   Ubuntu DEB must be rebuilt and verified on native Ubuntu 22.04 AMD64.
-2. Upload the final artifact to its real HTTPS release location.
-3. Replace the candidate checksum if the final file differs, set
-   `downloadUrl`, change `status` to `available`, and update its status and
-   qualification copy to describe the final release.
-4. Run `npm run verify` and inspect the generated `dist/download/index.html`
-   before allowing the normal website deployment job to publish the page.
-
-Never add a guessed URL, registry coordinate, or digest. A preview entry with a
-null location remains visible but non-downloadable by design.
+Verify actual public release listings and public manual destinations when
+updating availability. A source tag is not a binary download. Recheck both
+production and preview builds before publishing.
 
 ## Maintaining sponsor recognition
 
@@ -266,3 +280,68 @@ refs on the selected host and preserve port 26 in GitLab SSH recipes. See
 `docs/github_publication.md` for publication policy. Do not infer a package download from
 a source tag or copy a companion artifact into this site. QVF is a format
 reference, and vibe-basis stays in the core checkout.
+
+## Release hosting
+
+GitHub Releases is the canonical host for versioned public source downloads of
+vibe-qc, vibe-view, vibe-queue and QVF. Publish a release only after its existing
+public tag is verified. Source-only releases must say so explicitly; a tag or
+source archive does not establish installer availability. Link to each project's
+`/releases` page so subsequent releases do not require a website version edit.
+
+Desktop binaries remain a separate website channel with matching source and
+SHA-256 checksums. Unreachable artifacts must be marked unavailable in
+`distributions.mjs`; retain their metadata but remove active download buttons.
+Restore available status only after anonymously checking the package, source
+and checksum URLs and verifying downloaded bytes against the checksums.
+
+## Current desktop downloads
+
+The download page reads `/updates/<product>/current/release.json` for
+vibe-view and vibe-sketch. Its non-JavaScript download links follow the same
+`current` directory. Do not hard-code a release version in the page or promote
+an installer built from development main as a released tag.
+
+For each new stable release, build and test the native macOS ARM64 DMG and
+Linux x86-64 AppImage from the exact immutable tag. Publish their matching
+source archive too. The desktop publication command is:
+
+```sh
+python3 website/scripts/publish-desktop-release.py \
+  --updates-root "$PUBLIC_UPDATES_ROOT" --product vibe-view \
+  --version "$RELEASE_VERSION" --source-commit "$RELEASE_COMMIT" \
+  --macos "$QUALIFIED_DMG" --linux "$QUALIFIED_APPIMAGE" \
+  --source "$CORRESPONDING_SOURCE_ARCHIVE"
+```
+
+Use an external, operator-selected updates root. The publisher retains immutable
+`releases/<version>/` files and atomically advances a relative `current` symlink
+only after both platform packages and source have been written. It refuses
+changed bytes at an existing release and refuses version rollback. Deployment
+must preserve symlinks and the entire `/updates/` subtree. Verify the manifest,
+all download links and SHA-256 hashes over HTTPS after publication. Never delete
+older release directories or replace them with a different build.
+
+Direct macOS and Linux downloads are public. macOS downloads currently lack
+Developer ID signing and Apple notarization; the page states this explicitly.
+Windows Store publication remains separate. An operational release check keeps
+these pairs in sync with stable release tags; its host configuration and build
+records belong outside this repository.
+
+Every website build also checks published source releases and package availability with `scripts/check-downloads.mjs`. Current desktop manifests must include both platforms and their corresponding source; broken links stop publication.
+
+
+## Visible published versions
+
+`npm run build` verifies public download availability and runs
+`scripts/sync-releases.mjs` before rendering. The generated
+`src/data/published-releases.json` records desktop manifests for the sketcher
+and viewer and public GitHub releases for the queue and engine. These are
+published versions, never versions read from a development checkout. Release
+numbers render in HTML on the homepage, download directory and product pages;
+client-side desktop refresh is an enhancement only.
+
+After publishing a desktop pair or detecting a newer public source release,
+rebuild and republish the static website and preview so the HTML snapshot stays
+current too. Preserve independent manuals, updates, downloads and server-managed
+files. The maintenance automation must perform this refresh after release changes.

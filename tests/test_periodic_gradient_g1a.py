@@ -58,8 +58,8 @@ ANGSTROM_TO_BOHR = 1.8897261339213
 
 def _h2_periodic_box(R_bohr: float, box_ang: float = 20.0):
     """H₂ in a cubic box. Returns (system, basis, opts, kmesh, mol).
-    ``opts`` is a ``PeriodicSCFOptions`` with cutoff matching the
-    box so cross-cell density is below threshold."""
+    ``opts`` explicitly selects the home-cell molecular mode; the cutoff
+    is smaller than the box, so there are no nonzero images."""
     big_box = box_ang * ANGSTROM_TO_BOHR
     atoms = [
         vq.Atom(1, [0.0, 0.0, 0.0]),
@@ -71,6 +71,7 @@ def _h2_periodic_box(R_bohr: float, box_ang: float = 20.0):
     opts.conv_tol_energy = 1e-12
     opts.lattice_opts.cutoff_bohr = 25.0
     opts.lattice_opts.nuclear_cutoff_bohr = 25.0
+    opts.lattice_opts.gamma_only_0 = True
     kmesh = vq.monkhorst_pack(sys, [1, 1, 1])
     mol = vq.Molecule(atoms, charge=0, multiplicity=1)
     return sys, basis, opts, kmesh, mol
@@ -205,6 +206,7 @@ def test_h2o_box_matches_molecular_analytic():
     opts.conv_tol_energy = 1e-12
     opts.lattice_opts.cutoff_bohr = 25.0
     opts.lattice_opts.nuclear_cutoff_bohr = 25.0
+    opts.lattice_opts.gamma_only_0 = True
     kmesh = vq.monkhorst_pack(sys, [1, 1, 1])
 
     result = vq.run_rhf_periodic(sys, basis, kmesh, opts)
@@ -339,9 +341,17 @@ def test_h_chain_1d_periodic_k_contraction_regression():
     g_jk = np.asarray(core.eri_lattice_gradient_contribution(
         basis, sys, D_set, opts.lattice_opts, 1.0))
 
-    np.testing.assert_allclose(g_j, [[0.41855598, 0.0, 0.0],
-                                     [-0.41855598, 0.0, 0.0]], atol=5e-8)
-    np.testing.assert_allclose(g_jk, [[0.31128563, 0.0, 0.0],
-                                      [-0.31128563, 0.0, 0.0]], atol=5e-8)
+    # 312c34b preserves tiny squared self norms in the Schwarz prepass.
+    # Screening those norms at machine epsilon erased retained ERI terms:
+    # the old prepass gives J=0.4185559791 and J-K=0.3112856334 on the
+    # same frozen density. Corrected native values, with the 0893a3c
+    # derivative buffer guard, agree with a separate molecular-ERI cluster
+    # energy derivative: h=3e-5 gives J=0.4185570922, K=-0.1072705971.
+    # The legacy K density-slot convention and default force screening
+    # are unchanged.
+    np.testing.assert_allclose(g_j, [[0.41855709, 0.0, 0.0],
+                                     [-0.41855709, 0.0, 0.0]], atol=5e-8)
+    np.testing.assert_allclose(g_jk, [[0.31128649, 0.0, 0.0],
+                                      [-0.31128649, 0.0, 0.0]], atol=5e-8)
     np.testing.assert_allclose(g_jk[0], -g_jk[1], atol=1e-10)
-    assert abs((g_jk[0, 0] - g_j[0, 0]) + 0.10727035) < 5e-8
+    assert abs((g_jk[0, 0] - g_j[0, 0]) + 0.10727060) < 5e-8

@@ -37,7 +37,7 @@ Env-var knobs (laptop callers usually leave them at default):
   receives via ``--cpus`` (default: 14, matches the wrapper's own
   default).
 * ``VIBEQC_CRYSTAL_WALL_TIME_SECONDS`` — vq's hard wall-clock cap
-  (default: 7200 = 2 h). The handover's 2-h budget is enough for the
+  (default: 7200 = 2 h). the original investigation's 2-h budget is enough for the
   STO-3G / POB-* canonical regression set; tune up for tight POB-TZVP
   on larger cells.
 * ``VIBEQC_CRYSTAL_POLL_INTERVAL_S`` — how often we re-`vq status` the
@@ -275,8 +275,11 @@ def run_periodic_case(
         row.note = f"vq poll failed: {type(exc).__name__}: {exc}"
         _log(f"  EXCEPTION:\n{traceback.format_exc()}")
         return row
-    wall = time.perf_counter() - t0
-    _log(f"  vq job terminal state: {final_state}   (wall {wall:.1f} s)")
+    monitor_wall = time.perf_counter() - t0
+    _log(
+        f"  vq job terminal state: {final_state}   "
+        f"(queue-monitor elapsed {monitor_wall:.1f} s; not engine time)"
+    )
 
     fetch_dest = case_workdir / "fetched"
     fetch_dest.mkdir(parents=True, exist_ok=True)
@@ -300,7 +303,9 @@ def run_periodic_case(
         return row
 
     parsed = parse_crystal_out(out_path.read_text(errors="replace"))
-    row.wall_s = wall
+    # CodeRow uses zero for unavailable timing; paired_wall_ratio excludes it.
+    # Queue waiting and polling latency are not calculation time.
+    row.wall_s = parsed.wall_s if parsed.wall_s is not None else 0.0
     row.code_version = parsed.version or "unknown"
     row.energy_ha = parsed.energy_ha
     row.converged = parsed.converged
@@ -308,7 +313,9 @@ def run_periodic_case(
     if parsed.energy_ha is not None and len(spec.atoms) > 0:
         row.energy_per_atom_ha = parsed.energy_ha / len(spec.atoms)
 
-    note_bits = []
+    note_bits = [f"queue-monitor elapsed={monitor_wall:.1f} s (not engine time)"]
+    if parsed.wall_s is None:
+        note_bits.append("engine wall time unavailable: expected one valid END TELAPSE")
     if parsed.band_gap_ev is not None:
         note_bits.append(f"gap={parsed.band_gap_ev:.3f} eV")
     if final_state != "completed":
@@ -320,8 +327,7 @@ def run_periodic_case(
     if parsed.energy_ha is None:
         # No SCF energy parsed — escalate to error so the comparison
         # path doesn't silently feed None into the Δ calculation.
-        if not row.note:
-            row.note = "CRYSTAL produced no parseable total energy"
+        row.note += "; CRYSTAL produced no parseable total energy"
 
     _log(
         f"  E = {row.energy_ha!r} Ha   converged={row.converged}   "
@@ -703,7 +709,7 @@ class CrystalParseResult:
 
     __slots__ = (
         "version", "energy_ha", "converged", "n_iter",
-        "band_gap_ev", "error_line",
+        "band_gap_ev", "error_line", "wall_s",
     )
 
     def __init__(self) -> None:
@@ -713,6 +719,7 @@ class CrystalParseResult:
         self.n_iter: Optional[int] = None
         self.band_gap_ev: Optional[float] = None
         self.error_line: str = ""
+        self.wall_s: Optional[float] = None
 
 
 class CrystalEneCycleRecord:
@@ -786,6 +793,13 @@ _ENECYCLE_VALUE_RE = re.compile(
     r"^\s*:::\s+(.+?)\s+(-?\d+(?:\.\d*)?E[+-]?\d+)\s*$",
 )
 _CYC_RE = re.compile(r"^\s*CYC\s+(\d+)\s+ETOT\(AU\)")
+# Only the program END record is total elapsed engine time. Intermediate
+# TELAPSE records and TCPU are not substitutes. Count malformed END records
+# too, so concatenated outputs cannot acquire a seemingly unique valid time.
+_END_TIME_RECORD_RE = re.compile(r"^\s*T{5,}\s+END\b", re.IGNORECASE)
+_END_TIME_RE = re.compile(
+    r"^\s*T{5,}\s+END\s+TELAPSE\s+(\S+)\s+TCPU\b", re.IGNORECASE,
+)
 
 
 def _normalise_enecycle_label(label: str) -> str:
@@ -804,11 +818,26 @@ def parse_crystal_out(text: str) -> CrystalParseResult:
     bottom-of-file value is the canonical converged result). Failure
     mode: ``SCF ENDED - TOO MANY CYCLES`` flips ``converged=False`` but
     the last per-cycle energy is still captured.
+
+    ``wall_s`` is the unique positive finite terminal END TELAPSE value.
+    Missing, malformed or repeated END records leave timing unavailable.
     """
     res = CrystalParseResult()
     last_e = None
     last_iter = None
+    end_records = 0
     for line in text.splitlines():
+        if _END_TIME_RECORD_RE.match(line):
+            end_records += 1
+            m = _END_TIME_RE.match(line)
+            if m:
+                try:
+                    elapsed = float(m.group(1).replace("D", "E").replace("d", "e"))
+                except ValueError:
+                    pass
+                else:
+                    if math.isfinite(elapsed) and elapsed > 0:
+                        res.wall_s = elapsed
         if res.version is None:
             m = _VERSION_RE.search(line)
             if m:
@@ -840,6 +869,8 @@ def parse_crystal_out(text: str) -> CrystalParseResult:
 
     res.energy_ha = last_e
     res.n_iter = last_iter
+    if end_records != 1:
+        res.wall_s = None
     return res
 
 

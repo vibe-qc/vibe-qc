@@ -11,8 +11,11 @@ Keep build work off shared login nodes unless the cluster permits it.
 
 For a cluster without compute-node network access, stage dependency sources
 and Python wheels on an authorized connected host, then transfer them using
-your site's approved process. The generic native dependency helpers expose
-`--fetch-only`; check each helper's `--help` for its supported options.
+your site's approved process. Use
+`VIBEQC_FETCH_ONLY=1 scripts/setup_native_deps.sh` to stage native
+dependency sources without compiling. The standalone source-patch and native
+image-check helpers support Python 3.6 or newer at this bootstrap stage; the
+project runtime still requires the Python version in its installation guide.
 Prepare a wheelhouse for the target Python, platform and CPU baseline. Do not
 assume a wheel that works on a build node also works on an older login node.
 

@@ -25,8 +25,9 @@ writes one frame per step to ``{output}.traj``.
 from __future__ import annotations
 
 from copy import copy
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, contextmanager, suppress
 from contextvars import ContextVar
+from functools import wraps
 from dataclasses import replace
 import math
 import os
@@ -285,6 +286,8 @@ from .output import (
     warn,
     write,
 )
+from .output.refusal import write_preflight_refusal_receipt
+from .output.verdict import verdict_from_result
 from .output._cpp_diagnostics import (
     _progress_handler as _CPP_PROGRESS_HANDLER_SLOT,
 )
@@ -300,6 +303,18 @@ from .output.citations import (
     write_references_block,
 )
 from .output.formats.perf import _format_timing_summary
+from .output.formats.mlip_record import mlip_job_options, mlip_record_fields
+from .output.formats.semiempirical_record import (
+    format_semiempirical_record_section,
+    semiempirical_record_fields,
+)
+from .output.formats.vibrational import (
+    FD_HESSIAN_SURFACES,
+    hessian_surface_lines,
+    hessian_surface_manifest_fields,
+    hessian_unsupported_surface_lines,
+    thermochemistry_energy_labels,
+)
 from .output.plan import _resolve_sidecar_request
 from .perf import PerfScope
 from .perf import perf_log as _perf_log_ctx
@@ -355,6 +370,7 @@ from .structured_log import (
     run_fingerprint,
 )
 from .structured_log import (
+    _resolve_structured_log_target,
     structured_log as _structured_log_ctx,
 )
 
@@ -547,6 +563,28 @@ def _resolve_dispersion(
         f"dispersion must be None, bool, str, or D3BJParams; got "
         f"{type(dispersion).__name__}"
     )
+
+
+class _IAOAugmented:
+    """Preserve the SCF result interface while exposing requested IAO analysis."""
+
+    def __init__(self, scf_result, analysis):
+        self._scf = scf_result
+        self.iao_analysis = analysis
+
+    def __getattr__(self, name):
+        return getattr(self._scf, name)
+
+
+class _CosmoRSAugmented:
+    """Preserve the SCF result interface while exposing a COSMO-RS result."""
+
+    def __init__(self, scf_result, cosmors_result):
+        self._scf = scf_result
+        self.cosmors = cosmors_result
+
+    def __getattr__(self, name):
+        return getattr(self._scf, name)
 
 
 class _DispersionAugmented:
@@ -875,7 +913,7 @@ Method = Literal[
     # CASSCF/CASCI-referenced multireference PT2 (internally-contracted
     # CASPT2 default; strongly-contracted NEVPT2).  Reachable through
     # run_job(method=...) and documented in docs/user_guide/non_hf_solvers.md
-    # + handovers/HANDOVER_MULTIREF.md; listed here so the public method type
+    # + the original investigation; listed here so the public method type
     # matches the documented, dispatched surface.
     "nevpt2",
     "caspt2",
@@ -943,6 +981,15 @@ Method = Literal[
     # Machine-learning interatomic potential -- external pre-trained
     # model (ACEsuit MACE). Routed through vibeqc.mlip.mace.
     "mace",
+    # Double hybrids (#365). These name a complete method -- a hybrid SCF
+    # step plus a scaled MP2 correction on its orbitals -- so they are a
+    # ``method``, not a ``functional``. ``method="rks", functional="b2plyp"``
+    # keeps raising: that spelling asks for the SCF half alone, which is not
+    # the method it names. Routed through vibeqc.run_double_hybrid.
+    "b2plyp",
+    "dsd-pbep86",
+    "revdsd-pbep86",
+    "pwpb95",
 ]
 
 # Machine-learning interatomic potentials (external pre-trained models,
@@ -951,6 +998,14 @@ Method = Literal[
 # pass (maintainer-approved CLAUDE.md Sec.10 extension). Kept as a module
 # constant so the basis-skip sites in run_job stay in sync.
 _MLIP_METHODS = frozenset({"mace"})
+
+# Correlated methods with no analytic optimizer gradient whose ASE calculator
+# (_optimize_geometry's wavefunction_methods set) excludes them, so
+# optimizer_backend="ase" would silently substitute the mean-field surface
+# for optimize=True (GitLab #357). run_job requires an explicit
+# optimizer_backend="native"/"brent" opt-in for these instead of routing
+# them onto that (correct but FD-costly) surface implicitly.
+_CORRELATED_FD_ONLY_OPTIMIZE_METHODS = frozenset({"fci", "nevpt2", "caspt2", "mrci"})
 
 # Routes whose returned result exposes the AO-basis orbitals and density
 # needed by both the Molden and population adapters. Post-SCF methods that
@@ -1339,8 +1394,9 @@ def _detect_scf_accelerator(
     """Return the lower-cased SCFAccelerator route key (``"diis"`` /
     ``"ediis"`` / ``"ediis_diis"`` / ``"kdiis"`` / ``"adiis"`` /
     ``"adiis_diis"`` / ``"r_cdiis"`` / ``"ad_cdiis"``) the resolved SCF
-    executed, or ``None`` when no options struct is in play (post-SCF /
-    non-mean-field methods).
+    executed, ``"opentrustregion"`` when that orbital optimizer actually ran,
+    or ``None`` when no options struct is in play (post-SCF / non-mean-field
+    methods). Returning None selects the citation registry's DIIS default.
 
     The citation router uses this to fire the right SCF-accelerator
     references -- Hu-Yang 2010 for ADIIS, Kollmar 1997 for KDIIS,
@@ -1365,6 +1421,8 @@ def _detect_scf_accelerator(
       below ``diis_start_iter``, ``use_diis=False``, or a driver without the
       field) the configured accelerator is reported.
     """
+    if getattr(getattr(result, "opentrustregion", None), "backend", "") == "opentrustregion":
+        return "opentrustregion"
     opts = options_used
     if opts is None:
         opts = {
@@ -1424,7 +1482,7 @@ def _detect_uses_ecp(
 #: All three describe the same occupied space through different criteria and
 #: are cheap next to the SCF that produced it; Boys is the outlier, and only
 #: on aromatics, where its p=2 functional converges slowly (~89 sweeps on
-#: benzene against IBO's 14). See handovers/HANDOVER_IBO.md.
+#: benzene against IBO's 14).
 DEFAULT_LOCALIZE_METHODS = ("ibo", "boys", "pipek-mezey")
 
 _LOCALIZE_ALIASES = {
@@ -1516,12 +1574,54 @@ def _detect_direct_scf(
     return False
 
 
+def _open_shell_restricted_response_gap(
+    resolved_method: str, tddft_type: str
+) -> Optional[str]:
+    """Return the refusal message for a ``tddft=True`` request that the
+    restricted open-shell references cannot honour, else ``None``.
+
+    The only restricted open-shell response implemented is ROHF TDA/CIS
+    over the doubly-occupied -> virtual space
+    (:func:`vibeqc.tddft.run_tddft_tda_rohf`). Before #361 ``run_job``
+    recognised an ROHF reference by an attribute test that ``ROHFResult``
+    never satisfied (it mirrors ``mo_coeffs_alpha`` / ``mo_coeffs_beta`` as
+    properties), so TDA and Casida on ROHF, and any TDDFT on ROKS, ran the
+    closed-shell code with ``n_occ = n_electrons // 2`` under a
+    closed-shell header. Refuse before the SCF instead of substituting.
+    """
+    if resolved_method not in ("rohf", "roks"):
+        return None
+    if resolved_method == "roks":
+        missing = (
+            "a restricted open-shell Kohn-Sham response kernel "
+            "(ROKS TDA or Casida)"
+        )
+    elif str(tddft_type).strip().lower() != "tda":
+        missing = (
+            "Casida (full linear-response) excitation energies on a "
+            "restricted open-shell reference"
+        )
+    else:
+        return None
+    return (
+        f"tddft=True with method={resolved_method!r}: the only restricted "
+        "open-shell response implemented is ROHF TDA/CIS over the "
+        f"doubly-occupied -> virtual space; this run needs {missing}, "
+        "which is not implemented. Refusing before the SCF rather than "
+        "reporting a closed-shell response on open-shell orbitals "
+        "(issue #361). Use tddft_type='tda' with method='rohf', or a "
+        "UHF/UKS reference."
+    )
+
+
 def _detect_acceleration(
     resolved_method: str,
     rhf_options: Optional[RHFOptions],
     uhf_options: Optional[UHFOptions],
     rks_options: Optional[RKSOptions],
     uks_options: Optional[UKSOptions],
+    rohf_options: Optional[ROHFOptions] = None,
+    roks_options: Optional[ROKSOptions] = None,
 ) -> list[str]:
     """Return the integral/exchange-acceleration technique keys engaged by
     the resolved SCF, for ``assemble(acceleration=...)``.
@@ -1534,14 +1634,16 @@ def _detect_acceleration(
       ``density_fit``), so a lone ``cosx`` flag still maps to RIJCOSX.
 
     Empty list for post-SCF / non-mean-field methods (no options struct in
-    the rhf/uhf/rks/uks map) and for the conventional / direct four-index
-    path (neither density_fit nor cosx set).
+    the rhf/uhf/rks/uks/rohf/roks map) and for the conventional / direct
+    four-index path (neither density_fit nor cosx set).
     """
     opts = {
         "rhf": rhf_options,
         "uhf": uhf_options,
         "rks": rks_options,
         "uks": uks_options,
+        "rohf": rohf_options,
+        "roks": roks_options,
     }.get(resolved_method)
     if opts is None:
         return []
@@ -1560,6 +1662,7 @@ def _detect_soscf_trah(
     uhf_options: Optional[UHFOptions],
     rks_options: Optional[RKSOptions],
     uks_options: Optional[UKSOptions],
+    result=None,
 ) -> tuple[bool, bool]:
     """Return ``(uses_soscf, uses_trah)`` for the resolved SCF.
 
@@ -1567,8 +1670,9 @@ def _detect_soscf_trah(
     options struct (``soscf_threshold`` / ``trah_threshold``): the driver
     switches from Roothaan diagonalisation to the second-order step once the
     orbital-gradient norm drops below it (cpp/src/soscf.hpp, trah.hpp). A
-    threshold of 0.0 (the default) means "never engage" -- no citation. Both
-    False for methods with no options struct.
+    UHF stability recovery can also invoke TRAH after ordinary restarts fail,
+    even when the initial SCF threshold is zero. Its result flag records that
+    use separately from the caller's options.
     """
     opts = {
         "rhf": rhf_options,
@@ -1576,8 +1680,11 @@ def _detect_soscf_trah(
         "rks": rks_options,
         "uks": uks_options,
     }.get(resolved_method)
+    recovery_trah = bool(getattr(result, "stability_trah_used", False))
+    if resolved_method in {"ccm", "seccm"}:
+        return (bool(getattr(result, "orbital_optimization_used", False)), False)
     if opts is None:
-        return (False, False)
+        return (False, recovery_trah)
 
     def _armed(attr: str) -> bool:
         try:
@@ -1585,7 +1692,7 @@ def _detect_soscf_trah(
         except (TypeError, ValueError):
             return False
 
-    return (_armed("soscf_threshold"), _armed("trah_threshold"))
+    return (_armed("soscf_threshold"), _armed("trah_threshold") or recovery_trah)
 
 
 def _detect_level_shift(
@@ -1612,7 +1719,7 @@ def _detect_level_shift(
         "rohf": rohf_options,
         "roks": roks_options,
     }.get(resolved_method)
-    if opts is None:
+    if opts is None or getattr(opts, "orbital_optimizer", "native") == "opentrustregion":
         return False
     try:
         base = float(getattr(opts, "level_shift", 0.0) or 0.0)
@@ -1655,6 +1762,9 @@ def _auto_open_shell_optimizer_trah(
         _positive(attr)
         for attr in ("soscf_threshold", "trah_threshold", "newton_threshold")
     ):
+        return uhf_options, uks_options, False
+
+    if getattr(opts, "orbital_optimizer", "native") != "native":
         return uhf_options, uks_options, False
 
     opts.trah_threshold = 1.0
@@ -1863,6 +1973,8 @@ def _clone_rks_options_for_trah_retry(
     result: object,
 ) -> RKSOptions:
     retry = RKSOptions()
+    retry.orbital_optimizer = opts.orbital_optimizer
+    retry.opentrustregion = opts.opentrustregion
     for attr in (
         "functional",
         "max_iter",
@@ -1938,6 +2050,8 @@ def _clone_rks_options_for_trah_retry(
 
 def _clone_rhf_options_for_sad_retry(opts: RHFOptions) -> RHFOptions:
     retry = RHFOptions()
+    retry.orbital_optimizer = opts.orbital_optimizer
+    retry.opentrustregion = opts.opentrustregion
     for attr in (
         "max_iter",
         "conv_tol_energy",
@@ -2013,6 +2127,8 @@ def _rhf_tail_sad_retry_supported(
 ) -> bool:
     if resolved_method != "rhf" or rhf_options is None:
         return False
+    if getattr(rhf_options, "orbital_optimizer", "native") != "native":
+        return False
     if molecule.multiplicity != 1 or molecule.n_electrons() % 2 != 0:
         return False
     if int(getattr(result, "n_iter", 0) or 0) < 50:
@@ -2054,6 +2170,8 @@ def _rks_tail_trah_retry_supported(
     result: object,
 ) -> bool:
     if resolved_method != "rks" or rks_options is None:
+        return False
+    if getattr(rks_options, "orbital_optimizer", "native") != "native":
         return False
     if molecule.multiplicity != 1 or molecule.n_electrons() % 2 != 0:
         return False
@@ -2491,6 +2609,38 @@ def _detect_scf_guess(
     return _SCF_GUESS_ROUTE_KEYS.get(selection.effective.name.lower())
 
 
+def _resolve_scf_aux_basis(scf_opts, molecule, basis, method: str) -> None:
+    """Resolve the JK auxiliary basis for a density-fitted / RIJCOSX SCF
+    and refuse an aux basis that leaves an orbital centre unfitted.
+
+    A density-fitted / RIJCOSX SCF needs a JK auxiliary basis. If the
+    caller enabled ``density_fit`` or ``cosx`` but left ``aux_basis``
+    empty, auto-resolve the matching JKfit aux from the orbital basis --
+    the same convenience the CCSD RI path provides -- instead of letting
+    the driver reject the run with a bare "density_fit=true requires
+    aux_basis" (release-paper RIJCOSX glycine gap).
+
+    #480: refuse an auxiliary basis with no functions on a centre that
+    carries orbital functions, before any fitted SCF work. The C++ SCF
+    entry points are bound bare (imported from vibeqc/__init__.py before
+    the Python wrappers are defined), so the guard inside those wrappers
+    never runs on the run_job path; check here instead. Shared by the
+    RHF/UHF/RKS/UKS structs and, since #361, by ROHFOptions / ROKSOptions.
+    """
+    from .density_fitting import (
+        guard_aux_coverage_for_options,
+        resolve_default_jk_aux,
+    )
+
+    # No registered default (e.g. pob-* bases) leaves aux_basis empty so
+    # the driver raises its explicit error, which names the fallback.
+    resolve_default_jk_aux(scf_opts, basis)
+
+    guard_aux_coverage_for_options(
+        scf_opts, molecule, basis, route=f"run_job ({method} SCF)"
+    )
+
+
 def _run_single_point(
     method: str,
     molecule: Molecule,
@@ -2526,6 +2676,10 @@ def _run_single_point(
     grid_level: str = "orca-defgrid3",
     _mrpt_gradient: bool = True,
     used_scf_options_out: Optional[dict] = None,
+    integral_engine: object = None,
+    coulomb: object = None,
+    exchange: object = None,
+    symmetry_reduction: object = None,
 ):
     """Single-point dispatcher. ``solvent`` (v0.9.0) reroutes through
     :func:`vibeqc.solvation.run_cpcm_scf` and returns the underlying
@@ -2556,6 +2710,22 @@ def _run_single_point(
             "only, and COSMO with method='msindo'. Run the calculation in "
             "gas phase, or use a solvent-capable method with solvent."
         )
+    if symmetry_reduction is not None:
+        if method not in ("rhf", "uhf") or solvent is not None or dft_plus_u:
+            raise NotImplementedError("Qualified molecular symmetry requires gas-phase RHF/UHF")
+        from .symmetry_molecular_scf import run_symmetry_scf
+        options = rhf_options if method == "rhf" else uhf_options
+        if used_scf_options_out is not None:
+            used_scf_options_out["scf_options"] = options
+        return run_symmetry_scf(method, molecule, basis, options,
+            symmetry_reduction=symmetry_reduction, integral_engine=integral_engine,
+            coulomb=coulomb, exchange=exchange, read_from=read_from, fragments=fragments)
+    _selected_engine_kwargs = {}
+    if any(value is not None for value in (integral_engine, coulomb, exchange)):
+        if method not in ("rhf", "uhf", "rks", "uks") or solvent is not None or dft_plus_u:
+            raise NotImplementedError("Selected integral engines require gas-phase RHF/UHF/RKS/UKS without DFT+U")
+        _selected_engine_kwargs = dict(integral_engine=integral_engine,
+                                       coulomb=coulomb, exchange=exchange)
     method_opts = {
         "rhf": rhf_options or RHFOptions(),
         "uhf": uhf_options or UHFOptions(),
@@ -2593,43 +2763,9 @@ def _run_single_point(
             validate_ecp_required(
                 method_opts[method], molecule, _basis_name
             )
-        # Density-fitted / RIJCOSX SCF needs a JK auxiliary basis. If the
-        # caller enabled density_fit or cosx but left aux_basis empty,
-        # auto-resolve the matching JKfit aux from the orbital basis --
-        # the same convenience the CCSD RI path provides -- instead of
-        # letting the C++ driver reject the run with a bare "density_fit=
-        # true requires aux_basis" (release-paper RIJCOSX glycine gap).
         _scf_opts = method_opts[method]
-        _wants_df = bool(getattr(_scf_opts, "density_fit", False)) or bool(
-            getattr(_scf_opts, "cosx", False)
-        )
-        if _wants_df and not getattr(_scf_opts, "aux_basis", ""):
-            from .density_fitting import default_aux_basis_for
-
-            # basis here is a BasisSet; the resolver takes the orbital-basis
-            # name string.
-            _basis_name = getattr(basis, "name", basis)
-            try:
-                _scf_opts.aux_basis = default_aux_basis_for(
-                    _basis_name, kind="jk"
-                )
-            except Exception:
-                # No registered default (e.g. pob-* bases): leave empty so
-                # the driver raises its explicit aux_basis error, which now
-                # also names the auto-resolve fallback.
-                pass
-
-        # #480: refuse an auxiliary basis with no functions on a centre
-        # that carries orbital functions, before any fitted SCF work.
-        # This module binds the *bare* C++ SCF entry points -- it is
-        # imported from vibeqc/__init__.py before the Python wrappers are
-        # defined -- so the guard inside those wrappers never runs on the
-        # run_job path. Check here instead.
-        from .density_fitting import guard_aux_coverage_for_options
-
-        guard_aux_coverage_for_options(
-            _scf_opts, molecule, basis, route=f"run_job ({method} SCF)"
-        )
+        if not _selected_engine_kwargs:
+            _resolve_scf_aux_basis(_scf_opts, molecule, basis, method)
         # Hand the options object the SCF will actually run with (ECP fields
         # auto-attached above) back to the caller: run_job needs it for every
         # electrostatic property, which must use Z - n_core on ECP atoms
@@ -2637,6 +2773,16 @@ def _run_single_point(
         # reconstruct this object itself.
         if used_scf_options_out is not None:
             used_scf_options_out["scf_options"] = _scf_opts
+
+    if _selected_engine_kwargs:
+        from .manta_scf import run_selected_scf
+        supplied = {"rhf": rhf_options, "uhf": uhf_options,
+                    "rks": rks_options, "uks": uks_options}[method]
+        if supplied is None:
+            method_opts[method].initial_guess = InitialGuess.HCORE
+        return run_selected_scf(method, molecule, basis, method_opts[method],
+            **_selected_engine_kwargs, read_from=read_from, fragments=fragments,
+            grid_level=grid_level)
 
     if method in ("rhf", "uhf", "rks", "uks"):
         _prepare_molecular_special_guess(
@@ -2686,18 +2832,18 @@ def _run_single_point(
     if method == "rohf":
         # Restricted open-shell HF (pure-Python Roothaan driver). Solvent
         # / DFT+U are not yet combined with the ROHF Fock -- gate clearly
-        # rather than silently ignoring them (roadmap: handovers/HANDOVER_ROHF.md).
+        # rather than silently ignoring them.
         if solvent is not None:
             raise NotImplementedError(
                 "Implicit solvation (CPCM) with method='rohf' is not yet "
-                "supported; run ROHF in gas phase or use uhf/rks. See "
-                "handovers/HANDOVER_ROHF.md."
+                "supported; run ROHF in gas phase or use uhf/rks."
             )
         if dft_plus_u:
             raise NotImplementedError(
-                "DFT+U with method='rohf' is not yet supported. See handovers/HANDOVER_ROHF.md."
+                "DFT+U with method='rohf' is not yet supported."
             )
         _rohf_opts = rohf_options or ROHFOptions()
+        _resolve_scf_aux_basis(_rohf_opts, molecule, basis, method)
         if used_scf_options_out is not None:
             used_scf_options_out["scf_options"] = _rohf_opts
         _prepare_molecular_special_guess(
@@ -2711,14 +2857,14 @@ def _run_single_point(
         if solvent is not None:
             raise NotImplementedError(
                 "Implicit solvation (CPCM) with method='roks' is not yet "
-                "supported; run ROKS in gas phase or use uks. See "
-                "handovers/HANDOVER_ROHF.md."
+                "supported; run ROKS in gas phase or use uks."
             )
         if dft_plus_u:
             raise NotImplementedError(
-                "DFT+U with method='roks' is not yet supported. See handovers/HANDOVER_ROHF.md."
+                "DFT+U with method='roks' is not yet supported."
             )
         _roks_opts = roks_options or ROKSOptions()
+        _resolve_scf_aux_basis(_roks_opts, molecule, basis, method)
         if ks_options_need_grid_default(roks_options):
             # ROKSOptions is a pure-Python dataclass whose ``grid`` defaults
             # to None (the driver materialises a default GridOptions when it
@@ -3097,7 +3243,16 @@ def _run_single_point(
                     _cas_rdm1,
                     n_core=n_core,
                     n_active_orb=n_active_orb,
-                    n_elec_total=molecule.n_electrons(),
+                    # The valence count, for the same reason it is used to
+                    # build n_core above: on an ECP reference the replaced
+                    # core is not in the wavefunction, so the occupations
+                    # sum to H.nelec and not to molecule.n_electrons().
+                    # Passing the physical count made the consistency check
+                    # in _cas_natural_orbitals reject a correct partition
+                    # (8 against 18 for H2S/LANL2DZ), which returned None and
+                    # silently dropped the whole wavefunction section from
+                    # the QVF archive (#33).
+                    n_elec_total=n_elec_total,
                 )
                 return SolverResult(
                     energy=sc.e_total,
@@ -3871,16 +4026,22 @@ def _run_mlip(method: str, molecule: Molecule, mlip_options=None):
         from vibeqc.mlip.mace import MACEModel
 
         model = MACEModel(molecule, mlip_options)
-        return _MLIPResult(
-            model.energy(),
-            model.gradient(),
-            method,
-            converged=True,
-            n_iter=1,
-            model_info=model.info,
-            model_options=model.options,
-        )
+        return _result_from_mlip_model(model, method)
     raise ValueError(f"Unhandled MLIP method: {method!r}")
+
+
+def _result_from_mlip_model(model, method):
+    """Evaluate and attribute one geometry on an already loaded MLIP surface."""
+    return _MLIPResult(
+        model.energy(),
+        model.gradient(),
+        method,
+        converged=True,
+        n_iter=1,
+        model_info=model.info,
+        model_options=model.options,
+        weight_identity=model.weight_identity,
+    )
 
 
 class _MLIPResult:
@@ -3899,6 +4060,7 @@ class _MLIPResult:
         n_iter=1,
         model_info=None,
         model_options=None,
+        weight_identity=None,
     ):
         self.energy = energy
         self._gradient = gradient
@@ -3909,6 +4071,7 @@ class _MLIPResult:
         # MaceModelInfo (or None) -- provenance for the MLIP model actually
         # run; used by run_job for the per-model citation + .out/.system.
         self.model_info = model_info
+        self.weight_identity = dict(weight_identity or {})
         # Runtime choices are separate from the immutable model-registry row:
         # two jobs can use the same weights on different devices/dtypes.
         self.model_options = model_options
@@ -3923,18 +4086,15 @@ class _MLIPResult:
         return self._gradient
 
 
-# The DLPNO truncation knobs, ordered as the publications tabulate them --
-# TCutPairs, TCutPNO, TCutMKN (Liakos, Sparta, Kesharwani, Martin & Neese,
-# J. Chem. Theory Comput. 11, 1525 (2015), doi:10.1021/ct501129s, Table 1) --
-# followed by vibe-qc's own additional cutoffs.
-_DLPNO_THRESHOLD_ORDER = (
-    "tcut_pairs",
-    "tcut_pno",
-    "tcut_mkn",
-    "tcut_pairs_weak",
-    "tcut_pno_weak",
-    "tcut_pno_singles",
-    "tcut_tno",
+# The DLPNO provenance helpers (threshold order and settings, executed
+# triples mode, runtime-gated triples citations) live in
+# vibeqc.dlpno.provenance so the periodic front door describes the same
+# engine the same way; the private names stay as aliases.
+from .dlpno.provenance import (  # noqa: E402
+    THRESHOLD_ORDER as _DLPNO_THRESHOLD_ORDER,
+    threshold_settings as _dlpno_threshold_settings,
+    triples_citation_entries as _dlpno_triples_citation_entries,
+    triples_provenance as _dlpno_triples_provenance,
 )
 
 
@@ -4052,59 +4212,42 @@ def _format_dlpno_pno_correction(options, *, label_width: int = 24) -> str:
     return f"  {'PNO MP2 correction':<{label_width}s} = {'on' if flag else 'off'}\n"
 
 
-def _dlpno_threshold_settings(options, provenance) -> dict[str, float]:
-    """Return every cutoff disclosed for the route in artifact order.
+def _format_dlpno_pair_spin_scale(options, *, label_width: int = 24) -> str:
+    """Disclose the open-shell spin-orbital pair threshold scale.
 
-    ``provenance.applied`` owns the published triple and the derived MP2 weak
-    cutoffs. Local CC routes additionally carry solver-specific singles/TNO
-    cutoffs outside that published request. Keeping those settings beside the
-    named provenance makes the human, JSONL, and TOML artifacts mutually
-    reproducible without pretending they are Liakos preset coordinates.
+    ``LocalUCCSDOptions.tcut_pairs_spin_scale`` decides which spin-orbital
+    pairs are screened, and its default moved from 1.0 to 0.25 (#190), so it
+    is part of every open-shell recipe. Empty for routes without it.
     """
 
-    applied = dict(provenance.applied)
-    settings: dict[str, float] = {}
-    for name in _DLPNO_THRESHOLD_ORDER:
-        if name in applied:
-            settings[name] = float(applied[name])
-        elif name in ("tcut_pno_singles", "tcut_tno"):
-            if name == "tcut_tno" and (
-                not bool(getattr(options, "compute_triples", False))
-                or str(getattr(options, "triples_mode", "")).lower()
-                == "exact"
-            ):
-                continue
-            value = getattr(options, name, None)
-            if value is not None:
-                settings[name] = float(value)
-    return settings
+    scale = getattr(options, "tcut_pairs_spin_scale", None)
+    if scale is None:
+        return ""
+    return (
+        f"  {'Pair cut, spin orbital':<{label_width}s} = "
+        f"{float(scale):g} x tcut_pairs\n"
+    )
 
 
-def _dlpno_triples_provenance(options, result=None) -> tuple[str, str]:
-    """Return the executed triples mode and an artifact-safe description."""
+def _format_dlpno_pno_guess(options, result=None, *, label_width: int = 24) -> str:
+    """Disclose the opt-in full local MP2 PNO guess (``pno_guess="lmp2"``).
 
-    if not bool(getattr(options, "compute_triples", False)):
-        return "none", "disabled"
-    if (
-        result is not None
-        and hasattr(result, "triples_executed")
-        and not bool(result.triples_executed)
-    ):
-        return "none", "not executed for this result"
-    raw_mode = getattr(options, "triples_mode", None)
-    mode = str(raw_mode).strip().lower() if raw_mode is not None else "pilot"
-    algorithms = {
-        "local": "DLPNO-(T0), diagonal local occupied-Fock",
-        "t0": "DLPNO-(T0), diagonal local occupied-Fock",
-        "t1": "rotated-occupied (T1) compatibility correction",
-        "t1-iterative": (
-            "experimental dense spin-orbital generalization of Guo Eq. (2), "
-            "iterative local-basis DLPNO-(T1)"
-        ),
-        "exact": "canonical (T) contraction on local amplitudes",
-        "pilot": "dense correctness-pilot (T)",
-    }
-    return mode, algorithms.get(mode, f"unrecognized mode {mode!r}")
+    It changes the PNOs, the weak-pair energies and the truncation
+    correction, so it is part of the recipe. The semicanonical default prints
+    nothing, which keeps every existing record unchanged.
+    """
+
+    if str(getattr(options, "pno_guess", "semicanonical")) != "lmp2":
+        return ""
+    line = f"  {'PNO guess':<{label_width}s} = full local MP2"
+    if result is not None and getattr(result, "n_lmp2_pairs", 0):
+        iters = "/".join(str(int(n)) for n in getattr(result, "lmp2_iterations", ()))
+        line += (
+            f" ({int(result.n_lmp2_pairs)} pairs, iterations {iters}"
+            + ("" if getattr(result, "lmp2_converged", False) else ", NOT CONVERGED")
+            + ")"
+        )
+    return line + "\n"
 
 
 def _format_dlpno_triples(options, result=None, *, label_width: int = 24) -> str:
@@ -4148,6 +4291,21 @@ def _dlpno_manifest_fields(options, provenance) -> dict[str, object]:
             getattr(options, "residual_domain", "") or ""
         ),
         "dlpno_pno_norm": str(getattr(options, "pno_norm", "") or ""),
+        "dlpno_pno_density": str(getattr(options, "pno_density", "") or ""),
+        "dlpno_domain_criterion": str(
+            getattr(options, "domain_criterion", "") or ""
+        ),
+        "dlpno_tcut_do": (
+            float(getattr(options, "tcut_do"))
+            if getattr(options, "domain_criterion", None) == "doi"
+            and getattr(options, "tcut_do", None) is not None
+            else ""
+        ),
+        "dlpno_tcut_pno_diag_scale": (
+            float(getattr(options, "tcut_pno_diag_scale"))
+            if getattr(options, "tcut_pno_diag_scale", None) is not None
+            else ""
+        ),
         "dlpno_pno_correction": (
             ""
             if getattr(options, "pno_correction", None) is None
@@ -4191,7 +4349,7 @@ _FROZEN_CORE_ROUTE_METHODS = frozenset(
 # Routes whose kernels still partition occupied orbitals from the physical
 # electron count. The MP2, CC and DLPNO families left this set on
 # 2026-09-05: they consume ``effective_electron_count`` and the ECP-aware
-# frozen core (handovers/HANDOVER_BASIS_ECP_UNIFICATION.md, M2).
+# frozen core (the original investigation, M2).
 # Empty since 2026-09-07 (#740): OVGF partitions from
 # ``effective_electron_count`` at both its closed- and open-shell sites, so no
 # route is left that removes core electrons in the SCF and then counts the
@@ -4455,37 +4613,6 @@ def _frozen_core_citation_entries(
     if not _uses_published_frozen_core_selector(route_request):
         return ()
     return (_PUBLISHED_FROZEN_CORE_CITATION_KEY,)
-
-
-def _dlpno_triples_citation_entries(
-    method: str,
-    options: object,
-    result=None,
-) -> tuple[str, ...]:
-    """Return both Guo sources only when iterative local ``(T1)`` runs.
-
-    The 2018 closed-shell Eq. (2) keeps occupied triples in the localised
-    basis and iterates their off-diagonal occupied-Fock coupling. The 2020
-    paper is the dedicated open-shell extension. The compatibility ``"t1"``
-    routes instead diagonalise/rotate the occupied space. Static method routes
-    therefore cannot cite either source without over-claiming T0,
-    rotated/canonical, exact, pilot, or skipped executions.
-    """
-    if method != "dlpno-ccsd(t)" or options is None or result is None:
-        return ()
-    from .dlpno.uccsd_local_solver import LocalUCCSDOptions
-
-    if not isinstance(options, LocalUCCSDOptions):
-        return ()
-    if not bool(getattr(result, "triples_executed", False)):
-        return ()
-    mode, _ = _dlpno_triples_provenance(options, result)
-    if mode != "t1-iterative":
-        return ()
-    return (
-        "guo_dlpno_t1_2018",
-        "guo_openshell_dlpno_triples_2020",
-    )
 
 
 def _frozen_core_label(requested: object) -> tuple[str, str]:
@@ -4795,7 +4922,7 @@ def _prepare_dlpno_route_options(
     return prepared_mp2, prepared_ccsd
 
 
-def _format_mlip_provenance(info, options=None) -> str:
+def _format_mlip_provenance(info, options=None, weight_identity=None) -> str:
     """A self-documenting MLIP provenance block for the .out -- which
     external pre-trained model produced these numbers, its license, and
     how to read the (model-specific, reference-shifted) energy."""
@@ -4809,7 +4936,7 @@ def _format_mlip_provenance(info, options=None) -> str:
     elts = f", {info.elements} elements" if info.elements else ""
     body = [
         f"  Model:     {info.key}  ({info.domain}{elts})",
-        f"  Loader:    {info.loader}(model={info.loader_arg!r})",
+        f"  Loader:    {info.loader}(model={info.loader_arg!r})  [registry selector]",
         f"  License:   {lic_note}",
         f"  Training:  {info.training_data}   |   Theory: {info.theory}",
         "  Energy:    model-specific reference-shifted scale -- NOT a",
@@ -4824,6 +4951,13 @@ def _format_mlip_provenance(info, options=None) -> str:
                 f"  Weights:   upstream on-demand cache {mace_cache_root()}",
             ]
         )
+    if weight_identity:
+        body.extend([
+            f"  Checkpoint loader: {weight_identity['loader']}",
+            f"  SHA256:    {weight_identity['sha256']}",
+            f"  Size:      {weight_identity['size_bytes']} checkpoint bytes",
+            f"  Registry:  {weight_identity['registry_url']}",
+        ])
     if info.doi:
         body.append(f"  Reference: doi:{info.doi}  (cited in the .bibtex sibling)")
     body.append(
@@ -5583,6 +5717,99 @@ class _ASEGeometryOptimizationError(RuntimeError):
         )
 
 
+# The molecular optimizers behind ``optimizer_backend="native"`` and
+# ``"brent"``: the wording the .out uses, and the name the manifest event and
+# the ``GeomOptResult`` carry.
+_MOLECULAR_OPTIMIZER_LABELS = {
+    "native": ("native L-BFGS-B", "native_lbfgsb"),
+    "brent": ("Brent steepest-descent", "brent_sd"),
+}
+
+
+def _molecular_opt_max_gradient(opt_result) -> float:
+    """Largest gradient component of a ``MolecularOptimizeResult``, Ha/bohr."""
+    grad = np.asarray(opt_result.gradient, dtype=float)
+    return float(np.max(np.abs(grad))) if grad.size else float("nan")
+
+
+def _molecular_opt_outcome_lines(
+    opt_result, backend: str, gmax_target: float
+) -> str:
+    """The ``.out`` verdict for an ``optimizer_backend="native"|"brent"`` run.
+
+    Says converged or not in words, with the final largest gradient component
+    against the threshold it had to meet, and why the optimizer stopped.
+    """
+    label, _ = _MOLECULAR_OPTIMIZER_LABELS[backend]
+    status = "CONVERGED" if opt_result.converged else "NOT CONVERGED"
+    lines = [
+        f"  Geometry optimization {status}  ({label}, "
+        f"{opt_result.n_iter} iterations)\n",
+        f"  final max|g| = {_molecular_opt_max_gradient(opt_result):.3e} "
+        f"Ha/bohr (threshold {gmax_target:.3e})\n",
+    ]
+    message = getattr(opt_result, "message", "")
+    if message:
+        lines.append(f"  {message}\n")
+    return "".join(lines)
+
+
+def _molecular_opt_failure(
+    opt_result,
+    backend: str,
+    *,
+    gmax_target: float,
+    method: Optional[str],
+    basis: Any,
+    functional: Optional[str],
+):
+    """The error ``run_job`` raises for a native / Brent result, or ``None``.
+
+    A run that did not converge fails, as the ASE and ``geom_opt=`` backends
+    do. The error carries a ``vibeqc.geomopt.GeomOptResult``, the shape the
+    ``geom_opt=`` optimizers return, so a handler does not need to know which
+    backend ran.
+    """
+    if opt_result.converged:
+        return None
+    from .geomopt import GeomOptNotConvergedError
+
+    label, key = _MOLECULAR_OPTIMIZER_LABELS[backend]
+    result = opt_result.to_geomopt_result(
+        key,
+        method=method,
+        basis=basis if isinstance(basis, str) else None,
+        functional=functional,
+    )
+    return GeomOptNotConvergedError(
+        result,
+        f"geometry optimization ({label}) did not converge: "
+        f"{getattr(opt_result, 'message', '') or 'the optimizer stopped before converging'}; "
+        f"final max|g| = {_molecular_opt_max_gradient(opt_result):.3e} Ha/bohr "
+        f"against the {gmax_target:.3e} Ha/bohr threshold. "
+        "The last geometry is in the output files.",
+    )
+
+
+def _optimization_force_record(forces, molecule, *, units, converged):
+    """Retain computed final forces; missing data is never a zero-force claim (#641)."""
+    record = {"converged": bool(converged)}
+    if forces is None:
+        record["forces_unavailable"] = "optimizer did not retain final Cartesian forces"
+        return record
+    try:
+        values = np.asarray(forces, dtype=float)
+    except (TypeError, ValueError):
+        record["forces_unavailable"] = "final Cartesian forces are not numeric"
+        return record
+    count = len(list(molecule.atoms))
+    if values.size != count * 3 or not np.isfinite(values).all():
+        record["forces_unavailable"] = "final Cartesian forces have invalid size or values"
+        return record
+    record["final_forces"] = {"units": units, "values": values.reshape(count, 3).tolist()}
+    return record
+
+
 def _optimize_geometry(
     molecule: Molecule,
     basis_name: str,
@@ -5593,6 +5820,8 @@ def _optimize_geometry(
     fmax: float,
     max_steps: int,
     dispersion_params: Optional[D3BJParams] = None,
+    composite_recipe: Any = None,
+    solvent: Any = None,
     method: str = "rhf",
     cisd_options=None,
     cc3_options=None,
@@ -5614,6 +5843,7 @@ def _optimize_geometry(
     rohf_options: Optional[ROHFOptions] = None,
     mlip_options: Optional[MLIPOptions] = None,
     result_holder: Optional[list] = None,
+    force_holder: Optional[list] = None,
     grid_level: str = "orca-defgrid3",
 ) -> Molecule:
     """Run an ASE/BFGS geometry optimization, writing frames to a .traj file.
@@ -5659,8 +5889,12 @@ def _optimize_geometry(
     # casci / casscf joined 2026-06-12: they previously fell through to the
     # mean-field VibeQC calculator below, so the optimizer silently walked
     # the RHF/RKS surface while the final single point ran the CAS solver.
-    # nevpt2 / caspt2 / mrci / fci still fall through (routing them onto an
-    # FD-on-PT2 surface is a cost/policy call for the maintainer).
+    # nevpt2 / caspt2 / mrci / fci still fall through deliberately: run_job
+    # refuses optimizer_backend="ase" (including the "auto" default) for
+    # these up front with a clear error instead of reaching here (GitLab
+    # #357, decided kind::decision -- opt-in only). The native/brent
+    # backends already walk their correlated FD surface generically via
+    # _evaluate_energy/_run_single_point in molecular_optimize.py.
     wavefunction_methods = {
         "cisd",
         "cc3",
@@ -5672,6 +5906,22 @@ def _optimize_geometry(
         "casci",
         "casscf",
     }
+    if solvent is not None and method not in ("rhf", "uhf", "rks", "uks"):
+        # Only the mean-field CPCM route has a solvated nuclear gradient. Every
+        # other calculator below differentiates a gas-phase energy, and
+        # run_job's final single point would then report a solvated energy at a
+        # gas-phase geometry -- the defect this refusal exists to prevent.
+        raise ValueError(
+            f"run_job(optimize=True, solvent=...) is not supported for "
+            f"method={method!r}: only rhf, uhf, rks and uks have a solvated "
+            f"nuclear gradient (vibeqc.solvation.cpcm_gradient). MSINDO's "
+            f"COSMO route and the semiempirical, MLIP and wavefunction "
+            f"calculators differentiate the gas-phase energy, so the walk "
+            f"would follow the gas-phase surface while the reported energy "
+            f"includes solvation. Optimize in gas phase, or use a mean-field "
+            f"method with solvent."
+        )
+    mlip_model = None
     if method in MOLECULAR_SEMIEMPIRICAL_METHODS:
         atoms.calc = _make_semiempirical_ase_calculator(
             molecule,
@@ -5684,7 +5934,8 @@ def _optimize_geometry(
         # validated the model; MACEModel re-checks (defense in depth).
         from vibeqc.mlip.mace import MACEModel
 
-        atoms.calc = MACEModel(molecule, mlip_options).calculator
+        mlip_model = MACEModel(molecule, mlip_options)
+        atoms.calc = mlip_model.calculator
     elif method == "rohf":
         # ROHF has an analytic gradient (compute_rohf_gradient), so route it
         # through the analytic VibeQC calculator (restricted_open=True) for
@@ -5695,12 +5946,13 @@ def _optimize_geometry(
             multiplicity=molecule.multiplicity,
             restricted_open=True,
             dispersion=dispersion_params,
+            composite=composite_recipe,
             rohf_options=rohf_options,
         )
     elif method in wavefunction_methods or method == "roks":
         # ROKS + the gradient-less wavefunction solvers use the
         # finite-difference force path: ROKS's analytic XC-gradient term is
-        # a later milestone (handovers/HANDOVER_ROHF.md M5b), so geometry optimisation
+        # a later milestone (the original investigation M5b), so geometry optimisation
         # differentiates the (verified) energy numerically. functional is
         # threaded for ROKS.
         atoms.calc = _make_wavefunction_ase_calculator(
@@ -5731,6 +5983,17 @@ def _optimize_geometry(
             multiplicity=molecule.multiplicity,
             functional=functional,
             dispersion=dispersion_params,
+            # Composite 3c recipe: when set, VibeQC applies the full
+            # correction surface (D3-BJ or D4 + gCP [damped/plain] + SRB)
+            # to the forces the BFGS walk follows, replacing the plain
+            # dispersion= path. Without this the optimiser walks the bare
+            # SCF (or SCF+D3-BJ) surface while the run reports the full
+            # composite total at the final geometry.
+            composite=composite_recipe,
+            # The reaction field reaches the forces through the calculator's
+            # own cpcm_gradient wiring; without it the BFGS walk follows the
+            # gas-phase surface while the run reports a solvated energy.
+            solvent=solvent,
             rhf_options=rhf_options,
             uhf_options=uhf_options,
             rks_options=rks_options,
@@ -5791,9 +6054,36 @@ def _optimize_geometry(
             final_max_displacement=final_max_displacement,
             trajectory_path=trajectory_path,
         )
+    if force_holder is not None:
+        # Read only the already evaluated final ASE cache; get_forces could
+        # trigger a new calculation and erase the original evidence boundary.
+        cached_forces = None
+        if atoms.calc is not None and not atoms.calc.check_state(atoms):
+            cached_forces = atoms.calc.results.get("forces")
+        force_holder.append(_optimization_force_record(
+            cached_forces, optimized, units="eV/angstrom", converged=converged
+        ))
     if result_holder is not None:
-        result_holder.append(getattr(atoms.calc, "_last_result", None))
+        if mlip_model is not None:
+            # Keep the optimizer's checkpoint and runtime choices for the
+            # reported single point. A reload could observe a changed cache
+            # file or caller options and silently switch energy surfaces.
+            mlip_model._set_structure(optimized)
+            result_holder.append(_result_from_mlip_model(mlip_model, method))
+        else:
+            result_holder.append(getattr(atoms.calc, "_last_result", None))
     return optimized
+
+
+def _solvation_citation_row(resolved_method: str, solvent, uses_cpcm: bool):
+    """``routes.solvation`` key for run_job's citation plan, or ``None``."""
+    if not uses_cpcm:
+        return None
+    if resolved_method == "msindo":
+        return "cosmo_gepol"
+    from .solvation.driver import solvation_citation_key
+
+    return solvation_citation_key(solvent)
 
 
 def _resolve_optimizer_backend(requested: str) -> str:
@@ -5903,6 +6193,226 @@ def _resolve_route_aux_basis(
     return aux_basis or options_aux or None
 
 
+# Double-hybrid method keys run_job dispatches to vibeqc.run_double_hybrid
+# (#365). Every name here must resolve to an ``is_double_hybrid`` Functional;
+# tests/test_double_hybrid_run_job.py pins that.
+_DOUBLE_HYBRID_METHODS = frozenset(
+    {"b2plyp", "dsd-pbep86", "revdsd-pbep86", "pwpb95"}
+)
+
+# The run_job kwargs the double-hybrid dispatcher actually honours. Anything
+# else the caller sets away from its default is refused rather than dropped:
+# the dispatcher is a separate runner, so a silently ignored ``optimize=True``
+# or ``solvent=`` would report a number for a calculation nobody asked for --
+# the defect class the whole double-hybrid guard exists to prevent. Listing
+# what is carried, rather than what is not, means a kwarg added to run_job
+# later fails closed here until someone decides what it means for this route.
+_DOUBLE_HYBRID_RUN_JOB_KWARGS = frozenset(
+    {
+        "molecule",
+        "basis",
+        "fetch_from_bse",
+        "method",
+        # Redundant on this route -- the method names the functional -- but
+        # checked just below rather than here, so a mismatched pair gets a
+        # message about the mismatch instead of a generic "not carried".
+        "functional",
+        "output",
+        "citations",
+        "output_qvf",
+        "write_molden_file",
+        "write_xyz_file",
+        "write_population_file",
+        "perf_log",
+        "structured_log",
+        "grid_level",
+        "dispersion",
+        "density_fit",
+        "aux_basis",
+        "rks_options",
+        "mp2_options",
+        "num_threads",
+        # Live-console knobs only: all three choose how progress is echoed
+        # to stdout or the logging module while a job runs, and touch
+        # neither the numbers nor the set of files written. The dispatcher
+        # emits no live progress, so they are accepted and have nothing to
+        # act on -- refusing a purely cosmetic request would be noise.
+        "progress",
+        "verbose",
+        "use_logging",
+    }
+)
+
+
+def _refuse_unsupported_double_hybrid_kwargs(
+    method: str, supplied: dict[str, object]
+) -> None:
+    """Refuse run_job kwargs the double-hybrid dispatcher does not carry.
+
+    ``supplied`` is run_job's own locals filtered to its signature, so the
+    comparison is against the live defaults rather than a copy of them that
+    could drift. A parameter whose value cannot be compared (an array-valued
+    option, say) counts as supplied: refusing a kwarg the caller did set is
+    recoverable, silently dropping one is not.
+    """
+    import inspect
+
+    params = inspect.signature(run_job).parameters
+    unsupported = []
+    for name, value in supplied.items():
+        if name in _DOUBLE_HYBRID_RUN_JOB_KWARGS:
+            continue
+        param = params.get(name)
+        if param is None or param.default is inspect.Parameter.empty:
+            continue
+        try:
+            if bool(value == param.default):
+                continue
+        except Exception:  # noqa: BLE001 - uncomparable means "assume set"
+            pass
+        if value is param.default:
+            continue
+        unsupported.append(name)
+
+    if not unsupported:
+        return
+    raise NotImplementedError(
+        f"run_job(method={method!r}): "
+        + ", ".join(sorted(unsupported))
+        + " is not carried by the double-hybrid route. run_job dispatches "
+        "double hybrids to vibeqc.run_double_hybrid, which runs a hybrid SCF "
+        "step plus a scaled MP2 correction and writes the standard sidecars; "
+        "it has no geometry optimizer, Hessian, response, solvation or "
+        "post-SCF-density machinery. Refusing rather than reporting a "
+        "double-hybrid energy from a run that ignored the request. Run the "
+        "SCF half through method='rks'/'uks'/'roks' with a non-double-hybrid "
+        "functional if that feature is what you need."
+    )
+
+
+# The MP2Options fields the double-hybrid dispatcher reads for its MP2 step.
+# Every other field of the caller's object is compared with a fresh
+# MP2Options() and refused when it differs (#365): vibeqc.run_double_hybrid
+# has no parameter to carry it, and the scaling coefficients belong to the
+# functional, not to the caller.
+_DOUBLE_HYBRID_MP2_OPTION_FIELDS = frozenset({"density_fit", "aux_basis"})
+
+
+def _double_hybrid_mp2_knobs(method: str, mp2_options: object) -> tuple[bool, str]:
+    """Return ``(density_fit, aux_basis)`` from ``mp2_options``, refusing the rest.
+
+    ``mp2_options`` is an :class:`MP2Options` or a mapping of its field
+    names. Any field set away from the fresh-object default that is not in
+    ``_DOUBLE_HYBRID_MP2_OPTION_FIELDS`` raises ``NotImplementedError``
+    before any output is planned: the first landing read the two carried
+    knobs with ``getattr`` and dropped ``n_frozen_core``, ``c_os``, ``c_ss``
+    and the rest without a message, so three different requests returned
+    one identical energy under the double-hybrid label (and a mapping lost
+    every field, carried or not). Comparing against the live defaults rather
+    than a hard-coded field list means a field added to the binding later
+    fails closed here until someone decides what it means for this route. A
+    value that cannot be compared counts as set.
+    """
+    from collections.abc import Mapping
+
+    from ._vibeqc_core import MP2Options
+
+    fresh = MP2Options()
+    fields = [
+        name
+        for name in dir(fresh)
+        if not name.startswith("_") and not callable(getattr(fresh, name))
+    ]
+    if isinstance(mp2_options, Mapping):
+        unknown = sorted(str(k) for k in mp2_options if str(k) not in fields)
+        supplied = {name: mp2_options[name] for name in fields if name in mp2_options}
+    else:
+        unknown = []
+        supplied = {name: getattr(mp2_options, name) for name in fields}
+
+    uncarried = [f"{name}={mp2_options[name]!r}" for name in unknown]
+    for name, value in supplied.items():
+        if name in _DOUBLE_HYBRID_MP2_OPTION_FIELDS:
+            continue
+        default = getattr(fresh, name)
+        try:
+            same = bool(value == default)
+        except Exception:  # noqa: BLE001 - uncomparable means "assume set"
+            same = False
+        if not same:
+            uncarried.append(f"{name}={value!r}")
+    if uncarried:
+        raise NotImplementedError(
+            f"run_job(method={method!r}): mp2_options."
+            + ", mp2_options.".join(sorted(uncarried))
+            + " is not carried by the double-hybrid route. The dispatcher "
+            "reads only mp2_options.density_fit and mp2_options.aux_basis "
+            "for its MP2 step; the opposite-spin and same-spin scaling "
+            "coefficients belong to the functional, and "
+            "vibeqc.run_double_hybrid has no frozen-core, precision, memory "
+            "or scratch controls for the correction. Refusing rather than "
+            "reporting a double-hybrid energy from a run that ignored the "
+            "request; the same request spelled frozen_core=True is refused "
+            "for the same reason."
+        )
+    density_fit = supplied.get("density_fit", fresh.density_fit)
+    aux_basis = supplied.get("aux_basis", fresh.aux_basis)
+    return bool(density_fit), str(aux_basis or "")
+
+
+_MOLECULAR_OUTPUT_WRITER: ContextVar[OutputWriter | None] = ContextVar(
+    "vibeqc_molecular_output_writer", default=None,
+)
+
+
+def _molecular_output_lifecycle(func):
+    """Leave a preflight refusal receipt when no writer exists yet (#351).
+
+    ``run_job`` refuses unsupported capability combinations with
+    ``NotImplementedError`` before its output plan opens. Pre-fix those
+    runs left nothing on disk and were indistinguishable from runs never
+    submitted. Mirrors ``periodic_runner._periodic_output_lifecycle``.
+    """
+
+    @wraps(func)
+    def wrapped(molecule, *args, **kwargs):
+        token = _MOLECULAR_OUTPUT_WRITER.set(None)
+        try:
+            return func(molecule, *args, **kwargs)
+        except NotImplementedError as exc:
+            if _MOLECULAR_OUTPUT_WRITER.get() is None:
+                output = kwargs.get("output", "output")
+                try:
+                    write_preflight_refusal_receipt(
+                        output,
+                        error=exc,
+                        job_kind="molecular_scf",
+                        method=kwargs.get("method", "auto"),
+                        basis=kwargs.get("basis"),
+                        functional=kwargs.get("functional"),
+                        record_hostname=bool(
+                            kwargs.get("record_hostname", True)
+                        ),
+                    )
+                except Exception as output_exc:  # noqa: BLE001
+                    # Bookkeeping must never mask the refusal itself.
+                    with suppress(Exception):
+                        warn_output_failure(
+                            output_exc,
+                            stem_sibling(
+                                Path(os.fspath(output)), ".system"
+                            ),
+                            role="manifest",
+                            category=OutputFailureKind.manifest_recording,
+                        )
+            raise
+        finally:
+            _MOLECULAR_OUTPUT_WRITER.reset(token)
+
+    return wrapped
+
+
+@_molecular_output_lifecycle
 def run_job(
     molecule: Molecule,
     *,
@@ -5911,6 +6421,8 @@ def run_job(
     method: Method = "auto",
     functional: Optional[str] = None,
     initial_guess: Optional[object] = None,
+    orbital_optimizer: Optional[str] = None,
+    opentrustregion_options: Optional[object] = None,
     citype: Any = None,
     triples: Any = None,
     output: str | os.PathLike = "output",
@@ -5919,6 +6431,8 @@ def run_job(
     write_molden_file: bool | None = None,
     write_xyz_file: bool = True,
     write_population_file: bool | None = None,
+    iao_analysis: bool = False,
+    iao_bond_threshold: float = 0.05,
     write_cube: Union[bool, str, int, list, tuple, None] = False,
     cube_spacing: float = 0.2,
     cube_padding: float = 4.0,
@@ -5945,6 +6459,10 @@ def run_job(
     num_threads: Optional[int] = None,
     dispersion: DispersionSpec = None,
     solvent: object = None,
+    # COSMO-RS thermodynamics (docs/design_cosmors_run_job.md, M0): a
+    # vibeqc.CosmoRSOptions. Runs the solute as an ideal conductor on the fine
+    # cavity and reports a COSMO-RS solvation free energy.
+    cosmors: Optional[object] = None,
     # ``None`` means "not specified": the SCF stays on the four-index
     # path (the historical ``False`` default) and each post-SCF method
     # keeps its own documented default.  An explicit ``True``/``False``
@@ -5953,6 +6471,10 @@ def run_job(
     density_fit: Optional[bool] = None,
     aux_basis: Optional[str] = None,
     cosx: bool = False,
+    integral_engine: object = None,
+    coulomb: object = None,
+    exchange: object = None,
+    symmetry_reduction: object = None,
     # DFT integration-grid resolution for RKS/UKS/ROKS.  Ignored for HF and
     # semiempirical methods.  Accepts:
     #   "orca-defgrid3" (DEFAULT) — Lebedev-302 + NWChem pruning, matches ORCA
@@ -5982,6 +6504,7 @@ def run_job(
     casscf_options: Optional[CASSCFOptions] = None,
     ccsd_options: Optional["CCSDOptions"] = None,
     ccsd_reference: str = "uhf",
+    reference_contract: str = "all_tested_channels",
     mp2_reference: str = "uhf",
     mp2_options: Optional[MP2Options] = None,
     ump2_options: Optional[UMP2Options] = None,
@@ -6026,7 +6549,7 @@ def run_job(
     # vibe-view renders as a Lewis-structure view and lets the user switch
     # between. ``True``/``None`` selects the default set, ``False``/``"none"``
     # disables it, or pass a specific criterion or sequence of them.
-    # See handovers/HANDOVER_IBO.md.
+    #
     localize: Union[bool, str, Sequence[str], None] = None,
     # TD-DFT excited states + Natural Transition Orbitals (opt-in, QVF-bound).
     tddft: bool = False,
@@ -6115,9 +6638,25 @@ def run_job(
         approximate triples; CCSDT is the dense full iterative
         singles/doubles/triples solver. CC3 requires a closed-shell RHF
         reference.
+
+        The double hybrids ``"b2plyp"``, ``"dsd-pbep86"``,
+        ``"revdsd-pbep86"`` and ``"pwpb95"`` are methods here, not
+        functionals: each names a hybrid SCF step plus a scaled MP2
+        correction on its orbitals, and run_job hands the pair to
+        :func:`vibeqc.run_double_hybrid`, returning a
+        :class:`DoubleHybridResult`. Open shell runs a spin-pure ROKS SCF
+        with a semicanonical RI-ROHF-MP2 doubles-only correction. The
+        route carries the basis, grid, density-fitting, dispersion and
+        output keywords and refuses the rest, so a feature the dispatcher
+        lacks cannot be dropped silently; of ``mp2_options`` it reads only
+        ``density_fit`` and ``aux_basis`` and refuses any other field set
+        away from its default. ``method="rks"`` with a
+        double-hybrid functional still raises: that asks for the SCF half
+        alone, which is not the method it names.
     functional
         XC functional for RKS / UKS (e.g. ``"PBE"``, ``"B3LYP"``). Ignored
-        for HF.
+        for HF, and redundant for a double-hybrid ``method`` (which already
+        names its functional); a conflicting pair raises.
     initial_guess
         High-level SCF initial-guess selector for molecular RHF/UHF/RKS/UKS
         and their post-SCF reference SCFs. Accepts :class:`vibeqc.InitialGuess`
@@ -6197,6 +6736,15 @@ def run_job(
         default) emits it when the selected route exposes a Gaussian AO
         wavefunction. Explicit ``True`` is a guarantee and fails before the
         calculation on an unsupported route; ``False`` disables it.
+    iao_analysis
+        Opt in to molecular determinant IAO charges, spin populations and
+        spin-resolved IAO-Wiberg bond orders. Independent of localization and
+        QVF. The returned result exposes ``.iao_analysis``; text goes to .out
+        and the population text/JSON sidecars when enabled. Unsupported
+        analyses carry an explicit unavailable reason and no physical zeros.
+    iao_bond_threshold
+        Nonnegative text display threshold (default 0.05); the stored dense
+        IAO bond-order matrix is never thresholded.
     write_population_file
         Emit ``{output}.population.{txt,json}``. It follows the same
         capability-aware ``None`` / guaranteed ``True`` / disabled ``False``
@@ -6213,7 +6761,15 @@ def run_job(
         otherwise). See :doc:`/user_guide/trexio`.
     fmax, max_opt_steps
         Optimizer tolerance (eV/Å) and iteration limit. Ignored unless
-        ``optimize=True``.
+        ``optimize=True``. On the ASE, ``optimizer_backend="native"`` and
+        ``"brent"`` backends an optimization that stops short of the
+        tolerance ends the job: the ``.out`` says ``NOT CONVERGED`` with the
+        final largest gradient component, the last geometry is written to the
+        ``.xyz``, the manifest is marked crashed, and a ``RuntimeError`` is
+        raised (``vibeqc.geomopt.GeomOptNotConvergedError`` for the native
+        and Brent backends, which carries the last geometry as ``.system``
+        and the full outcome as ``.result``). The final single point and
+        frequencies do not run.
     memory_override
         If ``False`` (default), the driver estimates peak memory and
         aborts with :class:`InsufficientMemoryError` when the estimate
@@ -6275,12 +6831,38 @@ def run_job(
         retained on ``result.solvent_result.e_gas``. See
         :doc:`/user_guide/solvation` for the full theory and the
         cavity / preset table.
+    cosmors
+        A :class:`vibeqc.CosmoRSOptions` requests a COSMO-RS solvation free
+        energy (Klamt 1998; ideal gas at 1 bar to 1 mol/mol in the solvent)
+        for the solute in the pure solvent whose sigma potential it carries.
+        The solute runs as an ideal conductor (``epsilon=inf``) on the fine
+        cavity at the parameterization's radii; leave ``solvent`` unset and
+        that model is built, or pass a compatible one. The solute's method and
+        basis must be the solvent potential's, which is refused otherwise.
+        Mean-field single points only (rhf/uhf/rks/uks, no optimization).
+        The ``.out`` gets a ``## COSMO-RS`` block and the result a
+        ``cosmors`` attribute (:class:`vibeqc.CosmoRSResult`).
+    integral_engine, coulomb, exchange
+        Optional ``IntegralEngineOptions``, ``CoulombBuildOptions`` and
+        ``ExchangeBuildOptions`` for the experimental molecular engine route.
+        With no keywords, the existing route is unchanged. Selected gas-phase
+        RHF/UHF/RKS/UKS single points retain independent J/K choices through
+        terminal confirmation, RKS READ retries, properties, citations and QVF.
+        Omitted SCF options use HCORE; supplied options must choose HCORE or
+        same-basis READ. Static and IAO properties and closed-shell localization
+        retain the executed provider. Selected RHF/UHF exact/RI sources also
+        support ``geom_opt`` with HCORE starts and the original auxiliary content
+        recentered at each geometry and the final single point. See the MANTA
+        manual for current limits.
     density_fit
         Use density fitting (RI-J) for the Coulomb build and, together
         with ``cosx=True``, the chain-of-spheres (COSX) exchange build
         (RIJCOSX).  When ``True``, the JK auxiliary basis is resolved
         from ``aux_basis`` or autodetected from the orbital basis name
-        (e.g. ``"def2-svp"`` → ``"def2-svp-jk"``).  Reduces SCF wall
+        (e.g. ``"def2-svp"`` → ``"def2-svp-jk"``).  Honoured by every
+        molecular mean-field reference: RHF, UHF, RKS, UKS, ROHF and
+        ROKS (the last two through ``ROHFOptions`` / ``ROKSOptions``,
+        #361).  Reduces SCF wall
         time 10–50× for larger basis sets and cuts CPCM peak memory by
         avoiding the in-core four-index ERI tensor path.
 
@@ -6355,6 +6937,14 @@ def run_job(
         indistinguishable from an untouched grid and is replaced).  Build a
         fresh options object per call, or set the grid yourself, when you
         need different grids from one script.
+    reference_contract
+        Default ``all_tested_channels`` retains the conservative SCF gate.
+        ``real_restricted_cc`` explicitly assesses a real restricted singlet
+        reference for a closed-shell CC single point. Both real stability
+        channels must converge and the internal channel must be stable.
+        External instability remains recorded and ``usable`` stays false;
+        ``reference_usable`` is separate. Complex stability and correlated
+        accuracy are not certified by this option.
     record_hostname
         If ``False``, the per-job ``{output}.system`` manifest writes
         ``hostname = "<redacted>"`` instead of the live hostname. The
@@ -6462,7 +7052,9 @@ def run_job(
         default. Pass ``True`` to emit ``{output}.scf.jsonl``,
         a path-like to write there explicitly, or set the
         ``VIBEQC_STRUCTURED_LOG=path`` env var (which wins when
-        ``structured_log`` is left at ``False``). The format is
+        ``structured_log`` is left at ``False``). When neither is
+        given and ``$VQ_WORKDIR`` is set (a vq job), the log is
+        auto-enabled at ``{output}.scf.jsonl``. The format is
         stable: events are append-only, fields are never renamed
         or removed. See :mod:`vibeqc.structured_log` for the full
         event catalog.
@@ -6487,7 +7079,11 @@ def run_job(
         the Tamm-Dancoff approximation (TDA, default) or the full
         Casida linear-response formalism (tddft_type="casida").
         Requires a converged SCF that produces MO coefficients
-        (RHF/RKS/UHF/UKS).
+        (RHF/RKS/UHF/UKS). An ROHF reference runs ROHF TDA/CIS over the
+        doubly-occupied → virtual space only, labelled ``TDA-ROHF`` in
+        the .out; ``tddft_type="casida"`` on ROHF and any ``tddft=True``
+        on ROKS are refused before the SCF with the missing capability
+        named (#361).
     tddft_n_states
         Number of excited states to compute when ``tddft=True``.
         Default 5.
@@ -6513,7 +7109,9 @@ def run_job(
         When True (and ``tddft=True``), compute Natural Transition
         Orbitals for each TD-DFT excited state and embed paired
         hole/particle NTOs into the QVF archive as
-        ``wavefunction.gto`` sections with ``orbital_kind="natural"``.
+        ``wavefunction.gto`` sections with ``orbital_kind="nto"``, linked
+        to the state in the archive's ``excited_states`` section; the
+        weights lambda_k = sigma_k**2 sum to 1 (QVF spec Sec. 5.3).
         Requires ``output_qvf=True``.
     hessian
         When True, compute harmonic vibrational frequencies via
@@ -6522,8 +7120,75 @@ def run_job(
 
     Returns
     -------
-    The SCF result object (RHFResult / UHFResult / RKSResult / UKSResult).
+    The SCF result object (RHFResult / UHFResult / RKSResult / UKSResult),
+    or a DoubleHybridResult for a double-hybrid ``method``.
     """
+    if reference_contract not in ("all_tested_channels", "real_restricted_cc"):
+        raise ValueError("Unknown reference_contract")
+    if reference_contract == "real_restricted_cc" and (
+        str(method).lower() not in ("ccsd", "ccsd(t)", "dlpno-ccsd", "dlpno-ccsd(t)")
+        or molecule.multiplicity != 1 or optimize or geom_opt is not None or hessian
+    ):
+        raise ValueError("real_restricted_cc requires a closed-shell CC single point")
+
+    if symmetry_reduction is not None:
+        from .symmetry_molecular_job import source_request
+        _symmetry_source_request = source_request(symmetry_reduction)
+        if str(method).strip().lower() not in ("auto", "rhf", "uhf"):
+            raise NotImplementedError("Qualified molecular symmetry in run_job requires RHF/UHF")
+        unqualified = {
+            "other integral engines": any(v is not None for v in (integral_engine, coulomb, exchange)),
+            "geometry derivatives": bool(optimize or geom_opt is not None or hessian),
+            "response": bool(tddft or tddft_gradient or tddft_spectrum or tddft_molden or nto),
+            "atomization": bool(atomization),
+            "correlated selectors": citype is not None or triples is not None,
+            "QTAIM": bool(qtaim),
+            "solvation": solvent is not None or cosmors is not None,
+            "dispersion": dispersion is not None and dispersion is not False,
+            "DFT+U": bool(dft_plus_u),
+            "READ projection/FRAGMO": read_from is not None or fragments is not None,
+            "fitting/COSX": bool(density_fit or aux_basis or cosx),
+            "finite-temperature smearing": bool(smearing_temperature),
+        }
+        refused = [name for name, requested in unqualified.items() if requested]
+        if refused:
+            raise NotImplementedError("Qualified molecular symmetry in run_job does not yet qualify: " + ", ".join(refused))
+    _selected_engine_kwargs = {}
+    if any(value is not None for value in (integral_engine, coulomb, exchange)):
+        from .manta_scf import IntegralEngineOptions, CoulombBuildOptions, ExchangeBuildOptions
+        if geom_opt is not None:
+            optimize = True
+        for value, cls, name in ((integral_engine, IntegralEngineOptions, "integral_engine"),
+                                 (coulomb, CoulombBuildOptions, "coulomb"),
+                                 (exchange, ExchangeBuildOptions, "exchange")):
+            if value is not None and not isinstance(value, cls):
+                raise TypeError(f"{name} must be {cls.__name__}")
+        if str(method).strip().lower() not in ("auto", "rhf", "uhf", "rks", "uks"):
+            raise NotImplementedError("Selected integral engines in run_job require molecular RHF/UHF/RKS/UKS")
+        unqualified = {
+            "geometry optimization without geom_opt": bool(optimize and geom_opt is None),
+            "Hessians": bool(hessian),
+            "TDDFT/response": bool(tddft or tddft_gradient or tddft_spectrum or tddft_molden or nto),
+            "atomization": bool(atomization),
+            "correlated method selectors": citype is not None or triples is not None,
+            "QTAIM": bool(qtaim),
+            "solvation": solvent is not None or cosmors is not None,
+            "dispersion": dispersion is not None and dispersion is not False,
+            "DFT+U": bool(dft_plus_u),
+            "READ projection/FRAGMO": read_from is not None or fragments is not None,
+            "legacy density_fit/aux_basis/COSX": bool(density_fit or aux_basis or cosx),
+            "finite-temperature smearing": bool(smearing_temperature),
+        }
+        refused = [name for name, requested in unqualified.items() if requested]
+        if refused:
+            raise NotImplementedError("Selected integral engines in run_job do not yet qualify: " + ", ".join(refused))
+        _selected_engine_kwargs = dict(integral_engine=integral_engine,
+                                       coulomb=coulomb, exchange=exchange)
+
+    if not isinstance(iao_analysis, bool):
+        raise ValueError("iao_analysis must be True or False")
+    if not np.isfinite(iao_bond_threshold) or iao_bond_threshold < 0:
+        raise ValueError("iao_bond_threshold must be finite and nonnegative")
     enforce_runtime_pin_from_env()
 
     # GitLab #663: whether grid_level applies is decided from the options'
@@ -6564,12 +7229,26 @@ def run_job(
     # the molecule's elements is deliberately NOT a trigger -- that is the
     # coverage guard's refusal, and filling the gap from BSE would put two
     # sources under one basis name with no reviewed provenance for the join.
-    from .basis_fetch import ensure_bases_available, fetch_requested_by_env
+    from .basis_fetch import fetch_requested_by_env
 
     _bse_rendered: tuple = ()
+    _store_records: list = []
     _want_bse = (
         fetch_requested_by_env() if fetch_from_bse is None else bool(fetch_from_bse)
     )
+    # Layers 3 to 5 of the resolution order (vibeqc.basis_store): a record
+    # imported into the user store or sitting in the fetch cache answers a
+    # name the bundle does not, and with the flag the catalogue is consulted.
+    # A bundled name is a complete no-op here.
+    from . import basis_store as _basis_store
+
+    _resolution = _basis_store.resolve(
+        (basis, aux_basis),
+        elements=sorted({int(_a.Z) for _a in molecule.atoms}),
+        fetch=_want_bse,
+    )
+    _store_records = list(_resolution.records)
+    _bse_rendered = tuple(_resolution.fetched)
     if _want_bse:
         # Announced through ``warnings``, not ``output.warn``: the basis has
         # to be resolvable before anything constructs a BasisSet, which is
@@ -6582,10 +7261,6 @@ def run_job(
         # written beside the rendered basis.
         import warnings as _warnings
 
-        _bse_rendered = ensure_bases_available(
-            (basis, aux_basis),
-            elements=sorted({int(_a.Z) for _a in molecule.atoms}),
-        )
         for _rendered in _bse_rendered:
             _warnings.warn(
                 f"vibe-qc basis library: {_rendered.name!r} is not bundled. "
@@ -6620,6 +7295,84 @@ def run_job(
             f"zone, so band structures / DOS / k-meshes are not defined for "
             f"it. Build a PeriodicSystem and use vibeqc.run_periodic_job("
             f"...) for crystals, slabs, and wires."
+        )
+
+    # Double hybrids (#365). Dispatched here, after the wrong-runner and
+    # periodic-kwarg guards and after on-demand basis rendering, but before
+    # run_job builds its own output plan: vibeqc.run_double_hybrid is a
+    # complete runner with its own banner, sidecars and telemetry, so the two
+    # must not both write to the stem. ``method="rks", functional="b2plyp"``
+    # is unaffected and still raises from _refuse_plain_double_hybrid below.
+    _method_key = str(method).strip().lower()
+    if _method_key in _DOUBLE_HYBRID_METHODS:
+        import inspect as _inspect
+
+        _here = locals()
+        _refuse_unsupported_double_hybrid_kwargs(
+            _method_key,
+            {
+                _name: _here[_name]
+                for _name in _inspect.signature(run_job).parameters
+                if _name in _here
+            },
+        )
+        if functional is not None and str(functional).strip().lower() != _method_key:
+            raise ValueError(
+                f"run_job(method={method!r}, functional={functional!r}): a "
+                "double-hybrid method already names its functional. Drop the "
+                "functional= argument."
+            )
+        if num_threads is not None:
+            set_num_threads(int(num_threads))
+        from . import run_double_hybrid as _run_double_hybrid
+
+        # mp2_options carries only the two knobs the dispatcher exposes for
+        # the correction; the scaling coefficients come from the functional
+        # and are not the caller's to set on this route. Every other field
+        # set away from its default is refused here, before any output is
+        # planned (#365): the same request spelled frozen_core=True is
+        # refused above, and accepting it through mp2_options while running
+        # the unmodified method is the silent fall-through that guard exists
+        # to prevent.
+        _mp2_density_fit = True
+        _mp2_aux = ""
+        if mp2_options is not None:
+            _mp2_density_fit, _mp2_aux = _double_hybrid_mp2_knobs(
+                _method_key, mp2_options
+            )
+        # run_job spells "not specified" as None for these three. Its
+        # documented contract is that an unspecified density_fit leaves
+        # every post-SCF method on its own default (DF on both steps here),
+        # and that an unspecified sidecar is written iff the route produces
+        # one -- the double-hybrid route does, from its SCF half. Coercing
+        # None with bool() instead would silently turn DF off and drop the
+        # Molden and population files, so the two entry points would return
+        # different energies for the same request.
+        return _run_double_hybrid(
+            molecule,
+            basis,
+            _method_key,
+            density_fit=True if density_fit is None else bool(density_fit),
+            aux_basis=str(aux_basis or ""),
+            density_fit_mp2=_mp2_density_fit,
+            aux_basis_mp2=_mp2_aux,
+            dispersion=dispersion,
+            rks_options=rks_options,
+            grid_level=grid_level,
+            output=output,
+            citations=citations,
+            output_qvf=output_qvf,
+            write_molden_file=(
+                True if write_molden_file is None else bool(write_molden_file)
+            ),
+            write_xyz_file=write_xyz_file,
+            write_population_file=(
+                True
+                if write_population_file is None
+                else bool(write_population_file)
+            ),
+            perf_log=perf_log,
+            structured_log=structured_log,
         )
 
     output_stem = Path(os.fspath(output))
@@ -6667,25 +7420,13 @@ def run_job(
         _perf_target = Path(os.fspath(perf_log))
 
     # Resolve structured_log target. Default OFF (False) -- only emit
-    # when the caller opts in. Resolution mirrors perf_log:
-    #   True             -> {output}.scf.jsonl
-    #   str/PathLike     -> use verbatim
-    #   False / None     -> defer to VIBEQC_STRUCTURED_LOG env var (or
-    #                       leave disabled if the env var is unset)
-    #   $VQ_WORKDIR set  -> auto-enable to {output}.scf.jsonl even when
-    #                       structured_log=False (v0.24: always-on
-    #                       machine-readable progress for vq)
-    if structured_log is True:
-        _structured_target: Optional[Path] = stem_sibling(output_stem, ".scf.jsonl")
-    elif structured_log is False or structured_log is None:
-        _structured_target = None
-        # Auto-enable when running under vq — the daemon always sets
-        # $VQ_WORKDIR.  Machine-readable progress lets vq status /
-        # monitors show iteration + energy without parsing .out.
-        if os.environ.get("VQ_WORKDIR"):
-            _structured_target = stem_sibling(output_stem, ".scf.jsonl")
-    else:
-        _structured_target = Path(os.fspath(structured_log))
+    # when the caller opts in. Precedence (#303), highest first: an
+    # explicit True / path, then VIBEQC_STRUCTURED_LOG, then the
+    # $VQ_WORKDIR auto-enable, then off. One resolver shared with
+    # run_periodic_job (#384) so the two entry points cannot drift.
+    _structured_target: Optional[Path] = _resolve_structured_log_target(
+        structured_log, output_stem,
+    )
 
     # Resolve crash_dump target. Default ON: dump on failure unless the
     # caller explicitly opts out (or VIBEQC_NO_CRASH_DUMP=1). The
@@ -6796,6 +7537,62 @@ def run_job(
     resolved_method = _select_method(
         method, molecule, functional, ccsd_reference, mp2_reference
     )
+    if symmetry_reduction is not None and resolved_method not in ("rhf", "uhf"):
+        raise NotImplementedError(
+            f"Qualified molecular symmetry resolved to {resolved_method!r}; select RHF/UHF explicitly")
+    if _selected_engine_kwargs or symmetry_reduction is not None:
+        from ._vibeqc_core import SCFMode
+        if method not in ("auto", "rhf", "uhf", "rks", "uks") or resolved_method not in ("rhf", "uhf", "rks", "uks"):
+            raise NotImplementedError(
+                f"Selected integral engines do not yet qualify method={method!r} "
+                f"resolved to {resolved_method!r}; select RHF/UHF/RKS/UKS explicitly")
+        if geom_opt is not None and (resolved_method not in ("rhf", "uhf")
+                or getattr(coulomb, "algorithm", "exact") not in ("exact", "ri")
+                or getattr(exchange, "algorithm", "exact") not in ("exact", "ri")):
+            raise NotImplementedError("Selected integral engines in geometry optimization require RHF/UHF with exact/RI J and K")
+        supplied = {"rhf": rhf_options, "uhf": uhf_options,
+                    "rks": rks_options, "uks": uks_options}
+        cls = {"rhf": RHFOptions, "uhf": UHFOptions,
+               "rks": RKSOptions, "uks": UKSOptions}[resolved_method]
+        original = supplied[resolved_method]
+        selected_opts = cls() if original is None else cls(original)
+        if original is None:
+            selected_opts.initial_guess = InitialGuess.HCORE
+        if selected_opts.scf_mode == SCFMode.AUTO:
+            selected_opts.scf_mode = SCFMode.DIRECT
+        supplied[resolved_method] = selected_opts
+        rhf_options, uhf_options, rks_options, uks_options = (
+            supplied[key] for key in ("rhf", "uhf", "rks", "uks"))
+    # Explicit orbital optimization is a molecular SCF choice. Resolve it
+    # before automatic convergers, retries, memory admission or output setup.
+    _orbital_options = {"rhf": rhf_options, "uhf": uhf_options,
+                        "rks": rks_options, "uks": uks_options}
+    _explicit_otr = any(getattr(o, "orbital_optimizer", "native") == "opentrustregion"
+                        for o in _orbital_options.values() if o is not None)
+    if orbital_optimizer is not None or opentrustregion_options is not None or _explicit_otr:
+        if resolved_method not in _orbital_options or method not in ("auto", "rhf", "uhf", "rks", "uks"):
+            raise ValueError("OpenTrustRegion is available for molecular RHF/UHF/RKS/UKS SCF only; ROHF, spinors, excited-state targeting and correlated orbital optimization require separate adapters")
+        _oo = _orbital_options[resolved_method]
+        if _oo is None:
+            _oo = {"rhf": RHFOptions, "uhf": UHFOptions, "rks": RKSOptions, "uks": UKSOptions}[resolved_method]()
+        if orbital_optimizer is not None:
+            _oo.orbital_optimizer = str(orbital_optimizer).lower()
+        if opentrustregion_options is not None:
+            if _oo.orbital_optimizer != "opentrustregion":
+                raise ValueError("opentrustregion_options requires orbital_optimizer='opentrustregion'")
+            _oo.opentrustregion = opentrustregion_options
+        if _explicit_otr and _oo.orbital_optimizer != "opentrustregion":
+            raise ValueError("OpenTrustRegion was set on options for a different SCF method")
+        if _oo.orbital_optimizer not in ("native", "opentrustregion"):
+            raise ValueError("orbital_optimizer must be native or opentrustregion")
+        if _oo.orbital_optimizer == "opentrustregion":
+            from . import has_opentrustregion
+            if not has_opentrustregion():
+                raise RuntimeError("OpenTrustRegion backend unavailable: use ./scripts/update.sh --dev --with-opentrustregion (or build with -DVIBEQC_ENABLE_OPENTRUSTREGION=ON); see docs/user_guide/opentrustregion.md")
+            if smearing_temperature > 0 or solvent is not None or tddft or tddft_gradient:
+                raise ValueError("OpenTrustRegion requires integer occupations and a ground-state gas-phase SCF; smearing, solvent response and excited-state workflows are unsupported")
+        _orbital_options[resolved_method] = _oo
+        rhf_options, uhf_options, rks_options, uks_options = (_orbital_options[k] for k in ("rhf", "uhf", "rks", "uks"))
     _refuse_molecular_ecp_derivative_request(
         method,
         resolved_method,
@@ -6904,6 +7701,13 @@ def run_job(
             _functional_obj,
             route=resolved_method.upper(),
         )
+
+    if tddft:
+        # #361: ROHF supports TDA only, ROKS has no response kernel. Refuse
+        # before the SCF and before any output file exists.
+        _td_gap = _open_shell_restricted_response_gap(resolved_method, tddft_type)
+        if _td_gap is not None:
+            raise NotImplementedError(_td_gap)
 
     if tddft_gradient:
         # Issue #570: the FD excited-state gradient block below is built from
@@ -7014,7 +7818,29 @@ def run_job(
     #  * unsupported methods combined with optimize=True would burn the
     #    whole gas-phase optimization before the final single point raises.
     # rohf/roks pass through to their dedicated NotImplementedError gates
-    # (handovers/HANDOVER_ROHF.md).
+    # (the original investigation).
+    # COSMO-RS thermodynamics (run_job(cosmors=...); design note
+    # docs/design_cosmors_run_job.md). Validated here, before any SCF: the plan
+    # owns every refusal, and the conductor model it returns *is* the solvent
+    # for the rest of the job, so the gates below and the citation plan see
+    # an ordinary fine-cavity COSMO run.
+    _cosmors_plan = None
+    _cosmors_result = None
+    if cosmors is not None:
+        from .solvation.cosmors.job import plan_cosmors_job
+
+        _cosmors_plan = plan_cosmors_job(
+            cosmors,
+            molecule=molecule,
+            method=method,
+            resolved_method=resolved_method,
+            functional=functional,
+            basis=basis,
+            solvent=solvent,
+            optimize=bool(optimize or geom_opt is not None),
+        )
+        solvent = _cosmors_plan.solvent_model
+
     if solvent is not None:
         _solvent_capable = ("rhf", "uhf", "rks", "uks", "msindo")
         if resolved_method in _solvent_capable and method not in (
@@ -7432,6 +8258,10 @@ def run_job(
     # local (T1) request whose pair space is fully screened must not cite an
     # algorithm that never ran.
     _dlpno_triples_source_entries: tuple[str, ...] = ()
+    # Likewise for the canonical open-shell (T): only an executed UHF- or
+    # ROHF-based (T) cites the spin-orbital expression for a general
+    # single-determinant reference.
+    _cc_triples_source_entries: tuple[str, ...] = ()
 
     # Resolve the process allocation before either scheduler dry-run or real
     # admission. Prepared route options are private clones, so applying the
@@ -7491,9 +8321,10 @@ def run_job(
 
     # Early SECCM gate (fail fast, clean "unavailable" -- not a silent gap):
     # the MSINDO cyclic-cluster route is single-point only through run_job.
-    # gradients (finite-difference) + geometry optimisation live in
-    # msindo_ccm.ccm_gradient_fd / ccm_optimize; analytic CCM gradients and the
-    # run_job optimiser hook are not wired up.
+    # Nuclear gradients exist, finite-difference (msindo_ccm.ccm_gradient_fd)
+    # and analytic (ccm_gradient_analytic, also the gradient of run_seccm's
+    # result); geometry optimisation lives in msindo_ccm.ccm_optimize. Only
+    # the run_job optimiser hook is not wired up.
     if resolved_method == "ccm" and optimize:
         raise NotImplementedError(
             "method='seccm' geometry optimisation is not available through "
@@ -7512,7 +8343,7 @@ def run_job(
             "method='roks': the Hessian finite-differences the analytic "
             "ROKS gradient (needs the molecular XC-gradient term), not yet "
             "implemented (single-point energies + FD geometry optimisation "
-            "work; ROHF Hessians work). Track: handovers/HANDOVER_ROHF.md milestone M5b."
+            "work; ROHF Hessians work)."
         )
 
     # Early MLIP gate (fail fast, before any output / SCF machinery): an
@@ -7522,7 +8353,11 @@ def run_job(
     # MACEModel (defense in depth).
     if resolved_method in _MLIP_METHODS:
         from vibeqc.mlip import MLIPOptions, resolve_model
-        from vibeqc.mlip.mace import element_coverage_error, enforce_academic_license
+        from vibeqc.mlip.mace import (
+            _validate_optimization_controls,
+            element_coverage_error,
+            enforce_academic_license,
+        )
 
         _mlopts = mlip_options or MLIPOptions()
         _minfo = resolve_model(_mlopts.model)
@@ -7530,6 +8365,10 @@ def run_job(
         _ecov = element_coverage_error(_minfo, molecule)
         if _ecov is not None:
             raise ValueError(_ecov)
+        if optimize:
+            max_opt_steps = _validate_optimization_controls(
+                fmax, max_opt_steps, step_option="max_opt_steps",
+            )
 
     # Composite recipes may request D4 dispersion; the D4 path is
     # wired through compute_d4 in the post-SCF block below. A D4
@@ -7637,6 +8476,36 @@ def run_job(
         uks_options.cosx = bool(cosx)
         if aux_basis:
             uks_options.aux_basis = aux_basis
+        # The restricted open-shell drivers read the same three fields
+        # (ROHFOptions.density_fit / cosx / aux_basis; ROKSOptions inherits
+        # them). Before #361 they were left out here, so run_job(method=
+        # "rohf", density_fit=True) accepted the flag and ran the four-index
+        # path with nothing in the output saying so.
+        if rohf_options is None:
+            rohf_options = ROHFOptions()
+        rohf_options.density_fit = True
+        rohf_options.cosx = bool(cosx)
+        if aux_basis:
+            rohf_options.aux_basis = aux_basis
+        if roks_options is None:
+            roks_options = ROKSOptions()
+        roks_options.density_fit = True
+        roks_options.cosx = bool(cosx)
+        if aux_basis:
+            roks_options.aux_basis = aux_basis
+        # Resolve the JK aux here, once, so every consumer of these structs
+        # sees the same name: the single-point path re-checks it together
+        # with the #480 coverage guard, but the optimiser hands the structs
+        # to the ASE calculator and the FD Hessian to bare drivers, and
+        # before #362 both failed with "density_fit=true requires aux_basis"
+        # for a request the single point honoured on its own.
+        from .density_fitting import resolve_default_jk_aux
+
+        for _df_opts in (
+            rhf_options, uhf_options, rks_options, uks_options,
+            rohf_options, roks_options,
+        ):
+            resolve_default_jk_aux(_df_opts, basis)
 
     # Dry-run short-circuit (Phase O3). When ``dry_run=True`` or the
     # ``VIBEQC_DRY_RUN`` env var is set, write a one-shot
@@ -7761,6 +8630,24 @@ def run_job(
         d3_params = None
     else:
         d3_params = _resolve_dispersion(dispersion, functional)
+    # Generic DFT-D4 (#548): the optimizers and the finite-difference Hessian
+    # evaluate D4 at every geometry, as they do D3(BJ), so geometry and
+    # frequencies sit on the surface whose total is reported. Composite 3c
+    # recipes keep their own correction path. The post-SCF block below still
+    # adds D4 to the bare SCF energy exactly once.
+    _d4_surface = None
+    if use_d4 and composite_recipe is None:
+        from .dispersion import D4DispersionSpec
+
+        _d4_surface = D4DispersionSpec(functional or "hf")
+        if (optimize or hessian) and not dftd4_available():
+            raise ImportError(
+                "dispersion='d4' with optimize=True or hessian=True needs the "
+                "optional 'dftd4' package for the D4 gradient at every "
+                "geometry.\n  Install via `pip install -e '.[dispersion]'` or "
+                "`pip install dftd4`."
+            )
+    _geometry_dispersion = d3_params if d3_params is not None else _d4_surface
 
     # Pin the thread count if the caller asked for one; otherwise leave
     # the current state alone. We always query at the end so the output
@@ -7797,11 +8684,38 @@ def run_job(
         # degeneracy is known; the converged result overwrites this late-bound
         # field below.
         _extra_run["rohf_canonicalization"] = "guest-saunders"
+    # COSMO-RS thermodynamics and Direct COSMO-RS are experimental routes;
+    # the manifest carries the uniform marker (docs/methods.md) and names
+    # which part of the job it applies to, since the SCF itself is not.
+    _cosmors_component = None
+    if _cosmors_plan is not None:
+        _cosmors_component = (
+            "cosmors-direct-density"
+            if _cosmors_plan.options.density == "direct" else "cosmors"
+        )
+    elif solvent is not None:
+        from .solvation.driver import resolve_solvent as _resolve_solvent
+
+        try:
+            _sm_status = _resolve_solvent(solvent)
+        except Exception:
+            # An invalid solvent is refused by the solvent gates later;
+            # the manifest stamp is not the place to report it.
+            _sm_status = None
+        if getattr(_sm_status, "variant", None) == "dcosmo-rs":
+            _cosmors_component = "dcosmo-rs"
+    if _cosmors_component is not None:
+        _extra_run["method_status"] = "experimental"
+        _extra_run["experimental_component"] = _cosmors_component
     _output_writer = OutputWriter(
         _output_plan,
         record_hostname=record_hostname,
         extra_run_fields=_extra_run if _extra_run else None,
     )
+    _MOLECULAR_OUTPUT_WRITER.set(_output_writer)
+    # The run-level verdict (#342 #346 #351), built once when the SCF
+    # settles and carried by every writer below; None until then.
+    _run_verdict = None
 
     # [basis_library] -- which basis library actually answered, plus any set
     # rendered on demand. Recorded on every run, not only a fetching one:
@@ -7815,6 +8729,7 @@ def run_job(
         _output_writer.set_basis_library(
             resolved_root=str(_resolved_library) if _resolved_library else "",
             fetched=[_r.manifest_row() for _r in _bse_rendered],
+            records=[_r.manifest_row() for _r in _store_records],
         )
     except Exception:  # pragma: no cover - provenance must never fail a run
         pass
@@ -7859,6 +8774,7 @@ def run_job(
     # ContextVar lookup with no I/O.
     hessian_result = None
     _optimized_single_point_result = None
+    _optimization_record = None
 
     # Install the C++ → Python diagnostics bridge before any
     # computation, so VIBEQC_DIAG / vibeqc::diagnostic() calls in
@@ -8110,10 +9026,16 @@ def run_job(
         plog.info(f"Output file: {out_path}")
 
         # ── Solver selection ───────────────────────────────────────────────
-        if solver not in ("dense", "davidson", "lobpcg"):
+        if solver == "lobpcg":
+            raise NotImplementedError(
+                "run_job does not implement LOBPCG SCF diagonalization; "
+                "use solver='dense' or solver='davidson'. The standalone "
+                "operator API supports explicit real LOBPCG problems."
+            )
+        if solver not in ("dense", "davidson"):
             raise ValueError(
                 f"run_job: solver='{solver}' is not recognised. "
-                f"Supported: 'dense', 'davidson', 'lobpcg'."
+                f"Supported: 'dense', 'davidson'."
             )
         if solver != "dense" and resolved_method in (
             "rhf",
@@ -8123,9 +9045,6 @@ def run_job(
         ):
             # Materialise default options for the molecular C++ SCF path.
             # "davidson" -> use_davidson=True (C++ Davidson backend).
-            # "lobpcg" -> use_davidson=True for now (C++ molecular SCF
-            #   doesn't expose LOBPCG directly; periodic / ROHF drivers
-            #   use the Python solver stack via _scf_diagonalize).
             if resolved_method == "rhf":
                 if rhf_options is None:
                     rhf_options = RHFOptions()
@@ -8248,6 +9167,93 @@ def run_job(
             # Common gradient tolerance (eV/Angstrom -> Ha/bohr).
             _conv_grad = fmax * _EV_PER_ANGSTROM_TO_HA_PER_BOHR
 
+            def _settle_molecular_optimization(
+                opt_result, backend: str, wall_s: float
+            ) -> None:
+                """Report how a native / Brent optimization ended.
+
+                A run that stopped at its step limit, or otherwise short of
+                the gradient threshold, used to fall straight through to
+                "Optimized geometry", the final single point and the
+                frequencies as if it had converged. It now says so in the
+                .out, writes the last geometry, marks the job crashed and
+                raises, as the ASE and ``geom_opt=`` backends do. Returns
+                normally only for a converged run.
+                """
+                failure = _molecular_opt_failure(
+                    opt_result,
+                    backend,
+                    gmax_target=_conv_grad,
+                    method=resolved_method,
+                    basis=basis,
+                    functional=functional,
+                )
+                write(_molecular_opt_outcome_lines(opt_result, backend, _conv_grad))
+                flush()
+                if failure is None:
+                    write("\n  Optimized geometry\n")
+                    write(_geom_summary(molecule) + "\n\n")
+                    flush()
+                    return
+                record(
+                    "geometry_optimization_nonconverged",
+                    f"\n  FATAL: {failure}\n",
+                    level=Level.QUIET,
+                    wall_s=float(wall_s),
+                    optimizer=_MOLECULAR_OPTIMIZER_LABELS[backend][1],
+                    converged=False,
+                    n_steps=int(opt_result.n_iter),
+                    max_steps=int(max_opt_steps),
+                    final_max_gradient_ha_per_bohr=_molecular_opt_max_gradient(
+                        opt_result
+                    ),
+                    target_max_gradient_ha_per_bohr=float(_conv_grad),
+                    message=str(getattr(opt_result, "message", "")),
+                )
+                flush()
+                # The last geometry is the useful diagnostic: write it.
+                if write_xyz_file:
+                    try:
+                        _output_writer.dispatch_role(
+                            "geometry",
+                            only_format="xyz",
+                            molecule=molecule,
+                            energy_ha=None,
+                            raise_on_error=True,
+                        )
+                        write(
+                            "  Last non-converged geometry written to "
+                            f"{stem_sibling(output_stem, '.xyz').name}\n"
+                        )
+                        flush()
+                    except Exception as _xyz_exc:
+                        warn_writer_failure(
+                            _xyz_exc,
+                            stem_sibling(output_stem, ".xyz"),
+                            role="nonconverged_geometry",
+                            category=OutputFailureKind.optional_artifact,
+                            writer=_output_writer,
+                        )
+                try:
+                    _output_writer.crash(
+                        wall_seconds=time.perf_counter() - t_job_start
+                    )
+                except Exception as _crash_exc:
+                    warn_output_failure(
+                        _crash_exc,
+                        _output_writer.manifest_path,
+                        role="manifest_crash_status",
+                        category=OutputFailureKind.manifest_recording,
+                    )
+                _checkpointer.finalize(
+                    "failed",
+                    molecule=molecule,
+                    method=resolved_method,
+                    basis=basis,
+                    functional=functional,
+                )
+                raise failure
+
             # Semi-empirical and MLIP methods must use ASE -- the native
             # L-BFGS-B and Brent backends drive SCF+gradient through the
             # molecular ab-initio code path, not semi-empirical drivers.
@@ -8275,6 +9281,37 @@ def run_job(
                     "requires optimizer_backend='ase'; native and brent "
                     "optimizers use Gaussian-basis wavefunction providers and "
                     f"cannot run method={resolved_method!r}."
+                )
+
+            # GitLab #357: FCI, NEVPT2, CASPT2 and MRCI have no analytic
+            # optimizer path. _optimize_geometry's wavefunction_methods set
+            # (below, used by the ASE calculator) excludes them, so
+            # optimizer_backend="ase" -- and "auto", which resolves to "ase"
+            # whenever ASE is importable, i.e. on every install that followed
+            # the contributor setup docs -- silently drives BFGS on the
+            # mean-field VibeQC calculator instead, reporting a mean-field-
+            # optimized geometry labelled with the correlated method. The
+            # native and brent backends already walk the correct (FD-costly)
+            # surface generically through _evaluate_energy/_run_single_point
+            # (molecular_optimize.py), so require that surface be opted into
+            # explicitly rather than silently substituted.
+            if (
+                geom_opt is None
+                and resolved_method in _CORRELATED_FD_ONLY_OPTIMIZE_METHODS
+                and _opt_backend == "ase"
+            ):
+                raise ValueError(
+                    f"run_job(method={resolved_method!r}, optimize=True) "
+                    "requires optimizer_backend='native' or 'brent'. "
+                    "optimizer_backend='ase' (the 'auto' default whenever ASE "
+                    "is installed) has no correlated-surface calculator for "
+                    f"{resolved_method!r} and would silently optimize the "
+                    f"mean-field surface while reporting it as {resolved_method!r} "
+                    "(GitLab #357). The native/brent backends walk the "
+                    f"correlated {resolved_method!r} surface via finite "
+                    "differences, which is substantially slower than a "
+                    "mean-field optimization -- expect minutes rather than "
+                    "seconds even on a small molecule."
                 )
 
             # ---- geomopt-native path (v0.14+) ----------------------------------
@@ -8312,35 +9349,42 @@ def run_job(
                         if geom_conv_gmax is not None
                         else _conv_grad
                     )
-                    _provider = MolecularSCFProvider(
-                        basis,
-                        method=resolved_method,
-                        functional=functional,
-                        rhf_options=rhf_options,
-                        uhf_options=uhf_options,
-                        rks_options=rks_options,
-                        uks_options=uks_options,
-                        rohf_options=rohf_options, roks_options=roks_options,
-                        # GitLab #663: the provider applies its grid preset to
-                        # an untouched grid; forward run_job's level so an
-                        # explicit "legacy" is not re-defaulted to
-                        # orca-defgrid3 (the SKALA auto-selection already
-                        # marked the grid as chosen when it applied).
-                        grid_level=grid_level,
-                        dispersion_params=d3_params,
-                        solvent=solvent,
-                        cisd_options=cisd_options,
-                        selected_ci_options=selected_ci_options,
-                        dmrg_options=dmrg_options,
-                        v2rdm_options=v2rdm_options,
-                        transcorrelated_options=transcorrelated_options,
-                        casci_options=casci_options,
-                        caspt2_options=caspt2_options,
-                        nevpt2_options=nevpt2_options,
-                        casscf_options=casscf_options,
-                        active_space=active_space,
-                        cas_reference=cas_reference,
-                    )
+                    if _selected_engine_kwargs:
+                        from .manta_geometry import MolecularHFGeometrySource
+                        _selected_options = rhf_options if resolved_method == "rhf" else uhf_options
+                        _provider = MolecularHFGeometrySource(
+                            molecule, basis, method=resolved_method, options=_selected_options,
+                            **_selected_engine_kwargs)
+                    else:
+                        _provider = MolecularSCFProvider(
+                            basis,
+                            method=resolved_method,
+                            functional=functional,
+                            rhf_options=rhf_options,
+                            uhf_options=uhf_options,
+                            rks_options=rks_options,
+                            uks_options=uks_options,
+                            rohf_options=rohf_options, roks_options=roks_options,
+                            # GitLab #663: the provider applies its grid preset to
+                            # an untouched grid; forward run_job's level so an
+                            # explicit "legacy" is not re-defaulted to
+                            # orca-defgrid3 (the SKALA auto-selection already
+                            # marked the grid as chosen when it applied).
+                            grid_level=grid_level,
+                            dispersion_params=_geometry_dispersion,
+                            solvent=solvent,
+                            cisd_options=cisd_options,
+                            selected_ci_options=selected_ci_options,
+                            dmrg_options=dmrg_options,
+                            v2rdm_options=v2rdm_options,
+                            transcorrelated_options=transcorrelated_options,
+                            casci_options=casci_options,
+                            caspt2_options=caspt2_options,
+                            nevpt2_options=nevpt2_options,
+                            casscf_options=casscf_options,
+                            active_space=active_space,
+                            cas_reference=cas_reference,
+                        )
                     _output_writer.update_progress(phase="geom-opt", iteration=0)
                     _opt_result = run_geomopt(
                         molecule,
@@ -8362,6 +9406,15 @@ def run_job(
                     )
                     t_opt = time.perf_counter() - t0
                 molecule = _opt_result.system
+                _gradient = getattr(_opt_result, "gradient", None)
+                _optimization_record = _optimization_force_record(
+                    None if _gradient is None else -np.asarray(_gradient, dtype=float),
+                    molecule, units="Eh/bohr", converged=_opt_result.converged,
+                )
+                if _selected_engine_kwargs:
+                    # The final single point uses the same auxiliary content,
+                    # recentered on the optimized geometry rather than the input.
+                    _selected_engine_kwargs = _provider.scf_keywords(molecule)
                 _ecp_follow_optimized_geometry(molecule)
                 _traj_frames = _opt_result.trajectory_frames or []
                 _traj_energies = _opt_result.trajectory_energies or []
@@ -8378,6 +9431,7 @@ def run_job(
                 flush()
                 t0 = time.perf_counter()
                 _ase_result_holder = []
+                _ase_force_holder = []
                 try:
                     with (
                         plog.stage(
@@ -8400,7 +9454,9 @@ def run_job(
                             trajectory_path=traj_path,
                             fmax=fmax,
                             max_steps=max_opt_steps,
-                            dispersion_params=d3_params,
+                            dispersion_params=_geometry_dispersion,
+                            composite_recipe=composite_recipe,
+                            solvent=solvent,
                             method=resolved_method,
                             cisd_options=cisd_options,
                             cc3_options=cc3_options,
@@ -8422,6 +9478,7 @@ def run_job(
                             rohf_options=rohf_options,
                             mlip_options=mlip_options,
                             result_holder=_ase_result_holder,
+                            force_holder=_ase_force_holder,
                             grid_level=grid_level,
                             roks_options=roks_options,
                         )
@@ -8522,6 +9579,8 @@ def run_job(
                     )
                     raise
                 t_opt = time.perf_counter() - t0
+                if _ase_force_holder:
+                    _optimization_record = _ase_force_holder[0]
                 if _ase_result_holder:
                     _optimized_single_point_result = _ase_result_holder[0]
                 write("  Optimized geometry\n")
@@ -8621,7 +9680,7 @@ def run_job(
                         cas_reference=cas_reference,
                         max_iter=max_opt_steps,
                         conv_tol_grad=_conv_grad,
-                        dispersion_params=d3_params,
+                        dispersion_params=_geometry_dispersion,
                         solvent=solvent,
                         record_trajectory=bool(output_qvf),
                         progress=False,
@@ -8629,13 +9688,15 @@ def run_job(
                     )
                     t_opt = time.perf_counter() - t0
                 molecule = _opt_result.system
+                _gradient = getattr(_opt_result, "gradient", None)
+                _optimization_record = _optimization_force_record(
+                    None if _gradient is None else -np.asarray(_gradient, dtype=float),
+                    molecule, units="Eh/bohr", converged=_opt_result.converged,
+                )
                 _ecp_follow_optimized_geometry(molecule)
                 _traj_frames = _opt_result.trajectory_frames or None
                 _traj_energies = _opt_result.trajectory_energies or None
-
-                write("  Optimized geometry\n")
-                write(_geom_summary(molecule) + "\n\n")
-                flush()
+                _settle_molecular_optimization(_opt_result, "native", t_opt)
 
             elif _opt_backend == "brent":
                 # Brent steepest-descent + line-search backend.
@@ -8682,7 +9743,7 @@ def run_job(
                         cas_reference=cas_reference,
                         max_iter=max_opt_steps,
                         conv_tol_grad=_conv_grad,
-                        dispersion_params=d3_params,
+                        dispersion_params=_geometry_dispersion,
                         solvent=solvent,
                         record_trajectory=bool(output_qvf),
                         progress=False,
@@ -8690,12 +9751,15 @@ def run_job(
                     )
                     t_opt = time.perf_counter() - t0
                 molecule = _opt_result.system
+                _gradient = getattr(_opt_result, "gradient", None)
+                _optimization_record = _optimization_force_record(
+                    None if _gradient is None else -np.asarray(_gradient, dtype=float),
+                    molecule, units="Eh/bohr", converged=_opt_result.converged,
+                )
                 _ecp_follow_optimized_geometry(molecule)
                 _traj_frames = _opt_result.trajectory_frames or None
                 _traj_energies = _opt_result.trajectory_energies or None
-                write("  Optimized geometry\n")
-                write(_geom_summary(molecule) + "\n\n")
-                flush()
+                _settle_molecular_optimization(_opt_result, "brent", t_opt)
             else:
                 raise ValueError(f"Unknown optimizer_backend={_opt_backend!r}")
 
@@ -8941,7 +10005,7 @@ def run_job(
                 # attached), for the Z_eff-aware properties below (#642).
                 _used_scf_options: dict = {}
                 if (
-                    resolved_method == "pm6"
+                    (resolved_method == "pm6" or resolved_method in _MLIP_METHODS)
                     and _optimized_single_point_result is not None
                 ):
                     result = _optimized_single_point_result
@@ -8950,6 +10014,8 @@ def run_job(
                         resolved_method,
                         molecule,
                         basis_obj,
+                        **_selected_engine_kwargs,
+                        symmetry_reduction=symmetry_reduction,
                         functional=functional,
                         rhf_options=rhf_options,
                         uhf_options=uhf_options,
@@ -9021,6 +10087,21 @@ def run_job(
             _prov = getattr(result, "parameter_provenance", None)
             if _prov is not None:
                 _output_writer.update_run_fields(_prov)
+            # DFTB0 / SCC-DFTB: the element pairs whose repulsive is the
+            # A/R^12 placeholder, the same list the model warned about on
+            # stderr, into the .system [run] section (#345); rendered in the
+            # .out and archived in the QVF job spec below.
+            _placeholder_pairs = getattr(result, "placeholder_repulsive_pairs", None)
+            if _placeholder_pairs is not None:
+                _output_writer.update_run_fields(
+                    semiempirical_record_fields(placeholder_pairs=_placeholder_pairs)
+                )
+            # SECCM: the executed dimensional kernel and SCF controls (#249),
+            # so a number in the .system/QVF record binds to what ran.
+            _run_fields = getattr(result, "run_fields", None)
+            if _run_fields:
+                _output_writer.update_run_fields(dict(_run_fields))
+            _output_writer.update_run_fields(mlip_record_fields(result))
         except BaseException as _scf_exc:
             t_scf = time.perf_counter() - t0
             record(
@@ -9090,6 +10171,8 @@ def run_job(
         if (
             not bool(getattr(result, "converged", False))
             and basis_obj is not None
+            and not _selected_engine_kwargs
+            and symmetry_reduction is None
             and _rhf_tail_sad_retry_supported(
                 resolved_method=resolved_method,
                 molecule=molecule,
@@ -9270,7 +10353,12 @@ def run_job(
                         _retry_source_selection = select_initial_guess(
                             molecule, rks_options.initial_guess,
                         )
-                    result = run_rks(molecule, basis_obj, retry_opts)
+                    if _selected_engine_kwargs:
+                        result = _run_single_point("rks", molecule, basis_obj,
+                            functional=functional, rks_options=retry_opts,
+                            grid_level=grid_level, **_selected_engine_kwargs)
+                    else:
+                        result = run_rks(molecule, basis_obj, retry_opts)
                     from ._vibeqc_core import GuessSelection
                     result.guess_selection = GuessSelection(
                         _retry_source_selection.requested,
@@ -9675,12 +10763,13 @@ def run_job(
                 _format_mlip_provenance(
                     result.model_info,
                     getattr(result, "model_options", None),
+                    getattr(result, "weight_identity", None),
                 )
                 + "\n"
             )
         else:
             _scf_energy_label = (
-                "SCF energy"
+                "E_SCF (excl. dispersion)"
                 if d3_params is not None or use_d4 or composite_recipe is not None
                 else "Total energy"
             )
@@ -9713,6 +10802,7 @@ def run_job(
                 # The rows were streamed live as the native SCF produced
                 # them (#482); close the table rather than repeat it.
                 iterations_already_streamed=_scf_rows_streamed,
+                scf_applicable=resolved_method != "dftb0",
                 # A failed SCF has no valid derived properties.  Besides
                 # contradicting the fail-closed error below, evaluating the
                 # default Hirshfeld/Mayer/dipole block can repeat a large
@@ -9728,6 +10818,17 @@ def run_job(
                     + section_header("## Semiempirical parameter identity")
                     + f"  Identity = {_parameter_identity}\n"
                     + f"  SHA-256  = {_parameter_sha256}\n"
+                )
+            if _placeholder_pairs is not None:
+                # DFTB0 / SCC-DFTB: which element pairs ran on the A/R^12
+                # placeholder repulsive (#345), stated in the record a user
+                # reads rather than only on stderr.
+                write(
+                    "\n"
+                    + section_header("## DFTB repulsive qualification")
+                    + format_semiempirical_record_section(
+                        placeholder_pairs=_placeholder_pairs
+                    )
                 )
             # Finite-temperature semiempirical result: the total above is the
             # Mermin free energy at the executed temperature.  Surface the temperature,
@@ -9838,11 +10939,55 @@ def run_job(
                 "MLIP energy evaluated (single forward pass, no SCF); "
                 f"E = {render_energy_labeled(float(getattr(result, 'energy', 0.0)), width=0, precision=10)}"
             )
+        elif resolved_method == "dftb0":
+            # The result's success flag belongs to a single diagonalization,
+            # not to an SCF loop. Keep the terminal lifecycle, but do not
+            # publish an SCF verdict or synthetic convergence event.
+            plog.info(
+                "DFTB0 energy evaluated (single diagonalization, no SCF); "
+                f"E = {render_energy_labeled(float(result.energy), width=0, precision=10)}"
+            )
         else:
+            # One run-level verdict (#342 #346 #351): built once from the
+            # driver result and carried unchanged by .system ([verdict] +
+            # result_status), the structured log, the QVF and the .out.
+            # Recorded before any property or delivery step so a later
+            # failure preserves it (same rule as the periodic runner).
+            _scf_opts_for_verdict = (
+                {
+                    "rhf": rhf_options,
+                    "uhf": uhf_options,
+                    "rks": rks_options,
+                    "uks": uks_options,
+                }.get(resolved_method)
+                if resolved_method in ("rhf", "uhf", "rks", "uks")
+                else None
+            )
+            _run_verdict = verdict_from_result(
+                result,
+                reference_contract=reference_contract,
+                stability_requested=getattr(
+                    _scf_opts_for_verdict, "stability_check", None
+                ),
+                matvec_cap=getattr(
+                    _scf_opts_for_verdict, "stability_davidson_max_iter", None
+                ),
+            )
+            try:
+                _output_writer.set_result_status(_run_verdict.result_status)
+                _output_writer.set_verdict(_run_verdict.as_dict())
+            except Exception as _verdict_exc:
+                warn_output_failure(
+                    _verdict_exc,
+                    _output_writer.manifest_path,
+                    role="manifest_result_status",
+                    category=OutputFailureKind.manifest_recording,
+                )
             _converged_payload: dict[str, object] = {
                 "n_iter": int(getattr(result, "n_iter", 0)),
                 "energy": float(getattr(result, "energy", 0.0)),
                 "converged": bool(getattr(result, "converged", False)),
+                "verdict": _run_verdict.as_dict(),
             }
             if _selected_cpp_scf_attempt is not None:
                 _converged_payload["selected_attempt"] = (
@@ -9933,6 +11078,16 @@ def run_job(
             )
             flush()
             try:
+                _output_writer.set_result_status("not_converged", error=_msg)
+                _output_writer.set_verdict(verdict_from_result(result).as_dict())
+            except Exception as _verdict_exc:
+                warn_output_failure(
+                    _verdict_exc,
+                    _output_writer.manifest_path,
+                    role="manifest_result_status",
+                    category=OutputFailureKind.manifest_recording,
+                )
+            try:
                 _output_writer.crash(wall_seconds=t_scf)
             except Exception as _crash_exc:
                 warn_output_failure(
@@ -9944,6 +11099,7 @@ def run_job(
             _checkpointer.finalize(
                 "failed",
                 molecule=molecule,
+                result=result,
                 method=resolved_method,
                 basis=basis,
                 functional=functional,
@@ -9968,6 +11124,16 @@ def run_job(
                 energy=float(result.energy),
             )
             flush()
+            try:
+                _output_writer.set_result_status("not_converged", error=_msg)
+                _output_writer.set_verdict(verdict_from_result(result).as_dict())
+            except Exception as _verdict_exc:
+                warn_output_failure(
+                    _verdict_exc,
+                    _output_writer.manifest_path,
+                    role="manifest_result_status",
+                    category=OutputFailureKind.manifest_recording,
+                )
             try:
                 _output_writer.crash(wall_seconds=t_scf)
             except Exception as _crash_exc:
@@ -9999,7 +11165,8 @@ def run_job(
         # the energy is an excited SCF solution -- warn loudly on top of
         # the .out verdict line.
         if bool(getattr(result, "internal_instability", False)):
-            _lam_stab = float(getattr(result, "stability_eigenvalue", 0.0))
+            _lam_stab = float(getattr(result, "stability_internal_eigenvalue",
+                                      getattr(result, "stability_eigenvalue", 0.0)))
             _stab_msg = (
                 "SCF INTERNAL INSTABILITY -- the converged solution is "
                 "not a local minimum (lowest orbital-rotation Hessian "
@@ -10014,6 +11181,16 @@ def run_job(
             import warnings as _warnings
 
             _warnings.warn("  WARNING: " + _stab_msg)
+        elif bool(getattr(result, "external_instability", False)):
+            _stab_msg = (
+                "SCF EXTERNAL RHF/RKS-TO-UHF/UKS INSTABILITY -- the real "
+                "spin-breaking channel lowers the SCF energy; this is not "
+                "an internal restricted instability. The general usable gate "
+                "remains false. A real_restricted_cc reference contract, if "
+                "requested, is a separate constrained-reference assessment."
+            )
+            warn(_stab_msg, role="scf_external_instability")
+            flush()
         elif getattr(result, "stability_checked", False) and not getattr(
             result, "stability_analysis_converged", False
         ):
@@ -10047,7 +11224,8 @@ def run_job(
         # enable Fermi-Dirac smearing.
         _CONDUCTING_GAP_THRESHOLD_HA = 1.0e-4
         has_mo_energies = hasattr(result, "mo_energies")
-        if has_mo_energies and bool(getattr(result, "converged", False)):
+        if (has_mo_energies and bool(getattr(result, "converged", False))
+                and getattr(result, "orbital_kind", "canonical") == "canonical"):
             eps = result.mo_energies
             # Determine occupation count for this method.
             n_elec = effective_electron_count(molecule, result)
@@ -10086,7 +11264,7 @@ def run_job(
         # QCISD).  The closed-shell DF kernel is anchored against the
         # in-repo spin-orbital SGWB-1991 reference
         # (tests/test_ccsd_anchor.py, tests/test_cc_variants.py); dense
-        # O(N^6) pilot, small molecules only (see handovers/HANDOVER_CCSD.md).
+        # O(N^6) pilot, small molecules only.
         if (
             method in ("ccsd", "ccsd(t)")
             or method in _BCCD_METHODS
@@ -10242,6 +11420,20 @@ def run_job(
                     cc_result = _run_uccsd_py(molecule, basis_obj, result, cc_opts)
                 else:
                     cc_result = _run_ccsd_py(molecule, basis_obj, result, cc_opts)
+
+            if (
+                cc_opts.compute_triples
+                and _open_shell
+                and str(cc_opts.triples_variant) == "(t)"
+            ):
+                # The UHF- and ROHF-based kernels evaluate the spin-orbital
+                # (T) for a general single-determinant reference (Watts,
+                # Gauss and Bartlett 1993); the closed-shell kernel evaluates
+                # Raghavachari's spatial expression, which the static route
+                # already cites.
+                _cc_triples_source_entries = (
+                    "watts_gauss_bartlett_openshell_triples_1993",
+                )
 
             _cc_triples_memory_mode_used = str(
                 getattr(cc_result, "triples_memory_mode_used", "") or ""
@@ -10684,7 +11876,7 @@ def run_job(
             # #480: refuse an aux basis with no functions on a centre
             # that carries orbital functions, before any fitting work.
             # Not every DLPNO route builds a DensityFitting (the
-            # local_df branch wraps the aux in a SimpleNamespace), so the
+            # local_df branch wraps the aux in LocalFitFactors), so the
             # check belongs at construction rather than downstream.
             _aux_obj = _make_checked_aux(
                 molecule,
@@ -10832,12 +12024,12 @@ def run_job(
                 )
                 with plog.stage("dlpno-mp2", detail=_aux_name), PerfScope("dlpno_mp2"):
                     if bool(getattr(_dlpno_opts, "local_df", False)):
-                        _df = SimpleNamespace(
-                            orbital_basis=basis_obj,
-                            aux_basis=_aux_obj,
-                            aux_basis_name=_aux_name,
-                            n_orb=int(basis_obj.nbasis),
-                            n_aux=int(_aux_obj.nbasis),
+                        # The local fit reads only the bases; the global
+                        # fit is built only if a consumer asks for it.
+                        from vibeqc.dlpno.source import LocalFitFactors
+
+                        _df = LocalFitFactors(
+                            basis_obj, _aux_obj, aux_basis_name=_aux_name
                         )
                     else:
                         _df = _PyDF(basis_obj, _aux_obj, aux_basis_name=_aux_name)
@@ -10925,7 +12117,7 @@ def run_job(
                 )
 
         # Post-SCF DLPNO-CCSD / CCSD(T).
-        #   dlpno-ccsd    -> the reduced-scaling local solver (M3c,
+        #   dlpno-ccsd    -> the PNO-space local solver (M3c,
         #                   vibeqc.dlpno.ccsd_local_solver): pair-PNO
         #                   amplitudes, with each residual contracted in the
         #                   atom-based extended PAO domain and projected back,
@@ -10971,7 +12163,7 @@ def run_job(
             # #480: refuse an aux basis with no functions on a centre
             # that carries orbital functions, before any fitting work.
             # Not every DLPNO route builds a DensityFitting (the
-            # local_df branch wraps the aux in a SimpleNamespace), so the
+            # local_df branch wraps the aux in LocalFitFactors), so the
             # check belongs at construction rather than downstream.
             _aux_obj = _make_checked_aux(
                 molecule,
@@ -10990,7 +12182,7 @@ def run_job(
 
                 # The O(N^6) correctness pilot is opt-in (pass a
                 # DLPNOCCSDPilotOptions); otherwise both variants run the
-                # reduced-scaling local solver, with the local DLPNO-(T) for
+                # PNO-space local solver, with the local DLPNO-(T) for
                 # dlpno-ccsd(t).
                 if isinstance(
                     _dlpno_ccsd_options_for_run, DLPNOCCSDPilotOptions
@@ -11053,7 +12245,7 @@ def run_job(
                         _note = (
                             "  note: O(N^6) correctness pilot "
                             "(max_nbf-capped), explicitly selected; the default "
-                            "uses the reduced-scaling local solver.\n"
+                            "uses the PNO-space local solver.\n"
                         )
                 else:
                     _cc_opts = _dlpno_ccsd_options_for_run
@@ -11100,7 +12292,7 @@ def run_job(
                     cc_result = run_local_dlpno_ccsd(
                         molecule, basis_obj, result, _df, _cc_opts
                     )
-                    _engine = "local reduced-scaling (M3c)"
+                    _engine = "local PNO-space (M3c)"
                     if _is_t:
                         _triples_mode, _triples_algorithm = (
                             _dlpno_triples_provenance(_cc_opts)
@@ -11111,13 +12303,13 @@ def run_job(
                             else "final non-converged amplitudes"
                         )
                         _note = (
-                            "  note: reduced-scaling local solver; "
+                            "  note: PNO-space local solver; "
                             f"{_triples_algorithm} on the {_amplitude_state}. "
                             "Finite local domains remain approximate.\n"
                         )
                     else:
                         _note = (
-                            "  note: reduced-scaling local solver -- full-domain "
+                            "  note: PNO-space local solver -- full-domain "
                             "limit == canonical CCSD (FCI-anchored).\n"
                         )
 
@@ -11145,6 +12337,14 @@ def run_job(
                 {
                     "dlpno_triples_mode": _triples_mode,
                     "dlpno_triples_algorithm": _triples_algorithm,
+                    # The correlation source the engine read
+                    # (vibeqc.dlpno.source); pilots carry none.
+                    "dlpno_source_kind": str(
+                        getattr(cc_result, "source_kind", "") or ""
+                    ),
+                    "dlpno_source_identity": str(
+                        getattr(cc_result, "source_identity", "") or ""
+                    ),
                 }
             )
             _dlpno_triples_source_entries = _dlpno_triples_citation_entries(
@@ -11157,6 +12357,10 @@ def run_job(
                 "dlpno_ccsd_done",
                 variant=method,
                 engine=_engine,
+                source_kind=str(getattr(cc_result, "source_kind", "") or ""),
+                source_identity=str(
+                    getattr(cc_result, "source_identity", "") or ""
+                ),
                 aux_basis=_aux_name,
                 converged=bool(cc_result.converged),
                 n_iter=int(cc_result.n_iter),
@@ -11182,6 +12386,7 @@ def run_job(
                 e_pno_correction=float(
                     getattr(cc_result, "e_pno_correction", 0.0)
                 ),
+                pno_guess=str(getattr(cc_result, "pno_guess", "") or ""),
                 # #689: the extended/full contraction runs once per distinct
                 # (coupling set, extended domain) group; the group count and
                 # the mean contraction dimension size a wave honestly.
@@ -11226,6 +12431,7 @@ def run_job(
                 + _format_dlpno_residual_domain(_cc_opts, label_width=24)
                 + _format_dlpno_pno_norm(_cc_opts, label_width=24)
                 + _format_dlpno_pno_correction(_cc_opts, label_width=24)
+                + _format_dlpno_pno_guess(_cc_opts, cc_result, label_width=24)
                 + _format_frozen_core(
                     cc_result.n_frozen,
                     _dlpno_cc_fc_request,
@@ -11272,7 +12478,7 @@ def run_job(
             if not cc_result.converged:
                 warn("DLPNO-CCSD iteration did not converge", method="dlpno_ccsd")
             # The historical residual_domain="pair" path over-correlates under
-            # PNO truncation (HANDOVER_OPEN_BUGS_V015.md, 2026-08-03). Keep a
+            # PNO truncation (the original investigation, 2026-08-03). Keep a
             # loud note when a caller deliberately opts back into it; the
             # paper's extended domain is the production default.
             if (
@@ -11307,7 +12513,7 @@ def run_job(
 
         # Open-shell DLPNO-CCSD/(T): UHF-reference spin-orbital UCCSD(T).
         #
-        # The production path is the reduced-scaling local solver (M3c,
+        # The production path is the PNO-space local solver (M3c,
         # vibeqc.dlpno.uccsd_local_solver): per-pair PNO residual evaluation,
         # full-domain == canonical UCCSD (pilot-anchored). The O(N^6)
         # correctness pilot is opt-in (pass a DLPNOUCCSDPilotOptions);
@@ -11349,7 +12555,7 @@ def run_job(
             # #480: refuse an aux basis with no functions on a centre
             # that carries orbital functions, before any fitting work.
             # Not every DLPNO route builds a DensityFitting (the
-            # local_df branch wraps the aux in a SimpleNamespace), so the
+            # local_df branch wraps the aux in LocalFitFactors), so the
             # check belongs at construction rather than downstream.
             _aux_obj = _make_checked_aux(
                 molecule,
@@ -11361,7 +12567,7 @@ def run_job(
 
             # The O(N^6) correctness pilot is opt-in (pass a
             # DLPNOUCCSDPilotOptions); otherwise both variants run the
-            # reduced-scaling local solver, with the local DLPNO-(T) for
+            # PNO-space local solver, with the local DLPNO-(T) for
             # dlpno-ccsd(t).
             if isinstance(
                 _dlpno_ccsd_options_for_run, DLPNOUCCSDPilotOptions
@@ -11416,7 +12622,7 @@ def run_job(
                         if _is_t
                         else ""
                     )
-                    + "; the default route uses the reduced-scaling local "
+                    + "; the default route uses the PNO-space local "
                     "solver.\n"
                 )
             else:
@@ -11458,19 +12664,19 @@ def run_job(
                     cc_result = run_local_dlpno_uccsd(
                         molecule, basis_obj, result, _df, _cc_opts
                     )
-                _engine = "local reduced-scaling (M3c)"
+                _engine = "local PNO-space (M3c)"
                 if _is_t:
                     _triples_mode, _triples_algorithm = (
                         _dlpno_triples_provenance(_cc_opts)
                     )
                     _note = (
-                        "  note: reduced-scaling local solver; "
+                        "  note: PNO-space local solver; "
                         f"{_triples_algorithm} on the converged amplitudes. "
                         "Finite local domains remain approximate.\n"
                     )
                 else:
                     _note = (
-                        "  note: reduced-scaling local solver -- full-domain "
+                        "  note: PNO-space local solver -- full-domain "
                         "limit == canonical UCCSD (pilot-anchored).\n"
                     )
 
@@ -11503,7 +12709,7 @@ def run_job(
                     "triples"
                 )
                 _note = (
-                    "  note: reduced-scaling local UCCSD phase; "
+                    "  note: PNO-space local UCCSD phase; "
                     f"{_triples_algorithm} on the converged amplitudes. "
                     "The triples phase is dense and max_nbf-capped.\n"
                 )
@@ -11511,6 +12717,14 @@ def run_job(
                 {
                     "dlpno_triples_mode": _triples_mode,
                     "dlpno_triples_algorithm": _triples_algorithm,
+                    # The correlation source the engine read
+                    # (vibeqc.dlpno.source); pilots carry none.
+                    "dlpno_source_kind": str(
+                        getattr(cc_result, "source_kind", "") or ""
+                    ),
+                    "dlpno_source_identity": str(
+                        getattr(cc_result, "source_identity", "") or ""
+                    ),
                 }
             )
             _dlpno_triples_source_entries = _dlpno_triples_citation_entries(
@@ -11522,6 +12736,10 @@ def run_job(
                 "dlpno_uccsd_done",
                 variant=method,
                 engine=_engine,
+                source_kind=str(getattr(cc_result, "source_kind", "") or ""),
+                source_identity=str(
+                    getattr(cc_result, "source_identity", "") or ""
+                ),
                 aux_basis=_aux_name,
                 converged=bool(cc_result.converged),
                 n_iter=int(cc_result.n_iter),
@@ -11572,6 +12790,7 @@ def run_job(
                 )
                 + _format_dlpno_residual_domain(_cc_opts, label_width=24)
                 + _format_dlpno_pno_norm(_cc_opts, label_width=24)
+                + _format_dlpno_pair_spin_scale(_cc_opts, label_width=24)
                 + _format_frozen_core(
                     cc_result.n_frozen,
                     _dlpno_cc_fc_request,
@@ -11925,6 +13144,42 @@ def run_job(
                 )
                 flush()
 
+        # COSMO-RS solvation free energy on the converged conductor run
+        # (run_job(cosmors=...)). Every refusal happened before the SCF; what
+        # is left is the library chain on this one surface, so a failure here
+        # is a defect and propagates rather than being turned into a warning.
+        if _cosmors_plan is not None:
+            from .solvation.cosmors.job import render_cosmors_block
+
+            _cosmors_result = _cosmors_plan.compute(result.solvent_result)
+            record(
+                "cosmors",
+                "\n"
+                + section_header(
+                    f"## COSMO-RS ({_cosmors_result.parameterization}, "
+                    f"{_cosmors_result.temperature_k:.2f} K)"
+                )
+                + render_cosmors_block(_cosmors_result)
+                + "\n",
+                dg_solv_kcal=_cosmors_result.dg_solv,
+                mu_solvent_kcal=_cosmors_result.mu_solvent.total,
+                mu_gas_kcal=_cosmors_result.mu_gas,
+                n_ring_atoms=_cosmors_result.n_ring_atoms,
+                temperature_k=_cosmors_result.temperature_k,
+                parameterization=_cosmors_result.parameterization,
+                solute_protocol=_cosmors_result.solute_protocol,
+                solvent_protocol=_cosmors_result.solvent_protocol,
+                fraction_outside_grid=_cosmors_result.fraction_outside_grid,
+                solvent_name=_cosmors_result.solvent_name,
+                solvent_source=_cosmors_result.solvent_source,
+                ring_atoms_perceived=_cosmors_result.ring_atoms_perceived,
+                density=_cosmors_result.density,
+                direct_minus_gas_kcal=_cosmors_result.direct_minus_gas,
+                ln_gamma_inf=_cosmors_result.ln_gamma_inf,
+            )
+            flush()
+            result = _CosmoRSAugmented(result, _cosmors_result)
+
         # Capture a correlated method total before additive corrections wrap
         # the result. MP2, CC, and DLPNO wrappers preserve ``energy`` as the
         # SCF component and expose the method total through ``energy_total``.
@@ -12125,6 +13380,24 @@ def run_job(
         # screen-scrape the .out for charges + bond orders + dipole.
         # The matching block stays in .out for human reading; the
         # .txt + .json siblings are the machine-readable form.
+        _iao_analysis = None
+        if iao_analysis:
+            from vibeqc.iao_population import analyse_iao
+            from vibeqc.output.formats.population import format_iao_analysis
+
+            _iao_analysis = analyse_iao(
+                result, basis_obj, molecule,
+                method=resolved_method if method == "auto" else method,
+                uses_ecp=_detect_uses_ecp(
+                    rhf_options, uhf_options, rks_options, uks_options,
+                    result=result,
+                ),
+            )
+            write("\n" + format_iao_analysis(
+                _iao_analysis, bond_threshold=iao_bond_threshold,
+            ))
+            flush()
+
         _population_summary = None
         _population_written = False
         if write_population_file and (
@@ -12158,7 +13431,14 @@ def run_job(
                             basis_obj,
                             molecule,
                             nuclear_charges=_nuclear_charges_used,
+                            iao_analysis=_iao_analysis,
+                            iao_bond_threshold=iao_bond_threshold,
                         )
+                    if _iao_analysis is not None:
+                        _population_summary.iao_analysis = _iao_analysis
+                        _population_summary.iao_bond_threshold = iao_bond_threshold
+                        if not _iao_analysis.available:
+                            _population_summary.unavailable["iao"] = _iao_analysis.unavailable_reason
                     _output_writer.dispatch_role(
                         "population",
                         result=result,
@@ -12412,6 +13692,22 @@ def run_job(
                     "seccm_dimension": None,
                     "seccm_electrostatics_kernel": None,
                 }
+                from .manta_scf import molecular_engine_provenance
+                _engine_evidence = molecular_engine_provenance(result)
+                if symmetry_reduction is not None:
+                    _citation_route_kwargs["numerics"] = result.citation_numerics
+                if _engine_evidence is not None:
+                    _citation_route_kwargs["uses_integrals"] = "libint" in (
+                        _engine_evidence["one_electron_provider"],
+                        _engine_evidence["coulomb_provider"],
+                        _engine_evidence["exchange_provider"],
+                        _engine_evidence["bupo_near_provider"],
+                    )
+                    _citation_route_kwargs["extra_methods"] = _engine_evidence["citation_methods"]
+                    if _used_geomopt_optimizer and _engine_evidence["one_electron_provider"] == "manta":
+                        _fitted_gradient = "ri" in (_engine_evidence["coulomb_algorithm"], _engine_evidence["exchange_algorithm"])
+                        _citation_route_kwargs["extra_methods"].append(
+                            "manta_ri_hf_gradient" if _fitted_gradient else "manta_hf_gradient")
                 _semiempirical_citation_plan = (
                     getattr(result, "route_plan", None)
                     if resolved_method in SEMIEMPIRICAL_METHODS
@@ -12569,6 +13865,8 @@ def run_job(
                     uhf_options,
                     rks_options,
                     uks_options,
+                    rohf_options,
+                    roks_options,
                 )
                 # Second-order convergers (SOSCF / TRAH) cite their defining
                 # papers when armed by a positive threshold.
@@ -12578,6 +13876,7 @@ def run_job(
                     uhf_options,
                     rks_options,
                     uks_options,
+                    result=result,
                 )
                 # Saunders-Hillier level shift (opts.level_shift or an
                 # explicit level_shift_schedule) is a cited convergence
@@ -12673,6 +13972,8 @@ def run_job(
                             and not _population_summary.errors.get(_section)
                         ):
                             _props.append(_route)
+                if _iao_analysis is not None and _iao_analysis.available:
+                    _props.append("iao_wiberg")
                 if nto:
                     _props.append("nto")
                 if qtaim:
@@ -12710,15 +14011,28 @@ def run_job(
                     uses_cpcm=_uses_cpcm,
                     # MSINDO COSMO uses its GEPOL cavity (+ Silla 1991); the
                     # HF/DFT Lebedev path keeps the default "cpcm" bundle.
-                    solvent_variant=(
-                        "cosmo_gepol"
-                        if (_uses_cpcm and resolved_method == "msindo")
-                        else None
+                    # MSINDO's GEPOL COSMO, or the HF/DFT model that actually
+                    # ran -- variant and cavity -- so a fine-cavity job does
+                    # not cite the Lebedev treatment it never used.
+                    solvent_variant=_solvation_citation_row(
+                        resolved_method, solvent, _uses_cpcm
+                    ),
+                    # COSMO-RS thermodynamics evaluated on the conductor run,
+                    # or on the Direct COSMO-RS density (Klamt 2015 eq. 9).
+                    extra_solvation=(
+                        ()
+                        if _cosmors_result is None
+                        else ("cosmors", "dcosmors_solvation")
+                        if _cosmors_result.density == "direct"
+                        else ("cosmors",)
                     ),
                     # #701: the pair-density convention the PNO cut used.
                     # "legacy" is vibe-qc's own and has no route row.
                     pno_norm=_dlpno_pno_norm or None,
-                    direct_scf=_uses_direct,
+                    # The selected consumers currently perform unscreened
+                    # builds. The legacy direct-SCF route also cites Schwarz
+                    # screening, which these receipts explicitly exclude.
+                    direct_scf=_uses_direct and _engine_evidence is None and symmetry_reduction is None,
                     dft_plus_u=bool(dft_plus_u),
                     acceleration=_accel,
                     uses_soscf=_uses_soscf,
@@ -12743,6 +14057,7 @@ def run_job(
                         *_semiempirical_extra_entries,
                         *_frozen_core_source_entries,
                         *_dlpno_triples_source_entries,
+                        *_cc_triples_source_entries,
                     ),
                     **_citation_route_kwargs,
                 )
@@ -12791,11 +14106,24 @@ def run_job(
                     plog.stage("write_xyz", detail=str(xyz_path.name)),
                     PerfScope("write_xyz"),
                 ):
+                    # Name what that energy is. ``result.energy`` is the
+                    # SCF result's, and _select_method has already collapsed
+                    # a correlated request to its mean-field reference, so
+                    # for method="mp2" this number is RHF's (#360). Without
+                    # the tags the file said nothing, and an MP2 job's .xyz
+                    # was byte-identical to an RHF job's.
+                    _xyz_method = (
+                        resolved_method
+                        if str(_effective_method).lower() in ("auto", "")
+                        else str(_effective_method)
+                    )
                     _output_writer.dispatch_role(
                         "geometry",
                         only_format="xyz",
                         molecule=molecule,
                         energy_ha=(None if energy_ha != energy_ha else energy_ha),
+                        energy_method=resolved_method,
+                        method=_xyz_method,
                         raise_on_error=True,
                     )
                 write(f"  Final geometry written to {xyz_path.name}\n")
@@ -12872,6 +14200,8 @@ def run_job(
                     role="structured_log_properties",
                     category=OutputFailureKind.compatibility_fallback,
                 )
+            if _iao_analysis is not None:
+                _props_payload["iao"] = _iao_analysis.to_dict()
             if _props_payload:
                 _slog.emit("properties", **_props_payload)
 
@@ -12919,7 +14249,41 @@ def run_job(
             )
         # --- Harmonic vibrational analysis (finite-difference Hessian) ---
         _thermo_result_for_qvf = None
+        # Generic D4 is differentiated with the SCF gradient (#548); every
+        # record of the surface (.out, .system, .qvf) names it.
+        _hess_dispersion_label = (
+            "D4" if _d4_surface is not None and resolved_method not in {"om2", "om3"}
+            else None
+        )
         if hessian:
+            # Which surface a Hessian describes is not a detail: _select_method
+            # has already collapsed a correlated request down to its mean-field
+            # reference (method="mp2" -> "rhf"), and compute_hessian_fd
+            # differentiates that reference. Record the surface in the manifest
+            # before anything is printed, so a job that skips or fails still
+            # says which surface was asked for. vibeqc.output owns the wording.
+            _hess_surface_supported = resolved_method in FD_HESSIAN_SURFACES
+            try:
+                _output_writer.set_hessian(
+                    hessian_surface_manifest_fields(
+                        requested_method=method,
+                        resolved_method=resolved_method,
+                        functional=functional,
+                        basis=str(basis),
+                        dispersion=_hess_dispersion_label,
+                        available=_hess_surface_supported,
+                    )
+                )
+            except Exception as _hess_manifest_exc:  # noqa: BLE001
+                # Provenance, not results: a manifest write must not tank a
+                # converged job. It must not fail silently either -- the whole
+                # point of the section is that a reader can trust it is there.
+                warn(
+                    f"Hessian surface not recorded in the manifest: "
+                    f"{type(_hess_manifest_exc).__name__}: "
+                    f"{_hess_manifest_exc}",
+                    role="manifest",
+                )
             _scf_converged = bool(getattr(result, "converged", False))
             if not _scf_converged:
                 write(
@@ -12929,13 +14293,31 @@ def run_job(
                 )
                 flush()
             elif (
-                resolved_method in SEMIEMPIRICAL_METHODS
-                or resolved_method in _MLIP_METHODS
+                (resolved_method in SEMIEMPIRICAL_METHODS
+                 or resolved_method in _MLIP_METHODS)
+                and not _hess_surface_supported
             ):
                 write(
                     "\n  ## Vibrational Frequencies\n"
                     "  SKIPPED -- finite-difference Hessians are currently "
-                    "available only for Gaussian-basis molecular methods.\n\n"
+                    "available for Gaussian-basis molecular methods and "
+                    "molecular OM2/OM3 only.\n\n"
+                )
+                flush()
+            elif not _hess_surface_supported:
+                # A correlated method that does NOT collapse to a mean-field
+                # reference (casscf, cisd, caspt2, fci, ...) has no surface
+                # compute_hessian_fd can differentiate. Say that plainly here
+                # rather than letting its ValueError land in the block below as
+                # "FAILED: ValueError: FD Hessian: unknown method 'CASSCF'".
+                write(
+                    "\n"
+                    + section_header("## Vibrational Frequencies")
+                    + hessian_unsupported_surface_lines(
+                        requested_method=method,
+                        resolved_method=resolved_method,
+                    )
+                    + "\n"
                 )
                 flush()
             else:
@@ -12966,29 +14348,53 @@ def run_job(
                             "uks": uks_options,
                             "rohf": rohf_options,
                         }.get(resolved_method)
+                        _hess_is_omx = resolved_method in {"om2", "om3"}
                         _hess_opts = HessianFDOptions(
-                            include_dipole_derivatives=True,
+                            include_dipole_derivatives=not _hess_is_omx,
                             frozen_indices=hessian_frozen_indices,
                         )
                         hessian_result = compute_hessian_fd(
                             molecule,
-                            basis,
+                            "" if _hess_is_omx else basis,
                             method=resolved_method.upper(),
                             scf_options=_hess_scf_opts,
                             hessian_options=_hess_opts,
                             grid_level=grid_level,
+                            # Generic DFT-D4 is differentiated on the same
+                            # surface the optimizer used (#548).
+                            dispersion_params=None if _hess_is_omx else _d4_surface,
                         )
                         write(
                             "\n"
                             + section_header("## Vibrational Frequencies")
+                            # Name the surface before the numbers. For a
+                            # correlated request this also states outright that
+                            # the frequencies are not on the requested method's
+                            # surface -- otherwise the block below is
+                            # indistinguishable from a genuine RHF/UHF/... run.
+                            + hessian_surface_lines(
+                                requested_method=method,
+                                resolved_method=resolved_method,
+                                functional=functional,
+                                basis=str(basis),
+                                dispersion=_hess_dispersion_label,
+                            )
                             + f"  Finite-difference Hessian"
                             f"  (step = {_hess_opts.step_bohr:.3f} bohr,"
                             f"  {hessian_result.n_displacements} displacements)\n"
                             f"  Imaginary modes: {hessian_result.imaginary_count}\n"
                             f"  Linear molecule: {hessian_result.is_linear}\n\n"
                         )
-                        _n_skip = 5 if hessian_result.is_linear else 6
                         _freqs = hessian_result.frequencies_cm1
+                        # Projection inserts exact zeros, but eigenvalues are
+                        # sorted with negative curvature BEFORE those zeros.
+                        # Drop the rigid-body modes by magnitude, not position.
+                        _n_skip = (
+                            0 if hessian_result.unfrozen_indices is not None
+                            else min(len(_freqs), 5 if hessian_result.is_linear else 6)
+                        )
+                        _rigid_indices = set(np.argsort(np.abs(_freqs))[:_n_skip])
+                        _vib_indices = [k for k in range(len(_freqs)) if k not in _rigid_indices]
                         _ir = None
                         try:
                             _ir = ir_intensities(hessian_result)
@@ -13011,8 +14417,8 @@ def run_job(
                         if _ir is not None:
                             _freq_cols.append(Column("IR/(km/mol)", ">"))
                         _freq_tbl = Table(_freq_cols)
-                        for k in range(_n_skip, len(_freqs)):
-                            _label = f"{k - _n_skip + 1}"
+                        for _mode_number, k in enumerate(_vib_indices, start=1):
+                            _label = str(_mode_number)
                             _freq = _freqs[k]
                             if _freq < 0:
                                 _freq_str = f"{render_frequency(abs(_freq))}i"
@@ -13082,10 +14488,20 @@ def run_job(
                                 f"  ({_thermo.s_total * _Hced * 1000:8.3f} cal/mol/K)\n"
                             )
                             if _e0 == _e0:  # not NaN
+                                # _e0 is the SCF result's energy -- the surface
+                                # the Hessian was built on, NOT the job's
+                                # headline energy when a correlated method ran.
+                                # The labels name it, so an MP2 job's rows
+                                # cannot be read as MP2 enthalpies.
+                                (
+                                    _lbl_zpe,
+                                    _lbl_h,
+                                    _lbl_g,
+                                ) = thermochemistry_energy_labels(resolved_method)
                                 write(
-                                    f"  E(elec) + ZPE            = {render_energy_labeled(_e0 + _thermo.zpe, width=16, precision=10)}\n"
-                                    f"  H = E(elec) + H_corr     = {render_energy_labeled(_e0 + _thermo.h_thermal, width=16, precision=10)}\n"
-                                    f"  G = E(elec) + G_corr     = {render_energy_labeled(_e0 + _thermo.g_thermal, width=16, precision=10)}\n"
+                                    f"  {_lbl_zpe}= {render_energy_labeled(_e0 + _thermo.zpe, width=16, precision=10)}\n"
+                                    f"  {_lbl_h}= {render_energy_labeled(_e0 + _thermo.h_thermal, width=16, precision=10)}\n"
+                                    f"  {_lbl_g}= {render_energy_labeled(_e0 + _thermo.g_thermal, width=16, precision=10)}\n"
                                 )
                             write("\n")
                             flush()
@@ -13107,6 +14523,7 @@ def run_job(
         # TD-DFT excited states (output to .out; NTOs handled in QVF below).
         _tddft_result = None
         _qvf_uvvis_data = None
+        _qvf_excited_states = None
         _is_uhf = False  # set by TD-DFT block below
         if tddft and has_mos and bool(getattr(result, "converged", False)):
             try:
@@ -13123,14 +14540,15 @@ def run_job(
                     run_tddft_tda_uhf as _run_tddft_tda_uhf,
                 )
 
-                _is_uhf = bool(
+                # Route by the resolved method, not by which MO attributes
+                # the result exposes: ROHFResult mirrors mo_coeffs_alpha /
+                # mo_coeffs_beta as properties, so the attribute test used
+                # before #361 never recognised it and every ROHF / ROKS run
+                # took the closed-shell branch with n_occ = n_electrons // 2.
+                _is_rohf = resolved_method in ("rohf", "roks")
+                _is_uhf = (not _is_rohf) and bool(
                     hasattr(result, "mo_coeffs_alpha")
                     and not hasattr(result, "mo_coeffs")
-                )
-                _is_rohf = bool(
-                    hasattr(result, "mo_coeffs")
-                    and not hasattr(result, "mo_coeffs_alpha")
-                    and molecule.multiplicity > 1
                 )
                 _density_ao = (
                     np.asarray(result.density, dtype=float)
@@ -13171,6 +14589,14 @@ def run_job(
                         ),
                     )
                 elif _is_rohf:
+                    # The pre-flight gate above already refused Casida on
+                    # ROHF and any TDDFT on ROKS; keep the dispatch honest
+                    # if it is ever reached another way.
+                    _td_gap = _open_shell_restricted_response_gap(
+                        resolved_method, tddft_type
+                    )
+                    if _td_gap is not None:
+                        raise NotImplementedError(_td_gap)
                     from vibeqc.tddft import (
                         run_tddft_tda_rohf as _run_tddft_tda_rohf,
                     )
@@ -13218,6 +14644,15 @@ def run_job(
                     f" ({_td_method}{_td_func})\n"
                     f"  {'─' * 50}\n"
                 )
+                if _td_method == "TDA-ROHF":
+                    # Say what the ROHF response covers: the CIS space is
+                    # doubly-occupied → virtual only (vibeqc.tddft.
+                    # run_tddft_tda_rohf); SOMO excitations are not included.
+                    write(
+                        "  ROHF TDA (CIS) over doubly-occupied → virtual "
+                        "excitations only; excitations out of or into the "
+                        "singly-occupied orbitals are not included.\n"
+                    )
                 # Excited-states table via the document-layer Table
                 # primitive: columns + rule size to content instead of the
                 # old fixed 6/10/10/10 widths. The trailing dominant-
@@ -13259,6 +14694,20 @@ def run_job(
                     ],
                     "method": _td_method,
                 }
+                # The table of states for the QVF excited_states section
+                # (spec Sec. 5.12). The closed-shell response is the
+                # singlet one; open-shell states get no multiplicity.
+                from vibeqc.output.formats.qvf import (
+                    qvf_excited_states_data as _qvf_excited_states_data,
+                )
+
+                _closed_shell = not (_is_uhf or _is_rohf)
+                _qvf_excited_states = _qvf_excited_states_data(
+                    _tddft_result,
+                    functional=functional,
+                    multiplicity=1 if _closed_shell else None,
+                    reference_state="S0" if _closed_shell else None,
+                )
                 # UV/Vis spectrum (Gaussian-broadened stick spectrum).
                 if tddft_spectrum and _tddft_result.states:
                     _emin = min(
@@ -13302,6 +14751,7 @@ def run_job(
                 flush()
                 _tddft_result = None
                 _qvf_uvvis_data = None
+                _qvf_excited_states = None
 
         # FD excited-state nuclear gradient (opt-in, costly).
         if tddft_gradient and _tddft_result is not None and _tddft_result.states:
@@ -13413,6 +14863,8 @@ def run_job(
             # MLIP: a single forward pass, not an SCF -- honest phase label,
             # no per-iteration average.
             timing_rows.append(("MLIP energy evaluation", t_scf, None))
+        elif resolved_method == "dftb0":
+            timing_rows.append(("DFTB0 diagonalization", t_scf, None))
         elif isinstance(result, SolverResult):
             timing_rows.append(("Solver total", t_scf, None))
             timing_rows.append(
@@ -13472,6 +14924,9 @@ def run_job(
             converged=bool(getattr(result, "converged", False)),
             energy=_terminal_energy,
             out_path=str(out_path),
+            verdict=(
+                _run_verdict.as_dict() if _run_verdict is not None else None
+            ),
             **_corr_fields,
         )
 
@@ -13483,7 +14938,11 @@ def run_job(
             )
 
             _qvf_path_for_warn = stem_sibling(output_stem, ".qvf")
-            _qvf_scf_history = _scf_history_from_result(result)
+            _qvf_scf_history = (
+                None
+                if resolved_method == "dftb0" or resolved_method in _MLIP_METHODS
+                else _scf_history_from_result(result)
+            )
             _bibtex = None
             if _refs is not None:
                 try:
@@ -13498,6 +14957,10 @@ def run_job(
                         category=OutputFailureKind.compatibility_fallback,
                     )
             _pop = _population_summary
+            if _pop is None and _iao_analysis is not None:
+                from vibeqc.output.formats.population import PopulationSummary
+                _pop = PopulationSummary(iao_analysis=_iao_analysis,
+                                         iao_bond_threshold=iao_bond_threshold)
             _qvf_bond_orders = None
             _qvf_dipole = None
             if write_population_file and has_mos:
@@ -13740,7 +15203,10 @@ def run_job(
             # Closed-shell only: the IAO charge formula below assumes a
             # doubly-occupied reference (Knizia eq 3, gamma = 2 sum_i |i><i|).
             _qvf_localized_wf = None
-            _qvf_iao_charges = None
+            _qvf_iao_charges = (
+                _iao_analysis.charges if _iao_analysis is not None and _iao_analysis.available
+                else None
+            )
             _localize_methods = _resolve_localize_methods(localize)
             if (
                 _localize_methods
@@ -13779,17 +15245,31 @@ def run_job(
                     _occ_block = _mo[:, :_n_occ]
                     # Shared across criteria: the dipole integrals every
                     # centroid needs, and Boys needs outright.
-                    from vibeqc import compute_dipole
-
-                    _dip = compute_dipole(basis_obj)
-                    _dipoles = np.stack(
-                        [
-                            np.asarray(_dip.x),
-                            np.asarray(_dip.y),
-                            np.asarray(_dip.z),
-                        ],
-                        axis=-1,
-                    )
+                    _loc_source = ({"source_result": result}
+                                   if getattr(result, "engine_provenance", None) is not None else {})
+                    if _loc_source:
+                        from vibeqc.properties import _property_dipole_integrals, _property_overlap
+                        _dipoles = np.stack(_property_dipole_integrals(result, basis_obj, molecule), axis=-1)
+                        _loc_overlap = _property_overlap(result, basis_obj, molecule)
+                    else:
+                        from vibeqc import compute_dipole, compute_overlap as _iao_overlap
+                        _dip = compute_dipole(basis_obj)
+                        _dipoles = np.stack([np.asarray(_dip.x), np.asarray(_dip.y), np.asarray(_dip.z)], axis=-1)
+                        _loc_overlap = np.asarray(_iao_overlap(basis_obj))
+                    # Reuse the occupied-space analysis across all criteria.
+                    from vibeqc.iao import build_iaos, iao_reference
+                    # An unavailable population request must not suppress
+                    # separately supported localization of an SCF reference,
+                    # including the reference carried by an MP2 result.
+                    if _iao_analysis is not None and _iao_analysis.available:
+                        _loc_reference = _iao_analysis.reference
+                        _loc_iaos = _iao_analysis.iaos_alpha
+                    else:
+                        _loc_reference = iao_reference(molecule, basis_obj, **_loc_source)
+                        _loc_iaos = build_iaos(
+                            _occ_block, _loc_overlap,
+                            _loc_reference.overlap, _loc_reference.cross_overlap,
+                        )
                     _qvf_localized_wf = []
                     for _method in _localize_methods:
                         _loc = analyse_localization(
@@ -13798,6 +15278,9 @@ def run_job(
                             _occ_block,
                             method=_method,
                             dipoles=_dipoles,
+                            iaos=_loc_iaos,
+                            reference=_loc_reference,
+                            **_loc_source,
                         )
                         _qvf_localized_wf.append(
                             (
@@ -13853,9 +15336,15 @@ def run_job(
                     _nto_list: list[dict[str, object]] = []
 
                     if _is_uhf:
-                        # UHF: alpha and beta NTOs for each state.
-                        _n_occ_a = int(getattr(result, "n_occ_a", 0))
-                        _n_occ_b = int(getattr(result, "n_occ_b", 0))
+                        # UHF: alpha and beta NTOs for each state, with the
+                        # occupations the TD-DFT block above used (UHF
+                        # results do not carry n_occ_a / n_occ_b).
+                        _n_occ_a = int(getattr(result, "n_occ_a", 0) or 0)
+                        _n_occ_b = int(getattr(result, "n_occ_b", 0) or 0)
+                        if _n_occ_a <= 0 and _n_occ_b <= 0:
+                            _n_el = effective_electron_count(molecule, result)
+                            _n_occ_a = (_n_el + (molecule.multiplicity - 1)) // 2
+                            _n_occ_b = _n_el - _n_occ_a
                         for _state in _tddft_result.states:
                             _nto_uhf = _compute_nto_uhf(
                                 _state,
@@ -13889,10 +15378,10 @@ def run_job(
                                                 "n_mo": _n_hole,
                                                 "n_ao": _n_basis,
                                                 "spin": "restricted",
-                                                "orbital_kind": "natural",
+                                                "orbital_kind": "nto",
                                                 "energies": [0.0] * _n_hole,
                                                 "occupations": [
-                                                    _nto_res.hole_weights[i]
+                                                    _nto_res.weights[i]
                                                     for i in range(_n_hole)
                                                 ],
                                             },
@@ -13906,10 +15395,10 @@ def run_job(
                                                 "n_mo": _n_part,
                                                 "n_ao": _n_basis,
                                                 "spin": "restricted",
-                                                "orbital_kind": "natural",
+                                                "orbital_kind": "nto",
                                                 "energies": [0.0] * _n_part,
                                                 "occupations": [
-                                                    _nto_res.particle_weights[i]
+                                                    _nto_res.weights[i]
                                                     for i in range(_n_part)
                                                 ],
                                             },
@@ -13945,10 +15434,10 @@ def run_job(
                                     "n_mo": _n_hole,
                                     "n_ao": _n_basis,
                                     "spin": "restricted",
-                                    "orbital_kind": "natural",
+                                    "orbital_kind": "nto",
                                     "energies": [0.0] * _n_hole,
                                     "occupations": [
-                                        _nto_res.hole_weights[i] for i in range(_n_hole)
+                                        _nto_res.weights[i] for i in range(_n_hole)
                                     ],
                                 },
                                 "mo_coefficients": _hole_coeffs,
@@ -13967,10 +15456,10 @@ def run_job(
                                     "n_mo": _n_part,
                                     "n_ao": _n_basis,
                                     "spin": "restricted",
-                                    "orbital_kind": "natural",
+                                    "orbital_kind": "nto",
                                     "energies": [0.0] * _n_part,
                                     "occupations": [
-                                        _nto_res.particle_weights[i]
+                                        _nto_res.weights[i]
                                         for i in range(_n_part)
                                     ],
                                 },
@@ -14059,6 +15548,7 @@ def run_job(
                 assemble_run_record,
                 terminal_run_status,
             )
+            from vibeqc.qvf_job import job_spec_method_fields
 
             # The .out channel closed above, so the on-disk log is the
             # complete run log; embed it (+ the driving script) so the
@@ -14073,6 +15563,9 @@ def run_job(
                 molecule=molecule,
                 result=result,
                 method=resolved_method,
+                scf_applicable=(
+                    resolved_method != "dftb0" and resolved_method not in _MLIP_METHODS
+                ),
                 basis=basis,
                 functional=functional,
                 population_summary=_pop,
@@ -14080,6 +15573,10 @@ def run_job(
                 wall_seconds=t_total,
                 run_record=_qvf_run_record,
                 run_status=terminal_run_status(result),
+                run_verdict=(
+                    _run_verdict.as_dict() if _run_verdict is not None else None
+                ),
+                optimization=_optimization_record,
                 trajectory_frames=_traj_frames if _traj_frames else None,
                 trajectory_energies=_traj_energies if _traj_energies else None,
                 volume_data=_qvf_vol_data,
@@ -14087,6 +15584,21 @@ def run_job(
                 mo_data=_qvf_mo_list,
                 wf_data=_qvf_wf,
                 hessian_result=hessian_result,
+                # Name the Hessian's surface in the QVF too: job_spec.method
+                # carries resolved_method, so a correlated job's QVF already
+                # reads "rhf" while its frequencies sit in a section that says
+                # nothing about which surface produced them.
+                hessian_surface=(
+                    hessian_surface_manifest_fields(
+                        requested_method=method,
+                        resolved_method=resolved_method,
+                        functional=functional,
+                        basis=str(basis),
+                        dispersion=_hess_dispersion_label,
+                    )
+                    if hessian_result is not None
+                    else None
+                ),
                 scf_history_data=_qvf_scf_history,
                 bond_orders_data=_qvf_bond_orders,
                 dipole_moment_data=_qvf_dipole,
@@ -14095,21 +15607,55 @@ def run_job(
                 wf_localized_data=_qvf_localized_wf,
                 iao_charges=_qvf_iao_charges,
                 nto_data=_qvf_nto,
+                excited_states_data=_qvf_excited_states,
                 uvvis_data=_qvf_uvvis_data,
                 bonds_data=_qvf_bonds,
                 job_spec={
                     "job_type": "molecular",
                     "method": resolved_method,
-                    "basis": str(basis),
-                    "functional": functional,
+                    # QVF spec Sec. 5.9: a basis / functional name, or null
+                    # when the method takes none (basis-free semiempirical
+                    # and MLIP methods; HF and correlated methods have no
+                    # functional). Never the deprecated "".
+                    **job_spec_method_fields(
+                        resolved_method, basis=basis, functional=functional
+                    ),
+                    # One ``options`` object for every engine keyword: a
+                    # symmetry-reduction request and the semiempirical / MLIP
+                    # provenance must not overwrite each other.
                     **(
-                        {
-                            "options": {
-                                "parameter_identity": _parameter_identity,
-                                "parameter_sha256": _parameter_sha256,
+                        {"options": _qvf_job_spec_options}
+                        if (
+                            _qvf_job_spec_options := {
+                                **(
+                                    {
+                                        "symmetry_reduction": (
+                                            _symmetry_source_request
+                                        )
+                                    }
+                                    if symmetry_reduction is not None
+                                    else {}
+                                ),
+                                **(
+                                    mlip_job_options(result)
+                                    if resolved_method == "mace"
+                                    else {}
+                                ),
+                                **(
+                                    {
+                                        "parameter_identity": _parameter_identity,
+                                        "parameter_sha256": _parameter_sha256,
+                                    }
+                                    if _parameter_identity is not None
+                                    else {}
+                                ),
+                                # DFTB placeholder repulsive pairs (#345), the
+                                # same list as the .system [run] section.
+                                **semiempirical_record_fields(
+                                    placeholder_pairs=_placeholder_pairs
+                                ),
                             }
-                        }
-                        if _parameter_identity is not None
+                        )
                         else {}
                     ),
                 },
@@ -14248,6 +15794,9 @@ def run_job(
             "converged",
             molecule=molecule,
             result=result,
+            run_verdict=(
+                _run_verdict.as_dict() if _run_verdict is not None else None
+            ),
             method=resolved_method,
             basis=basis,
             functional=functional,
@@ -14260,7 +15809,7 @@ def run_job(
         f"Job total {_reported_wall_seconds:.2f}s -- output written to {out_path}"
     )
 
-    return result
+    return _IAOAugmented(result, _iao_analysis) if _iao_analysis is not None else result
 
 
 __all__ = ["run_job"]

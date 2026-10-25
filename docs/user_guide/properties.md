@@ -3,7 +3,121 @@
 Every `run_job` calculation now reports a properties block at the end
 of the `.out` file with **atomic charges**, **bond orders**, and the
 **dipole moment**, the standard sanity-check output every QC program
-emits.
+emits. Everything on this page is production on molecular SCF results, the
+polarizability on closed-shell RHF only; see
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+
+## Theory
+
+**Population analyses.** Every partial-charge model splits the electron
+count $N = \mathrm{tr}(\mathbf P\mathbf S)$ among the atoms; the models
+differ in *how*. Mulliken ({vibeqc-cite}`mulliken_1955`) assigns each basis
+function to its own centre and divides every overlap population equally,
+
+$$
+q_A^{\mathrm{Mulliken}} = Z_A - \sum_{\mu\in A}(\mathbf P\mathbf S)_{\mu\mu},
+$$
+
+which is trivial to compute but depends strongly on the basis: a diffuse
+function on A describes density near B and still counts for A. Loewdin
+({vibeqc-cite}`lowdin_1950`) first transforms to the symmetrically
+orthogonalised basis, the orthonormal set closest in the least-squares
+sense to the original AOs, and then reads the diagonal,
+
+$$
+q_A^{\mathrm{Loewdin}} = Z_A - \sum_{\mu\in A}\big(\mathbf S^{1/2}\mathbf P\mathbf S^{1/2}\big)_{\mu\mu},
+$$
+
+which removes the equal-split arbitrariness but is still a basis-space
+partition. Hirshfeld ({vibeqc-cite}`hirshfeld_1977`) partitions real space
+instead: each atom receives the molecular density in proportion to its own
+free-atom (promolecule) density,
+
+$$
+q_A^{\mathrm{Hirshfeld}} = Z_A - \int w_A(\mathbf r)\,\rho(\mathbf r)\,d\mathbf r,
+\qquad
+w_A(\mathbf r) = \frac{\rho_A^{0}(\mathbf r)}{\sum_B \rho_B^{0}(\mathbf r)},
+$$
+
+integrated on the Becke-Lebedev grid; because the stockholder weights are
+smooth functions of position, the charges barely move with the basis. In
+vibe-qc the promolecule densities are the SAD initial-guess atomic
+densities expanded in the molecular basis, which is why the values sit
+slightly below tabulated Slater-atom Hirshfeld charges (see the caveats).
+On H2O/STO-3G at the geometry of the examples below the three models give
+$q_{\mathrm O} = -0.42$, $-0.28$ and $-0.26$ e respectively (vibe-qc 0.17.x
+development build); the ordering, Mulliken most negative and Hirshfeld
+least, is typical. For ECP calculations $Z_A$ is the effective core charge
+in all three formulas.
+
+**Hirshfeld on ECP calculations.** Since v0.17.16 the promolecule of an ECP
+calculation is built from *valence-only* free atoms, running the same ECP
+operator the SCF used, the atomic calculation the SAD guess uses on an ECP
+atom. The promolecule then integrates to the valence electron count of the
+molecule, as the molecular density does. Before, the free atom was either
+unrepresentable in a valence basis (the Hirshfeld column disappeared from
+the `.out` on H2S/LANL2DZ) or, in an all-electron-sized basis, kept the
+replaced core's electrons (ZnH+ with 6-31G and ecp10mdf integrated to 31
+electrons for a 20-electron molecule). Hirshfeld charges of ECP systems
+computed before v0.17.16 should be recomputed; all-electron results are
+unchanged. On H2S/LANL2DZ at the experimental geometry the `.out` now gives
+$q_{\mathrm S} = -0.105$ e and $q_{\mathrm H} = +0.053$ e, with a promolecule
+of 8.0 electrons (vibe-qc 0.17.17 development build).
+
+When you call `hirshfeld_charges` (or `mulliken_charges`, `loewdin_charges`
+and the dipole) yourself on an ECP result, pass the effective charges
+$Z_A - n_{\mathrm{core},A}$ as `nuclear_charges`; the runner, the FD Hessian,
+the ASE calculator and the population writers do this for you. Without them
+the bare $Z_A$ is used and every ECP atom carries a spurious $n_{\mathrm{core}}$:
+the same H2S call returns $q_{\mathrm S} = +9.89$ e.
+
+```python
+import vibeqc as vq
+from vibeqc.ecp_metadata import effective_nuclear_charges_from
+
+h = vq.hirshfeld_charges(result, basis, mol,
+                         nuclear_charges=effective_nuclear_charges_from(mol, result))
+```
+
+**Dipole moment and its origin.** With the origin $\mathbf O$,
+
+$$
+\boldsymbol\mu(\mathbf O) = \sum_A Z_A(\mathbf R_A - \mathbf O) - \int(\mathbf r - \mathbf O)\,\rho(\mathbf r)\,d\mathbf r
+ = \boldsymbol\mu(\mathbf 0) - Q\,\mathbf O,
+$$
+
+where $Q = \sum_A Z_A - N$ is the net charge. For a neutral molecule the
+origin drops out; for an ion the dipole changes by $-Q\,\Delta\mathbf O$
+under an origin shift, so a reported value is meaningful only together with
+its origin. `dipole_moment` defaults to the centre of mass and records it in
+`.origin`. On the H2O+ doublet cation at the same geometry, moving the
+origin from the centre of mass by 5.11 bohr along $z$ changes $|\mu|$ from
+2.52 to 15.51 D: exactly $Q\,\Delta O = 5.11$ au $= 13.0$ D added to the
+$z$ component.
+
+**Static and dynamic polarizability.** An external field $\mathbf F$ adds
+$-\boldsymbol\mu\cdot\mathbf F$ to the Fock operator; the first-order
+response of the orbitals follows from the coupled-perturbed Hartree-Fock
+equations, a linear system in the occupied-virtual rotation amplitudes,
+
+$$
+\mathbf A\,\mathbf U^{x} = -\mathbf B^{x},
+\qquad
+[\mathbf A\mathbf v]_{ai} = (\varepsilon_a - \varepsilon_i)\,v_{ai}
+ + \sum_{bj}\big[4(ai|bj) - (ab|ij) - (aj|ib)\big]v_{bj},
+$$
+
+with $\mathbf B^{x}$ the occupied-virtual block of the dipole integrals in
+direction $x$. The static polarizability is then
+$\alpha_{xy} = -2\sum_{ai}U^{x}_{ai}\,\mu_{y,ai}$, a symmetric $3\times3$
+tensor in atomic units. Replacing the static response by the
+imaginary-frequency TD-HF response gives $\alpha(i\omega)$, a real, smooth,
+monotonically decaying function of $\omega$ whose Casimir-Polder integral
+$C_6^{AB} = \tfrac{3}{\pi}\int_0^\infty\alpha_A(i\omega)\,\alpha_B(i\omega)\,d\omega$
+is what the D4 dispersion model consumes. vibe-qc solves the CPHF system
+with a preconditioned conjugate-gradient iteration that never forms
+$\mathbf A$ (one Fock-like build per iteration) for closed-shell RHF
+references.
 
 ## What you'll see in the `.out`
 
@@ -143,10 +257,102 @@ json.dump({
 `dipole_polarizability_rhf` returns the symmetric `(3, 3)` static
 tensor in atomic units; pass a precomputed `eri=` if you are also
 running `dynamic_polarizability_rhf` on the same system, so the ERI
-tensor is built once. Both live in `vibeqc.cphf` and are re-exported at
-the top level. This recipe is pinned end to end in
+tensor is built once. Both live in `vibeqc.cphf`; only
+`dipole_polarizability_rhf` is re-exported at the top level, so import the
+dynamic one from the module. This recipe is pinned end to end in
 `tests/test_properties.py`
 (`test_property_sidecar_dipole_and_polarizability`).
+
+`dynamic_polarizability_rhf(result, basis, mol, frequencies)` evaluates
+$\alpha(i\omega)$ on the imaginary axis for a scalar or a sequence of
+frequencies (atomic units) and returns a `(n_freq, 3, 3)` array:
+
+```python
+import numpy as np
+import vibeqc as vq
+from vibeqc.cphf import dynamic_polarizability_rhf
+
+mol = vq.Molecule([vq.Atom(8, [0.0, 0.0, 0.0]),
+                   vq.Atom(1, [0.0, 1.43, -0.98]),
+                   vq.Atom(1, [0.0, -1.43, -0.98])])   # bohr
+basis = vq.BasisSet(mol, "sto-3g")
+result = vq.run_rhf(mol, basis)
+
+omegas = [0.0, 0.25, 0.5, 1.0]
+alpha_iw = np.asarray(dynamic_polarizability_rhf(result, basis, mol, omegas))
+for w, a in zip(omegas, alpha_iw):
+    print(f"alpha_iso(i*{w:.2f}) = {np.trace(a) / 3:.4f} au")
+```
+
+At RHF/STO-3G this prints 2.1533, 1.9874, 1.6217 and 0.9486 au (vibe-qc
+0.17.x development build): the $\omega = 0$ value equals the static
+isotropic polarizability from `dipole_polarizability_rhf`, and the decay
+with $\omega$ is the monotone behaviour the Casimir-Polder integral relies
+on. A minimal basis has no diffuse functions, so these absolute values are
+far below experiment; the recipe, not the number, is the point.
+
+## Atomisation energies
+
+`run_job(..., atomization=True)` reports the atomisation energy of a
+mean-field calculation,
+
+$$
+D_{\mathrm{at}} = \sum_A E(\text{atom } A) - E(\text{molecule})
+\qquad (> 0 \text{ for a bound molecule}),
+$$
+
+with every free-atom reference computed at the **same** method, basis,
+functional and grid as the molecule, in its Hund's-rule ground-state
+multiplicity (a spin-polarised atomic SCF). The references are cached per
+`(Z, method, basis, functional, grid)`, so a job pays at most one atomic
+SCF per distinct element. The block is written for `rhf`, `uhf`, `rks`,
+`uks`, `rohf` and `roks` once the molecular SCF has converged; a post-SCF
+method gets no atomisation block, because its atoms would need post-SCF
+references too. Ground-state multiplicities are tabulated for the main-group
+elements H to Kr (plus K and Ca); the 3d transition metals are deliberately
+excluded, because a black-box atomic UHF is not reliable for their
+near-degenerate configurations, so a system containing one raises
+`NotImplementedError` rather than returning a wrong reference (the `.out`
+then carries an "atomization not available" line instead of the block).
+
+```python
+from vibeqc import Atom, Molecule, run_job
+from vibeqc.atomization import atomization_energy
+
+h2o = Molecule([Atom(8, [0.0, 0.0, 0.0]),
+                Atom(1, [0.0, 1.43, -0.98]),
+                Atom(1, [0.0, -1.43, -0.98])])   # bohr
+
+# run_job writes an "## Atomization energy" block into the .out file
+res = run_job(h2o, basis="sto-3g", method="rhf", atomization=True,
+              output="h2o_atomization")
+
+# The same numbers through the library call (free atoms are cached per element)
+atm = atomization_energy(h2o, res.energy, "rhf", "sto-3g")
+print(f"{atm.atomization:.6f} Ha = {atm.atomization_kcal:.1f} kcal/mol")
+print(atm.atomic_energies)   # {8: E(O, triplet), 1: E(H, doublet)}
+```
+
+At RHF/STO-3G this prints 0.212252 Ha = 133.2 kcal/mol, from
+E(O) = -73.80415 Ha and E(H) = -0.46658 Ha against
+E(H2O) = -74.94957 Ha (vibe-qc 0.17.x development build); the `.out` block
+lists the same references, their sum, the molecule and the value per atom.
+`vibeqc.atomization.atomization_energy(molecule, e_molecule, method, basis,
+functional=..., grid_level=..., grid_options=...)` returns an
+`AtomizationResult` with `e_molecule`, `e_atoms_sum`, `atomization`,
+`atomization_per_atom`, `atomic_energies` and the `atomization_kcal`
+property. Hartree-Fock atomisation energies are far too small (STO-3G water
+is a coincidence of basis-set error); use a correlated or DFT level for a
+number to compare with experiment, and remember that no zero-point
+correction is included.
+
+MSINDO does not use this machinery: its parametrisation carries its own
+atomic reference energies (`ATENG`), so `run_job(method="msindo")` reports
+a **binding energy** $E_{\mathrm{total}} - \sum_A E_{\mathrm{ATENG}}(A)$ in
+its own "Atomization / binding energy" block and on
+`result.binding_energy`. It is negative for a bound molecule, the opposite
+sign convention, and it is the quantity the method was parametrised
+against.
 
 ## Validation
 

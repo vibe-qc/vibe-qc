@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
+  "schema_version": "1.1.0",
+  "name": "pob-tzvp",
+  "description": "vibeqc-generated from Bredow-group archive 'pob-tzvp'.\nSource dir: python/vibeqc/basis_library/sources/pob-TZVP/\nCite: Peintinger, Vilela Oliveira, Bredow. J. Comput. Chem. 34, 451–459 (2013). DOI: 10.1002/jcc.23153; Rb-I: Laun, Vilela Oliveira, Bredow. J. Comput. Chem. 39, 1285–1290 (2018). DOI: 10.1002/jcc.25195\n\nECP sidecar:\nBasis set: pob-tzvp ECPs\nEffective core potentials carried by the pob-TZVP records for Rb-I\n(CRYSTAL Z+200 convention), converted from the Bredow-group per-element\nsources in python/vibeqc/basis_library/sources/pob-TZVP/ by\nvibeqc.basis_crystal.emit_ecp_sidecar. The channels are exactly the\nprimitive arrays vibeqc.basis_crystal.crystal_ecp_to_libecpint_arrays\nfeeds libecpint on the periodic route, so molecular and periodic runs use\none ECP.\nOriginating publication: J. Laun, D. Vilela Oliveira, T. Bredow,\n  J. Comput. Chem. 39, 1285 (2018); DOI: 10.1002/jcc.25195\nECP parameters: Stuttgart-Cologne energy-consistent pseudopotentials as\n  distributed with the pob-TZVP Rb-I basis; the same potentials as the\n  pob-TZVP-rev2 Rb-I records (per-element references: Leininger 1996 Rb,\n  Kaupp 1991 Sr, Andrae 1990 Y-Cd, Metz 2000 In-Sb, Peterson 2003 Te-I).\nSource URL: https://www.chemie.uni-bonn.de/bredow/de/software/pob-tzvp-rb-i-tar.gz\n  (pob-TZVP-Rb-I.tar.gz, 7280 bytes, sha256 2b341b8f0169548b2904e9db27dc0d9e\n  be86ee1eede0a8c0ed2225d434bf194e), retrieved 2026-09-13\nLicense: bundled with the Bredow group's agreement (docs/license.md 3a)",
   "role": "orbital",
   "elements": {
     "H": {
@@ -9241,6 +9241,7 @@
       "ecp_id": "I"
     }
   },
+  "basis_family": "pob",
   "ecps": {
     "Rb": {
       "element": "Rb",
@@ -10810,7 +10811,136 @@
       ]
     }
   },
+  "references": [
+    {
+      "key": "peintinger_pob_tzvp_2013",
+      "description": "M. F. Peintinger, D. Vilela Oliveira, T. Bredow, Journal of Computational Chemistry 34, 451-459 (2013)",
+      "doi": "10.1002/jcc.23153"
+    },
+    {
+      "key": "laun_pob_fifth_period_2018",
+      "description": "J. Laun, D. Vilela Oliveira, T. Bredow, Journal of Computational Chemistry 39, 1285-1290 (2018)",
+      "doi": "10.1002/jcc.25195"
+    },
+    {
+      "key": "andrae_ecp_1990",
+      "description": "D. Andrae, U. Häußermann, M. Dolg, H. Stoll, H. Preuß, Theoretica Chimica Acta 77, 123-141 (1990)",
+      "doi": "10.1007/BF01114537"
+    },
+    {
+      "key": "metz_stoll_dolg_ecp_2000",
+      "description": "B. Metz, H. Stoll, M. Dolg, Journal of Chemical Physics 113, 2563-2569 (2000)",
+      "doi": "10.1063/1.1305880"
+    },
+    {
+      "key": "peterson_pp_2003",
+      "description": "K. A. Peterson, D. Figgen, E. Goll, H. Stoll, M. Dolg, Journal of Chemical Physics 119, 11113-11123 (2003)",
+      "doi": "10.1063/1.1622924"
+    },
+    {
+      "key": "leininger_nicklass_ecp_1996",
+      "description": "T. Leininger, A. Nicklass, W. Küchle, H. Stoll, M. Dolg, A. Bergner, Chemical Physics Letters 255, 274-280 (1996)",
+      "doi": "10.1016/0009-2614(96)00382-X"
+    },
+    {
+      "key": "kaupp_schleyer_stoll_preuss_ecp_1991",
+      "description": "M. Kaupp, P. v. R. Schleyer, H. Stoll, H. Preuss, Journal of Chemical Physics 94, 1360-1366 (1991)",
+      "doi": "10.1063/1.459993"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "vendor",
+    "upstream": [
+      {
+        "name": "Bredow group basis-set archive",
+        "url": "https://www.chemie.uni-bonn.de/bredow/de/software",
+        "identifier": "pob-TZVP",
+        "detail": "per-element CRYSTAL records under basis_library/sources/pob-TZVP/"
+      }
+    ],
+    "retrieval_date": "2026-09-13",
+    "content_sha256": "c9a8e7c8e3d06fb2e0fbe1772f19cd88cc88b74a7458f9a843619fc258b7a51f",
+    "citations": [
+      {
+        "keys": [
+          "peintinger_pob_tzvp_2013"
+        ]
+      },
+      {
+        "keys": [
+          "laun_pob_fifth_period_2018"
+        ],
+        "elements": [
+          "Rb",
+          "Sr",
+          "Y",
+          "Zr",
+          "Nb",
+          "Mo",
+          "Ru",
+          "Rh",
+          "Pd",
+          "Ag",
+          "Cd",
+          "In",
+          "Sn",
+          "Sb",
+          "Te",
+          "I"
+        ]
+      },
+      {
+        "keys": [
+          "andrae_ecp_1990"
+        ],
+        "elements": [
+          "Y",
+          "Zr",
+          "Nb",
+          "Mo",
+          "Ru",
+          "Rh",
+          "Pd",
+          "Ag",
+          "Cd"
+        ]
+      },
+      {
+        "keys": [
+          "metz_stoll_dolg_ecp_2000"
+        ],
+        "elements": [
+          "In",
+          "Sn",
+          "Sb"
+        ]
+      },
+      {
+        "keys": [
+          "peterson_pp_2003"
+        ],
+        "elements": [
+          "Te",
+          "I"
+        ]
+      },
+      {
+        "keys": [
+          "leininger_nicklass_ecp_1996"
+        ],
+        "elements": [
+          "Rb"
+        ]
+      },
+      {
+        "keys": [
+          "kaupp_schleyer_stoll_preuss_ecp_1991"
+        ],
+        "elements": [
+          "Sr"
+        ]
+      }
+    ]
   }
 }

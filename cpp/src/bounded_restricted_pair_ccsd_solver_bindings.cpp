@@ -1,6 +1,7 @@
 // Tiny numerical diagnostics. Caller arrays do not certify a Hamiltonian or PNOs.
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 #include <algorithm>
 #include <array>
 #include <cmath>

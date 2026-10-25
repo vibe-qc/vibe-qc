@@ -65,7 +65,9 @@ from ._vibeqc_core import (
 __all__ = [
     "DispersionResult",
     "D3BJParams",
+    "D4DispersionSpec",
     "compute_d3bj",
+    "compute_dispersion",
     "d3bj_params_for",
     "dftd3_available",
 ]
@@ -245,6 +247,48 @@ def compute_d3bj(
     if chosen == "dftd3":
         return _compute_d3bj_dftd3(mol, params, with_gradient=with_gradient)
     return _compute_d3bj_builtin(mol, params, with_gradient)
+
+
+@dataclass(frozen=True)
+class D4DispersionSpec:
+    """Generic molecular DFT-D4 evaluated at every geometry (#548).
+
+    It travels wherever a :class:`D3BJParams` travels as ``dispersion_params``,
+    so optimizers, finite-difference gradients and the finite-difference
+    Hessian differentiate the same DFT-D4 surface whose total ``run_job``
+    reports (Caldeweyher et al., J. Chem. Phys. 150, 154122 (2019)). The total
+    charge is read from the molecule at each evaluation. Composite 3c recipes
+    keep their own correction path.
+    """
+
+    functional: str
+    backend: str = "dftd4"
+
+    def __str__(self) -> str:
+        return f"D4({self.functional})"
+
+
+def compute_dispersion(mol: Molecule, params, *, with_gradient: bool = False):
+    """Dispersion energy (and ``(n_atoms, 3)`` gradient) for ``dispersion_params``.
+
+    ``params`` is a :class:`D3BJParams` or functional name (D3(BJ), as
+    :func:`compute_d3bj`) or a :class:`D4DispersionSpec`. The result exposes
+    ``.energy`` in Hartree and ``.gradient`` in Hartree/bohr.
+    """
+    if isinstance(params, D4DispersionSpec):
+        from .dispersion_d4 import compute_d4
+
+        result = compute_d4(
+            mol, params.functional, charge=float(mol.charge),
+            with_gradient=with_gradient, backend=params.backend,
+        )
+        if with_gradient and result.gradient is None:
+            raise RuntimeError(
+                f"D4 backend {params.backend!r} returned no gradient for "
+                f"{params.functional!r}"
+            )
+        return result
+    return compute_d3bj(mol, params, with_gradient=with_gradient)
 
 
 def _compute_d3bj_dftd3(

@@ -11,10 +11,10 @@ H₂-molecular-crystal limit). Each frame shows:
     step-by-step, with a marker on the current δ
 
 The animation makes the *mechanism* of the Peierls instability
-immediate: as the chain dimerises, the band gap opens (visible
-as a vertical drop in the energy plot once δ crosses the
-metal→insulator boundary at δ ≈ 0.8 bohr), and the SCF starts
-converging where it failed before.
+immediate: as the chain dimerises, the band gap opens and the energy
+per cell drops. Points whose SCF did not converge in the scan are
+marked, with a shaded band over them; on the current scan every point
+converges, so there is none.
 
 Writes ``docs/_static/plots/h-chain-peierls-animation.gif``.
 
@@ -157,12 +157,12 @@ def main() -> None:
         if converged[idx]:
             title += "   ✓ SCF converged"
         else:
-            title += "   ✗ SCF stalled (metallic regime)"
+            title += "   ✗ SCF not converged"
         ax_chain.set_title(title, fontsize=10)
 
         # --- energy curve (bottom panel) ---
         ax_e.clear()
-        de = (energies - e_ref) * 1000   # meV
+        de = (energies - e_ref) * 1000   # mHa
         # Draw the whole curve as a faint guide
         ax_e.plot(deltas, de, color="#aaa", alpha=0.4,
                   marker="o", markersize=3, linestyle="-")
@@ -171,12 +171,15 @@ def main() -> None:
                   color="C0", marker="o", markersize=5)
         # Current point
         ax_e.scatter([delta], [de[idx]], color="C3", s=120, zorder=5)
-        # Convergence-failure region as a colored band
-        ax_e.axvspan(0, 0.7, alpha=0.10, color="red")
-        ax_e.text(0.35, max(de) * 0.85, "metallic\n(SCF stalls)",
-                  fontsize=9, color="darkred", ha="center")
+        # Convergence-failure region, if the scan has one, as a band
+        stalled = deltas[~converged]
+        if stalled.size:
+            ax_e.axvspan(stalled.min() - 0.05, stalled.max() + 0.05,
+                         alpha=0.10, color="red")
+            ax_e.text(float(stalled.mean()), max(de) * 0.85, "SCF stalls",
+                      fontsize=9, color="darkred", ha="center")
         ax_e.set_xlabel("δ / bohr  (dimerisation parameter)")
-        ax_e.set_ylabel("ΔE / meV  (rel. to δ = 0)")
+        ax_e.set_ylabel("ΔE / mHa  (rel. to δ = 0)")
         ax_e.set_title("Total energy per cell along the dimerisation path",
                        fontsize=10)
         ax_e.set_xlim(deltas.min() - 0.05, deltas.max() + 0.05)

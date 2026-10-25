@@ -1,0 +1,899 @@
+"""Source/metadata contracts for #316; no native import or QC calculation.
+
+Standalone admission-free command: python tests/test_bipole_domain_contract.py
+Native relabelling, raw-energy and force acceptance is deliberately separate.
+"""
+from __future__ import annotations
+
+import ast
+from dataclasses import FrozenInstanceError
+from enum import Enum
+import importlib.util
+import json
+from pathlib import Path
+import re
+import sys
+from types import ModuleType, SimpleNamespace
+import unittest
+from unittest.mock import Mock, patch
+
+ROOT = Path(__file__).resolve().parents[1]
+PACKAGE = ROOT / "python" / "vibeqc"
+SPEC = importlib.util.spec_from_file_location("_bipole_domain_contract", PACKAGE / "bipole_domain.py")
+domain = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = domain
+SPEC.loader.exec_module(domain)
+
+
+class CoulombMethod(Enum):
+    DIRECT_TRUNCATED = 0
+    EWALD_3D = 1
+
+
+class Angular(Enum):
+    ProductGaussLegendre = 0
+    Lebedev = 1
+
+
+class PeriodicXCDensityDomain(Enum):
+    AUTO = 0
+    MOLECULAR_HOME = 1
+    PERIODIC_LATTICE = 2
+
+
+def lattice():
+    values = dict.fromkeys(domain.LATTICE_FIELDS, 0.0)
+    values.update(cutoff_bohr=15.0, nuclear_cutoff_bohr=15.0,
+                  schwarz_threshold=1e-12, schwarz_threshold_forces=1e-14,
+                  pair_complete_1e=True, sr_range_screening=True,
+                  sr_sparse_traversal=True, coulomb_method=CoulombMethod.DIRECT_TRUNCATED)
+    return SimpleNamespace(**values)
+
+
+def grid():
+    values = dict.fromkeys(domain.GRID_FIELDS, 1)
+    values.update(n_radial=200, angular=Angular.Lebedev, lebedev_order=53,
+                  orca_angular_points=[50, 110, 194, 110, 50])
+    return SimpleNamespace(**values)
+
+
+def capture(**changes):
+    args = dict(lattice_1e=lattice(), lattice_2e=lattice(),
+                ewald_options=SimpleNamespace(real_cutoff_bohr=19.0),
+                alpha=0.4, reciprocal_cutoff=3.404, ewald_precision=1e-12,
+                sr_image_extent=28.0, use_ewald_j_split=True,
+                exchange_ewald_split=True, exchange_exxdiv="ewald", exact_zone=None,
+                ks_options=SimpleNamespace(grid=grid(), use_periodic_becke=True,
+                                           becke_image_radius_bohr=18.0))
+    args.update(changes)
+    return domain.capture_bipole_domain(**args)
+
+
+def function(name, file="bipole_gradient.py", **namespace):
+    tree = ast.parse((PACKAGE / file).read_text())
+    node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name)
+    # Future annotations avoid loading any numerical/native type annotations.
+    module = ast.Module(body=[ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0), node], type_ignores=[])
+    ast.fix_missing_locations(module)
+    exec(compile(module, file, "exec"), namespace)
+    return namespace[name]
+
+
+class DomainContractTests(unittest.TestCase):
+    def test_named_policy_overrides_native_flag_without_mutating_it(self):
+        clone = function("copy_bipole_lattice_options", file="pbc_bipole_common.py",
+            OptionSnapshot=domain.OptionSnapshot, LATTICE_FIELDS=domain.LATTICE_FIELDS,
+            LatticeSumOptions=lattice)
+        resolve = function("resolve_bipole_lattice_options", file="pbc_bipole_common.py",
+            resolve_bipole_pair_policy=domain.resolve_bipole_pair_policy,
+            copy_bipole_lattice_options=clone)
+        for native_flag in (False, True):
+            original = lattice()
+            original.pair_complete_1e = native_flag
+            self.assertTrue(resolve(original).pair_complete_1e)
+            self.assertFalse(resolve(original, historical_domain=True).pair_complete_1e)
+            self.assertEqual(original.pair_complete_1e, native_flag)
+        for invalid in (None, 0, 1, "false", "true"):
+            with self.subTest(invalid=invalid), self.assertRaises(TypeError):
+                resolve(original, historical_domain=invalid)
+        with self.assertRaisesRegex(ValueError, "requires ab initio BIPOLE"):
+            domain.resolve_bipole_pair_policy(True, active=False)
+        domain.resolve_bipole_pair_policy(False, active=False)
+
+    def test_requested_options_replay_resolved_policy_and_screening(self):
+        original = lattice()
+        original.pair_complete_1e = False
+        original.sr_range_screening = False
+        original.nuclear_cutoff_bohr = 25.0
+        record = capture(requested_lattice=original)
+        result = SimpleNamespace(resolved_domain=record, **{
+            k: getattr(record, k) for k in ("ewald_alpha_bohr_inv", "ewald_precision",
+                "sr_image_extent_bohr", "exact_zone_bohr", "exchange_ewald_split")})
+        restore = function("_gradient_domain_options", LatticeSumOptions=lattice)
+        effective = restore(result, original)
+        self.assertTrue(effective.pair_complete_1e)
+        self.assertTrue(effective.sr_range_screening)
+        self.assertEqual(effective.nuclear_cutoff_bohr, 15.0)
+        self.assertFalse(original.pair_complete_1e)
+        self.assertFalse(original.sr_range_screening)
+        # Already resolved settings are accepted too. Arbitrary control changes
+        # match neither record and must fail rather than silently restoring.
+        self.assertEqual(restore(result, effective), effective)
+        original.cutoff_bohr = 10.0
+        with self.assertRaisesRegex(ValueError, "cutoff_bohr"):
+            restore(result, original)
+
+    def test_policy_reaches_all_runner_and_spin_schedule_dispatches(self):
+        names = {"run_pbc_bipole_" + m for m in ("rhf", "uhf", "rks", "uks")}
+        runner = ast.parse((PACKAGE / "periodic_runner.py").read_text())
+        calls = [n for n in ast.walk(runner) if isinstance(n, ast.Call)
+                 and isinstance(n.func, ast.Name) and n.func.id in names]
+        self.assertEqual(len(calls), 6)
+        for call in calls:
+            self.assertEqual(ast.unparse(next(k.value for k in call.keywords
+                if k.arg == "historical_domain")), "bipole_historical_domain")
+        optimization, = [n.value for n in ast.walk(runner) if isinstance(n, ast.Assign)
+            and any(isinstance(t, ast.Name) and t.id == "_bipole_opt_driver_kwargs" for t in n.targets)]
+        options = dict(zip((k.value for k in optimization.keys), optimization.values))
+        self.assertEqual(ast.unparse(options["historical_domain"]), "bipole_historical_domain")
+        for suffix in ("", "_uhf", "_rks", "_uks"):
+            tree = ast.parse((PACKAGE / f"pbc_bipole{suffix}.py").read_text())
+            entry, = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
+            defaults = dict(zip((a.arg for a in entry.args.kwonlyargs), entry.args.kw_defaults))
+            self.assertIs(defaults["historical_domain"].value, False)
+            for call in ast.walk(entry):
+                if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == entry.name:
+                    self.assertEqual(ast.unparse(next(k.value for k in call.keywords
+                        if k.arg == "historical_domain")), "historical_domain")
+            capture_call, = [n for n in ast.walk(entry) if isinstance(n, ast.Call)
+                and isinstance(n.func, ast.Name) and n.func.id == "capture_bipole_domain"]
+            self.assertEqual(ast.unparse(next(k.value for k in capture_call.keywords
+                if k.arg == "requested_lattice")), "opts.lattice_opts")
+
+    def test_optimizer_and_fd_forward_policy_without_running_a_calculation(self):
+        controls = dict(historical_domain=True, ewald_precision=1e-12,
+                        sr_image_precision=None)
+        result = SimpleNamespace(converged=True, energy=-1.0)
+        drivers = {"run_pbc_bipole_" + m: Mock(return_value=result)
+                   for m in ("rhf", "uhf", "rks", "uks")}
+        optimize = function("_run_scf", file="bipole_optimize.py", **drivers)
+        for method in ("RHF", "UHF", "RKS", "UKS"):
+            optimize("system", "basis", "mesh", "options", method, "pbe", **controls)
+            driver = drivers["run_pbc_bipole_" + method.lower()]
+            for key, value in controls.items():
+                self.assertEqual(driver.call_args.kwargs[key], value)
+        # Evaluate the actual four FD call expressions with stub drivers. This
+        # tests forwarding only; no native imports or displaced geometries.
+        tree = ast.parse((PACKAGE / "bipole_gradient.py").read_text())
+        fd = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
+                  and n.name == "compute_bipole_gradient_fd")
+        calls = [n for n in ast.walk(fd) if isinstance(n, ast.Call)
+                 and isinstance(n.func, ast.Name) and n.func.id in drivers]
+        self.assertEqual(len(calls), 4)
+        for call in calls:
+            eval(compile(ast.Expression(call), "fd-forwarding", "eval"), dict(
+                drivers, sys_disp="displaced-system", basis_disp="displaced-basis",
+                kmesh="mesh", options="options", functional="pbe", bipole_kwargs=controls))
+            received = drivers[call.func.id].call_args
+            self.assertEqual(received.args, ("displaced-system", "displaced-basis", "mesh", "options"))
+            for key, value in controls.items():
+                self.assertEqual(received.kwargs[key], value)
+
+    def test_runner_records_planned_and_executed_domains(self):
+        tree = ast.parse((PACKAGE / "periodic_runner.py").read_text())
+        nodes = [n for n in ast.walk(tree) if isinstance(n, ast.If)
+                 and isinstance(n.test, ast.Name) and n.test.id == "_bipole_domain_active"
+                 and isinstance(n.body[0], ast.Assign)
+                 and isinstance(n.body[0].targets[0], ast.Subscript)]
+        self.assertEqual(len(nodes), 3)
+        for physical in (False, True):
+            lat = lattice()
+            lat.pair_complete_1e = physical
+            record = capture(lattice_1e=lat, lattice_2e=lat)
+            namespace = dict(_bipole_domain_active=True, _bipole_physical_pairs=physical,
+                _dry_run_fields={}, _initial_run_fields={}, _manifest_run_fields={},
+                result=SimpleNamespace(resolved_domain=record))
+            for node in nodes:
+                exec(compile(ast.Module(body=[node], type_ignores=[]), "manifest", "exec"), namespace)
+            for name in ("_dry_run_fields", "_initial_run_fields", "_manifest_run_fields"):
+                self.assertEqual(namespace[name]["bipole_domain_policy"], record.policy)
+            self.assertNotIn("bipole_resolved_domain", namespace["_dry_run_fields"])
+            manifest = namespace["_manifest_run_fields"]
+            self.assertEqual(manifest["bipole_resolved_domain"], record.as_dict())
+            json.dumps(manifest, allow_nan=False)
+
+    def test_snapshot_is_detached_including_grid_vectors(self):
+        opts = SimpleNamespace(grid=grid(), use_periodic_becke=True, becke_image_radius_bohr=18.0)
+        original = lattice()
+        record = capture(lattice_2e=original, ks_options=opts)
+        digest = record.settings_sha256
+        original.cutoff_bohr = 2.0
+        opts.grid.orca_angular_points[0] = 999
+        opts.becke_image_radius_bohr = 3.0
+        self.assertEqual(record.settings_sha256, digest)
+        self.assertEqual(record.lattice_2e.restore(lattice).cutoff_bohr, 15.0)
+        self.assertEqual(record.xc_grid.restore(grid).orca_angular_points[0], 50)
+        self.assertEqual(record.becke_image_radius_bohr, 18.0)
+        with self.assertRaises(FrozenInstanceError):
+            record.ewald_precision = 1e-4
+        json.dumps(record.as_dict(), allow_nan=False)
+
+    def test_historical_policy_is_identified_and_changes_digest(self):
+        historical = lattice()
+        historical.pair_complete_1e = False
+        old = capture(lattice_1e=historical, lattice_2e=historical)
+        new = capture()
+        self.assertEqual(old.policy, "historical_index_ball")
+        self.assertEqual(new.policy, "physical_pairs")
+        self.assertNotEqual(old.settings_sha256, new.settings_sha256)
+
+    def test_snapshot_rejects_nonfinite_settings(self):
+        opts = lattice()
+        opts.cutoff_bohr = float("nan")
+        with self.assertRaises(ValueError):
+            capture(lattice_2e=opts)
+
+    def test_exact_and_incremental_context_cannot_drift(self):
+        record = capture()
+        ctx = SimpleNamespace(lat_opts_2e=lattice(), omega_used=.4,
+                              ewald_precision=1e-12, sr_image_extent=28.0,
+                              use_ewald_j_split=True, exchange_split_active=True,
+                              exact_zone_bohr=None, exact_j_for_pure_rks=False,
+                              exact_j_ke_cutoff=200.0)
+        record.require_fock_context(ctx)
+        for field in ("cutoff_bohr", "pair_complete_1e", "schwarz_threshold_forces",
+                      "eri_interaction_cutoff_bohr", "becke_image_radius_bohr"):
+            saved = getattr(ctx.lat_opts_2e, field)
+            setattr(ctx.lat_opts_2e, field, not saved if isinstance(saved, bool) else saved + 1)
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, field):
+                record.require_fock_context(ctx)
+            setattr(ctx.lat_opts_2e, field, saved)
+        ctx.sr_image_extent = 30.0
+        with self.assertRaisesRegex(ValueError, "sr_image_extent"):
+            record.require_fock_context(ctx)
+
+    def test_exact_j_diagnostic_cannot_change_during_accumulator_reuse(self):
+        record = capture(exact_j_ke_cutoff=160.0)
+        ctx = SimpleNamespace(lat_opts_2e=lattice(), omega_used=.4,
+                              ewald_precision=1e-12, sr_image_extent=28.0,
+                              use_ewald_j_split=True, exchange_split_active=True,
+                              exact_zone_bohr=None, exact_j_for_pure_rks=True,
+                              exact_j_ke_cutoff=160.0)
+        record.require_fock_context(ctx)
+        ctx.exact_j_ke_cutoff = 200.0
+        with self.assertRaisesRegex(ValueError, "exact_j_ke_cutoff"):
+            record.require_fock_context(ctx)
+        ctx.exact_j_ke_cutoff = 160.0
+        ctx.exact_j_for_pure_rks = False
+        with self.assertRaisesRegex(ValueError, "exact_j_ke_cutoff"):
+            record.require_fock_context(ctx)
+        ctx.exact_j_for_pure_rks = True
+        with self.assertRaisesRegex(ValueError, "exact_j_ke_cutoff"):
+            capture().require_fock_context(ctx)
+
+    def test_ewald_contract_checks_real_reciprocal_alpha_and_precision(self):
+        record = capture()
+        options = SimpleNamespace(alpha=.4, real_cutoff_bohr=19.0,
+                                  recip_cutoff_bohr_inv=3.404, tolerance=1e-12)
+        record.require_ewald_options(options, context="gradient")
+        for name in vars(options):
+            saved = getattr(options, name)
+            setattr(options, name, saved + 1)
+            with self.subTest(field=name), self.assertRaisesRegex(ValueError, "gradient"):
+                record.require_ewald_options(options, context="gradient")
+            setattr(options, name, saved)
+        with self.assertRaisesRegex(ValueError, "missing resolved Ewald"):
+            record.require_ewald_options(None, context="gradient")
+        capture(alpha=None, ewald_options=None, reciprocal_cutoff=None).require_ewald_options(
+            None, context="non-Ewald")
+
+    def test_gradient_rejects_regenerated_ewald_real_radius_drift_before_kernels(self):
+        record = capture()
+        result = SimpleNamespace(resolved_domain=record, **{
+            k: getattr(record, k) for k in ("ewald_alpha_bohr_inv", "ewald_precision",
+                "sr_image_extent_bohr", "exact_zone_bohr", "exchange_ewald_split")})
+        package = ModuleType("_domain_test_package")
+        native = ModuleType("_domain_test_package.bipole_ext_el_pole")
+        native.bipole_ewald_reciprocal_cutoff = Mock(return_value=3.404)
+        ewald = SimpleNamespace(alpha=.4, real_cutoff_bohr=19.0,
+                               recip_cutoff_bohr_inv=3.404, tolerance=1e-12)
+        match = Mock(return_value=ewald)
+        restore = function("_gradient_domain_options", LatticeSumOptions=lattice,
+            __package__=package.__name__, _matching_ewald_options=match,
+            np=SimpleNamespace(asarray=lambda x, **kw: x,
+                               linalg=SimpleNamespace(det=lambda x: 125.0)))
+        system = SimpleNamespace(dim=3, lattice="cell")
+        with patch.dict(sys.modules, {package.__name__: package, native.__name__: native}):
+            restored = restore(result, None, system=system)
+            match.assert_called_once_with(system, restored, .4,
+                reciprocal_cutoff_bohr_inv=3.404, tolerance=1e-12)
+            ewald.real_cutoff_bohr = 15.0
+            with self.assertRaisesRegex(ValueError, "ewald_real_cutoff_bohr"):
+                restore(result, None, system=system)
+
+    def test_gradient_accepts_original_scf_options_only_after_same_preparation(self):
+        record = capture(alpha=None, ewald_options=None, reciprocal_cutoff=None)
+        result = SimpleNamespace(resolved_domain=record, **{
+            k: getattr(record, k) for k in ("ewald_alpha_bohr_inv", "ewald_precision",
+                "sr_image_extent_bohr", "exact_zone_bohr", "exchange_ewald_split")})
+        package = ModuleType("_domain_test_package")
+        common = ModuleType(package.__name__ + ".pbc_bipole_common")
+        common.copy_bipole_lattice_options = function("copy_bipole_lattice_options",
+            file="pbc_bipole_common.py", OptionSnapshot=domain.OptionSnapshot,
+            LATTICE_FIELDS=domain.LATTICE_FIELDS, LatticeSumOptions=lattice)
+        common.clamp_bipole_nuclear_cutoff = function("clamp_bipole_nuclear_cutoff",
+            file="pbc_bipole_common.py")
+        progress = ModuleType(package.__name__ + ".progress")
+        progress.resolve_progress = Mock(return_value=Mock())
+        restore = function("_gradient_domain_options", LatticeSumOptions=lattice,
+                           __package__=package.__name__)
+        original = lattice()
+        original.nuclear_cutoff_bohr = 25.0
+        with patch.dict(sys.modules, {m.__name__: m for m in (package, common, progress)}):
+            actual = restore(result, original, system=SimpleNamespace(dim=3))
+            self.assertEqual(actual.nuclear_cutoff_bohr, 15.0)
+            self.assertEqual(original.nuclear_cutoff_bohr, 25.0)
+            original.nuclear_cutoff_bohr = 12.0
+            with self.assertRaisesRegex(ValueError, "nuclear_cutoff_bohr"):
+                restore(result, original, system=SimpleNamespace(dim=3))
+            self.assertEqual(original.nuclear_cutoff_bohr, 12.0)
+
+    def test_each_driver_resolves_a_private_lattice_without_changing_next_run(self):
+        clone = function("copy_bipole_lattice_options", file="pbc_bipole_common.py",
+            OptionSnapshot=domain.OptionSnapshot, LATTICE_FIELDS=domain.LATTICE_FIELDS,
+            LatticeSumOptions=lattice)
+        resolve = function("resolve_bipole_lattice_options", file="pbc_bipole_common.py",
+            resolve_bipole_pair_policy=domain.resolve_bipole_pair_policy,
+            copy_bipole_lattice_options=clone)
+        passthrough = function("_lattice_options_passthrough", file="pbc_bipole_common.py",
+            LatticeSumOptions=lattice,
+            _LATTICE_PASSTHROUGH_FIELDS=tuple(n for n in domain.LATTICE_FIELDS if n != "coulomb_method"))
+        clamp = function("clamp_bipole_nuclear_cutoff", file="pbc_bipole_common.py")
+        prepare = function("prepare_bipole_lattice_options", file="pbc_bipole_common.py",
+            clamp_bipole_nuclear_cutoff=clamp, _lattice_options_passthrough=passthrough,
+            CoulombMethod=CoulombMethod)
+        for suffix in ("", "_uhf", "_rks", "_uks"):
+            tree = ast.parse((PACKAGE / f"pbc_bipole{suffix}.py").read_text())
+            assignment, = [n for n in ast.walk(tree) if isinstance(n, ast.AnnAssign)
+                           and isinstance(n.target, ast.Name) and n.target.id == "lat_opts"]
+            original = lattice()
+            original.nuclear_cutoff_bohr = 25.0
+            original.coulomb_method = CoulombMethod.EWALD_3D
+            before = domain.OptionSnapshot.capture(original, domain.LATTICE_FIELDS)
+            # Evaluate the actual driver assignment, then the actual preparation
+            # twice. The unsplit second run must not inherit the first clamp.
+            for split, expected in ((True, 15.0), (False, 25.0)):
+                private = eval(compile(ast.Expression(assignment.value), "driver-options", "eval"),
+                    dict(opts=SimpleNamespace(lattice_opts=original),
+                         resolve_bipole_lattice_options=resolve, historical_domain=False))
+                _, _, two, one = prepare(SimpleNamespace(dim=3), private, split, Mock())
+                with self.subTest(driver=suffix, split=split):
+                    self.assertEqual(two.nuclear_cutoff_bohr, expected)
+                    self.assertEqual(one.nuclear_cutoff_bohr, expected)
+                    self.assertIsNot(private, original)
+                    self.assertEqual(before, domain.OptionSnapshot.capture(original, domain.LATTICE_FIELDS))
+                    self.assertEqual(private.coulomb_method, original.coulomb_method)
+
+    def test_gradient_uses_recorded_lattice_and_refuses_other_domain(self):
+        record = capture()
+        result = SimpleNamespace(resolved_domain=record, **{
+            k: getattr(record, k) for k in ("ewald_alpha_bohr_inv", "ewald_precision",
+                "sr_image_extent_bohr", "exact_zone_bohr", "exchange_ewald_split")})
+        restore = function("_gradient_domain_options", LatticeSumOptions=lattice)
+        self.assertEqual(restore(result, None).cutoff_bohr, 15.0)
+        wrong = lattice()
+        wrong.pair_complete_1e = False
+        with self.assertRaisesRegex(ValueError, "pair_complete_1e"):
+            restore(result, wrong)
+        result.ewald_precision = 1e-8
+        with self.assertRaisesRegex(ValueError, "ewald_precision"):
+            restore(result, None)
+
+    def test_gradient_grid_restores_nondefault_profile_without_native_import(self):
+        result = SimpleNamespace(resolved_domain=capture())
+        package = ModuleType("_domain_test_package")
+        native = ModuleType("_domain_test_package._vibeqc_core")
+        native.GridOptions = grid
+        restore = function("_gradient_domain_grid", __package__="_domain_test_package")
+        with patch.dict(sys.modules, {package.__name__: package, native.__name__: native}):
+            actual, periodic, radius = restore(result, None, None, None)
+            self.assertEqual((actual.n_radial, actual.lebedev_order, periodic, radius),
+                             (200, 53, True, 18.0))
+            with self.assertRaisesRegex(ValueError, "becke_image_radius"):
+                restore(result, None, None, 10.0)
+            changed = grid()
+            changed.lebedev_order = 17
+            with self.assertRaisesRegex(ValueError, "lebedev_order"):
+                restore(result, changed, None, None)
+            self.assertEqual(restore(SimpleNamespace(), None, None, None), (None, True, 10.0))
+
+    def test_gradient_density_domain_auto_and_unrecorded_remain_accepted(self):
+        restore = function("_gradient_domain_options", LatticeSumOptions=lattice)
+        for selected in (None, PeriodicXCDensityDomain.AUTO):
+            record = capture(xc_density_domain=selected)
+            result = SimpleNamespace(resolved_domain=record, **{
+                key: getattr(record, key) for key in (
+                    "ewald_alpha_bohr_inv", "ewald_precision", "sr_image_extent_bohr",
+                    "exact_zone_bohr", "exchange_ewald_split")})
+            with self.subTest(selected=selected):
+                self.assertEqual(restore(result, None).cutoff_bohr, 15.0)
+
+    def test_nonauto_density_domain_refused_at_both_ks_gradient_entries(self):
+        restore = function("_gradient_domain_options", LatticeSumOptions=lattice)
+        for selected in (PeriodicXCDensityDomain.MOLECULAR_HOME,
+                         PeriodicXCDensityDomain.PERIODIC_LATTICE):
+            # Missing numerical objects/metadata are intentional: the refusal
+            # must precede any kernel or geometry-dependent domain resolution.
+            result = SimpleNamespace(resolved_domain=capture(xc_density_domain=selected))
+            for spin in ("rks", "uks"):
+                entry = function(
+                    "compute_bipole_gradient_" + spin,
+                    _gradient_domain_grid=lambda *args: (None, True, 18.0),
+                    _reject_m5_domain_analytic_gradient=lambda *args: None,
+                    _warn_research_preview=lambda *args: None,
+                    _gradient_domain_options=restore,
+                )
+                with self.subTest(selected=selected, spin=spin):
+                    with self.assertRaisesRegex(NotImplementedError, "non-AUTO XC density domain"):
+                        entry(object(), object(), result)
+
+    def test_nonauto_density_domain_cannot_restore_as_auto(self):
+        restore = function("_gradient_domain_options", LatticeSumOptions=lattice)
+        for selected in (PeriodicXCDensityDomain.MOLECULAR_HOME,
+                         PeriodicXCDensityDomain.PERIODIC_LATTICE):
+            record = capture(xc_density_domain=selected)
+            result = SimpleNamespace(resolved_domain=record, **{
+                key: getattr(record, key) for key in (
+                    "ewald_alpha_bohr_inv", "ewald_precision", "sr_image_extent_bohr",
+                    "exact_zone_bohr", "exchange_ewald_split")})
+            with self.subTest(selected=selected):
+                with self.assertRaisesRegex(NotImplementedError, "non-AUTO XC density domain"):
+                    restore(result, None)
+
+    def test_energy_and_nuclear_pair_policies_must_agree(self):
+        other = lattice()
+        other.pair_complete_1e = False
+        with self.assertRaisesRegex(ValueError, "1e/2e domain mismatch"):
+            capture(lattice_1e=other)
+
+    def test_output_discloses_historical_policy_and_all_settings(self):
+        render = function("_format_bipole_domain", file="output/formats/scf_log.py")
+        opts = lattice()
+        opts.pair_complete_1e = False
+        record = capture(lattice_1e=opts, lattice_2e=opts)
+        text = render(SimpleNamespace(resolved_domain=record))
+        self.assertIn("not atom-image invariant", text)
+        self.assertIn(record.settings_sha256, text)
+        for name in domain.LATTICE_FIELDS + domain.GRID_FIELDS:
+            self.assertIn(name + ":", text)
+        self.assertEqual(render(SimpleNamespace()), "")
+
+    def test_ewald_resolver_pairs_the_same_alpha_and_reciprocal_envelope(self):
+        native = ModuleType("_domain_test_package.bipole_ext_el_pole")
+        native.bipole_ewald_reciprocal_cutoff = Mock(return_value=3.404)
+        alpha = Mock(return_value=.4)
+        widen = Mock(side_effect=lambda system, lat, a, tol, log: setattr(lat, "nuclear_cutoff_bohr", 19.0))
+        options = Mock(return_value=SimpleNamespace(real_cutoff_bohr=19.0))
+        resolver = function("resolve_bipole_ewald_state", file="pbc_bipole_common.py",
+            __package__="_domain_test_package",
+            np=SimpleNamespace(asarray=lambda x, **kw: x,
+                               linalg=SimpleNamespace(det=lambda x: 125.0)),
+            resolve_bipole_ewald_alpha=alpha,
+            raise_bipole_ewald_real_cutoff=widen, _crystal_ewald_options=options)
+        one, two = lattice(), lattice()
+        system, log = SimpleNamespace(dim=3, lattice="lattice"), Mock()
+        with patch.dict(sys.modules, {native.__name__: native}):
+            result = resolver(system, one, two, ewald_omega=.4,
+                              ewald_precision=1e-12, erfc_exchange_arm_active=False, plog=log)
+        self.assertEqual(result[1:], (.4, 125.0, 3.404))
+        alpha.assert_called_once_with(125.0, .4, two, 1e-12,
+                                      erfc_exchange_arm_active=False, plog=log)
+        native.bipole_ewald_reciprocal_cutoff.assert_called_once_with(125.0, .4)
+        options.assert_called_once_with(one, alpha_bohr_inv=.4,
+            tolerance=1e-12, recip_cutoff_bohr_inv=3.404)
+        self.assertEqual(one.nuclear_cutoff_bohr, 19.0)
+        self.assertEqual(two.nuclear_cutoff_bohr, 15.0)
+        self.assertEqual(resolver(SimpleNamespace(dim=2), one, two, ewald_omega=None,
+            ewald_precision=1e-12, erfc_exchange_arm_active=False, plog=log), (None,)*4)
+
+    def test_prepared_nuclear_erfc_options_reach_kernel_and_record(self):
+        for suffix in ("", "_uhf", "_rks", "_uks"):
+            tree = ast.parse((PACKAGE / f"pbc_bipole{suffix}.py").read_text())
+            calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)]
+            for consumer, keyword in (("capture_bipole_domain", "nuclear_erfc_options"),
+                                      ("build_bipole_one_electron_lattice", "resolved_erfc_options")):
+                call, = [c for c in calls if c.func.id == consumer]
+                self.assertEqual(ast.unparse(next(k.value for k in call.keywords if k.arg == keyword)),
+                                 "_v_ne_erfc_options")
+        tree = ast.parse((PACKAGE / "pbc_bipole_common.py").read_text())
+        builder = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "build_bipole_one_electron_lattice")
+        call, = [c for c in ast.walk(builder) if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
+                 and c.func.id == "_compute_nuclear_lattice_ewald_reciprocal_ft"]
+        self.assertEqual(ast.unparse(next(k.value for k in call.keywords if k.arg == "resolved_erfc_options")),
+                         "resolved_erfc_options")
+
+    def test_all_four_drivers_share_record_with_context_and_result(self):
+        for suffix in ("", "_uhf", "_rks", "_uks"):
+            tree = ast.parse((PACKAGE / f"pbc_bipole{suffix}.py").read_text())
+            calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)]
+            shared = [c for c in calls if c.func.id == "resolve_bipole_ewald_state"]
+            self.assertEqual(len(shared), 1)
+            self.assertFalse(any(c.func.id in ("resolve_bipole_ewald_alpha", "bipole_ewald_reciprocal_cutoff") for c in calls))
+            consumers = [c for c in calls if c.func.id == "BipoleFockContext" or (c.func.id.startswith("PBCBipole") and c.func.id.endswith("Result"))]
+            self.assertEqual(len(consumers), 2)
+            for consumer in consumers:
+                value = next(k.value for k in consumer.keywords if k.arg == "resolved_domain")
+                self.assertEqual(ast.unparse(value), "_resolved_domain")
+
+    def test_fock_guards_precede_accumulator_access(self):
+        tree = ast.parse((PACKAGE / "pbc_bipole_fock.py").read_text())
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef) and node.name in ("build_bipole_restricted_fock", "build_bipole_unrestricted_fock"):
+                self.assertIn("require_fock_context(ctx)", ast.unparse(node.body[1]))
+
+    def test_nondefault_grid_reaches_both_response_builders(self):
+        tree = ast.parse((PACKAGE / "bipole_gradient.py").read_text())
+        for spin in ("closed", "open"):
+            name = f"_multi_k_orbital_relaxation_ks_{spin}_diag"
+            node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name)
+            grids = [n for n in ast.walk(node) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in ("_build_ks_grid", "build_periodic_becke_grid")]
+            self.assertEqual(len(grids), 1)
+            call = grids[0]
+            self.assertEqual(call.func.id, "_build_ks_grid")
+            received = Mock(return_value="grid")
+            expression = ast.Expression(body=call)
+            selected_grid = object()
+            self.assertEqual(eval(compile(expression, "grid-call", "eval"), dict(
+                _build_ks_grid=received, system="cell", grid_options=selected_grid,
+                use_periodic_becke=False, becke_image_radius_bohr=18.0)), "grid")
+            received.assert_called_once_with("cell", selected_grid, False, 18.0)
+            callers = [c for c in ast.walk(tree) if isinstance(c, ast.Call) and isinstance(c.func, ast.Name) and c.func.id == name]
+            self.assertEqual(len(callers), 1)
+            for field in ("grid_options", "use_periodic_becke", "becke_image_radius_bohr"):
+                self.assertEqual(ast.unparse(next(k.value for k in callers[0].keywords if k.arg == field)), field)
+
+    def test_snapshot_inventory_covers_native_option_fields(self):
+        source = (ROOT / "cpp/src/bindings.cpp").read_text()
+        for klass, expected in (("GridOptions", domain.GRID_FIELDS), ("LatticeSumOptions", domain.LATTICE_FIELDS)):
+            start = source.index(f'py::class_<vibeqc::{klass}>')
+            end = source.index('\n    m.def(', start) if klass == "GridOptions" else source.index(';', start)
+            # A semicolon in a docstring can terminate the quick bound. Use the
+            # next class binding to enclose all lattice fields instead.
+            if klass == "LatticeSumOptions":
+                end = source.index('py::class_<', start + 15)
+            fields = set(re.findall(r'\.def_(?:readwrite|property)\("([^"]+)"', source[start:end]))
+            self.assertEqual(fields, set(expected))
+
+
+class XCDensityReachContractTests(unittest.TestCase):
+    """Execute the driver boundary with independent lattice/grid controls."""
+
+    def _resolve_driver(self, method, reach, cutoff=24.0, partition=10.0,
+                        selection=PeriodicXCDensityDomain.AUTO):
+        tree = ast.parse((PACKAGE / f"pbc_bipole_{method}.py").read_text())
+        driver = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
+                      and n.name == f"run_pbc_bipole_{method}")
+        start = next(i for i, n in enumerate(driver.body)
+                     if isinstance(n, ast.AnnAssign)
+                     and getattr(n.target, "id", None) == "overlap_fold_drift")
+        stop = next(i for i in range(start + 1, len(driver.body))
+                    if isinstance(driver.body[i], ast.If)
+                    and ast.unparse(driver.body[i].test) == "exchange_split_active")
+        source = lattice()
+        source.cutoff_bohr = cutoff
+        source.becke_image_radius_bohr = reach
+        ns = dict(lat_opts_2e=source, _chi_xc=None,
+                  opts=SimpleNamespace(use_periodic_becke=True,
+                                       becke_image_radius_bohr=partition),
+                  xc_density_domain=selection,
+                  PeriodicXCDensityDomain=PeriodicXCDensityDomain,
+                  resolve_bipole_xc_density_reach=getattr(
+                      domain, "resolve_bipole_xc_density_reach", None))
+        module = ast.Module(body=driver.body[start:stop], type_ignores=[])
+        exec(compile(module, "driver-xc-resolution", "exec"), ns)
+        return ns
+
+    def test_driver_density_radius_is_independent_of_partition(self):
+        for method in ("rks", "uks"):
+            for request, cutoff, partition, expected in (
+                (0.0, 24.0, 10.0, 24.0), (10.0, 24.0, 7.0, 10.0),
+                (40.0, 24.0, 10.0, 24.0), (0.0, 6.0, 10.0, 6.0)):
+                for selection in (PeriodicXCDensityDomain.AUTO,
+                                  PeriodicXCDensityDomain.PERIODIC_LATTICE):
+                    with self.subTest(method=method, request=request,
+                                      cutoff=cutoff, selection=selection):
+                        ns = self._resolve_driver(method, request, cutoff,
+                                                  partition, selection)
+                        self.assertEqual(ns["lat_opts_2e"].becke_image_radius_bohr,
+                                         expected)
+                        self.assertEqual(ns["opts"].becke_image_radius_bohr, partition)
+
+    def _run_grid_motion_fixture(self, *, direct_bypass=None, fixture_source=None):
+        """Run the maintained fixture with affine XC doubles, never chemistry.
+
+        Execute the real restoration and correction bodies. The synthetic
+        affine energy merely lets the fixture reach all of its call sites;
+        its nonzero slope supplies no physical acceptance evidence.
+        """
+        import numpy as np
+
+        if fixture_source is None:
+            fixture_source = (ROOT / "tests/test_bipole_gradient.py").read_text()
+        node = next(n for n in ast.parse(fixture_source).body
+                    if isinstance(n, ast.FunctionDef) and n.name ==
+                    "test_periodic_xc_grid_motion_correction_matches_moving_fd")
+        node.decorator_list = []
+        targets = {
+            "fixed": "xc_lattice_gradient_contribution",
+            "correction": "_periodic_xc_grid_motion_correction",
+            "displaced": "build_xc_periodic",
+        }
+        if direct_bypass is not None:
+            # Only the selected DIRECT consumer loses the captured radius.
+            # The SCF request and its immutable resolved record remain at 10.
+            call, = [n for n in ast.walk(node) if isinstance(n, ast.Call)
+                     and getattr(n.func, "id", None) == targets[direct_bypass]]
+            index, = [i for i, n in enumerate(call.args)
+                      if isinstance(n, ast.Name) and n.id == "xc_lattice_opts"]
+            call.args[index] = ast.Call(func=ast.Name(id="discard_reach", ctx=ast.Load()),
+                                       args=[call.args[index]], keywords=[])
+        module = ast.fix_missing_locations(ast.Module(body=[node], type_ignores=[]))
+        seen = []
+        state = {}
+
+        class Atom:
+            def __init__(self, Z, xyz):
+                self.Z, self.xyz = Z, xyz
+
+        class System:
+            def __init__(self, dim, cell, atoms):
+                self.dim, self.lattice, self.unit_cell = dim, cell, atoms
+                self.charge, self.multiplicity = 0, 1
+
+            def unit_cell_molecule(self):
+                return self
+
+        def options(*, cutoff):
+            lat = lattice()
+            lat.cutoff_bohr = lat.nuclear_cutoff_bohr = cutoff
+            return SimpleNamespace(lattice_opts=lat, grid=grid(),
+                use_periodic_becke=True, becke_image_radius_bohr=10.0)
+
+        def scf(system, basis, mesh, opts, **kwargs):
+            self.assertEqual(opts.lattice_opts.cutoff_bohr, 24.0)
+            self.assertEqual(opts.lattice_opts.becke_image_radius_bohr, 10.0,
+                             "fixture must request SCF density reach 10 explicitly")
+            self.assertEqual(opts.becke_image_radius_bohr, 10.0)
+            resolved = self._resolve_driver("rks", opts.lattice_opts.becke_image_radius_bohr,
+                opts.lattice_opts.cutoff_bohr, opts.becke_image_radius_bohr)["lat_opts_2e"]
+            record = capture(lattice_1e=resolved, lattice_2e=resolved,
+                requested_lattice=opts.lattice_opts, ks_options=opts,
+                xc_density_domain=PeriodicXCDensityDomain.AUTO)
+            result = SimpleNamespace(converged=True, density=object(), resolved_domain=record,
+                **{k: getattr(record, k) for k in ("ewald_alpha_bohr_inv", "ewald_precision",
+                    "sr_image_extent_bohr", "exact_zone_bohr", "exchange_ewald_split")})
+            state.update(result=result, options=opts, in_correction=False)
+            return result
+
+        def check(opts, boundary):
+            seen.append(boundary)
+            record = state["result"].resolved_domain
+            expected = record.lattice_2e.restore(lattice)
+            self.assertEqual(domain.resolve_bipole_xc_density_reach(opts),
+                domain.resolve_bipole_xc_density_reach(expected),
+                f"{boundary}: direct density reach differs from SCF 10")
+            record.lattice_2e.require_match(opts, context=boundary)
+
+        def build_grid(system, *, grid_options, image_radius_bohr):
+            record = state["result"].resolved_domain
+            record.xc_grid.require_match(grid_options, context="fixture grid")
+            self.assertEqual(image_radius_bohr, record.becke_image_radius_bohr)
+            return system
+
+        def energy(basis, system, grid, func, density, opts):
+            check(opts, "correction_energy" if state["in_correction"] else "displaced")
+            self.assertIs(density, state["result"].density)
+            return SimpleNamespace(e_xc=1e-4 * sum(sum(a.xyz) for a in system.unit_cell))
+
+        def fixed(basis, system, grid, func, density, opts):
+            check(opts, "fixed")
+            self.assertIs(density, state["result"].density)
+            return np.zeros((2, 3))
+
+        def correction(*args, **kwargs):
+            check(args[4], "correction")
+            self.assertIs(args[2], state["result"].density)
+            state["in_correction"] = True
+            try:
+                return actual_correction(*args, **kwargs)
+            finally:
+                state["in_correction"] = False
+
+        def discard_reach(opts):
+            out = SimpleNamespace(**vars(opts))
+            out.becke_image_radius_bohr = 0.0
+            return out
+
+        modules = {n: ModuleType(n) for n in ("vibeqc", "vibeqc._vibeqc_core",
+            "vibeqc.bipole_gradient", "vibeqc.pbc_bipole_rks",
+            "vibeqc.periodic_grid", "vibeqc.pbc_bipole_common")}
+        modules["vibeqc"].__path__ = []
+        core = modules["vibeqc._vibeqc_core"]
+        core.Functional = lambda *args: object()
+        core.GridOptions = grid
+        core.build_xc_periodic = energy
+        core.xc_lattice_gradient_contribution = fixed
+        modules["vibeqc.pbc_bipole_common"]._lattice_options_passthrough = (
+            lambda opts: SimpleNamespace(**vars(opts)))
+        helper = modules["vibeqc.bipole_gradient"]
+        for name in ("_gradient_domain_grid", "_gradient_domain_options",
+                     "_ks_gradient_lattice_options"):
+            setattr(helper, name, function(name, __package__="vibeqc",
+                                          LatticeSumOptions=lattice))
+        actual_correction = function("_periodic_xc_grid_motion_correction",
+            __package__="vibeqc", np=np, Atom=Atom, PeriodicSystem=System,
+            _recenter_basis_on_periodic_system=lambda basis, system: object(),
+            _build_ks_grid=lambda system, opts, periodic, radius: build_grid(
+                system, grid_options=opts, image_radius_bohr=radius))
+        helper._periodic_xc_grid_motion_correction = correction
+        modules["vibeqc.pbc_bipole_rks"].run_pbc_bipole_rks = scf
+        modules["vibeqc.periodic_grid"].build_periodic_becke_grid = build_grid
+        ns = dict(np=np, vq=SimpleNamespace(Atom=Atom, PeriodicSystem=System,
+            BasisSet=lambda *args: object()), _ks_opts=options,
+            monkhorst_pack=lambda *args: object(), discard_reach=discard_reach)
+        with patch.dict(sys.modules, modules):
+            exec(compile(module, "grid-motion-fixture", "exec"), ns)
+            try:
+                ns[node.name]()
+            finally:
+                if "result" in state:
+                    self.assertEqual(state["options"].lattice_opts.becke_image_radius_bohr, 10.)
+                    self.assertEqual(dict(state["result"].resolved_domain.lattice_2e.values)[
+                        "becke_image_radius_bohr"], 10.)
+        return seen
+
+    def test_grid_motion_fixture_matches_scf_domain_at_every_xc_call(self):
+        from collections import Counter
+        self.assertEqual(Counter(self._run_grid_motion_fixture()),
+                         dict(fixed=1, correction=1, correction_energy=12, displaced=12))
+
+    def test_grid_motion_fixture_direct_only_bypass_is_detected(self):
+        for boundary in ("fixed", "correction", "displaced"):
+            with self.subTest(boundary=boundary), self.assertRaisesRegex(
+                    AssertionError, boundary + ": direct density reach differs from SCF 10"):
+                self._run_grid_motion_fixture(direct_bypass=boundary)
+
+    def test_fock_bundle_carries_its_own_native_count(self):
+        # Evaluate the actual return boundary, with deliberately distinct
+        # total/alpha/beta counts. No last-callback cache can satisfy this.
+        for method in ("rks", "uks"):
+            tree = ast.parse((PACKAGE / f"pbc_bipole_{method}.py").read_text())
+            driver = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
+                          and n.name == f"run_pbc_bipole_{method}")
+            wrapper = next(n for n in driver.body if isinstance(n, ast.FunctionDef)
+                           and n.name == "_build_fock_for_density")
+            result = next(n.value for n in wrapper.body if isinstance(n, ast.Return))
+            fb = SimpleNamespace(**dict.fromkeys((
+                "e_j_short_range", "e_j_long_range", "e_exchange", "e_j_multipole",
+                "e_2e_k_correction", "e_exchange_finite_size",
+                "screened_exchange_execution", "output_cell_farming_execution",
+                "f2e_alpha_real", "f2e_beta_real"), None))
+            ns = dict(fb=fb, f2e_real=None, f_k_list=[], f_alpha_k_list=[],
+                      f_beta_k_list=[], chi_e_xc=None,
+                      **{f"_PBCBipole{method.upper()}FockBuild": SimpleNamespace})
+            for count in (1.25, 1.9925, 2.0001):
+                ns["xc_result"] = SimpleNamespace(e_xc=-0.25,
+                    n_electrons_grid=count, periodic_density_bras=True)
+                bundle = eval(compile(ast.Expression(result), "fock-count", "eval"), ns)
+                self.assertEqual(getattr(bundle, "n_electrons_grid", None), count)
+                self.assertIs(bundle.periodic_density_bras, True)
+            ns["xc_result"] = None  # PATOM and non-grid callback have no count.
+            bundle = eval(compile(ast.Expression(result), "fock-count", "eval"), ns)
+            self.assertIsNone(bundle.n_electrons_grid)
+            self.assertFalse(bundle.periodic_density_bras)
+
+    def test_gradient_keeps_captured_density_radius(self):
+        fake = ModuleType("vibeqc.pbc_bipole_common")
+        fake._lattice_options_passthrough = lambda v: SimpleNamespace(**vars(v))
+        fake.resolve_bipole_xc_density_reach = getattr(domain, "resolve_bipole_xc_density_reach", None)
+        gradient = function("_ks_gradient_lattice_options", LatticeSumOptions=lattice,
+                            __package__="vibeqc")
+        with patch.dict(sys.modules, {"vibeqc.pbc_bipole_common": fake}):
+            source = lattice()
+            source.cutoff_bohr = 24.0
+            source.becke_image_radius_bohr = 24.0
+            result = gradient(source, True, 10.0)
+            self.assertEqual(result.becke_image_radius_bohr, 24.0)
+            self.assertEqual(source.becke_image_radius_bohr, 24.0)
+
+
+    def test_invalid_reaches_refuse_and_unset_values_preserve_native_semantics(self):
+        for method in ("rks", "uks"):
+            for bad in (float("nan"), float("inf"), -float("inf")):
+                with self.subTest(method=method, bad=bad), self.assertRaises(ValueError):
+                    self._resolve_driver(method, bad)
+            for bad in (0.0, -1.0, float("nan"), float("inf")):
+                with self.subTest(method=method, cutoff=bad), self.assertRaises(ValueError):
+                    self._resolve_driver(method, 0.0, cutoff=bad)
+            self.assertEqual(self._resolve_driver(method, -1.0)[
+                "lat_opts_2e"].becke_image_radius_bohr, 24.0)
+
+    def test_auto_reserves_differences_without_forcing_density_selection(self):
+        for method in ("rks", "uks"):
+            for selected in PeriodicXCDensityDomain:
+                ns = self._resolve_driver(method, 0.0, selection=selected)
+                self.assertEqual(ns["needs_pair_difference_xc"],
+                                 selected == PeriodicXCDensityDomain.PERIODIC_LATTICE)
+                self.assertEqual(ns["needs_xc_difference_support"],
+                                 selected != PeriodicXCDensityDomain.MOLECULAR_HOME)
+            tree = ast.parse((PACKAGE / f"pbc_bipole_{method}.py").read_text())
+            calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+                     and getattr(n.func, "id", None) == "periodic_xc_difference_closed_cells"]
+            self.assertEqual(len(calls), 1)
+            got = Mock(return_value=())
+            ns = dict(periodic_xc_difference_closed_cells=got, system="cell",
+                      lat_opts_2e=SimpleNamespace(cutoff_bohr=24.0),
+                      _xc_image_radius=24.0)
+            eval(compile(ast.Expression(calls[0]), "xc-differences", "eval"), ns)
+            got.assert_called_once_with("cell", 24.0, 24.0)
+
+    def test_terminal_hook_warns_once_on_the_accepted_bundle_for_both_spins(self):
+        import warnings
+        spec = importlib.util.spec_from_file_location(
+            "_xc_diagnostic_contract", PACKAGE / "periodic_xc_diagnostics.py")
+        diagnostic = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(diagnostic)
+        for method in ("rks", "uks"):
+            tree = ast.parse((PACKAGE / f"pbc_bipole_{method}.py").read_text())
+            driver = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
+                          and n.name == f"run_pbc_bipole_{method}")
+            start = next(i for i, n in enumerate(driver.body) if isinstance(n, ast.Assign)
+                         and any(getattr(t, "id", None) == "_xc_diagnostics" for t in n.targets))
+            terminal = ast.Module(body=driver.body[start:-1], type_ignores=[])
+            result_call = driver.body[-1].value
+            fields = {k.arg: k.value for k in result_call.keywords
+                      if k.arg.startswith("xc_")}
+            self.assertEqual(set(fields), {"xc_grid_electrons", "xc_grid_electron_error",
+                                           "xc_periodic_density_bras"})
+            for final, periodic, warns in ((1.99, True, 1), (2.0, True, 0),
+                    (float("nan"), True, 1), (1.0, False, 0), (None, False, 0)):
+                ns = dict(_fb=SimpleNamespace(n_electrons_grid=final,
+                          periodic_density_bras=periodic), n_elec=2,
+                          opts=SimpleNamespace(becke_image_radius_bohr=7.0),
+                          lat_opts_2e=SimpleNamespace(cutoff_bohr=24., becke_image_radius_bohr=12.),
+                          check_xc_grid_electron_count=diagnostic.check_xc_grid_electron_count,
+                          trial_count=99.0, patom_count=-1.0)
+                with warnings.catch_warnings(record=True) as caught:
+                    warnings.simplefilter("always")
+                    exec(compile(terminal, "terminal-diagnostic", "exec"), ns)
+                self.assertEqual(len(caught), warns)
+                if warns:
+                    msg = str(caught[0].message)
+                    for expected in ("N = 2", "0.001", "cutoff_bohr=24",
+                                     "becke_image_radius_bohr=12", "partition radius=7"):
+                        self.assertIn(expected, msg)
+                reported = eval(compile(ast.Expression(fields["xc_grid_electrons"]),
+                                        "result-count", "eval"), ns)
+                self.assertIs(reported, final)
+            # No warning is permitted inside a trial/iteration callback.
+            calls = [n for n in ast.walk(driver) if isinstance(n, ast.Call)
+                     and getattr(n.func, "id", None) == "check_xc_grid_electron_count"]
+            self.assertEqual(len(calls), 1)
+
+    def test_resolved_and_requested_radii_survive_domain_capture(self):
+        requested = lattice()
+        requested.cutoff_bohr = 24.0
+        requested.becke_image_radius_bohr = 40.0
+        resolved = lattice()
+        resolved.cutoff_bohr = 24.0
+        resolved.becke_image_radius_bohr = 24.0
+        record = capture(lattice_1e=resolved, lattice_2e=resolved,
+                         requested_lattice=requested)
+        self.assertEqual(dict(record.requested_lattice.values)["becke_image_radius_bohr"], 40.)
+        self.assertEqual(dict(record.lattice_2e.values)["becke_image_radius_bohr"], 24.)
+        self.assertEqual(record.becke_image_radius_bohr, 18.)
+        self.assertEqual(requested.becke_image_radius_bohr, 40.)
+
+
+if __name__ == "__main__":
+    unittest.main()

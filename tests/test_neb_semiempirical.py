@@ -324,7 +324,10 @@ def test_periodic_dftb0_analytic_gradient_matches_mgo_slab_fd() -> None:
         h=1.0e-4,
     )
 
-    assert energy == pytest.approx(-3.768068706362752, abs=1.0e-12)
+    # Re-pinned for the corrected STO-6G DFTB basis (#373); the old basis
+    # gave -3.768068706362752 on this slab. Re-pinned again for the #478 H0
+    # normalization (406dcb25); before it the slab gave -3.8581785314371517.
+    assert energy == pytest.approx(-3.779807122930656, abs=1.0e-12)
     assert np.max(np.abs(analytic)) > 1.0e-5
     assert np.max(np.abs(analytic - finite_difference)) < 2.0e-8
 
@@ -568,7 +571,10 @@ def test_dftb0_full_k_native_gradient_drives_public_neb_qvf(tmp_path) -> None:
         _hli_chain(1.45),
         method="dftb0",
         kpoints=(3, 1, 1),
-        semiempirical_cutoff_bohr=12.0,
+        # The #373 STO-6G Li functions need a converged periodic overlap: at
+        # 12 bohr the truncated S(k) sum is indefinite.  32 bohr matches the
+        # other HLi chain k-point tests (test_semiempirical_kpoint_dftb*.py).
+        semiempirical_cutoff_bohr=32.0,
         n_images=1,
         interpolation="linear",
         max_iter=1,

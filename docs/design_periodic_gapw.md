@@ -450,9 +450,6 @@ The five M0 asks, resolved by the maintainer 2026-05-24:
 
 - [`docs/roadmap.md`](roadmap.md), Acceleration program,
   `v0.10.x` row.
-- [Archived `HANDOVER_GDF_V0_11_2026_05_29.md`](https://vibe-qc.com/docs/)
-  - GDF route state (the closed-shell Γ-only Gaussian route
-  we coexist with).
 - [`docs/user_guide/bipole.md`](user_guide/bipole.md)
   - BIPOLE route reference (the multi-k open-shell Gaussian route
   we coexist with).
@@ -462,3 +459,21 @@ The five M0 asks, resolved by the maintainer 2026-05-24:
   GAPW formulation.
 - Blöchl, *Phys. Rev. B* 50, 17953 (1994), PAW.
 - Lin Lin, *J. Chem. Theory Comput.* 12, 2242 (2016), ACE.
+
+
+### Opt-in coupled nuclear pair domain
+
+`smeared_v_ne_full_gamma(..., lat_opts=opts)` uses a coupled physical domain
+when `opts.pair_complete_1e` is true. The actual erfc lattice cells and
+`opts.cutoff_bohr` define the calibrated AO-pair Fourier projection of the
+FFT potential; the alpha correction uses overlap with the unchanged same
+options. With `V_G = FFT[V]/N_grid` and
+`P_mn(G) = integral P_mn(r) exp(-i G.r) dr`, the projection is
+`sum_G V_G conj(P_mn(G))`, retaining the existing AO normalization.
+The private convention dispatcher forwards supplied options for this route.
+
+The nuclear positions are reduced into the grid cell before the opt-in
+finite-image collocation. This fixes representation-dependent image placement;
+`image_shells`, grid resolution and real-space cutoffs still require convergence.
+No global default or common Fock API changes. Full native matrix translation,
+alpha cancellation and SCF checks remain the numerical acceptance criteria.

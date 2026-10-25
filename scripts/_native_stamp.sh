@@ -173,7 +173,7 @@ $salt"
 # other unmarked recipe change also changes the current hash and invalidates
 # the alias.
 #
-# There is currently NO entry. The one that existed — scripts/build_libint.sh
+# The former libint entry — scripts/build_libint.sh
 # at 8d3443c65f0c2480a0688d928a133da48488c815, whose only change was the lock
 # source/acquire pair that 4caf8b2a7 moved and 0255fec94 marked lifecycle-only
 # — was retired on 2026-08-06, when the max_am change (deriv-2 tier 3 -> 4,
@@ -187,8 +187,61 @@ $salt"
 # from, skipping the rebuild and leaving analytic Hessians silently unable to
 # handle g-function bases — exactly the stale-install class this file exists
 # to catch.
+# Exact pre-admission FFTW fingerprints: only cache checks/messages changed.
+# The current fingerprint still includes every source pin and build option.
+# This compatibility is recipe identity, never installed-source attestation.
+_vibeqc_fftw_admission_recipe_matches() {
+    [ "$1" = "scripts/build_fftw.sh" ] || return 1
+    [ "$3" = "96174d7161101da4e1f28b3e767971e719fa3532047eb6ef0c738ea3e279b465" ] || return 1
+    case "$2" in
+        5e4c72c10655584c2dd511080e982a4177c5afaf81633de3df8a4aecd1e61fd2|1aaac633983c4a69f5304deb3997734c259028e6ce33fe2e90871c12e53717cd) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# libxc's analogous cache-only change preserves its compiled recipe as well.
+_vibeqc_libxc_admission_recipe_matches() {
+    [ "$1" = "scripts/build_libxc.sh" ] || return 1
+    [ "$3" = "eb5a6576a709db0e0e61d35e8ace4ab35fa2002bb6375cebd8739705827e1d7f" ] || return 1
+    case "$2" in
+        4bae92e0e9cfbb4dce430145fa20b20772657f2995f721db90afc32d2310fc59|ba791910b05b03d672db9b327dfdb0d11f4bd3b59b63183d980f461bec8c008f) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# spglib's admission-only change likewise leaves compilation unchanged.
+_vibeqc_spglib_admission_recipe_matches() {
+    [ "$1" = "scripts/build_spglib.sh" ] || return 1
+    [ "$3" = "34014ff2047664e99a32a8edd73b10b491219d05568941aa890d112e9b3ba561" ] || return 1
+    case "$2" in
+        e07be4baf5d5adee173497d6250badcedb9f9662cc3b525c07fc411b0422bf16|5d0e3001218aa57c4a7a15a7213fbf276bbae08b60cd2a74baacd1f9d8239179) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# OpenBLAS's header-only gate changes to admission, with no build flag change.
+_vibeqc_openblas_admission_recipe_matches() {
+    [ "$1" = "scripts/build_openblas.sh" ] || return 1
+    [ "$3" = "89e3aea5b49039a69c308e91efe9db42ad0634ae0c57df5239ddd5d60084781c" ] || return 1
+    case "$2" in
+        821eaeb47a6bc6f56c6f91fdb8fbfeecbbf83ad5d2eb99e1d1ceda1be208e723|51acb78acc510a3c19e9ab0394cd572c220d7fcdc378f868af95b64c7b1027f3) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 _vibeqc_reviewed_legacy_recipe_matches() {
     local script="$1" legacy_stamped="$2" current="$3"
+    # This pre-admission v1 row had no max-AM salt. Compare the exact recipe
+    # at its default salt; v2 rows still compare their actual requested salt.
+    if [ "$script" = "scripts/build_libint.sh" ] &&
+       [ "$legacy_stamped" = "15c929d322009784daff6981454e439dbead4b5518be2d43e032e795d86757c5" ] &&
+       [ "$(VIBEQC_LIBINT_MAX_AM=5_4_4 _vibeqc_recipe_hash "$script")" = "5bf93e44e0ffedba0604cd0ab7fb3b1bbd64248a8ca9e2483ee746e07568a5e7" ]; then
+        return 0
+    fi
+    _vibeqc_fftw_admission_recipe_matches "$script" "$legacy_stamped" "$current" && return 0
+    _vibeqc_libxc_admission_recipe_matches "$script" "$legacy_stamped" "$current" && return 0
+    _vibeqc_spglib_admission_recipe_matches "$script" "$legacy_stamped" "$current" && return 0
+    _vibeqc_openblas_admission_recipe_matches "$script" "$legacy_stamped" "$current" && return 0
     case "$script" in
         *) return 1 ;;
     esac
@@ -208,7 +261,19 @@ _vibeqc_stamp_recipe_matches() {
                 if ! current="$(_vibeqc_recipe_hash "$script")"; then
                     return 1
                 fi
-                [ "$v2_stamped" = "v2:$current" ]
+                [ "$v2_stamped" = "v2:$current" ] || {
+                    [ "$v2_stamped" = "v2:1aaac633983c4a69f5304deb3997734c259028e6ce33fe2e90871c12e53717cd" ] &&
+                        _vibeqc_fftw_admission_recipe_matches "$script" "${v2_stamped#v2:}" "$current"
+                } || {
+                    [ "$v2_stamped" = "v2:ba791910b05b03d672db9b327dfdb0d11f4bd3b59b63183d980f461bec8c008f" ] &&
+                        _vibeqc_libxc_admission_recipe_matches "$script" "${v2_stamped#v2:}" "$current"
+                } || {
+                    [ "$v2_stamped" = "v2:5d0e3001218aa57c4a7a15a7213fbf276bbae08b60cd2a74baacd1f9d8239179" ] &&
+                        _vibeqc_spglib_admission_recipe_matches "$script" "${v2_stamped#v2:}" "$current"
+                } || {
+                    [ "$v2_stamped" = "v2:51acb78acc510a3c19e9ab0394cd572c220d7fcdc378f868af95b64c7b1027f3" ] &&
+                        _vibeqc_openblas_admission_recipe_matches "$script" "${v2_stamped#v2:}" "$current"
+                }
                 ;;
             *) return 1 ;;
         esac
@@ -305,6 +370,46 @@ _vibeqc_dep_artifact_present() {
     return 1
 }
 
+# Identity admission is separate from rebuildable recipe drift. Runtime
+# version is observed, never mapped to a source release or build options.
+vibeqc_verify_cached_fftw() {
+    [ -d third_party/fftw/install ] || return 0
+    python3 "$(dirname "${BASH_SOURCE[0]}")/attest_fftw_image.py" \
+        third_party/fftw/install >/dev/null
+}
+
+vibeqc_verify_cached_libxc() {
+    [ -d third_party/libxc/install ] || return 0
+    python3 "$(dirname "${BASH_SOURCE[0]}")/attest_native_image.py" \
+        libxc third_party/libxc/install >/dev/null
+}
+
+vibeqc_verify_cached_spglib() {
+    [ -d third_party/spglib/install ] || return 0
+    python3 "$(dirname "${BASH_SOURCE[0]}")/attest_native_image.py" \
+        spglib third_party/spglib/install >/dev/null
+}
+
+vibeqc_verify_cached_libint() {
+    [ -d third_party/libint/install ] || return 0
+    if [ ! -f third_party/libint/install/lib/cmake/libint2/libint2-config.cmake ]; then
+        echo "libint artifact identity unavailable: cache lacks libint2-config.cmake" >&2
+        return 1
+    fi
+    python3 "$(dirname "${BASH_SOURCE[0]}")/attest_native_image.py" \
+        libint third_party/libint/install >/dev/null
+}
+
+vibeqc_verify_cached_openblas() {
+    [ -d third_party/openblas/install ] || return 0
+    if [ ! -f third_party/openblas/install/include/lapacke.h ]; then
+        echo "OpenBLAS artifact identity unavailable: cached install lacks lapacke.h" >&2
+        return 1
+    fi
+    python3 "$(dirname "${BASH_SOURCE[0]}")/attest_native_image.py" \
+        openblas third_party/openblas/install >/dev/null
+}
+
 # ---------------------------------------------------------------------------
 # vibeqc_stamp_write
 #
@@ -312,6 +417,11 @@ _vibeqc_dep_artifact_present() {
 # Caller invokes this *after* a successful setup_native_deps.sh run.
 # ---------------------------------------------------------------------------
 vibeqc_stamp_write() {
+    vibeqc_verify_cached_libint || return 3
+    vibeqc_verify_cached_fftw || return 3
+    vibeqc_verify_cached_libxc || return 3
+    vibeqc_verify_cached_spglib || return 3
+    vibeqc_verify_cached_openblas || return 3
     local stamp="$VIBEQC_STAMP_PATH"
     local dir tmp dep script
     dir=$(dirname "$stamp")
@@ -391,6 +501,7 @@ vibeqc_stamp_write() {
 # drift is detected. Returns:
 #   0 — stamp matches, no action needed
 #   1 — drift detected (caller may choose to warn or to force a rebuild)
+#   3 — native artifact identity unavailable; preserve cache, no implicit rebuild
 #   2 — stamp missing (third_party/install trees exist but were built
 #       before this stamp logic landed; we can't tell whether they're
 #       current)
@@ -405,6 +516,12 @@ vibeqc_stamp_check() {
         shift
     fi
 
+    # Admission refusal (3) must not be routed into automatic rebuild (1).
+    vibeqc_verify_cached_libint || return 3
+    vibeqc_verify_cached_fftw || return 3
+    vibeqc_verify_cached_libxc || return 3
+    vibeqc_verify_cached_spglib || return 3
+    vibeqc_verify_cached_openblas || return 3
     local stamp="$VIBEQC_STAMP_PATH"
 
     # Nothing to check if no install/ tree exists at all.

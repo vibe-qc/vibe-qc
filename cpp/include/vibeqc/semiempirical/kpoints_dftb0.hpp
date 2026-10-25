@@ -100,6 +100,16 @@ int validate_dftb_kpoint_request(
     double cutoff_bohr,
     const char* caller);
 
+// Refuse a Bloch overlap the pair cutoff left indefinite (#565). The exact
+// S(k) of a real basis is positive definite; summing the pair blocks only up
+// to cutoff_bohr drops overlaps that diffuse functions still carry, so S(k)
+// can lose that property. The refusal names the cutoff as the remedy.
+void require_positive_definite_bloch_overlap(
+    const Eigen::MatrixXcd& S_k,
+    const Eigen::Vector3d& kpoint,
+    double cutoff_bohr,
+    const char* caller);
+
 // Run DFTB0 along a band-structure path with independent per-point filling.
 // The aggregate energy is diagnostic only; path points are not a quadrature.
 KPointDFTB0Result run_dftb0_bandpath(

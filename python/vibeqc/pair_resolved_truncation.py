@@ -10,7 +10,7 @@ cell outside the radial domain -- 100% of MgO cells are orbit-open at
 production cutoffs, cell-list expansion provably never closes them,
 and the resulting truncation asymmetry is the ~4e-2 Ha SYM3b
 enforcement shift that keeps ``use_fock_symmetry*`` opt-in
-(HANDOVER_BIPOLE_PRODUCTION.md Sec. 0a, 2026-07-12).
+(the original investigation, 2026-07-12).
 
 The fix is to truncate by the PAIR criterion CRYSTAL uses:
 
@@ -172,28 +172,40 @@ def pair_resolved_domain(
         # distance, so it is already kept up to boundary rounding;
         # iterate to a fixed point anyway -- the set is finite and
         # grows monotonically, and real inputs converge immediately).
+        # Batch the same affine integer action by atom pair. Each operator
+        # transforms an (n_cells, 3) array rather than making a tiny NumPy
+        # array for every triple. Keep only one pair/operator image at a
+        # time, and retain the fixed point for incomplete operator sets.
+        # The atom-image shifts follow Dovesi (1986), Eqs. (31)-(36),
+        # doi:10.1002/qua.560290608; only their evaluation is batched.
+        keys_by_pair: Dict[Tuple[int, int], Set[CellIndex]] = {}
+        for key, pairs in pairs_by_key.items():
+            for pair in pairs:
+                keys_by_pair.setdefault(pair, set()).add(key)
         changed = True
         while changed:
             changed = False
             current = [
-                (a, b, key)
-                for key, pairs in pairs_by_key.items()
-                for (a, b) in pairs
+                (a, b, np.asarray(list(keys), dtype=int))
+                for (a, b), keys in keys_by_pair.items()
             ]
-            for a, b, key in current:
-                h = np.array(key, dtype=int)
+            for a, b, keys in current:
                 for op_idx in range(len(op_R_lat)):
                     a_img = int(op_perm[op_idx][a])
                     b_img = int(op_perm[op_idx][b])
-                    h_img = _cell_tuple(
-                        op_R_lat[op_idx] @ h
+                    images = (
+                        keys @ op_R_lat[op_idx].T
                         + op_shifts[op_idx][a]
                         - op_shifts[op_idx][b]
                     )
-                    kept = pairs_by_key.setdefault(h_img, set())
-                    if (a_img, b_img) not in kept:
-                        kept.add((a_img, b_img))
-                        changed = True
+                    kept = keys_by_pair.setdefault((a_img, b_img), set())
+                    previous_size = len(kept)
+                    kept.update(zip(*images.T.tolist()))
+                    changed |= len(kept) != previous_size
+        pairs_by_key = {}
+        for pair, keys in keys_by_pair.items():
+            for key in keys:
+                pairs_by_key.setdefault(key, set()).add(pair)
 
     # Order kept cells by the direct_lattice_cells convention
     # (|r| ascending, home first). Cells that joined only through

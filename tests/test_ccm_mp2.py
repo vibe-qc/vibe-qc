@@ -60,12 +60,18 @@ def test_ccm_reference_entrypoints_validate_before_integrals(selector, monkeypat
         pytest.fail("integral construction preceded guess validation")
     monkeypatch.setattr(scf, "_ccm_eri_for_method", forbidden)
     monkeypatch.setattr(neutral, "ccm_neutral_cderi_fold", forbidden)
+    # The real-Gamma direct SCF drivers build an explicit SAD on the
+    # supercell (#519 RG-9); for them SAD is a capability, not a refusal.
+    sad_capable = {"run_ccm_rhf_direct", "run_ccm_rks_direct",
+                   "run_ccm_uhf_direct", "run_ccm_uks_direct"}
     checked = 0
     for module in (scf, uhf, dft, ri, direct, mp2, ump2, ccsd, uccsd):
         for name, fn in vars(module).items():
             if not name.startswith("run_ccm_") or not inspect.isfunction(fn):
                 continue
             if fn.__module__ != module.__name__ or "initial_guess" not in inspect.signature(fn).parameters:
+                continue
+            if selector == "SAD" and name in sad_capable:
                 continue
             extra = {"functional": "pbe"} if "functional" in inspect.signature(fn).parameters else {}
             with pytest.raises((ValueError, TypeError, NotImplementedError), match="guess|selector|InitialGuess"):
@@ -295,7 +301,7 @@ def test_ri_mp2_reference_direct_open_shell():
 def test_ri_wrappers_default_reference_is_direct():
     """The A-line RI default is ``reference="direct"`` (D-5, 2026-09-05).
 
-    ``HANDOVER_D2_EXXDIV.md`` measured that the strict-zero neutral reference
+    the original investigation measured that the strict-zero neutral reference
     error grows linearly in the cluster size, so ``exxdiv="ewald"`` is the
     correct convention and a standard method cannot ship correlation on the
     neutral reference. Reproduced on this cell while making the flip, both legs
@@ -326,17 +332,31 @@ def test_ri_wrappers_default_reference_is_direct():
         "sto-3g",
     )
     defaulted = run_ccm_ri_mp2(cs, ke_cutoff=_KE)
+    bloch = run_ccm_ri_mp2(cs, ke_cutoff=_KE, reference="bloch")
     direct = run_ccm_ri_mp2(cs, ke_cutoff=_KE, reference="direct")
     neutral = run_ccm_ri_mp2(cs, ke_cutoff=_KE, reference="neutral")
-    assert defaulted.e_total == pytest.approx(direct.e_total, abs=1e-12)
+    # Since 2026-09-25 (speed-up prompt 4) the default is the Bloch
+    # producer folded to real supercell-Gamma orbitals (Theorem 1): the
+    # same Hamiltonian as "direct", so the two agree at the identity class
+    # (per supercell here; the pinned rule is 1e-9 Ha/cell), and the
+    # default IS the bloch route, bit for bit.
+    assert defaulted.e_total == pytest.approx(bloch.e_total, abs=1e-12)
+    assert defaulted.scf.bloch_transform is not None
+    assert defaulted.e_correlation == pytest.approx(
+        direct.e_correlation, abs=2e-9)
+    assert defaulted.e_total == pytest.approx(direct.e_total, abs=2e-9)
     # The two routes are genuinely different, so the assertion above has force.
     assert abs(direct.e_total - neutral.e_total) > 0.5
 
     cc_defaulted = run_ccm_ri_ccsd(cs, ke_cutoff=_KE, compute_triples=False)
+    cc_bloch = run_ccm_ri_ccsd(
+        cs, ke_cutoff=_KE, compute_triples=False, reference="bloch"
+    )
     cc_direct = run_ccm_ri_ccsd(
         cs, ke_cutoff=_KE, compute_triples=False, reference="direct"
     )
-    assert cc_defaulted.e_total == pytest.approx(cc_direct.e_total, abs=1e-12)
+    assert cc_defaulted.e_total == pytest.approx(cc_bloch.e_total, abs=1e-12)
+    assert cc_defaulted.e_total == pytest.approx(cc_direct.e_total, abs=2e-9)
 
 
 def test_ccm_open_shell_initial_spin_counts(monkeypatch):

@@ -133,6 +133,6 @@ class concurrently for throughput, "dedicate" = give it most of the node.
   sizes, and CCSD's eigensolve is negligible. Only matters for very large DFT
   (≥1000 bf); roadmap, not a quick win.
 * **Code fixes for serial bottlenecks** were landed earlier this session as the
-  parallelism half of the perf sweep (see `HANDOVER_PERF_OPT.md`): per-cell
+  parallelism half of the perf sweep: per-cell
   Schwarz, grid Becke partition (4.2×), AO-eval fork-join (1.9→3.2×), (T)
   triples worklist, periodic-XC grid-batch - each with a before/after number.

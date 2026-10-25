@@ -547,7 +547,7 @@ class DelocalizedInternalCoordinates(CoordinateRepresentation):
         # representable and the optimizer cannot relax along it -- warn
         # loudly rather than silently under-optimising (the primitive
         # generator does not yet guarantee completeness for every
-        # topology; see handovers).
+        # topology).
         expected = max(0, 3 * self._n_atoms - 6 - 3 * len(self._frozen_set))
         if 0 < self._n_dlc < expected:
             import warnings

@@ -12,6 +12,20 @@ For the Bravais-lattice + reciprocal-lattice background, what the
 BZ actually *looks like* for FCC, BCC, hexagonal, etc., and where
 Γ, X, K, L, M sit, see [crystal lattices](crystal_lattices.md).
 
+Mesh sizes passed to `KPoints` constructors or `monkhorst_pack` must be
+positive integers. Python and NumPy integer entries are accepted; floats
+(including `2.0`), booleans and strings are rejected before native grid
+construction. For lower-dimensional systems, active-axis vectors are padded
+and explicit inactive integer entries retain the existing pinning to one
+point at Gamma.
+
+The runner, ASE periodic-force/GPW and dimer raw mesh adapters, GDF tuple
+and IBZ metadata readers, the
+Madelung supercell and BvK density helpers, and four-center CCM use the same
+exact integer rule. The runner retains its three-axis scalar repetition;
+GDF slab meshes retain their explicit inactive-axis requirement of one.
+This count rule does not restrict physical fractional k-point coordinates.
+
 ## Why we sample the BZ
 
 For a periodic crystal the Bloch states $\psi_{n\mathbf{k}}(\mathbf{r})$
@@ -39,7 +53,8 @@ that accuracy.
 
 ## The Monkhorst-Pack mesh
 
-The standard choice. Monkhorst and Pack (1976) proposed sampling on
+The standard choice. Monkhorst and Pack (1976)
+({vibeqc-cite}`monkhorst_pack_1976`) proposed sampling on
 a uniform grid in *fractional* reciprocal-lattice coordinates:
 
 $$
@@ -180,7 +195,8 @@ kp = vq.KPoints.from_kspacing(sysp, kspacing=0.20)
 kp = vq.KPoints.auto(sysp, length=30.0)
 ```
 
-The KPPRA builder (``from_kppra``) takes an optional ``metallic=True``
+The KPPRA builder (``from_kppra``, the AFLOW convention of
+{vibeqc-cite}`curtarolo_aflow_2012`) takes an optional ``metallic=True``
 flag that bumps the density 4× and warns if smearing isn't enabled,
 metals need both fine k-meshes and Fermi-Dirac smearing to converge.
 For ``from_kspacing`` / ``auto``, request a denser mesh directly with a
@@ -230,10 +246,20 @@ of ``vibeqc/kpoints.py`` so they are easy to tune. Hexagonal/trigonal
 lattices get a Γ-centred grid automatically; very large supercells collapse
 to Γ-only; slab/wire vacuum axes stay at ``N = 1``.
 
+On a Γ-centred mesh, a cell with a hexagonal plane (two lattice vectors of
+equal length at 60° or 120°) takes multiples of 3 along that plane, so the
+mesh contains the zone corners K and K'. The rationale says
+``K-commensurate``. Without them a semimetal such as graphene alternates
+along a mesh ladder as successive meshes include and miss the Dirac point.
+For DFTB0 graphene the energy on an 8×8 mesh happens to lie close to the
+converged value, and a 25×25 mesh lies 1.1e-5 Ha below it. A Γ-only axis
+stays at ``N = 1``.
+
 For metals you can pick how the Brillouin zone is integrated via
 ``bz_integration``: the default ``None`` / ``"smearing"`` recommends
 temperature broadening (a :class:`SmearingOptions`), while ``"gilat"`` selects
-the parameter-free **Gilat-Raubenheimer net** (the tetrahedron-family, CRYSTAL
+the parameter-free **Gilat-Raubenheimer net** ({vibeqc-cite}`gilat_raubenheimer_1966`,
+{vibeqc-cite}`gilat_spectral_1972`; the tetrahedron-family, CRYSTAL
 ``SHRINK IS ISP`` analogue), a T = 0 integrator with no smearing width. AUTO
 then drops the smearing recommendation (``spec.smearing is None``) and records
 ``spec.bz_integration == "gilat"`` to pass to the multi-k RHF driver's
@@ -253,7 +279,10 @@ Gilat occupations and DOS post-SCF.
 Pass ``verify=True`` with an ``scf_energy_fn`` to run a convergence ladder
 (Δk·√2, Δk, Δk/√2, …) that refines until the total energy/atom changes by
 less than ``tolerance_meV_per_atom`` between rungs, returning the converged
-mesh with the ladder attached as ``spec.verification``
+mesh with the ladder attached as ``spec.verification``. Every rung follows
+the same mesh rules, including the K-commensurate rounding, and a
+refinement that would repeat the previous rung's mesh keeps refining, so a
+mesh is never compared with itself
 (a :class:`~vibeqc.KPointConvergence`):
 
 ```python
@@ -270,8 +299,8 @@ An advanced ``predictor=`` hook accepts a machine-learned Δk model
 predicted interval.  A **bundled model** ships with vibe-qc  --  a
 scikit-learn random-forest regressor trained on synthetic data that
 replicates the scaling laws observed in the Choudhary--Tavazza
-k-point-convergence predictor (Choudhary & Tavazza, *npj Comput. Mater.*
-**6**, 39, 2020), using ~600 synthetic training points that encode the
+k-point-convergence predictor (Choudhary & Tavazza, *Comput. Mater. Sci.*
+**161**, 300, 2019; {vibeqc-cite}`choudhary_tavazza_2019`), using ~600 synthetic training points that encode the
 metal/insulator character, cell volume, atom count, and dimensionality.
 
 **Quick start (bundled model):**
@@ -300,7 +329,7 @@ print(spec.rationale)
   reciprocal direction  --  and thus rarely under-samples.
 - The model is a *starter predictor* trained on synthetic data derived
   from JARVIS-DFT scaling heuristics (CC-BY-4.0, Choudhary et al.,
-  *npj Comput. Mater.* **6**, 173, 2020).  When production JARVIS-DFT-
+  *npj Comput. Mater.* **6**, 173, 2020; {vibeqc-cite}`jarvis_dft`).  When production JARVIS-DFT-
   trained weights are available, the same ``.pkl`` swap upgrades it
   with no code change.
 
@@ -310,14 +339,15 @@ loaded silently  --  without this variable, ``predictor="ml"`` raises
 supplied path is unaffected.
 
 **Bring your own model:** pass ``ml_predictor=<callable>`` returning
-``(Δk, σ)`` (no env var needed); see Choudhary & Tavazza (2020) and
+``(Δk, σ)`` (no env var needed); see Choudhary & Tavazza (2019) and
 conformal-quantile-regression k-spacing models for training guidance.
 
 ### Generalized regular grids
 
-Generalized regular (GR) grids keep the uniform-grid structure but
-allow sheared integer generators instead of only axis-aligned
-Monkhorst-Pack subdivisions. They are useful for skewed or anisotropic
+Generalized regular (GR) grids ({vibeqc-cite}`wisesa_grids_2016`) keep the
+uniform-grid structure but allow sheared integer generators instead of only
+axis-aligned Monkhorst-Pack subdivisions. The on-the-fly search follows
+{vibeqc-cite}`wang_grids_2021`. They are useful for skewed or anisotropic
 3D cells where a rectangular MP mesh wastes points.
 
 ```python
@@ -346,7 +376,7 @@ matching the density-helper convention for Fermi-surface integration.
 The on-the-fly GR search is 3D-only and does not require a network
 database. `KPoints.from_database(...)` is deliberately explicit about
 network access: it supports the public GMU/NRL `sc`, `bcc`, `fcc`, and
-`hex` tables, normalizes the returned symmetry weights, and converts
+`hex` tables ({vibeqc-cite}`mehl_kpoint_database_1990`), normalizes the returned symmetry weights, and converts
 the lattice-coordinate k-points through the system's reciprocal
 lattice.
 
@@ -361,11 +391,14 @@ symmetry-related; the rest is recoverable by applying the symmetry
 operations.
 
 For an FCC lattice with cubic point-group $O_h$ (48 operations), an
-8×8×8 mesh has 512 points but only **35 in the IBZ**, a 14× speedup
-on the SCF if you exploit it.
+8×8×8 mesh has 512 points but only **60 in the IBZ** for the classical
+shifted mesh that `KPoints.monkhorst_pack` builds (29 for the Γ-centred
+`KPoints.gamma_centred` mesh), an 8.5× (17.7×) speedup on the SCF if
+you exploit it.
 
 In vibe-qc you opt in via the ``KPoints.symmetry_reduce()``
-builder method (Phase K2, IBZ reduction via spglib):
+builder method (Phase K2, IBZ reduction via spglib,
+{vibeqc-cite}`togo_shinohara_tanaka_2024`):
 
 ```python
 from vibeqc import attach_symmetry
@@ -373,7 +406,7 @@ from vibeqc import attach_symmetry
 attach_symmetry(sysp)             # spglib detects the space group
 kp = vq.KPoints.monkhorst_pack(sysp, [8, 8, 8])
 kp_irr = kp.symmetry_reduce()
-print(kp_irr.n_kpoints)           # ~35 for FCC
+print(kp_irr.n_kpoints)           # 60 for FCC (29 Γ-centred)
 print(kp_irr.is_symmetry_reduced) # True
 print(sum(kp_irr.weights))        # still 1.0  --  symmetry-equivalent
                                    # points fold into boosted weights
@@ -488,7 +521,9 @@ definition.
 
 For band-structure plots you want a **path** of k-points along the
 edges of the IBZ, not a uniform mesh. The standard convention
-(Setyawan-Curtarolo 2010) defines a path per Bravais lattice:
+(Setyawan-Curtarolo 2010; W. Setyawan, S. Curtarolo, *Comput. Mater. Sci.*
+**49**, 299 (2010), doi:10.1016/j.commatsci.2010.05.010) defines a path per
+Bravais lattice:
 
 | Lattice | Standard path |
 |---|---|
@@ -506,7 +541,7 @@ re-evaluated at the path k-points.
 
 In vibe-qc, the lattice-aware path is auto-detected via
 [seekpath](https://github.com/giovannipizzi/seekpath) using the
-HPKOT 2017 convention (Phase K3). One call:
+HPKOT 2017 convention ({vibeqc-cite}`hinuma_seekpath_2017`; Phase K3). One call:
 
 ```python
 # Auto-detected path for the system's Bravais lattice (HPKOT/Hinuma):
@@ -583,12 +618,14 @@ band crosses the Fermi level, a finite mesh can't resolve them
 cleanly. The fix is to *broaden* the step:
 
 * **Fermi-Dirac**: $f = (1 + e^{(\varepsilon - \mu)/k_B T})^{-1}$.
-  Has a thermodynamic interpretation (electronic temperature $T$);
+  Has a thermodynamic interpretation (electronic temperature $T$,
+  the Mermin free energy of {vibeqc-cite}`mermin_finite_temperature_dft_1965`);
   use this for finite-T studies.
 * **Gaussian**: $f$ ≈ erf-shaped. No physical interpretation, but
   converges faster than Fermi-Dirac at the same broadening width.
-* **Methfessel-Paxton**: a hierarchy of corrections that approach
-  the zero-T limit as the order increases. Common in plane-wave DFT.
+* **Methfessel-Paxton** ({vibeqc-cite}`methfessel_paxton_1989`): a hierarchy
+  of corrections that approach the zero-T limit as the order increases.
+  Common in plane-wave DFT.
 
 Vibe-qc currently exposes Fermi-Dirac smearing through
 ``smearing_temperature`` on the periodic SCF options (Phase C1b).
@@ -596,11 +633,14 @@ This is ``k_B T`` in Hartree, not Kelvin; use
 ``vq.kelvin_to_hartree_temperature(T_K)`` or
 ``vq.resolve_smearing_temperature("1000 K")`` when you want to specify
 a physical electronic temperature. Numeric strings can carry units such
-as ``"0.1 eV"``, ``"0.01 Ha"``, and ``"0.02 Ry"``. Gaussian and
-Methfessel-Paxton are tracked on the roadmap.
+as ``"0.1 eV"``, ``"0.01 Ha"``, and ``"0.02 Ry"``. `run_periodic_job`
+also takes ``smearing_method=`` (``"mermin"``, ``"methfessel-paxton"``,
+``"marzari-vanderbilt"``; see [smearing](smearing.md)); plain Gaussian
+smearing is not implemented.
 
 ```python
-opts = vq.PeriodicSCFOptions()
+opts = vq.PeriodicKSOptions()
+opts.lattice_opts.coulomb_method = vq.CoulombMethod.EWALD_3D  # smearing route
 opts.smearing_temperature = vq.kelvin_to_hartree_temperature(300.0)
 kp = vq.KPoints.monkhorst_pack(sysp, [12, 12, 12])
 result = vq.run_rks_periodic_scf(
@@ -629,7 +669,7 @@ sysp = vq.PeriodicSystem(
     ]),
     unit_cell=[
         vq.Atom(11, [0.0, 0.0, 0.0]),
-        vq.Atom(17, [0.5, 0.5, 0.5]),
+        vq.Atom(17, [a / 2, a / 2, a / 2]),   # Cartesian bohr
     ],
 )
 
@@ -645,12 +685,11 @@ print(f"Full mesh: {6**3} points; IBZ: {kp.n_kpoints} points "
 
 # 4. Converged SCF.
 basis = vq.BasisSet(sysp.unit_cell_molecule(), "pob-tzvp")
-opts = vq.PeriodicSCFOptions()
+opts = vq.PeriodicKSOptions()
+opts.functional = "PBE"
 opts.lattice_opts.coulomb_method = vq.CoulombMethod.EWALD_3D
-result = vq.run_rks_periodic_scf(sysp, basis, opts,
-                                 kmesh=kp.to_bloch_kmesh(),
-                                 omega=0.5, spacing_bohr=0.5,
-                                 functional="PBE")
+result = vq.run_rks_periodic_scf(sysp, basis, kp.to_bloch_kmesh(), opts,
+                                 omega=0.5, spacing_bohr=0.5)
 print(f"E(NaCl) = {result.energy:.6f} Ha/cell  "
       f"({result.n_iter} iters, converged={result.converged})")
 ```

@@ -1122,6 +1122,7 @@ def test_use_ewald_j_split_ibz_native_energy_matches_full_mesh():
         system, basis, kmesh_full, opts,
         use_ewald_j_split=True,
         use_exchange_ewald_split=False,  # gauge-independent consistency check; legacy keeps it cheap (no BvK-torus cutoff)
+        historical_domain=True,
         ewald_precision=1e-6,
         progress=False,
     )
@@ -1129,6 +1130,7 @@ def test_use_ewald_j_split_ibz_native_energy_matches_full_mesh():
         system, basis, kmesh_ibz, opts,
         use_ewald_j_split=True,
         use_exchange_ewald_split=False,  # gauge-independent consistency check; legacy keeps it cheap (no BvK-torus cutoff)
+        historical_domain=True,
         ewald_precision=1e-6,
         progress=False,
     )
@@ -1156,6 +1158,8 @@ def test_use_ewald_j_split_ibz_native_other_drivers_energy_matches_full_mesh(
     options,
 ):
     """RKS/UHF/UKS accept IBZ meshes with ir_mapping like RHF."""
+    # The physical pair default (#316) refuses the legacy gauge; this test
+    # pins the historical operator, so it replays it explicitly (#503).
     system, basis = _build_he_cubic()
     vq.attach_symmetry(system)
     kmesh_full = monkhorst_pack(system, [2, 2, 2], use_symmetry=False)
@@ -1167,6 +1171,7 @@ def test_use_ewald_j_split_ibz_native_other_drivers_energy_matches_full_mesh(
         system, basis, kmesh_full, options(),
         use_ewald_j_split=True,
         use_exchange_ewald_split=False,  # gauge-independent consistency check; legacy keeps it cheap (no BvK-torus cutoff)
+        historical_domain=True,
         ewald_precision=1e-6,
         progress=False,
     )
@@ -1174,6 +1179,7 @@ def test_use_ewald_j_split_ibz_native_other_drivers_energy_matches_full_mesh(
         system, basis, kmesh_ibz, options(),
         use_ewald_j_split=True,
         use_exchange_ewald_split=False,  # gauge-independent consistency check; legacy keeps it cheap (no BvK-torus cutoff)
+        historical_domain=True,
         ewald_precision=1e-6,
         progress=False,
     )

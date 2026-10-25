@@ -31,7 +31,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from urllib.request import Request, urlopen
 
-from examples.regression.core.spec import ExperimentalReference, Provenance
+from vibeqc_spec import ExperimentalReference, Provenance
 
 from .. import __version__ as FETCHER_VERSION
 from ..cache import FetchCache, FetchCacheMiss

@@ -4,6 +4,14 @@ Experimental cross-pollination spike on alternative periodic Coulomb J
 methods. Theme set by the original brief; this is the throwaway closeout
 per `feedback_experimental_chat_policy`.
 
+**Inventory note.** Only the files listed under "Files left in the
+worktree" at the end of this document exist: `j_builders.py`,
+`scf_driver.py`, `bench_h2.py`, `bench_h2_jonly.py`,
+`bug_compute_2c_eri_pshell.py` and `results/bench_h2_jonly.json`. The
+scripts named in "What stays for the spinoff chat" (`bench_lih_jonly.py`,
+`bench_h2_scf.py`) are to-do items that were never written, and no CSV
+results were produced.
+
 **Branch:** intended `experimental/coulomb-method-zoo`; that branch was
 already checked out by another worktree at HEAD-of-main with no commits,
 so the work landed on `claude/jolly-bohr-97bce6` instead. Commits are

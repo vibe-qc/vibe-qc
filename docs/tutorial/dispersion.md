@@ -9,7 +9,8 @@ crystals, layered materials, π-stacking, drug-receptor binding, and
 host-guest chemistry, the missing dispersion energy is often 1-10
 kcal/mol per contact, which is everything.
 
-**Grimme's D3(BJ) correction** is a pairwise atomic-sum that bolts a
+**Grimme's D3(BJ) correction** ({vibeqc-cite}`grimme_d3_2010`,
+{vibeqc-cite}`grimme_d3bj_2011`) is a pairwise atomic-sum that bolts a
 physically-motivated $-C_6/R^6$ tail onto any DFT functional, with
 Becke-Johnson (BJ) damping to avoid double-counting short-range
 correlation. It's additive to the SCF energy, no re-converging the
@@ -54,22 +55,26 @@ $R^{-6}$ tail is missing.
 
 ### D3 construction
 
-Grimme's D3 approach (2010) keeps the $1/R^6 + 1/R^8$ shape but
+Grimme's D3 approach (2010, {vibeqc-cite}`grimme_d3_2010`) keeps the
+$1/R^6 + 1/R^8$ shape but
 replaces the per-pair polarisability integral with a **coordination-
 number-dependent $C_6$**: for each atom, the local coordination
 number $\text{CN}_A$ is estimated from a smooth distance-based
 counting function, then $C_6^{AB}(\text{CN}_A, \text{CN}_B)$ is
 interpolated between pre-computed reference values for a small set of
 chemically representative environments (sp / sp² / sp³ carbon, etc.).
-This single trick makes the correction transferable across oxidation
-states without refitting. $C_8^{AB}$ is derived from $C_6^{AB}$ via
+This single trick makes the correction transferable across
+hybridization and bonding environments without refitting; a
+dependence on atomic charge (oxidation state) is what D4 adds. $C_8^{AB}$ is derived from $C_6^{AB}$ via
 atomic expectation values.
 
 ### BJ damping
 
 The raw $-C_6/R^6$ tail diverges as $R \to 0$ and also double-counts
 whatever short-range correlation the DFT functional already supplies.
-D3-BJ uses **Becke-Johnson damping**, a rational function that
+D3-BJ uses **Becke-Johnson damping** (A. D. Becke and E. R. Johnson,
+*J. Chem. Phys.* **127**, 154108 (2007), doi:10.1063/1.2795701; in D3
+form {vibeqc-cite}`grimme_d3bj_2011`), a rational function that
 transitions from zero at short range to the full asymptotic form at
 long range:
 
@@ -85,7 +90,11 @@ $$
 
 The four empirical parameters, scaling coefficients $s_6, s_8$ and
 BJ-damping parameters $a_1, a_2$, are **fit per functional** against
-reference interaction-energy benchmarks (S22, S66, etc.). Each
+reference interaction-energy benchmarks (S22: P. Jurečka, J. Šponer,
+J. Černý and P. Hobza, *Phys. Chem. Chem. Phys.* **8**, 1985 (2006),
+doi:10.1039/B600027D; S66: J. Řezáč, K. E. Riley and P. Hobza,
+*J. Chem. Theory Comput.* **7**, 2427 (2011), doi:10.1021/ct2002946;
+etc.). Each
 functional gets its own set; using PBE's numbers with B3LYP
 double-counts short-range correlation. vibe-qc looks these up for you
 via `d3bj_params_for(functional)`.
@@ -94,13 +103,18 @@ via `d3bj_params_for(functional)`.
 
 - Pairwise, density-blind. D3 doesn't know about charge transfer,
   many-body screening, or long-range polarization. For layered
-  metals and metallic fragments, many-body dispersion (MBD, D4) does
-  better.
+  metals and metallic fragments, many-body dispersion (MBD,
+  A. Tkatchenko, R. A. DiStasio, R. Car and M. Scheffler,
+  *Phys. Rev. Lett.* **108**, 236402 (2012),
+  doi:10.1103/PhysRevLett.108.236402; D4,
+  {vibeqc-cite}`caldeweyher_d4_2019`) does better.
 - Doesn't fix a wrong density. If PBE over-polarises an H-bond, D3
   won't correct that, it adds to the resulting energy, doesn't
   re-converge.
-- Always attractive. D3 always lowers relative energies; it can't
-  model repulsion gaps that local DFT already over-attracts.
+- Pairwise attractive. The two-body D3 term always lowers the total
+  energy (the optional three-body ATM term below is repulsive), but
+  relative energies can move either way; it can't model repulsion
+  gaps that local DFT already over-attracts.
 
 ## The one-liner
 
@@ -135,14 +149,16 @@ The output file gets a new "Dispersion correction" block:
           s8       0.787500
           a1       0.428900
           a2       4.440700
+          s9       0.000000
       E_disp    -0.00070434 Ha  (-0.4420 kcal/mol)
        E_SCF   -76.31993075 Ha
      E_total   -76.32063509 Ha
 ```
 
-When post-SCF dispersion is active, the earlier SCF trace labels its component
-sum as `SCF energy`; use this block's `E_total` or the result object's
-`.energy_total` for the dispersion-inclusive total.
+When post-SCF dispersion is active, the earlier `Energy components (Ha)` block
+ends with `E_SCF (excl. dispersion)` instead of `Total energy`, because that
+row is the SCF component only. Use this block's `E_total` or the result
+object's `.energy_total` for the dispersion-inclusive total.
 
 For both D3(BJ) and non-composite D4 calls, the returned result object carries
 `.energy` (bare SCF), `.e_dispersion` (the correction), and `.energy_total`
@@ -227,8 +243,10 @@ dispersion, the part that shows up in binding energies:
 | Binding energy (PBE-D3) | −7.13 kcal/mol |
 | D3 contribution         | −0.72 kcal/mol |
 
-Both values over-bind the experimental (CCSD(T)/CBS) reference of
-~5.0 kcal/mol, that's a known PBE issue unrelated to dispersion.
+Both values over-bind the CCSD(T)/CBS reference of ~5.0 kcal/mol.
+The excess is unrelated to dispersion: it comes from PBE itself and,
+with no counterpoise correction here, from the basis-set superposition
+error of the small 6-31G\* basis.
 D3 is additive, not corrective.
 
 ## What the curve looks like
@@ -299,8 +317,8 @@ run_job(mol, basis="6-31g*", method="rks", functional="pbe",
 
 Everything above is *pairwise*: each atom pair contributes independently.
 The leading correction to that picture is the Axilrod-Teller-Muto (ATM)
-three-body term, a dipole-dipole-dipole interaction summed over atom
-triples. `D3BJParams` exposes it as `s9`:
+three-body term ({vibeqc-cite}`axilrod_teller_1943`), a
+dipole-dipole-dipole interaction summed over atom triples. `D3BJParams` exposes it as `s9`:
 
 ```python
 # Two-body D3(BJ) -- the default, and what "D3(BJ)" means in the papers.
@@ -329,14 +347,16 @@ Two things worth knowing about the term:
   untouched.
 
 The PBEh-3c and HSE-3c composites set `s9 = 1.0` for you --- their
-defining papers make the three-body term part of the method. See
+defining papers ({vibeqc-cite}`grimme_pbeh3c_2015`,
+{vibeqc-cite}`brandenburg_hse3c_2016`) make the three-body term part of the method. See
 {doc}`../user_guide/composites`.
 
 ## D3 with Hartree-Fock
 
 HF has no correlation at all, so dispersion is a bigger miss there
-than for DFT. HF + D3(BJ) uses Grimme's HF-specific damping set, which
-is included in the native registry. Pass its lookup name directly:
+than for DFT. HF + D3(BJ) uses Grimme's HF-specific damping set
+({vibeqc-cite}`grimme_d3bj_2011`), which is included in the native
+registry. Pass its lookup name directly:
 
 ```python
 run_job(mol, basis="6-31g*", method="rhf",
@@ -345,7 +365,8 @@ run_job(mol, basis="6-31g*", method="rhf",
 ```
 
 Any basis-set-superposition-error concerns that apply to plain HF
-still apply, counterpoise correction is a separate topic, not baked
+still apply, counterpoise correction ({vibeqc-cite}`boys_bernardi_1970`)
+is a separate topic, not baked
 into vibe-qc yet.
 
 ## D3 in geometry optimization
@@ -397,9 +418,10 @@ optimized geometry.
 
 ## Resources
 
-~150 MB peak RAM, ~10 s on one core (Apple M2 baseline) for the
-water-dimer binding curve at HF/6-31G\* (10 distance points × HF +
-D3 correction). The D3 evaluation itself is essentially free
+The water-dimer binding curve in the figure is PBE/6-31G\* with and
+without D3(BJ) at 14 O···O distances; its script,
+`examples/plots/water-dimer-d3-curve.py`, quotes about 2 min on 4
+OpenMP threads. The D3 evaluation itself is essentially free
 (~$\mathcal{O}(N_\text{atom}^2)$ pair sum); cost is dominated by
 the underlying SCFs.
 
@@ -408,8 +430,14 @@ the underlying SCFs.
 Foundation papers for the D3-BJ machinery.
 
 - **BJ damping, original proposal.** A. D. Becke and E. R. Johnson,
-  "Exchange-hole dipole moment and the dispersion interaction revisited,"
-  *J. Chem. Phys.* **127**, 154108 (2007).
+  *J. Chem. Phys.* **122**, 154104 (2005); E. R. Johnson and
+  A. D. Becke, *J. Chem. Phys.* **123**, 024101 (2005) and
+  "A post-Hartree-Fock model of intermolecular interactions: inclusion
+  of higher-order corrections," *J. Chem. Phys.* **124**, 174104
+  (2006), which defines the damping radius $a_1 R_c + a_2$.
+  Revisited in A. D. Becke and E. R. Johnson, "Exchange-hole dipole
+  moment and the dispersion interaction revisited," *J. Chem. Phys.*
+  **127**, 154108 (2007).
 - **D3 base method.** S. Grimme, J. Antony, S. Ehrlich, and H. Krieg,
   "A consistent and accurate ab initio parametrization of
   density functional dispersion correction (DFT-D) for the 94
@@ -424,9 +452,13 @@ Foundation papers for the D3-BJ machinery.
   Intermolecular Forces*, 2nd ed., Oxford University Press (2013),
   chapters 2 and 4 for the London expansion.
 
-For beyond-D3: **D4** (Caldeweyher et al., 2019) generalises the
-coordination-number model with charge-dependent $C_6$; **many-body
-dispersion** (Tkatchenko-Scheffler, MBD) adds many-body screening at
+For beyond-D3: **D4** (Caldeweyher et al., 2019,
+{vibeqc-cite}`caldeweyher_d4_2017`, {vibeqc-cite}`caldeweyher_d4_2019`)
+generalises the coordination-number model with charge-dependent $C_6$;
+**many-body dispersion** (Tkatchenko-Scheffler, MBD: A. Tkatchenko and
+M. Scheffler, *Phys. Rev. Lett.* **102**, 073005 (2009),
+doi:10.1103/PhysRevLett.102.073005; Tkatchenko *et al.* 2012, cited
+above) adds many-body screening at
 the cost of a plasmon self-consistency. D4 ships in `vibeqc.dispersion_d4`;
 its native backend was un-gated 2026-06-26 and is production-validated
 for H-Ne (native $C_6$ agrees with `dftd4` to a few percent, CH4-dimer

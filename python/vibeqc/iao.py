@@ -27,8 +27,7 @@ poor IAO reference, and it shifts CH4 partial charges by ~20 %:
     B2 = "ano-rcc-mb"   q(C) = -0.389
     B2 = "sto-3g"       q(C) = -0.132
 
-(measured on the same CH4/def2-SVP RHF wave function).  See
-``handovers/HANDOVER_IBO.md`` § 4a.
+(measured on the same CH4/def2-SVP RHF wave function).
 """
 
 from __future__ import annotations
@@ -66,14 +65,15 @@ __all__ = [
 IAO_REFERENCE_BASIS = "mini"
 
 #: Highest atomic number ``IAO_REFERENCE_BASIS`` covers.  Verified against the
-#: bundled ``mini.g94``: Z=86 (Rn) builds, Z=87 (Fr) raises "no shells loaded".
+#: bundled ``mini.g94``: Z=86 (Rn) builds, Z=87 (Fr) raises "has no functions
+#: for Z=87" (before #30: "no shells loaded").
 IAO_REFERENCE_MAX_Z = 86
 
-# Relative eigenvalue floor for the metric inversions below.  Knizia's
+# Absolute/relative eigenvalue floor for the metric inversions below.  Knizia's
 # Appendix C warns that explicit inverse overlap matrices are numerically
 # fragile for large or diffuse bases and prescribes a Cholesky or spectral
-# decomposition; we use a thresholded spectral (pseudo-)inverse, matching
-# `_hermitian_power` in the periodic AICCM2026DEV-B localizer.
+# decomposition. Rank loss makes a full labeled IAO reference ill-defined;
+# reject it rather than silently substituting a pseudoinverse.
 _METRIC_THRESHOLD = 1e-10
 
 
@@ -102,22 +102,35 @@ class IAOReference:
     name: str
 
 
-def _hermitian_power(matrix: np.ndarray, power: float) -> np.ndarray:
-    """``matrix ** power`` for a Hermitian matrix, dropping null directions.
+def _hermitian_power(
+    matrix: np.ndarray, power: float, *, name: str = "metric",
+) -> np.ndarray:
+    """Spectral power of a full-rank positive Hermitian metric.
 
-    Symmetrised before the eigendecomposition so that accumulated asymmetry
-    in an assembled metric cannot produce complex eigenvalues.
+    The eigenvalue floor is 1e-10 times max(1, largest eigenvalue). Every
+    labeled direction must survive; callers must report rank loss as unavailable analysis.
     """
+    matrix = np.asarray(matrix)
+    if (matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]
+            or not np.isfinite(matrix).all()):
+        raise ValueError(f"IAO {name} must be a finite square matrix")
+    if matrix.size == 0:
+        return matrix.copy()
+    if np.linalg.norm(matrix - matrix.conj().T) > 1e-10 * max(1., np.linalg.norm(matrix)):
+        raise ValueError(f"IAO {name} is not Hermitian")
     values, vectors = np.linalg.eigh(0.5 * (matrix + matrix.conj().T))
     largest = float(values[-1])
     if largest <= 0.0:
         raise np.linalg.LinAlgError(
-            "IAO construction hit a metric with no positive eigenvalue"
+            f"IAO {name} has no positive eigenvalue"
         )
-    keep = values > _METRIC_THRESHOLD * largest
-    if not np.any(keep):
+    boundary = _METRIC_THRESHOLD * max(1.0, largest)
+    keep = values > boundary
+    if not np.all(keep):
         raise np.linalg.LinAlgError(
-            "IAO construction hit a numerically singular metric"
+            f"IAO reference space is rank deficient: {name} eigenvalue "
+            f"{values[0]:.3e} is below the spectral floor "
+            f"{boundary:.3e}; no populations were renormalized"
         )
     return (vectors[:, keep] * values[keep] ** power) @ vectors[:, keep].conj().T
 
@@ -125,7 +138,7 @@ def _hermitian_power(matrix: np.ndarray, power: float) -> np.ndarray:
 def _orth(coefficients: np.ndarray, overlap: np.ndarray) -> np.ndarray:
     """Knizia Appendix C:  ``orth(C) = C [C^T S1 C]^(-1/2)``."""
     metric = coefficients.conj().T @ overlap @ coefficients
-    return coefficients @ _hermitian_power(metric, -0.5)
+    return coefficients @ _hermitian_power(metric, -0.5, name="depolarized occupied metric")
 
 
 def iao_unsupported_reason(molecule: Molecule, uses_ecp: bool = False) -> str | None:
@@ -148,6 +161,8 @@ def iao_unsupported_reason(molecule: Molecule, uses_ecp: bool = False) -> str | 
             "electrons"
         )
     charges = [int(atom.Z) for atom in molecule.atoms]
+    if any(z <= 0 for z in charges):
+        return "IAO analysis does not support ghost atoms or nonpositive nuclear charges"
     beyond = sorted({z for z in charges if z > IAO_REFERENCE_MAX_Z})
     if beyond:
         return (
@@ -162,12 +177,16 @@ def iao_reference(
     target_basis: BasisSet,
     *,
     name: str = IAO_REFERENCE_BASIS,
+    source_result=None,
 ) -> IAOReference:
     """Build the minimal-basis side (B2, S2, S12, atom map) of an IAO job.
 
-    ``S12`` comes from :func:`compute_overlap_two_basis`, the molecular
-    cross-basis overlap.
+    ``S12`` is the molecular cross-basis overlap. If ``source_result`` has
+    selected molecular engine provenance, use its one-electron provider after
+    checking the target basis and molecule content. Otherwise use libint.
     """
+    from .properties import _manta_property_integral, _property_provider
+    provider = _property_provider(source_result, target_basis, molecule)
     reference_basis = BasisSet(molecule, name)
     for shell in reference_basis.shells():
         if not bool(getattr(shell, "pure", True)):
@@ -175,12 +194,17 @@ def iao_reference(
                 "IAO construction requires spherical (pure) reference shells; "
                 f"'{name}' produced a Cartesian shell"
             )
+    if provider == "manta":
+        overlap = _manta_property_integral(source_result, reference_basis, "overlap")
+        cross_overlap = _manta_property_integral(source_result, target_basis, "overlap",
+            ket=reference_basis, retained_bytes=overlap.nbytes)
+    else:
+        overlap = np.asarray(compute_overlap(reference_basis))
+        cross_overlap = np.asarray(compute_overlap_two_basis(target_basis, reference_basis))
     return IAOReference(
         basis=reference_basis,
-        overlap=np.asarray(compute_overlap(reference_basis)),
-        cross_overlap=np.asarray(
-            compute_overlap_two_basis(target_basis, reference_basis)
-        ),
+        overlap=overlap,
+        cross_overlap=cross_overlap,
         atom_indices=_shell_to_atom(reference_basis),
         name=name,
     )
@@ -222,10 +246,10 @@ def build_iaos(
     ndarray
         IAO coefficients in B1, shape ``(n_ao, n_ref)``, orthonormal in ``S1``.
     """
-    p12 = _hermitian_power(overlap, -1.0) @ cross_overlap
+    p12 = _hermitian_power(overlap, -1.0, name="AO overlap") @ cross_overlap
     depolarized = _orth(
         p12
-        @ _hermitian_power(reference_overlap, -1.0)
+        @ _hermitian_power(reference_overlap, -1.0, name="reference overlap")
         @ cross_overlap.conj().T
         @ occupied,
         overlap,
@@ -239,7 +263,7 @@ def build_iaos(
         projector_occ @ projector_dep
         + (identity - projector_occ) @ (identity - projector_dep)
     ) @ p12
-    return raw @ _hermitian_power(raw.conj().T @ overlap @ raw, -0.5)
+    return raw @ _hermitian_power(raw.conj().T @ overlap @ raw, -0.5, name="raw IAO metric")
 
 
 def iao_populations(
@@ -303,8 +327,11 @@ def iao_atom_populations(
     return out
 
 
-def _dipole_tensor(basis: BasisSet) -> np.ndarray:
+def _dipole_tensor(basis: BasisSet, *, source_result=None, molecule=None) -> np.ndarray:
     """Cartesian dipole integrals stacked as ``(n_ao, n_ao, 3)``."""
+    if getattr(source_result, "engine_provenance", None) is not None:
+        from .properties import _property_dipole_integrals
+        return np.stack(_property_dipole_integrals(source_result, basis, molecule), axis=-1)
     integrals = compute_dipole(basis)
     return np.stack(
         [
@@ -378,6 +405,9 @@ def analyse_localization(
     centre_threshold: float = 0.10,
     max_iter: int = 200,
     conv_tol: float = 1e-10,
+    iaos: np.ndarray | None = None,
+    reference: IAOReference | None = None,
+    source_result=None,
 ) -> IBOAnalysis:
     """Localize a converged closed-shell occupied set and describe the result.
 
@@ -398,6 +428,13 @@ def analyse_localization(
         Computed on demand when omitted.
     centre_threshold
         Atomic population above which an atom counts toward ``n_centres``.
+    iaos, reference
+        Optional matched IAO coefficients and reference from a previous
+        analysis of this occupied set. Both must be supplied together.
+    source_result
+        Optional SCF result whose executed one-electron provider evaluates new
+        overlaps and moments. Its basis/molecule content must match. Supplied
+        dipoles, IAOs and reference remain caller-provided numerical inputs.
 
     Notes
     -----
@@ -421,18 +458,35 @@ def analyse_localization(
     )
     from .properties import _shell_to_atom
 
+    source_kwargs = {"source_result": source_result} if source_result is not None else {}
+    dipole_kwargs = {**source_kwargs, "molecule": molecule} if source_kwargs else {}
     if method not in LOCALIZATION_METHODS:
         raise ValueError(
             f"unknown localization method {method!r}; "
             f"expected one of {LOCALIZATION_METHODS}"
         )
 
-    overlap = np.asarray(compute_overlap(basis))
-    reference = iao_reference(molecule, basis, name=reference_basis)
-
-    iaos = build_iaos(
-        occupied, overlap, reference.overlap, reference.cross_overlap
-    )
+    if getattr(source_result, "engine_provenance", None) is not None:
+        from .properties import _property_overlap
+        overlap = _property_overlap(source_result, basis, molecule)
+    else:
+        overlap = np.asarray(compute_overlap(basis))
+    if (iaos is None) != (reference is None):
+        raise ValueError("Supply both iaos and reference for localization reuse")
+    if reference is None:
+        reference = iao_reference(molecule, basis, name=reference_basis, **source_kwargs)
+        iaos = build_iaos(
+            occupied, overlap, reference.overlap, reference.cross_overlap
+        )
+    else:
+        if (reference.name != reference_basis
+                or iaos.shape != (overlap.shape[0], len(reference.atom_indices))
+                or not np.allclose(iaos.conj().T @ overlap @ iaos,
+                                   np.eye(iaos.shape[1]), atol=1e-8, rtol=0)):
+            raise ValueError("Reused IAOs do not match the reference or AO metric")
+        if not np.allclose(iaos @ (iaos.conj().T @ overlap @ occupied),
+                           occupied, atol=1e-8, rtol=1e-8):
+            raise ValueError("Reused IAOs do not span the occupied orbitals")
 
     # Occupied set in the orthonormal IAO basis.  Lossless: the IAOs span the
     # occupied space exactly, which is the defining property of the
@@ -443,7 +497,7 @@ def analyse_localization(
     objective_initial = ibo_objective(in_iao_basis, reference.atom_indices, power)
 
     if dipoles is None and method == "boys":
-        dipoles = _dipole_tensor(basis)
+        dipoles = _dipole_tensor(basis, **dipole_kwargs)
 
     if method == "ibo":
         localised_iao, sweeps = ibo_localise(
@@ -477,7 +531,7 @@ def analyse_localization(
     )
 
     if dipoles is None:
-        dipoles = _dipole_tensor(basis)
+        dipoles = _dipole_tensor(basis, **dipole_kwargs)
     centroids = np.stack(
         [
             np.einsum("mi,mn,ni->i", coefficients, dipoles[:, :, c], coefficients)

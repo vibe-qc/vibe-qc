@@ -709,6 +709,7 @@ def test_reference_annotation_adds_size_normalized_deltas():
         kmesh="mol",
         code="orca",
         code_version="mock",
+        converged=True,
         energy_ha=-100.000,
         n_atoms=12,
         n_electrons=42,
@@ -724,6 +725,7 @@ def test_reference_annotation_adds_size_normalized_deltas():
         kmesh="mol",
         code="vibeqc",
         code_version="mock",
+        converged=True,
         energy_ha=-99.9974,
         n_atoms=12,
         n_electrons=42,
@@ -800,3 +802,117 @@ def test_summary_renders_size_aware_accuracy_ranking(tmp_path):
     assert "abs Δ/atom" in text
     assert "atoms/bf" in text
     assert "0.217" in text
+
+
+def _parity_rows():
+    common = dict(run_id="test", target="dev", system_id="crystal-a",
+                  family="ionic", basis="explicit", method_id="uks-pbe",
+                  kmesh="2x1x1", code_version="test", converged=True,
+                  energy_ha=-12., n_atoms=2, n_electrons=10, n_basis_functions=8)
+    return (CodeRow(code="vibeqc", wall_s=2., **common),
+            CodeRow(code="crystal", wall_s=4., **common),
+            ExpectedRef(system_id="crystal-a", basis="explicit", method_id="uks-pbe",
+                        kmesh=(2, 1, 1), tolerance_ha=1e-5))
+
+
+@pytest.mark.parametrize("side", [0, 1])
+@pytest.mark.parametrize("field,value", [
+    ("converged", False), ("converged", None),
+    ("energy_ha", None), ("energy_ha", float("nan")),
+    ("energy_ha", float("inf")), ("energy_ha", -float("inf")),
+    ("system_id", "other"), ("basis", "different"),
+    ("method_id", "rks-pbe0"), ("kmesh", "1x1x1"),
+])
+def test_comparison_rejects_invalid_or_mismatched_runs(side, field, value):
+    v, r, expected = _parity_rows()
+    setattr((v, r)[side], field, value)
+    annotate_against_reference([v, r], "crystal", expected)
+    assert v.status == "error"
+    assert v.delta_ha_vs_ref is None and v.abs_delta_mha_vs_ref is None
+    assert not v.ref_code
+
+
+@pytest.mark.parametrize("ref_status", ["error", "unavailable"])
+def test_comparison_preserves_reference_failure(ref_status):
+    v, r, expected = _parity_rows()
+    r.status, r.note = ref_status, "reference process failed after printing an energy"
+    annotate_against_reference([v, r], "crystal", expected)
+    assert r.status == ref_status
+    assert r.note == "reference process failed after printing an energy"
+    assert v.status == "error"
+
+
+def test_comparison_rejects_duplicate_reference_and_clears_old_pass():
+    from dataclasses import replace
+    v, r, expected = _parity_rows()
+    annotate_against_reference([v, r], "crystal", expected)
+    assert v.status == "pass"
+    duplicate = replace(r)
+    annotate_against_reference([v, r, duplicate], "crystal", expected)
+    assert all(x.status == "error" for x in (v, r, duplicate))
+    assert v.delta_ha_vs_ref is None and v.abs_delta_mha_per_atom_vs_ref is None
+    assert "ambiguous" in v.note
+
+
+@pytest.mark.parametrize("field", ["n_atoms", "n_electrons", "n_basis_functions"])
+def test_comparison_rejects_different_reported_counts(field):
+    v, r, expected = _parity_rows()
+    setattr(v, field, getattr(r, field) + 1)
+    annotate_against_reference([v, r], "crystal", expected)
+    assert v.status == "error"
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), -1., True])
+def test_comparison_rejects_invalid_tolerance(bad):
+    from dataclasses import replace
+    from examples.regression.core.compare import classify
+    v, r, expected = _parity_rows()
+    annotate_against_reference([v, r], "crystal", replace(expected, tolerance_ha=bad))
+    assert v.status == "error"
+    assert classify(0., bad)[0] == "error"
+
+
+@pytest.mark.parametrize("delta", [None, float("nan"), float("inf"), -float("inf")])
+def test_nonfinite_delta_is_a_missing_comparison(delta):
+    from examples.regression.core.compare import classify
+    assert classify(delta, 1e-5)[0] == "error"
+
+
+def test_report_uses_only_accuracy_accepted_timing_pairs(tmp_path):
+    from examples.regression.core.compare import paired_wall_ratio
+    v, r, expected = _parity_rows()
+    annotate_against_reference([v, r], "crystal", expected)
+    assert paired_wall_ratio(v, r) == .5
+    case = CaseRecord("crystal-a", "ionic", "explicit", "uks-pbe", (2, 1, 1), [v, r])
+    output = tmp_path / "report.md"
+    def render():
+        render_summary(run_id="test", env={}, cases=[case], out_path=output,
+                       csv_path=tmp_path / "rows.csv")
+        return output.read_text()
+    assert "Accuracy-filtered wall ratios" in render()
+    case.rows.append(v)
+    assert "Accuracy-filtered wall ratios" not in render()
+    case.rows.pop()
+    for state in ("marginal", "fail", "error", "unavailable", "pending"):
+        v.status = state
+        assert paired_wall_ratio(v, r) is None
+        assert "Accuracy-filtered wall ratios" not in render()
+    v.status = "pass"
+    for bad in (0., -1., float("nan"), float("inf")):
+        v.wall_s = bad
+        assert paired_wall_ratio(v, r) is None
+    v.wall_s = 2.
+    r.converged = False
+    assert paired_wall_ratio(v, r) is None
+
+
+@pytest.mark.parametrize("converged,energy,reference,tolerance,expected", [
+    (True, -12., -12., 1., 0), (True, -12., -13., 1., 1),
+    (False, -12., -12., 1., 2), (None, -12., -12., 1., 2),
+    (True, float("nan"), -12., 1., 2), (True, -12., float("inf"), 1., 2),
+    (True, -12., -12., float("inf"), 2), (True, -12., -12., True, 2),
+])
+def test_legacy_crystal_demo_verdict_requires_valid_calculation(converged, energy, reference, tolerance, expected):
+    from examples.regression.crystal_parity.crystal_demos.runner import _demo_parity_verdict
+    assert _demo_parity_verdict(SimpleNamespace(converged=converged, energy=energy),
+                                reference, tolerance) == expected

@@ -5,10 +5,13 @@ converged SCF -- how strong is this bond, where did the charge go,
 what holds these fragments together -- are answered by bond-analysis
 methods, and vibe-qc ships four complementary families of them. Each
 family looks at the same density matrix through a different lens:
-Wiberg indices count shared electron pairs, the provisional NBO tools
-classify natural orbitals, EDA splits an interaction energy into physical
-components, and entanglement measures read bonding straight off the
-quantum-information structure of the wavefunction.
+Wiberg indices count shared electron pairs, the provisional, exploratory
+NBO helper classifies orbitals, EDA splits an interaction energy into
+physical components, and entanglement measures read bonding straight off
+the quantum-information structure of the wavefunction. Bond orders, EDA and
+the entanglement measures are production on HF and DFT densities; NPA is
+gated and the NBO search provisional (see
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels)).
 
 For **energy-resolved** periodic bonding analysis (COHP/COOP curves,
 band-by-band bonding character), use the canonical
@@ -22,10 +25,111 @@ Wiberg bond indices are computed automatically on every population dump.
 The `.population.{txt,json}` sidecars retain an NPA field, but it is empty
 and reports `unavailable.npa` until the full occupancy-weighted
 Natural Atomic Orbital construction is implemented. This prevents a
-Löwdin population from being reported under the NPA label. The provisional
-NBO search, EDA, and entanglement analyses are Python-API workflows you call
-on an SCF result.
+Löwdin population from being reported under the NPA label. The NBO search
+is a provisional, exploratory Python helper; it, the EDA and the
+entanglement analyses are Python-API workflows you call on an SCF result.
 ```
+
+## Theory
+
+All four families read the same converged one-particle density matrix
+$\mathbf P$ (spin-summed, $\mathbf P = \mathbf P^\alpha + \mathbf P^\beta$
+for open shells) and the AO overlap $\mathbf S$; what distinguishes them is
+which contraction they take and in which basis.
+
+**Bond orders.** The Mayer bond order ({vibeqc-cite}`mayer_bond_order_1983`)
+contracts through the overlap in the raw AO basis,
+
+$$
+B_{AB} = \sum_{\mu\in A}\sum_{\nu\in B} (\mathbf P\mathbf S)_{\mu\nu}\,(\mathbf P\mathbf S)_{\nu\mu}
+$$
+
+for a closed shell (open shells use
+$2[(\mathbf P^\alpha\mathbf S)(\mathbf P^\alpha\mathbf S) + (\mathbf P^\beta\mathbf S)(\mathbf P^\beta\mathbf S)]$
+summed the same way), while the Wiberg index
+({vibeqc-cite}`wiberg_bond_index_1968`) squares the elements of the density
+in the symmetrically orthogonalised (Loewdin) basis,
+$\tilde{\mathbf P} = \mathbf S^{1/2}\mathbf P\mathbf S^{1/2}$:
+
+$$
+W_{AB} = \sum_{\mu\in A}\sum_{\nu\in B} \tilde P_{\mu\nu}^{\,2} .
+$$
+
+Both count shared electron pairs, both give 1 for H2 in a minimal basis,
+and both depend on the basis because "atom A" means "the functions centred
+on A"; the Loewdin transformation makes the Wiberg index the less sensitive
+of the two. The delocalisation index of QTAIM
+({vibeqc-cite}`matito_esi_2007`, {vibeqc-cite}`outeiral_di_2018`) is
+defined without a basis, as the double integral of the exchange-correlation
+density over two atomic basins, which for a single determinant reduces to
+basin overlaps of the occupied orbitals:
+
+$$
+\delta(A,B) = -2\int_{\Omega_A}\!\!\int_{\Omega_B}\rho_{\mathrm{xc}}(\mathbf r_1,\mathbf r_2)\,d\mathbf r_1\,d\mathbf r_2
+\;=\; 2\sum_{ij} S_{ij}(\Omega_A)\,S_{ij}(\Omega_B) .
+$$
+
+vibe-qc has no basin integration yet ([QTAIM guide](qtaim.md)), so
+`delocalization_index` replaces the basin overlaps by an AO partition,
+$\delta^{\mathrm{AO}}_{AB} = 2\sum_{\mu\in A,\nu\in B}(\mathbf P\mathbf S)_{\mu\nu}(\mathbf P\mathbf S)_{\nu\mu} - \sum_{\mu\in A,\nu\in B}\tilde P_{\mu\nu}^{\,2}$.
+That is an approximation with no positivity guarantee: on H2O/STO-3G it
+returns $\delta(\mathrm O,\mathrm H) = -0.17$ where the Wiberg index is
+0.98 and the Mayer order 0.94 (vibe-qc 0.17.x development build), so read
+it as a diagnostic beside the two bond orders, not as a QTAIM number.
+
+**Energy decomposition.** LMO-EDA ({vibeqc-cite}`su_li_eda_2009`) and the
+Kitaura-Morokuma scheme ({vibeqc-cite}`morokuma_eda_1971`) write the
+interaction energy of two fragments as a sum of steps from the isolated
+fragments, through the frozen promolecule and the frozen orthogonalised state,
+to the relaxed dimer,
+
+$$
+\Delta E_{\mathrm{int}} = E_{AB} - E_A - E_B
+ = \Delta E_{\mathrm{elstat}} + \Delta E_{\mathrm{exch}} + \Delta E_{\mathrm{rep}}
+ + \Delta E_{\mathrm{pol+CT}} + \Delta E_{\mathrm{disp}} .
+$$
+
+The terms are built from the fragment densities and the AO integrals and sum
+to $\Delta E_{\mathrm{int}}$ exactly; the
+[EDA section](#energy-decomposition-analysis-eda) below defines each of them,
+gives the call signature and shows a counterpoise water-dimer example.
+
+**Orbital entanglement.** Tracing a normalised wavefunction over all but
+one spatial orbital leaves a $4\times4$ one-orbital reduced density matrix
+in the Fock-space basis
+$\{|0\rangle, |\!\uparrow\rangle, |\!\downarrow\rangle, |\!\uparrow\downarrow\rangle\}$
+with eigenvalues $\omega_{i,\alpha}$; its von Neumann entropy and the
+mutual information of two orbitals
+({vibeqc-cite}`legeza_entanglement_2003`,
+{vibeqc-cite}`szalay_multiorbital_2017`) are
+
+$$
+s_i = -\sum_\alpha \omega_{i,\alpha}\ln\omega_{i,\alpha},
+\qquad
+I_{ij} = s_i + s_j - s_{ij},
+$$
+
+with $s_{ij}$ the entropy of the $16\times16$ two-orbital density. $s_i$
+vanishes for an orbital that is empty or doubly occupied in every
+determinant and reaches $\ln 4$ at maximal entanglement, so it measures how
+strongly an orbital takes part in correlation; $I_{ij}$ is large for the
+pairs that must be correlated together, which makes it an active-space
+selector and, in the maximally entangled atomic-orbital picture
+({vibeqc-cite}`entanglement_bonds_2025`), a bonding index. For a single
+determinant the one-orbital density is diagonal in the natural occupations
+$n_i$ and $s_i = -n_i\ln n_i - (1-n_i)\ln(1-n_i)$, which is what
+`entanglement_from_density` evaluates from the eigenvalues of the
+orthogonalised density, estimating $I_{ij}$ from products of fractional
+occupations. That shortcut is only informative for densities with
+fractional natural occupations (DFT, broken-symmetry UHF, correlated
+1-RDMs); for a correlated wavefunction feed genuine one- and two-orbital
+RDMs to `single_orbital_entropy` and `mutual_information`. See the caveat
+in the entanglement section below about which orthogonalisation the
+shortcut applies.
+
+**Intrinsic bond orbitals** ({vibeqc-cite}`knizia_ibo_2013`) and the
+natural-population gate ({vibeqc-cite}`reed_weinhold_npa_1985`) are
+described in their own sections below.
 
 ## Wiberg bond indices and the delocalization index
 
@@ -82,7 +186,8 @@ key as an empty list and explain the gate in `unavailable.npa`. They skip
 the unimplemented API, so this limitation does not appear as a failed
 calculation in `errors`. The text section says `npa: not implemented`.
 
-The separate, provisional orbital classifier remains available:
+The separate NBO search is a provisional, exploratory Python helper and
+remains available:
 
 ```python
 import numpy as np
@@ -107,32 +212,123 @@ Reed, Curtiss & Weinhold, *Chem. Rev.* **88**, 899 (1988).
 
 ## Energy decomposition analysis (EDA)
 
+**Status: preview.** The terms are real and add up to the interaction energy,
+for two closed-shell Hartree-Fock fragments only; other inputs are refused.
+The Kohn-Sham form, open-shell fragments and a `run_job` keyword are not
+implemented. The label vocabulary is in
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+
 EDA answers "why do these two fragments bind" by partitioning the
-interaction energy into electrostatic, exchange/Pauli-repulsion,
-polarisation, and dispersion components. vibe-qc implements the
-LMO-EDA scheme (Su & Li 2009) and the original Morokuma (1971)
-decomposition as post-processing over three SCF runs: the
-supersystem and the two isolated fragments (in the supersystem basis
-for BSSE consistency; see the counterpoise section of the
-[basis sets guide](basis_sets.md)).
+interaction energy of two closed-shell fragments into electrostatic,
+exchange, Pauli-repulsion, polarisation and dispersion terms.
+`vibeqc.eda.eda_lmo` implements the LMO-EDA partition of Su and Li (2009)
+and `vibeqc.eda.eda_morokuma` the Kitaura-Morokuma partition (1971, 1976) of
+the same states, both as post-processing of three converged Hartree-Fock
+runs: the dimer and the two fragments, each fragment computed **in the
+dimer basis** so that the interaction energy is counterpoise corrected.
+vibe-qc has no ghost-atom keyword, but a `Molecule` accepts atoms with
+`Z = 0`, and the explicit-shell `BasisSet` constructor puts the dimer's
+shells on them. The default SAD guess has no atomic density for `Z = 0`,
+so the fragment runs start from the core Hamiltonian.
 
 ```python
+import vibeqc as vq
 from vibeqc.eda import eda_lmo
 
+ANG = 1.8897259886   # Angstrom to bohr
+xyz = [  # water dimer, R(O..O) = 2.95 A
+    (8, (0.000, 0.000, 0.000)), (1, (0.000, 0.000, 0.960)), (1, (0.000, 0.929, -0.240)),
+    (8, (0.000, 0.000, 2.950)), (1, (0.000, 0.759, 3.538)), (1, (0.000, -0.759, 3.538)),
+]
+frag1, frag2 = [0, 1, 2], [3, 4, 5]
+
+def molecule(real):
+    """The dimer with every atom outside `real` turned into a ghost (Z = 0)."""
+    return vq.Molecule([vq.Atom(z if i in real else 0, [c * ANG for c in p])
+                        for i, (z, p) in enumerate(xyz)], 0, 1)
+
+dimer = molecule(frag1 + frag2)
+basis = vq.BasisSet(dimer, "6-31g*")
+shells = basis.shells()
+
+def scf(mol):
+    opts = vq.RHFOptions()
+    if any(a.Z == 0 for a in mol.atoms):
+        opts.initial_guess = vq.InitialGuess.HCORE      # SAD has no density for Z = 0
+        return vq.run_rhf(mol, vq.BasisSet(mol, shells, name="6-31g*"), opts)
+    return vq.run_rhf(mol, basis, opts)
+
+ab, a, b = scf(dimer), scf(molecule(frag1)), scf(molecule(frag2))
 eda = eda_lmo(
-    e_total, e_frag1, e_frag2,
-    fock_total, fock_frag1, fock_frag2,
-    density_total, density_frag1, density_frag2,
-    overlap,
+    ab.energy, a.energy, b.energy,
+    None, None, None,                        # Fock matrices: accepted, not used
+    ab.density, a.density, b.density,
+    vq.compute_overlap(basis),
+    basis=basis, molecule=dimer, frag1_atoms=frag1, frag2_atoms=frag2,
 )
-print(eda.summary())   # E_int split into elstat / exch / rep / pol / disp
+print(eda.summary())
 ```
 
-`vibeqc.eda.fragment_density_matrix` builds the per-fragment
-projected densities from the supersystem MO coefficients.
+```
+Energy Decomposition Analysis (LMO-EDA)
+----------------------------------------------------------------
+  E_total (supersystem)   =  -152.02576771 E_h
+  E_fragment_1 (isolated) =   -76.00957528 E_h
+  E_fragment_2 (isolated) =   -76.00960659 E_h
+----------------------------------------------------------------
+  dE_int (total)          =    -0.00658583 E_h      -4.13 kcal/mol
+
+  Electrostatic           =    -0.01255786 E_h      -7.88 kcal/mol
+  Exchange                =    -0.01136365 E_h      -7.13 kcal/mol
+  Repulsion (Pauli)       =     0.01991724 E_h      12.50 kcal/mol
+  Polarisation (+CT)      =    -0.00258156 E_h      -1.62 kcal/mol
+----------------------------------------------------------------
+```
+
+The partition follows one path: the two fragments, the *promolecule*
+(`P_1 + P_2`, the fragment orbitals as they are), the *frozen state* (one
+determinant of the mutually orthogonalised occupied orbitals), and the
+relaxed dimer.
+
+| Term | Definition |
+|---|---|
+| `e_elstat` | Classical Coulomb energy of the two frozen charge distributions, nuclei included. |
+| `e_exch` | Inter-fragment exchange energy of the promolecule state (LMO-EDA). |
+| `e_rep` | Pauli repulsion beyond exchange: the frozen state minus the promolecule. |
+| `e_pol` | Converged dimer minus frozen state: polarisation and charge transfer together. |
+| `e_disp` | Difference of additive dispersion corrections, if you pass them (`e_disp`, `e_disp_frag1`, `e_disp_frag2`). |
+
+The five terms add up to `e_int = e_total - e_frag1 - e_frag2` exactly.
+`eda_morokuma` reports the Kitaura-Morokuma terms of the same states:
+`e_exch` is then the full exchange repulsion EX (the sum of the LMO-EDA
+exchange and repulsion, +5.37 kcal/mol here), `e_rep` is zero, and
+`e_pol` is polarisation, charge transfer and coupling as one number. The
+restricted SCF variations that separate those three are not implemented.
+
+What to expect: the electrostatic attraction of a hydrogen bond is larger
+than the binding energy, Pauli repulsion cancels most of it, and
+relaxation adds a smaller stabilisation. Only the sum is an observable;
+the split depends on the chosen intermediate states, and the polarisation
+and charge-transfer terms are not basis-set stable. Compare them within
+one basis.
+
+**Scope, enforced by the code.** The terms are functionals of the fragment
+densities, so `eda_lmo` needs the integrals and takes `basis`, `molecule`
+and the atom indices of each fragment beside the SCF results. It evaluates
+the Hartree-Fock energy expression on the supplied densities and refuses,
+with a `ValueError`, energies that do not match it to
+`consistency_tol` (1e-6 Hartree): Kohn-Sham energies, ECP runs and
+fragments computed in another basis all fail here rather than return
+wrong numbers. It also refuses densities that are not closed-shell SCF
+densities. That excludes `fragment_density_matrix`, which returns a
+projection of the dimer orbitals and not a fragment density; use the
+density of a fragment run in the dimer basis. Open-shell fragments and the
+Kohn-Sham form of LMO-EDA are not implemented. The Fock-matrix arguments
+of the older signature are still accepted and are ignored.
 
 References: Su & Li, *J. Chem. Phys.* **131**, 014102 (2009);
-Morokuma, *J. Chem. Phys.* **55**, 1236 (1971).
+Morokuma, *J. Chem. Phys.* **55**, 1236 (1971); Kitaura & Morokuma,
+*Int. J. Quantum Chem.* **10**, 325 (1976).
 
 ## Orbital entanglement measures
 
@@ -140,8 +336,8 @@ Quantum-information analysis reads bonding from the entanglement
 structure of the wavefunction: the single-orbital entropy measures
 how strongly an orbital participates in correlation, and the mutual
 information between two orbitals quantifies their bonding
-entanglement. For single-determinant (HF/DFT) results vibe-qc offers
-an occupation-number approximation directly from the density matrix:
+entanglement. vibe-qc offers an occupation-number approximation directly
+from a spin-restricted, spin-summed AO density matrix:
 
 ```python
 from vibeqc.entanglement import entanglement_from_density
@@ -149,6 +345,25 @@ from vibeqc.entanglement import entanglement_from_density
 ent = entanglement_from_density(P, S)
 print("total quantum information:", ent.total_information)
 print("correlation clusters:", ent.correlation_clusters)
+```
+
+The density is transformed as $S^{1/2} P S^{1/2}$, using the same
+Loewdin convention as Wiberg bond orders. Its eigenvalues are the
+spin-summed natural occupations in $[0, 2]$. The binary entropy uses
+per-spin occupations $n_i$, obtained by dividing those eigenvalues by two:
+$s_i = -n_i\ln n_i - (1-n_i)\ln(1-n_i)$.
+Closed-shell RHF densities give zero entropy, mutual information and
+entanglement bond orders; fractional occupations, such as those of
+stretched H2 CASCI, give positive occupation entropy. Endpoint deviations
+within $10^{-14}$ per spin are treated as eigensolver roundoff.
+
+```{warning}
+`entanglement_from_density` reports an occupation-based approximation.
+Its mutual information and bond orders are heuristic estimates; a
+one-particle density alone does not determine full orbital entanglement.
+Zero entropy for a closed-shell determinant refers to its natural orbitals,
+not to an arbitrary choice of localized orbitals. Supply the spin-summed
+density with `Tr(P @ S)` equal to the electron count.
 ```
 
 For multi-determinantal wavefunctions (CAS, CC densities), feed the
@@ -236,13 +451,11 @@ is set, the IAO charges are written into the QVF's `atom_properties`
 section alongside the Mulliken, Löwdin and Hirshfeld rows, so vibe-view's
 charge picker offers them directly.
 
-```{admonition} The .population sidecars do not carry IAO charges
-:class: warning
-
-The IAO analysis runs during QVF preparation, after the
-`.population.{txt,json}` sidecars have been written, so those files list
-Mulliken/Löwdin/Hirshfeld only. The QVF is the complete record.
-```
+Use `iao_analysis=True` to request IAO charges, spin populations and
+spin-resolved IAO-Wiberg bonds independently of localization or QVF. The
+requested section is then included in `.out` and the population text/JSON
+sidecars. See [IAO population analysis](iao_population.md) for its definition,
+API, support limits and periodic integration plan.
 
 ```{admonition} Scope and cost
 :class: note
@@ -258,8 +471,7 @@ Jobs
 using ECPs are refused -- an all-electron minimal reference basis cannot
 partition a valence-only target basis -- as are elements past Z=86. In
 each case the job completes and warns; only the localized section is
-omitted. Periodic (Wannier) localization and open-shell support are
-tracked in `handovers/HANDOVER_IBO.md`.
+omitted.
 ```
 
 Reference: Knizia, *J. Chem. Theory Comput.* **9**, 4834 (2013),

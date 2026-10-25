@@ -4,7 +4,7 @@ Exposes the periodic Gaussian-density-fitting (GDF) 3-index tensor ``Lpq`` -- th
 fitted "cderi", shape ``(n_fit, nbf, nbf)``, with
 ``(muν|ls) ≈ S_L Lpq[L,muν] Lpq[L,ls]`` -- so it can be transformed into the
 occupied-Wannier / PAO basis for periodic correlation
-([`handovers/HANDOVER_PERIODIC_LOCAL_CORRELATION.md`], Stage 4).
+(Stage 4).
 
 The periodic GDF SCF drivers (`run_pbc_gdf_rhf`, `run_krhf_periodic_gdf`) build
 this tensor internally and discard it. This module rebuilds it via the **public**

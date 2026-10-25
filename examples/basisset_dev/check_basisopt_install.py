@@ -23,7 +23,7 @@ The fix is vibe-qc's ``[basisopt]`` extra::
     pip install -e . && pip install -e vibe-basis/   # pip, two steps
 
 See ``docs/installation.md`` § "Optional basis-set optimization driver"
-and ``handovers/HANDOVER_VIBE_BASIS_DEPLOYMENT.md``.
+and the original investigation.
 
 Exit status
 -----------

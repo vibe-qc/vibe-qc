@@ -34,13 +34,17 @@ point.
 from __future__ import annotations
 
 
+from .guess import _real_gamma_seed
 from .guess import periodic_result_selection
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+import hashlib
+import json
 from typing import List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
+from .periodic.exchange_convention import MOLECULAR_LIMIT
 from ._vibeqc_core import (
     BasisSet,
     CoulombMethod,
@@ -50,7 +54,6 @@ from ._vibeqc_core import (
     PeriodicSystem,
     SCFIteration,
     bloch_sum,
-    build_jk_gamma_molecular_limit,
     compute_kinetic_lattice,
     compute_overlap_lattice,
     nuclear_repulsion_per_cell,
@@ -58,12 +61,14 @@ from ._vibeqc_core import (
 from .ewald_composed import make_ewald_3d_gamma_j_builder
 from .ewald_j import auto_grid
 from .guess import initial_densities_open_shell
-from .madelung import (
-    madelung_energy_correction_for_lat as _madelung_energy_correction_for_lat,
-)
 from .periodic_rhf_ewald import _canonical_orthogonalizer, _refuse_if_dense_ionic
 from .progress import ProgressLogger, resolve_progress
 from .scf_divergence import check_scf_divergence
+from .solvers._scf import FockDiagonalizer, solve_dense_fock
+from .solvers.operators import FockOperator, OperatorFrame, solve_operator
+from .fock_state import FockBuild
+from .periodic_fock_source import _gamma_source_details
+from .periodic_uhf_ewald import _GammaUHFBuilder
 from .rohf import (
     _commutator_error,
     _diis_extrapolate,
@@ -84,7 +89,10 @@ class PeriodicROHFEwaldResult:
     densities.  Exposes the UHF-style ``*_alpha`` / ``*_beta`` aliases
     (identical spatial orbitals) so the periodic output writers handle it
     with no special-casing, exactly as the molecular ``ROHFResult`` does.
-    ``s_squared`` is exact for a restricted-open determinant.
+    ``s_squared`` is exact for a restricted-open determinant. Orbital energies
+    are those of the unshifted effective Fock within each occupation subspace.
+    At convergence these are full eigenpairs; an unconverged result retains
+    the cross-occupation Fock residual and does not claim stationarity.
     """
 
     energy: float
@@ -135,6 +143,43 @@ class PeriodicROHFEwaldResult:
     restart_kpoints: object = None
     restart_weights: object = None
 
+    # Every Gamma-only Ewald/GDF driver builds exchange with the
+    # molecular-limit kernel (home-cell density, image blocks zeroed); the
+    # runner's manifest records this instead of the exxdiv knob (GitLab #23).
+    exchange_q0: str = MOLECULAR_LIMIT
+    fock_build: FockBuild | None = None
+    effective_fock_operator: FockOperator | None = None
+    effective_fock_residual: float | None = None
+    evaluated_build_history: list[dict] = field(default_factory=list)
+
+    @property
+    def run_fields(self):
+        if self.fock_build is None:
+            return {}
+        return dict(self.fock_build.output_fields(),
+                    orbital_state_relation="density-defining-occupation-block-canonical",
+                    scf_stop_reason="converged" if self.converged else "iteration_limit",
+                    effective_fock_role="effective",
+                    effective_fock_parent_build_id=self.effective_fock_operator.metadata.build_id,
+                    effective_fock_residual=self.effective_fock_residual,
+                    evaluated_build_history=[dict(row) for row in self.evaluated_build_history])
+
+
+def _roothaan_operator(physical):
+    """Effective ROHF operator associated with both evaluated spin channels.
+
+    It is not an extra physical energy channel. ROHF stationarity constrains
+    the common orbitals, so the separate UHF spin commutators need not vanish.
+    The existing Roothaan coupling/occupation convention is unchanged.
+    """
+    alpha, beta = physical.channels
+    frame = alpha.operator.frame
+    matrix = roothaan_effective_fock(
+        alpha.operator.matrix, beta.operator.matrix,
+        alpha.density, beta.density, frame.overlap)
+    return FockOperator(matrix=matrix, frame=frame, metadata=replace(
+        alpha.operator.metadata, spin="restricted-open", role="effective"))
+
 
 def run_rohf_periodic_gamma_ewald3d(
     system: PeriodicSystem,
@@ -157,6 +202,11 @@ def run_rohf_periodic_gamma_ewald3d(
     Same interface as :func:`vibeqc.run_uhf_periodic_gamma_ewald3d`; the
     a/b counts come from ``system.multiplicity``.  Returns a spin-pure
     determinant (``s_squared = S(S+1)`` exactly).
+
+    Effective-Fock solves honor the dense/Davidson policy in ``options``.
+    Davidson must request the complete retained spectrum: open-shell
+    occupation assignment examines all non-core orbitals. The HCORE seed
+    remains a separate dense solve.
     """
     opts = options if options is not None else PeriodicRHFOptions()
     from .guess import select_periodic_driver_guess
@@ -274,13 +324,33 @@ def run_rohf_periodic_gamma_ewald3d(
             f"kept {n_kept} directions; need >= {n_alpha}."
         )
 
+    def source_details():
+        return _gamma_source_details(
+            basis, system, lat_opts, omega=omega, grid_shape=grid_shape_t,
+            origin=origin, spacing_bohr=spacing_bohr)
+
+    source_basis = source_details()
+    frame = OperatorFrame(
+        n=basis.nbasis, basis_id=hashlib.sha256(json.dumps(
+            source_basis["shells"], sort_keys=True).encode()).hexdigest(),
+        ordering=source_basis["ordering"], image_gauge="gamma-bloch-at-declared-shell-origins",
+        overlap=S, X=X)
+    X, S = frame.X, frame.overlap
+    diagonalize_fock = FockDiagonalizer(
+        X, S, opts, spin="restricted-open", n_required=n_kept,
+        real_only=True, frame=frame,
+    )
     e_nuc = float(nuclear_repulsion_per_cell(system, lat_opts))
 
     def diagonalize(f: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        fp = X.T @ f @ X
-        fp = 0.5 * (fp + fp.T)
-        eps, cp = np.linalg.eigh(fp)
-        return X @ cp, eps
+        if isinstance(f, FockOperator):
+            solved = solve_operator(f, solver="dense")
+            return solved.eigenvectors.copy(), solved.eigenvalues.copy()
+        solved = solve_dense_fock(
+            f, X=X, overlap=S, kind="one_electron",
+            spin="restricted-open", basis_id=frame.basis_id,
+        )
+        return solved.eigenvectors.copy(), solved.eigenvalues.copy()
 
     # ---- Initial guess ---------------------------------------------------
     c_hcore, _eps_h = diagonalize(Hcore)
@@ -297,7 +367,10 @@ def run_rohf_periodic_gamma_ewald3d(
         overlap=S,
     )
     if split is not None:
-        D_alpha, D_beta = split
+        D_alpha, D_beta = (
+            _real_gamma_seed(split[0], "run_rohf_periodic_gamma_ewald3d"),
+            _real_gamma_seed(split[1], "run_rohf_periodic_gamma_ewald3d"),
+        )
     else:
         ca = c_hcore[:, :n_alpha]
         cb = c_hcore[:, :n_beta]
@@ -318,41 +391,22 @@ def run_rohf_periodic_gamma_ewald3d(
         grid_shape=grid_shape_t, origin=origin, spacing_bohr=spacing_bohr,
     )
 
-    def build_fock(da: np.ndarray, db: np.ndarray):
-        """Periodic per-spin Fock + per-cell electronic energy (incl. the
-        Madelung-leak fix), reusing the validated UHF two-electron path."""
-        dt = da + db
-        j = j_build(dt)
-        # build_jk_gamma_molecular_limit returns K(D); feed 2.D_s and halve
-        # to recover the per-spin exchange (the UHF-driver convention).
-        ka = 0.5 * np.asarray(
-            build_jk_gamma_molecular_limit(basis, system, lat_opts, 2.0 * da, 0.0).K
-        )
-        kb = 0.5 * np.asarray(
-            build_jk_gamma_molecular_limit(basis, system, lat_opts, 2.0 * db, 0.0).K
-        )
-        fa = Hcore + j - ka
-        fb = Hcore + j - kb
-        fa = 0.5 * (fa + fa.T)
-        fb = 0.5 * (fb + fb.T)
-        e_elec = (
-            0.5 * float(np.einsum("ij,ij->", dt, Hcore))
-            + 0.5 * float(np.einsum("ij,ij->", da, fa))
-            + 0.5 * float(np.einsum("ij,ij->", db, fb))
-            + _madelung_energy_correction_for_lat(dt, S, system, lat_opts)
-        )
-        return fa, fb, e_elec
+    build_fock = _GammaUHFBuilder(
+        basis, system, lat_opts, T, V, frame, e_nuc, j_build, source_details,
+        method="ROHF")
+    T, V, Hcore = build_fock.kinetic, build_fock.nuclear, build_fock.hcore
 
     if guess == InitialGuess.PATOM:
-        fa, fb, _ = build_fock(D_alpha, D_beta)
-        ca, _ = diagonalize(fa)
-        cb, _ = diagonalize(fb)
+        seed = build_fock(D_alpha, D_beta)
+        ca, _ = diagonalize(seed.channels[0].operator)
+        cb, _ = diagonalize(seed.channels[1].operator)
         D_alpha = ca[:, :n_alpha] @ ca[:, :n_alpha].T
         D_beta = cb[:, :n_beta] @ cb[:, :n_beta].T
         D_alpha_prev, D_beta_prev = D_alpha.copy(), D_beta.copy()
 
     # ---- SCF loop (Roothaan single effective Fock) -----------------------
     scf_trace: List[SCFIteration] = []
+    evaluated_build_history = []
     fock_hist: List[np.ndarray] = []
     err_hist: List[np.ndarray] = []
     e_prev = 0.0
@@ -373,11 +427,16 @@ def run_rohf_periodic_gamma_ewald3d(
             da_used = damping * D_alpha_prev + (1.0 - damping) * D_alpha
             db_used = damping * D_beta_prev + (1.0 - damping) * D_beta
 
-        focka, fockb, e_elec = build_fock(da_used, db_used)
-        e_total = e_elec + e_nuc
+        physical = build_fock(da_used, db_used)
+        focka, fockb = (channel.operator.matrix for channel in physical.channels)
+        e_total = physical.energy.total
+        evaluated_build_history.append(dict(
+            iteration=iter_idx, generation=physical.generation,
+            build_id=physical.identity, density_id=physical.density_id))
 
         dt = da_used + db_used
-        fock_eff = roothaan_effective_fock(focka, fockb, da_used, db_used, S)
+        effective = _roothaan_operator(physical)
+        fock_eff = effective.matrix
         err = _commutator_error(fock_eff, dt, S, X)
         grad_norm = float(np.linalg.norm(err))
 
@@ -416,26 +475,54 @@ def run_rohf_periodic_gamma_ewald3d(
             and grad_norm < float(opts.conv_tol_grad)
         ):
             converged = True
-            mo_coeffs, mo_energies, mo_occ = _solve_and_occupy(
-                fock_eff, focka, X, S, D_alpha, level_shift, n_alpha, n_beta,
-            )
+            # Keep the determinant whose density was just tested. A fresh
+            # shifted solve here would replace its orbitals but not its density.
             break
 
+        solver_fock = (FockOperator(matrix=fock_eff, frame=frame, metadata=replace(
+            effective.metadata, role="solver", modification="roothaan-diis"))
+            if diis_dim > 1 else effective)
         mo_coeffs, mo_energies, mo_occ = _solve_and_occupy(
-            fock_eff, focka, X, S, D_alpha, level_shift, n_alpha, n_beta,
+            solver_fock, focka, S, D_alpha, level_shift, n_alpha, n_beta,
+            diagonalize=diagonalize_fock,
         )
         D_alpha_prev, D_beta_prev = D_alpha, D_beta
         D_alpha, D_beta = _densities_from_occupations(mo_coeffs, mo_occ)
         e_prev = e_total
 
     # ---- Final consistent energy + result --------------------------------
-    focka, fockb, e_elec = build_fock(D_alpha, D_beta)
-    e_total = e_elec + e_nuc
-    fock_eff = roothaan_effective_fock(focka, fockb, D_alpha, D_beta, S)
+    terminal = build_fock(D_alpha, D_beta)
+    effective = _roothaan_operator(terminal)
+    focka, fockb = (channel.operator.matrix for channel in terminal.channels)
     if mo_coeffs is None:
         mo_coeffs, mo_energies, mo_occ = _solve_and_occupy(
-            fock_eff, focka, X, S, D_alpha, 0.0, n_alpha, n_beta,
+            effective, focka, S, D_alpha, 0.0, n_alpha, n_beta,
+            diagonalize=diagonalize_fock,
         )
+        # Zero iterations still returns an evaluated determinant, explicitly
+        # unconverged, rather than orbitals unrelated to its initial density.
+        D_alpha, D_beta = _densities_from_occupations(mo_coeffs, mo_occ)
+        terminal = build_fock(D_alpha, D_beta)
+        effective = _roothaan_operator(terminal)
+        focka, fockb = (channel.operator.matrix for channel in terminal.channels)
+    fock_eff = effective.matrix
+    e_total = terminal.energy.total
+    # Keep the legacy electronic value inclusive of the Madelung correction;
+    # FockBuild records that correction separately and adds it exactly once.
+    e_elec = e_total - terminal.energy.nuclear
+    mo_coeffs, mo_energies, mo_occ = _canonicalize_final_orbitals(
+        mo_coeffs, mo_occ, fock_eff,
+    )
+    residual = float(np.linalg.norm(_commutator_error(
+        fock_eff, D_alpha + D_beta, S, X)))
+    if scf_trace:
+        last = scf_trace[-1]
+        converged = (converged and residual < float(opts.conv_tol_grad)
+                     and abs(e_total - last.energy) < float(opts.conv_tol_energy))
+        scf_trace[-1] = SCFIteration(iter=last.iter, energy=e_total,
+            delta_e=e_total - last.energy, grad_norm=residual, diis_subspace=last.diis_subspace)
+        evaluated_build_history[-1] = dict(iteration=n_iter, generation=terminal.generation,
+            build_id=terminal.identity, density_id=terminal.density_id)
 
     spin = 0.5 * (n_alpha - n_beta)
     s_squared = spin * (spin + 1.0)
@@ -457,10 +544,12 @@ def run_rohf_periodic_gamma_ewald3d(
         density=D_alpha + D_beta,
         density_alpha=D_alpha,
         density_beta=D_beta,
-        fock=fock_eff,
-        fock_alpha=focka,
-        fock_beta=fockb,
-        overlap=S,
+        fock=fock_eff.copy(),
+        fock_alpha=focka.copy(),
+        fock_beta=fockb.copy(),
+        fock_build=terminal, effective_fock_operator=effective,
+        effective_fock_residual=residual, evaluated_build_history=evaluated_build_history,
+        overlap=S.copy(),
         n_alpha=n_alpha,
         n_beta=n_beta,
         scf_trace=scf_trace,
@@ -469,18 +558,53 @@ def run_rohf_periodic_gamma_ewald3d(
     )
 
 
-def _solve_and_occupy(fock_eff, focka, x, s, dma, level_shift, n_alpha, n_beta):
+def _solve_and_occupy(
+    fock_eff, focka, s, dma, level_shift, n_alpha, n_beta, *, diagonalize,
+):
     """Diagonalise the effective Fock (optional virtual level shift) and
     assign ROHF occupations (closed by effective-Fock energy, open by a
     orbital energy)."""
-    f = fock_eff
+    operator = fock_eff if isinstance(fock_eff, FockOperator) else None
+    f = operator.matrix if operator is not None else fock_eff
     if level_shift > 0.0:
         f = f + level_shift * (s - s @ dma @ s)
-    fp = x.T @ f @ x
-    fp = 0.5 * (fp + fp.T)
-    eps, cp = np.linalg.eigh(fp)
-    c = x @ cp
+        if operator is not None:
+            operator = FockOperator(matrix=f, frame=operator.frame, metadata=replace(
+                operator.metadata, role="solver", modification=(
+                    (operator.metadata.modification + "+") if operator.metadata.modification else ""
+                ) + "virtual-level-shift"))
+    c, eps = diagonalize(operator if operator is not None else f)
     # Alpha orbital energies for the open-shell selection: diag of Fa in MO.
     eps_alpha = np.einsum("pi,pq,qi->i", c, focka, c)
     occ = _roothaan_occupations(eps, eps_alpha, n_alpha, n_beta)
     return c, eps, occ
+
+
+def _canonicalize_final_orbitals(coeffs, occupations, fock):
+    """Remove iteration shifts without changing the final ROHF determinant.
+
+    Equal-occupation rotations preserve both spin densities and the alpha-energy
+    selection made in the SCF loop. Keep the complete physical Fock unchanged:
+    an unconverged cross-occupation residual must not be projected away.
+    """
+    c = np.array(coeffs, copy=True)
+    occ = np.asarray(occupations)
+    energies = np.empty(occ.size)
+    # Guest and Saunders, Mol. Phys. 28, 819 (1974), Sec. 2, Eq. (8):
+    # canonicalize over Hermitian Z within each occupation category. Here Z is
+    # the existing unshifted Roothaan Fock, so its orbital-energy convention is
+    # retained. Density/energy invariance holds even away from stationarity.
+    for occupation in (2.0, 1.0, 0.0):
+        indices = np.flatnonzero(occ == occupation)
+        if not indices.size:
+            continue
+        block_c = c[:, indices]
+        block = block_c.T @ fock @ block_c
+        solved = solve_dense_fock(
+            0.5 * (block + block.T), spin="restricted-open",
+            basis_id=f"gamma-rohf-occupation-{int(occupation)}",
+        )
+        c[:, indices] = block_c @ solved.eigenvectors
+        energies[indices] = solved.eigenvalues
+    order = np.argsort(energies, kind="stable")
+    return c[:, order], energies[order], occ[order]

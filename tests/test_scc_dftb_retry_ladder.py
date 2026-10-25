@@ -4,7 +4,6 @@ A zero-temperature SCC-DFTB failure on a pi-conjugated N/O system is a
 non-smooth charge-response fixed point, not a mixer defect; Fermi-Dirac
 occupation smearing at low charge mixing is the standard DFTB+/tblite remedy
 and is what ``run_job`` retries with (see
-``handovers/HANDOVER_SCC_DFTB_CONVERGENCE.md`` and
 ``_RUNNER_SCC_DFTB_RETRY_SETTINGS``).
 
 Issue #78 left four archived single-point rows failing closed after that
@@ -21,11 +20,13 @@ exposed a different missing rung:
 * adenine does not converge on any rung up to T = 0.0015 Ha even at 1500
   iterations, and needs the warmer T = 0.002 Ha (~632 K) rung added for it.
 
-Both energies below are Mermin free energies at the rung that converged,
-measured 2026-08-21. They are regression pins on vibe-qc's own SCC-DFTB, not
-reference values: the geometries are the hand-built approximations from
-qc-input-library's ``scripts/_geometries.py``, not published benchmark
-structures.
+Since #478 (the Wolfsberg-Helmholz hopping without the duplicated 1/2) both
+rows converge at T = 0 on the first, integer-occupation attempt, so the
+ladder is no longer entered for them (#562); the rung-structure test below
+keeps the rungs these rows once needed. The energies are regression pins on
+vibe-qc's own SCC-DFTB, not reference values: the geometries are the
+hand-built approximations from qc-input-library's ``scripts/_geometries.py``,
+not published benchmark structures.
 """
 
 from __future__ import annotations
@@ -69,10 +70,11 @@ FORMIC_ACID_DIMER = [
     (1, 0.528749, -1.135085, 0.0),
 ]
 
-# Mermin free energies at the converging rung, measured 2026-08-21.
+# Zero-temperature energies on the corrected H0 (#478, #562; 60 and 48
+# iterations). Before: Mermin free energies on the T = 0.002 / 0.0012 Ha rungs.
 PINNED_FREE_ENERGY_HA = {
-    "adenine": -19.63356440,          # T = 0.002 Ha rung, 232 iterations
-    "formic_acid_dimer": -16.43989628,  # T = 0.0012 Ha rung, 573 iterations
+    "adenine": -21.422247430714716,   # was -27.089575576045554 (T = 0.002 rung)
+    "formic_acid_dimer": -17.675059742046628,  # was -20.49301121435573 (T = 0.0012 rung)
 }
 TOL_HA = 1e-5
 
@@ -123,15 +125,18 @@ def test_retry_ladder_converges_the_issue_78_rows(name, geometry, tmp_path):
     # because its geometry buries an H 0.430 A inside a ring carbon, which is
     # the shape of failure this assertion exists to catch.
     assert energy < 0.0
+    assert result.converged
+    assert result.electronic_temperature == 0.0
     assert energy == pytest.approx(PINNED_FREE_ENERGY_HA[name], abs=TOL_HA)
 
 
 def test_ladder_is_ordered_and_reaches_the_adenine_rung():
     """The rungs stay monotone in temperature and still include T = 0.002 Ha.
 
-    Adenine stalls at -18.7886 / -18.9226 / -19.1639 Ha on the 0.001 / 0.0012 /
-    0.0015 Ha rungs even at 1500 iterations, so removing the warmest rung
-    silently reopens #78.
+    Under the pre-#478 H0 adenine stalled at -18.7886 / -18.9226 / -19.1639 Ha
+    on the 0.001 / 0.0012 / 0.0015 Ha rungs even at 1500 iterations, so the
+    warmest rung was added for it (#78). The ladder's structure is kept;
+    which systems still reach it is pinned elsewhere (#562).
     """
     from vibeqc.semiempirical.runner import (
         _RUNNER_SCC_DFTB_RETRY_MAX_ITER,

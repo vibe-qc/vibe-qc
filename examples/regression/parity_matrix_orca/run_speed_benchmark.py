@@ -280,7 +280,7 @@ def benchmark_cell(
         "orca_wall_s": orca_wall,
         "vibeqc_wall_s": vqc_wall,
         "vibeqc_scf_wall_s": vqc_scf_wall,
-        # ratio < 1 => vibe-qc is faster (the handover's goal).
+        # ratio < 1 => vibe-qc is faster (the original investigation's goal).
         "ratio": (vqc_wall / orca_wall) if orca_wall else None,
         # energy agreement — a sanity check that we timed the same thing.
         "delta_e": abs(orca["e_total_final"] - vqc["energy_ha"]),

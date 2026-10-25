@@ -1,18 +1,29 @@
 # Experimental χ-CCM occupied localization
 
+```{admonition} Status: experimental
+:class: warning
+
+χ-CCM occupied localization (`localize_aiccm2026dev_b_occupied`) is an experimental route. `localize_aiccm2026dev_b_occupied` emits `vibeqc.AICCM2026DevBLocalizationWarning`, the χ-CCM SCF it consumes emits `vibeqc.AICCM2026DevBExperimentalWarning`, and the `.system` manifest records `method_status = "experimental"` for every AICCM job run through `run_periodic_job`. Its numbers are research output, not validated results, and it is not part of the release gate. The label vocabulary is defined in [Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+```
+
 `aiccm2026dev-b` is the code selector for χ-CCM[^xccm-convention], the
 finite-translation-group character CCM line. It can turn a converged,
 gapped RHF or RKS occupied space into localized orbitals on its finite
 Born-von Karman torus. This API is experimental and belongs only to χ-CCM. It
-does not change Γ-CCM, the union-and-weight sibling approach, or the SCF
-orbitals stored on the original result.
+does not change Γ-CCM (the neutral finite-torus construction, variants
+`real-gamma` and `neutral-bloch`), the four-centre union-and-weight lineage
+kept in the same `aiccm2026dev-a` line, or the SCF orbitals stored on the
+original result.
 
 The prerequisite χ-CCM SCF result must currently be 3D. Every 1D/2D backend
 fails closed before SCF, so no lower-dimensional result may be supplied to the
 localizer until the shared wire/slab Coulomb convention is derived.
 
-[^xccm-convention]: Γ-CCM and χ-CCM are distinct CCM approaches. Γ-CCM uses
-    the union-and-weight/Wigner--Seitz integral-weighting construction; χ-CCM
+[^xccm-convention]: Γ-CCM and χ-CCM are distinct CCM approaches. Γ-CCM is
+    the neutral finite-torus construction with two producers, `variant="real-gamma"`
+    and `variant="neutral-bloch"` (ruling R1, 2026-08-21); the `four-center` variant
+    is the 2014 union-and-weight/Wigner-Seitz lineage, a different construction
+    kept in the same `aiccm2026dev-a` development line. χ-CCM
     uses the finite-translation-group character construction. They are compared
     at a declared common exchange-q=0 convention. Their distinction is not a
     choice of Coulomb kernels, and equality for a specified operator/route is

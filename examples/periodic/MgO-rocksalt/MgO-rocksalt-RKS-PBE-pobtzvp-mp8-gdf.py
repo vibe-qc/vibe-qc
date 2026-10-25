@@ -7,10 +7,9 @@ CRYSTAL14 partner:
 
 The CRYSTAL input lists the Fm-3m asymmetric unit in the conventional
 cell. CRYSTAL then works internally with the 2-atom FCC primitive cell.
-This vibe-qc input builds that same primitive cell explicitly. The
-native vibe-qc Gamma-only GDF backend is available, but the 8x8x8 multi-k
-GDF/FFTDF backend is still pending. Until that lands, this target input
-stops with ``NotImplementedError`` instead of importing PySCF.
+This vibe-qc input builds that same primitive cell explicitly and runs
+the 8x8x8 target on the native multi-k GDF backend
+(``vq.run_krks_periodic_gdf``) end to end; PySCF is never imported.
 
 Run:
     .venv/bin/python examples/periodic/MgO-rocksalt/MgO-rocksalt-RKS-PBE-pobtzvp-mp8-gdf.py

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List
 
 from .case import CaseRecord, CodeRow
+from .compare import paired_wall_ratio
 
 
 _STATUS_ICON = {
@@ -215,7 +216,7 @@ def render_summary(
         a("")
 
     # ---- 5. Performance ranking --------------------------------------
-    a("## Performance (slowest first)")
+    a("## Observed runtime (including failed runs; slowest first)")
     a("")
     a("| system | basis | method | code | wall (s) | n_iter | s/iter |")
     a("|---|---|---|---|---|---|---|")
@@ -232,22 +233,28 @@ def render_summary(
           f"{r.n_iter if r.n_iter is not None else '—'} | {s_per} |")
     a("")
 
-    # Performance ratio vibe-qc / pyscf per case ------------------------
+    # Only accepted comparisons participate in paired timing.
     ratio_lines: List[str] = []
     for case in cases:
-        v = next((r for r in case.rows if r.code == "vibeqc"), None)
-        p = next((r for r in case.rows if r.code == "pyscf"), None)
-        if v and p and v.wall_s > 0 and p.wall_s > 0:
-            ratio = v.wall_s / p.wall_s
+        candidates = [r for r in case.rows if r.code == "vibeqc"]
+        v = candidates[0] if len(candidates) == 1 else None
+        references = [r for r in case.rows if v and r.code == v.ref_code]
+        p = references[0] if len(references) == 1 else None
+        ratio = paired_wall_ratio(v, p) if v and p else None
+        if ratio is not None:
             ratio_lines.append(
-                f"| {v.system_id} | {v.basis} | {v.method_id} | "
+                f"| {v.system_id} | {v.basis} | {v.method_id} | {p.code} | "
                 f"{v.wall_s:.1f} | {p.wall_s:.1f} | {ratio:.2f}× |"
             )
     if ratio_lines:
-        a("### vibe-qc vs pyscf wall ratio")
+        a("### Accuracy-filtered wall ratios")
         a("")
-        a("| system | basis | method | vibeqc (s) | pyscf (s) | ratio |")
-        a("|---|---|---|---|---|---|")
+        a("Both runs converged and passed the declared energy comparison. "
+          "Hardware, resource allocation, numerical settings and timing scope "
+          "must also match before claiming performance parity.")
+        a("")
+        a("| system | basis | method | reference | vibeqc (s) | reference (s) | ratio |")
+        a("|---|---|---|---|---|---|---|")
         for line in ratio_lines:
             a(line)
         a("")

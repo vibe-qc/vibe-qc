@@ -78,6 +78,7 @@
 #pragma once
 
 #include <Eigen/Dense>
+#include <algorithm>
 #include <cstddef>
 
 namespace vibeqc {
@@ -252,9 +253,43 @@ UHFNewtonStepResult uhf_newton_step(
 // Hessian-vector product = one J build + two K builds via the supplied
 // JKBuilder.
 // ---------------------------------------------------------------------------
+// Why a stability solve ended (GitLab #342). ``converged`` is the only
+// value that certifies the reported eigenvalue; the two budgets and a
+// stagnation end the solve without a verdict, which the drivers report
+// as UNVERIFIED. Exposed on the driver results as an int.
+enum class StabilityStop : int {
+    converged = 0,
+    matvec_budget = 1,
+    wall_budget = 2,
+    not_run = 3,    // max_iter <= 0: requested, never started
+    trivial = 4,    // no rotation degrees of freedom: stable by construction
+    stagnated = 5,  // no new direction could be added below the caps
+};
+
+// The wall budget one stability solve may spend (#342): an explicit
+// budget wins; otherwise max(floor_s, fraction * scf_loop_wall_s), the
+// SCF loop wall being the sum of the per-iteration trace. A result of 0
+// means unbounded, the pre-#342 behaviour.
+inline double stability_wall_budget_for(double explicit_s, double fraction,
+                                        double floor_s,
+                                        double scf_loop_wall_s) {
+    if (explicit_s > 0.0) return explicit_s;
+    const double automatic = std::max(floor_s, fraction * scf_loop_wall_s);
+    return automatic > 0.0 ? automatic : 0.0;
+}
+
 struct UHFStabilityOptions {
+    // 0: full real UHF space; +1/-1: normalized equal/opposite-spin
+    // rotations at an identical restricted reference. Seeger-Pople 1977,
+    // doi:10.1063/1.434318, Eq. (34): internal singlet / external triplet.
+    int restricted_spin_sector = 0;
     // Davidson matvec cap. Each matvec is one J + two K builds.
     int max_iter = 60;
+    // Wall-clock budget for one solve, in seconds; 0 = unbounded (#342).
+    // Checked wherever the matvec cap is checked, so the solve ends
+    // within one matvec of the budget and reports
+    // StabilityStop::wall_budget.
+    double wall_budget_s = 0.0;
     // Subspace cap before a thick restart onto the lowest Ritz block.
     int max_subspace = 24;
     // Residual convergence: ||H x - theta x|| <= residual_tol. The UHF
@@ -267,6 +302,9 @@ struct UHFStabilityResult {
     bool converged = false;          // Davidson residual converged
     double lowest_eigenvalue = 0.0;  // valid when ``converged``
     int n_matvec = 0;
+    // Why the solve ended and the wall it spent (#342).
+    StabilityStop stop_reason = StabilityStop::not_run;
+    double wall_s = 0.0;
     // Unit-norm lowest-eigenvector direction (occ-vir blocks per spin,
     // [a, i] indexing as in uhf_newton_step). Empty when a spin has no
     // occupied x virtual rotation space.

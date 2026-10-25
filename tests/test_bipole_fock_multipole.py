@@ -77,6 +77,7 @@ def test_multipole_far_field_off_by_default_rhf():
             opts,
             use_ewald_j_split=True,
             use_exchange_ewald_split=False,
+            historical_domain=True,
             ewald_precision=1e-8,
             use_multipole_far_field=False,  # explicit disable
             progress=False,

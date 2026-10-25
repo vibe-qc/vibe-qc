@@ -10,15 +10,51 @@ is documented separately because it is an external pre-trained model, not
 a semiempirical electronic-structure method ({doc}`mlip`).
 
 ```{warning}
-**Production readiness varies by method.** DFTB is intended for
-screening/preoptimization; GFN2-xTB is gated experimental; PM6 is available
-for molecular work with its documented total-energy convention; OM2 and OM3
-are validated development/prescreening routes, not external-parity production
-claims; OM1 is
-experimental until its analytic core-valence ECP lands; MSINDO is
-reference-parity validated for its current molecular scope. See the
-{ref}`status table <semiempirical-status>` and the comparative
-production brief in {doc}`semiempirical_mlip_comparison`.
+**Production readiness varies by method.** MSINDO is production within its
+documented scope (INDO H to Xe; NDDO H, Li to F, Na to Cl). DFTB0 and
+SCC-DFTB are a preview for screening and preoptimization. GFN2-xTB is
+experimental (`GFN2ExperimentalWarning`). PM6 is experimental: it runs for
+molecular work with its documented total-energy convention, but MOPAC
+heat-of-formation parity is open. OM1, OM2 and OM3 are experimental and a
+**maintainer retirement target** (target matrix of 2026-09-02: no molecular,
+Bloch or CCM target remains; fail closed, deprecate, remove from the public
+portfolio). They are still executable today, OM2/OM3 as validated
+development/prescreening routes and OM1 with its missing core-valence ECP,
+and nothing has been removed yet. PM7 is gated at every boundary. See the
+{ref}`status table <semiempirical-status>`, the comparative production
+brief in {doc}`semiempirical_mlip_comparison`, and the label vocabulary in
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+```
+
+```{admonition} Status: experimental
+:class: warning
+
+GFN2-xTB, PM6 and the OMx family (OM1, OM2, OM3) are experimental routes.
+GFN2-xTB emits `GFN2ExperimentalWarning` on every energy evaluation and OM1
+emits `NDDOExperimentalWarning`; PM6, OM2 and OM3 do not warn, but their
+route plan carries `maturity = "experimental"`
+(`SemiempiricalRoutePlan.from_request("pm6", boundary="molecule", charge=0,
+multiplicity=1).maturity` in `vibeqc.semiempirical.routes`), periodic runs
+record it as `route_maturity` in the `.system` manifest, and
+`semiempirical_route_status(...)` reports `production=False` for all of
+them. Their numbers are research output, not validated results, and they
+are not part of the release gate. The label vocabulary is defined in
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+```
+
+```{admonition} Status: preview
+:class: note
+
+DFTB0 and SCC-DFTB are a maintained preview: molecular and Gamma-periodic
+energies and analytic gradients, full-k energies and bands, and the
+unrestricted variants ship, for screening and preoptimisation. The
+parameters are in-house, there is no DFTB+ (mio-1-1) parity, and absolute
+energies are not claimable while the repulsive is the `A/R^12` placeholder
+(issue #306), which `DFTB0RepulsivePlaceholderWarning` reports pair by pair;
+fixed-geometry differences remain exactly valid. The route registry reports
+`production=True` for the native DFTB kernels on its kernel-parity axis; the
+documentation label is preview because of the parameter provenance. See
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels).
 ```
 
 With `citations=True`, the high-level molecular and periodic runners take
@@ -36,6 +72,201 @@ output files.
 | GFN-xTB | GFN2-xTB | Organic / main-group | Fast |
 | NDDO | PM6, OM1, OM2, OM3 | Development benchmarking, pre-screening | Fast |
 | INDO | MSINDO | Reference-parity molecular semiempirical runs inside the supported element/spin scope | Fast |
+
+## Theory
+
+All four families keep the self-consistent-field structure,
+$\mathbf F\mathbf C = \mathbf S\mathbf C\boldsymbol\varepsilon$ in a minimal
+valence basis of Slater-type orbitals, and replace most of the integrals by
+parametrised expressions. What differs is which integrals survive and where
+the parameters come from.
+
+### NDDO: MNDO, PM6 and the OMx corrections
+
+In the NDDO approximation (neglect of diatomic differential overlap) a
+product $\chi_\mu^A\chi_\nu^B$ of orbitals on different atoms is set to zero
+inside every two-electron integral, so only one- and two-centre integrals
+remain,
+
+$$
+(\mu^A\nu^B|\lambda^C\sigma^D) = \delta_{AB}\,\delta_{CD}\,(\mu^A\nu^A|\lambda^C\sigma^C),
+$$
+
+and the overlap matrix in the Roothaan equations is the identity. The
+one-centre integrals are taken from atomic spectra as the parameters
+$G_{ss}, G_{sp}, G_{pp}, G_{p2}, H_{sp}$. The two-centre integrals
+$(\mu^A\nu^A|\lambda^B\sigma^B)$ are evaluated with the multipole model of
+Dewar and Thiel ({vibeqc-cite}`dewar_thiel_1977`): each charge distribution
+$\mu^A\nu^A$ is represented by a point-charge multipole (monopole, dipole or
+quadrupole, depending on the orbital pair), and two multipoles interact
+through the Klopman-Ohno-Dewar-Sabelli damped Coulomb law,
+
+$$
+[M_A^{(l)}, M_B^{(l')}] = \sum_{i\in A}\sum_{j\in B}
+ \frac{q_i\,q_j}{\sqrt{R_{ij}^2 + \big(\rho_A^{(l)} + \rho_B^{(l')}\big)^2}},
+$$
+
+whose additive terms $\rho$ are fixed so that the one-centre limit
+reproduces the spectroscopic $G$ and $H$ parameters; the same
+$\rho_A^{(0)}$ enter the two-centre monopole $\gamma_{AB}$ that MSINDO's
+NDDO mode uses. The one-electron matrix carries the core attraction
+$V_{\mu\nu,B} = -Z_B\,(\mu\nu|s_Bs_B)$, evaluated with the same multipoles,
+and the resonance integrals $\beta_{\mu\nu} = \tfrac12(\beta_\mu + \beta_\nu)S_{\mu\nu}$
+from the true overlap. The core-core repulsion is not $Z_AZ_B/R$ but the
+screened
+
+$$
+E_{\mathrm{core}}(A,B) = Z_AZ_B\,(s_As_A|s_Bs_B)\big[1 + e^{-\alpha_A R_{AB}} + e^{-\alpha_B R_{AB}}\big]
+ \;+\; \text{(PM6: pairwise } x_{AB}, \alpha_{AB}\text{ and Gaussian terms)},
+$$
+
+which repairs the too-weak repulsion of the damped electron-core attraction
+at short range. MNDO fixed this form; PM6 ({vibeqc-cite}`stewart_pm6_2007`)
+keeps the NDDO integral model, adds d orbitals for the heavier main-group
+and transition elements, and replaces the atom-wise core-core parameters by
+diatomic pair parameters fitted to about 9000 reference compounds, which is
+where its breadth comes from. vibe-qc's PM6 uses the parameter cache of the
+open-source MOPAC release ({vibeqc-cite}`mopac_moussa_stewart_2026`) and
+reports a PM6-like total energy rather than MOPAC's heat of formation. PM7
+({vibeqc-cite}`stewart_pm7_2013`) changes the electrostatics themselves,
+feathering the NDDO integrals smoothly into exact point-charge interactions
+at long range and modifying the coupled electron-electron, electron-core
+and core-core terms together; vibe-qc has only the parameter registry, so
+every PM7 request fails closed.
+
+The OMx methods add what MNDO-type methods lack most: the Pauli repulsion
+that comes from orthogonalising the basis. Expanding the Loewdin
+transformation of the one-electron matrix to low order in
+$\mathbf S' = \mathbf S - \mathbf 1$,
+
+$$
+\mathbf H^{\lambda} = \mathbf S^{-1/2}\mathbf H\mathbf S^{-1/2}
+ = \mathbf H - \tfrac12(\mathbf S'\mathbf H + \mathbf H\mathbf S')
+ + \tfrac38(\mathbf S'^2\mathbf H + \mathbf H\mathbf S'^2)
+ + \tfrac14\mathbf S'\mathbf H\mathbf S' + \dots,
+$$
+
+gives two- and three-centre corrections to the resonance and
+core-attraction integrals. OM1 ({vibeqc-cite}`kolb_thiel_om1_1993`) keeps
+the two-atom corrections and describes the core-valence repulsion with an
+analytic effective core potential; OM2 ({vibeqc-cite}`weber_thiel_om2_2000`)
+adds the three-centre terms of the expansion, which is the origin of its
+improved conformational energies and rotation barriers; OM3
+({vibeqc-cite}`scholten_om3_2003`) drops OM2's most expensive terms at a
+small accuracy cost. The parameters vibe-qc ships are the published H, C,
+N, O, F sets of {vibeqc-cite}`dral_omx_2016`. vibe-qc's OM1 lacks the
+analytic ECP, which is why it warns and why its X-H bonds come out about
+0.3 Å short; the OMx two-centre integrals use Klopman-scaled STO monopole
+densities where the publications use scaled-Gaussian multipoles, which
+leaves OM2/OM3 bond minima 0.1 to 0.2 Å long while relative energetics
+survive. Where NDDO helps:
+geometries, heats of formation and conformational trends of organic and
+main-group molecules at a cost of $O(N^2)$ integrals. Where it fails:
+metals, electronic spectra, transition-state energetics and anything the
+training set did not contain, and periodic systems, where the damped
+long-range electrostatics are not straightforward to sum over a lattice
+(which is why periodic PM6 is experimental and Bloch OMx is gated).
+
+### Density-functional tight binding: DFTB0 and SCC-DFTB
+
+DFTB ({vibeqc-cite}`porezag_dftb0_1995`) is derived from Kohn-Sham DFT
+rather than from Hartree-Fock. Expand the DFT energy around a reference
+density $\rho_0$, the superposition of neutral atomic densities. The
+zeroth-order term gives a non-self-consistent tight-binding energy plus a
+pair repulsion,
+
+$$
+E_{\mathrm{DFTB0}} = \sum_i f_i\,\langle\psi_i|\hat H^0|\psi_i\rangle
+ + \sum_{A<B} V_{\mathrm{rep}}(R_{AB}),
+$$
+
+where the Hamiltonian elements $H^0_{\mu\nu}$ and overlaps $S_{\mu\nu}$ are
+two-centre quantities of the atomic pair (tabulated once against the
+interatomic distance in a Slater-Koster set), the on-site elements are
+atomic orbital energies, and $V_{\mathrm{rep}}$ absorbs the double-counting
+and core-core terms into a short-range pair potential fitted to DFT. One
+diagonalisation of $\mathbf H^0\mathbf C = \mathbf S\mathbf C\boldsymbol\varepsilon$
+gives the energy; there is no SCF. The second-order term in the density
+fluctuation $\delta\rho = \rho - \rho_0$, written in atom-centred Mulliken
+charge fluctuations $\Delta q_A$, gives SCC-DFTB
+({vibeqc-cite}`elstner_scc_dftb_1998`),
+
+$$
+E_{\mathrm{SCC}} = E_{\mathrm{DFTB0}} + \tfrac12\sum_{AB}\gamma_{AB}(R_{AB})\,\Delta q_A\,\Delta q_B,
+\qquad
+H_{\mu\nu} = H^0_{\mu\nu} + \tfrac12 S_{\mu\nu}\sum_C\big(\gamma_{AC} + \gamma_{BC}\big)\Delta q_C
+\quad(\mu\in A,\ \nu\in B),
+$$
+
+where the gamma function tends to the on-site Hubbard parameter $U_A$ (the
+chemical hardness) as $R \to 0$ and to $1/R$ at long range. The charges now
+depend on the orbitals, so the equations are solved self-consistently,
+which is what captures charge transfer and polarisation in heteropolar
+systems. vibe-qc's molecular SCC uses the Klopman-Ohno form
+$\gamma_{AB} = 1/\sqrt{R^2 + \eta_{AB}^2}$ and its periodic routes the
+Elstner form $\gamma = 1/R - S(R)$, whose $1/R$ tail is Ewald-summed (see
+the periodic note below). Two things make vibe-qc's DFTB a preview rather
+than a production DFTB: the Slater-Koster tables are in-house estimates,
+not the published mio or 3ob sets, and the repulsive is the `A/R^12`
+placeholder of issue #306 instead of a fitted spline. On the H2O geometry
+of the quick start below, DFTB0 gives -4.296131 Ha and SCC-DFTB
+-4.182605 Ha (vibe-qc 0.17.x development build on an Apple M-series CPU);
+both runs carry the placeholder warning for the H-H, H-O and O-O pairs, and
+the numbers are useful for fixed-geometry differences and for
+preoptimisation, not as absolute energies. DFTB helps most where a cheap
+electronic model of a large covalent or ionic system is needed
+(preoptimisation, screening, k-point convergence studies); it fails where
+the reference density is a poor start (highly charged species, strong
+correlation) and wherever the repulsive is not fitted.
+
+### GFN2-xTB
+
+The GFN family ({vibeqc-cite}`grimme_gfn1_2017`,
+{vibeqc-cite}`bannwarth_gfn2_2019`) is an extended tight-binding method
+built on the same DFT expansion, parametrised for the whole periodic table
+up to radon for geometries, frequencies and non-covalent interactions
+rather than for heats of formation. GFN2-xTB extends SCC-DFTB in three
+directions, and its energy reads
+
+$$
+E_{\mathrm{GFN2}} = E_{\mathrm{rep}} + E_{\mathrm{EHT}}
+ + E_{\mathrm{IES+IXC}}^{(2)} + E_{\mathrm{AES}}^{(2)} + E_{\mathrm{AXC}}^{(2)}
+ + E^{(3)} + E_{\mathrm{D4}} .
+$$
+
+$E_{\mathrm{EHT}}$ is the extended-Hueckel-type zeroth-order band energy
+with coordination-number-dependent on-site levels over an explicit overlap
+basis of Slater functions, and $E_{\mathrm{rep}}$ is a classical pairwise
+repulsion evaluated separately from it (without it the O-H potential of
+water has no short-range wall). The isotropic second-order term
+$E^{(2)}_{\mathrm{IES+IXC}} = \tfrac12\sum\gamma_{AB,ll'}\,q_{A,l}\,q_{B,l'}$
+is **shell-resolved**: every shell carries its own charge and hardness. The
+anisotropic electrostatics $E^{(2)}_{\mathrm{AES}}$ add cumulative atomic
+dipole and quadrupole moments that interact with the charges and with each
+other through damped multipole kernels, which is what lets GFN2 describe
+hydrogen and halogen bonds without ad hoc corrections, and
+$E^{(2)}_{\mathrm{AXC}}$ is the matching on-site anisotropic
+exchange-correlation term. The third-order term
+$E^{(3)} = \tfrac13\sum_{A,l}\Gamma_{A,l}\,q_{A,l}^{3}$ adds the charge
+dependence of the hardness, which keeps the SCC from over-polarising
+charged systems. Dispersion is the D4 model with charge-dependent $C_6$
+coefficients; in vibe-qc it is a post-SCF term (the native D4 covers H, He,
+B, C, N, O, F and Ne and elsewhere returns zero with
+`GFN2D4UnsupportedWarning`), and the reported energy includes it so that
+comparisons with `xtb` are like for like. Where GFN2 helps: structures,
+vibrational frequencies and conformer energies of molecules and clusters
+across the periodic table at DFTB cost. Where it fails: reaction energies
+and barriers beyond its training, metals, and, in vibe-qc's implementation,
+anything that depends on closing the external-parity and periodic-multipole
+gates described in the GFN2 quick start below.
+
+### MSINDO
+
+MSINDO is an INDO method with its own theory page: the
+[MSINDO guide](msindo.md) derives the INDO integral approximations, the
+orthogonalisation correction and the pseudopotential terms, and the
+[cyclic cluster model guide](cyclic_cluster_model.md) describes the SECCM
+boundary that all four families share.
 
 ## Quick start
 
@@ -55,6 +286,14 @@ model = DFTB0Model(mol)
 print(f"Energy: {model.energy():.6f} Ha")
 print(f"Gradient shape: {model.gradient().shape}")  # (3, 3)
 ```
+
+The minimal valence basis is a Slater orbital per shell, expanded as an
+STO-6G contraction from Stewart's least-squares tables (J. Chem. Phys. 52,
+431 (1970)) keyed by the shell's principal quantum number, so a 3p shell is
+a 3p fit and a 4f shell a 4f fit. Period-7 elements have no tabulated
+expansion and fail closed. Before 2026-09-19 the DFTB routes used two tables
+of unknown provenance that were not Slater fits (issue #373), which is why
+every DFTB number from earlier versions differs from the current ones.
 
 ### SCC-DFTB, self-consistent charges
 
@@ -91,12 +330,19 @@ retry ladder after a zero-temperature failure:
 | 1 | 0.001 Ha (~316 K) | off | 0.05 |
 | 2 | 0.0012 Ha (~379 K) | off | 0.05 |
 | 3 | 0.0015 Ha (~474 K) | off | 0.05 |
+| 4 | 0.002 Ha (~632 K) | off | 0.05 |
 
 The ladder is only reached when the zero-T SCC fails, so systems whose
 integer-occupation fixed point converges keep their exact zero-T energies
-(bit-identical to the direct `SCCDFTBModel` result). Each rung restarts from
-zero charges with a 500-iteration budget, and the reported iteration count is
-the cumulative total across all attempts. Because the SCC fixed point does
+(bit-identical to the direct `SCCDFTBModel` result). The zero-temperature
+attempt has a 500-iteration budget. Each rung restarts from zero charges
+with a 1500-iteration budget, wider than the zero-temperature one because a
+smeared, low-mixing SCC converges slowly (the formic-acid dimer needs 573
+iterations on its rung; adenine converges only on the fourth rung, at
+0.002 Ha, in 232 iterations). A rung is entered only after the previous one
+failed, so the wider budget and the fourth rung cannot change any system
+that already converged. The reported iteration count is the cumulative total
+across all attempts. Because the SCC fixed point does
 not depend on the mixing fraction, the retried energies are unchanged from
 the same-temperature model-level run; only the iteration path differs.
 
@@ -133,12 +379,19 @@ folds in, and without it the water O-H potential energy surface has no
 short-range wall (the minimum collapses below 1.7 bohr). With E_rep the
 water O-H minimum sits at 1.81 bohr, matching xtb 6.7.1 on the identical
 geometry, and the repulsive energy itself matches xtb to ~1e-11 Ha.
-A residual electronic-term gap against xtb remains (water ~15 mHa; tracked
-as the GFN2 external-parity matrix workstream), so GFN2-xTB stays gated
-experimental.
+The molecular electronic model is at parity with xtb 6.7.0 since
+2026-10-12: on the 49-system matrix of `tests/test_gfn2_xtb_parity_matrix.py`
+(period 2 to 5 main group, Zn/Cd/Hg, Cu2, TiCl4, the OH- and NH4+ ions), the
+SCC electronic energy plus repulsion of every closed-shell row agrees with
+xtb to better than 2e-5 Ha and the repulsion to 1e-6 Ha. The total energy
+still differs by the dispersion channel: the native post-SCF D4 covers H-Ne
+(0.6 mHa or better on those rows) and returns zero with a warning beyond,
+so a total with heavier elements omits the D4 term that xtb includes (issue
+#132). GFN2-xTB stays gated experimental on that channel, on the periodic
+gates below, and on the open-shell route, which fails closed.
 The remaining production gates are periodic AES image-cell multipole Ewald
 terms, stricter periodic molecular-limit parity, difficult periodic/polar
-fixtures, and a full external-parity matrix against `xtb`. See
+fixtures, the D4 reference scope, and the unrestricted route. See
 {ref}`semiempirical-status`.
 The bounded h-BN expansion sweep at lattice scales 1.02 through 1.06 converges
 on a smooth branch when given an explicit 1000-iteration total budget; its
@@ -176,7 +429,7 @@ converges. Diamond-Si periodic PM6 now uses one shared gamma kernel for electron
 core image monopoles and crosses its 15-bohr shell boundary smoothly. The
 h-BN PM6 physics gap remains open; Bloch-periodic OMx is gated as described
 below.
-The post-SCF native D4 term is included for H, He, B, C, N, O, F, and Ne;
+The post-SCF native D4 term is included for H, He, B, C, N, O, F, Ne, and Cu;
 outside that reference-data set GFN2 returns zero D4 and emits
 `GFN2D4UnsupportedWarning`.
 
@@ -191,20 +444,188 @@ dynamics, and periodic calculations, see the
 `run_job(method="gfn2_xtb")` all return the **native SCC energy plus the
 post-SCF D4 dispersion correction**. The native binding
 `vibeqc._vibeqc_core.semiempirical.xtb.run_gfn2_xtb(...).energy` returns the
-SCC energy **alone**: D4 is an a-posteriori term in GFN2 (Bannwarth, Ehlert
-& Grimme, *J. Chem. Theory Comput.* **15**, 1652-1671 (2019),
-[doi:10.1021/acs.jctc.8b01176](https://doi.org/10.1021/acs.jctc.8b01176)),
-so the two differ by exactly that correction.
+SCC energy **alone**; the two interfaces differ by the post-SCF correction.
+This is a native D4-style approximation. The published GFN2 functional
+(Bannwarth, Ehlert & Grimme, *J. Chem. Theory Comput.* **15**, 1652-1671
+(2019), [doi:10.1021/acs.jctc.8b01176](https://doi.org/10.1021/acs.jctc.8b01176))
+includes charge-dependent two-body dispersion in SCC.
 
-`xtb`'s own total energy already includes dispersion (its output prints it as
-a sub-term of the SCC energy, `-> dispersion`), so **an `xtb` parity
-comparison is only like-for-like against the D4-corrected value.** The gap is
-not academic. On the archived THIEL adenine frame vibe-qc's SCC energy is
-−27.508108468 Ha and the reported total is −27.521386606 Ha, 13.278 mHa
-apart, against `xtb` 6.7.0's −27.499575435 Eh (whose own `-> dispersion` is
-−13.538 mHa). Quoting the SCC energy where the total belongs turns a
-−21.811 mHa residual into a −8.5 mHa one, 133x the 0.1 mHa parity gate.
+Molecular GFN2 validates occupations in its parameterized valence space.
+The high-level GFN2 route remains closed-shell. The experimental native
+`run_gfn2_xtb` also accepts open shells with `aes_faithful=True`: it retains
+shell SCC, third-order and faithful AES terms, and optional SCC D4 operands.
+It uses common orbitals with separately conserved alpha and beta populations,
+not spin-dependent Fock matrices. At zero temperature each spin uses hard
+Aufbau occupations; at positive temperature each has its own Fermi level.
+The reported entropy sums both spin channels, and the gradient differentiates
+`free_energy = energy - electronic_temperature * entropy`.
+`occupations_alpha`, `occupations_beta`, `n_alpha`, and `n_beta` expose the
+executed ensemble, including the last evaluated state on SCC exhaustion.
+This low-level capability does not establish quantitative open-shell accuracy
+or repair the remaining D4 reference-protocol discrepancy.
+
+The separate legacy `run_ugfn2_xtb` atom-charge driver subtracts molecular
+charge before assigning alpha and beta occupations. Both drivers reject
+incompatible spin/electron counts and occupations that exceed the available basis,
+instead of computing a different charge state by truncation or clamping.
+This matters for charged systems and f-in-core lanthanide references.
+The unrestricted atom-charge model evaluates
+`E = Tr(P H0) + qᵀ γ q / 2 + E_rep`, with positive charges
+`q = Z_val - Mulliken population`. Its SCC Hamiltonian uses the derivative
+of that same energy, and reported charges come from the returned density.
+This partial model remains incomplete; see the workshop's open-shell section
+for its limitations.
+On SCC iteration exhaustion, the unrestricted result has `converged=False`
+and retains the last evaluated energy, occupations, and iteration count for
+diagnosis. It is not an accepted stationary energy. The driver requires a
+positive iteration budget and finite positive charge tolerance; linear charge
+mixing must be finite and within `[0, 1]`.
+The shared `XTBSccOptions` type also has controls for the fuller restricted
+and periodic drivers. The unrestricted driver rejects requests for a mixer
+other than `Simple`, nonzero or nonfinite `electronic_temperature`, a
+`gamma_form` other than `KlopmanOhno`, or `aes_faithful=True`. These requests
+previously ran the zero-temperature atom-charge model silently. It has no
+automatic stabilization ladder; `auto_stabilize`, mixer-history controls,
+and AES damping do not apply to its single Simple-mixing attempt.
+
+For first-principles reference-data development,
+`vibeqc.dispersion_d4_refdata.coupled_polarizability_imag_freq_uks`
+computes spin-resolved imaginary-frequency polarizabilities from a converged
+UKS reference and its matching functional/grid. Passing `functional=None`
+selects the UHF response. It rejects nonintegral occupations and unstable or
+singular response Hessians instead of producing reference coefficients from
+them. The frozen D4 dataset covers H, He, B, C, N, O, F, Ne, and Cu.
+The light-element records use PBE38/aug-cc-pVTZ and include a CH doublet
+reference for low-coordinate carbon alongside CO. The scientific protocol
+and CH molecular response are recorded in
+`semiempirical/methods/d4_reference_light_protocol.json`.
+Copper uses independently generated PBE38/aug-cc-pVTZ neutral-atom and
+CuH references; its protocol is recorded in
+`semiempirical/methods/d4_reference_copper_protocol.json`. Cu atomic spectra
+and self coefficients are unchanged; cross coefficients use the updated
+light-element spectra. Coverage of the remaining heavier
+elements remains under development in issue 132.
+`vibeqc.dispersion_d4_reference_data.generate_reference_dataset` accepts
+an explicit `reference_systems` sequence of `ReferenceSystem` records,
+including charge and multiplicity. It uses RKS for singlets and UKS for
+higher multiplicities, passes molecular charge to EEQ, and builds canonical
+atomic references before subtracting partner contributions. Include each
+partner element's canonical host in a custom catalogue. A unique free-atom
+host takes precedence over a hydride, except for hydrogen, whose canonical
+host remains H2. The bundled catalogue and dataset are unchanged by a
+custom generation run.
+
+| D4 choice | Native molecular GFN2 | Upstream GFN2 (`xtb` 6.7.1) |
+|---|---|---|
+| Two-body charges | EEQ, computed after SCC | SCC charges and dispersion potential |
+| Reference data | Independently generated CPKS/PBE38 data | Upstream GFN2 reference data and charges |
+| Coordination numbers | EEQ erf CN with soft cap | Electronegativity-weighted D4 CN |
+| Reference weights | Reference-specific Gaussian counts from the stored nominal CN environments | Reference-specific Gaussian counts |
+| ATM C6 | Same EEQ-dependent model as two-body C6 | Neutral-charge reference interpolation |
+| BJ and ATM scaling | s6=1, s8=2.7, a1=0.52, a2=5, s9=5 | Same values |
+
+These distinctions are visible in the tagged upstream
+[GFN2 dispersion driver](https://github.com/grimme-lab/xtb/blob/v6.7.1/src/xtb/dispersion.f90)
+and [D4 implementation](https://github.com/grimme-lab/xtb/blob/v6.7.1/src/disp/dftd4.F90).
+
+The light-element catalogue still differs from upstream, including missing
+open-shell free-atom references. Adding CH supplies a distinct low-coordinate
+environment that increasing the basis of the closed-shell hosts alone cannot
+supply. Further reference coverage and full GFN2 component parity remain
+incomplete. Molecular-to-atomic reference partitioning follows Caldeweyher et al.,
+*J. Chem. Phys.* **150**, 154122 (2019), Eq. 5; Eq. 6 defines the coordination
+number.
+
+The native CN interpolation uses Caldeweyher et al., *J. Chem. Phys.* **150**,
+154122 (2019), Eq. 8: isolated nonzero-CN references use one Gaussian;
+crowded reference environments and free atoms use additional narrower
+Gaussians. Energy and analytic CN derivatives share this weighting policy.
+The low-level `n_gaussian` argument can explicitly select a common count
+or per-reference counts. This interpolation correction does not establish
+GFN2 energy parity; the other differences in the table remain.
+The native ATM kernel uses negative C9 and energy `-C9 * angular_factor * damping`:
+equilateral triplets repel, while collinear triplets attract.
+
+`aes_faithful=True` changes AES only. It retains this post-SCF D4 model;
+it does not enable upstream-faithful dispersion. Total-energy comparisons
+must include each program's dispersion and use the same geometry and ensemble.
+Subtracting dispersion can diagnose a difference, but cannot establish total
+energy or force parity. A few-percent C6 comparison is also insufficient for a
+0.1 mHa total-energy criterion. Both default and faithful AES remain experimental.
+The molecular D4 force contribution finite-differences the same post-SCF energy,
+including ATM and the coordinate dependence of its EEQ charges and CN.
+The EEQ solve constrains the partial charges to the molecule's total charge
+for both energy and displaced force evaluations. Cations and anions therefore
+use their ionic charge for both pairwise and ATM dispersion.
 Guard: `tests/test_gfn2_xtb.py::TestGFN2PublicEnergyIsDispersionCorrected`.
+
+**Molecular AES derivative support.** The native result records its executed
+AES functional in the read-only `GFN2Result.aes_functional` field: `"shell"`
+for the default `XTBSccOptions.aes_faithful=False`, `"faithful"` for the
+opt-in atom-resolved energy, and `"unknown"` for a result without an execution
+identity. The direct native Python binding copies the complete SCC options
+while holding the GIL, before releasing it for native execution. Mutations of
+the original options during or after the call cannot change the invocation
+or this field.
+`compute_gfn2_gradient` dispatches to the derivative of the recorded `"shell"`
+or `"faithful"` functional. Unknown or legacy results raise `ValueError` and
+must be recomputed with a current native build. `GFN2Model.gradient()` uses
+the recorded functional, including when reusing a cached energy result,
+then adds the existing post-SCF D4 derivative. The public
+`GFN2Model` and `run_job(method="gfn2_xtb")` defaults remain shell AES;
+`aes_faithful` is a native SCC option, not a new `run_job` keyword.
+Converged molecular results with zero valence electrons still retain the
+electrostatic and repulsive nuclear derivatives; zero occupation alone does
+not imply a zero gradient.
+When a native restricted SCC attempt exhausts its iteration budget, its
+result retains the last evaluated density, charges, eigenpairs, component
+energies and free energy with `converged=False`. If every stabilization
+attempt fails, these observables belong to the last attempt and its reported
+temperature. They are diagnostic iterates, not stationary results.
+The high-level model still raises on nonconvergence, and analytic gradients
+reject these unconverged states.
+The faithful derivative includes atom-resolved dipoles and quadrupoles,
+their integral and moving-origin derivatives, pair damping, coordination
+number derivatives of the multipole radii and H0, isotropic SCC, third-order
+terms, repulsion, and the overlap Pulay term. Its Fock is the density
+derivative of its energy; orbital and occupation response cancel at a
+stationary SCC solution. At finite temperature this cancellation applies
+to the Mermin free energy, with the converged fractional occupations in
+the energy-weighted density. No displaced SCC calculations or numerical
+integral derivatives enter the faithful native gradient (issue #427).
+Molecular SCC acceptance checks both shell-charge convergence and consistency
+of the diagonalized Hamiltonian with the full undamped Fock rebuilt from
+the returned density. The maximum AO-matrix element difference must be
+below the numerical value of `conv_tol_charge`, in Hartree. This prevents
+neutral symmetric molecules from stopping before their multipoles and
+damped AES potential have converged. The iteration budget still applies;
+an unconverged result cannot produce a native gradient. This
+stronger acceptance check can change iteration counts and energies
+that previously stopped at a charge-only fixed point, without changing the
+energy functional or the shell-AES default. For shell AES the acceptance
+check includes the shell potential from the current density's multipoles,
+and the reported AES energy uses that same potential. Its gradient retains
+the nonvariational shell response correction; full-Fock self-consistency
+does not make the shell energy variational (issue #436).
+External force parity against `xtb` remains a separate validation gate.
+
+**Finite electronic temperature: one ensemble for the energy and the
+SCC gradient.** The molecular driver runs its primary SCC attempt at the
+requested temperature, exact zero-temperature Aufbau by default. Two paths
+lead to a smeared solution: an explicit `electronic_temperature` on the
+native options, or the automatic stabilisation ladder accepting its
+`T = 0.005 Ha` rung for a system that stalls at `T = 0` (see the ladder
+notes below). In both cases the SCC is stationary in the Mermin free energy
+`A = E - T*S`, so that is what `GFN2Model.energy()` and `run_job` report
+(plus D4), what `compute_gfn2_gradient` differentiates through the converged
+fractional occupations (`GFN2Result.occupations`), and what an optimizer
+minimises. The native binding keeps `energy` (the internal `E`),
+`free_energy`, `entropy` and `smearing_temperature` side by side;
+`GFN2Model.electronic_temperature` and `run_job`'s `electronic_temperature`,
+`e_internal` and `entropy` fields state which ensemble a number belongs to,
+and the `.out` carries the "Mermin free energy (finite electronic
+temperature)" block. At `T = 0` every value is the historical one, bit for
+bit.
 
 The `.system` manifest records the parameter provenance a GFN2 number
 depends on, including `gfn2_cache_sha256` (the digest of the fetched
@@ -248,12 +669,34 @@ model = PM6Model(mol)
 print(f"Energy: {model.energy():.6f} Ha")
 ```
 
-The high-level closed-shell `run_job(method="pm6")` route first attempts the
-ordinary zero-temperature SCF. If hard occupations cycle across
-near-degenerate fragment orbitals, it uses a bounded finite-temperature
-occupation homotopy and then cools back to an idempotent zero-temperature
-density. Only the cooled PM6 energy is accepted; the finite-temperature
+The high-level closed-shell `run_job(method="pm6")` route runs the ordinary
+zero-temperature SCF and, alongside it, a bounded finite-temperature
+occupation homotopy at each of three temperatures, every rung cooled back to
+an idempotent zero-temperature density and re-cooled to prove it is a genuine
+fixed point. Only cooled PM6 energies are accepted; a finite-temperature
 intermediate is never reported as a successful result.
+
+If those probes agree, the energy is reported as before. If two of them reach
+**different** converged zero-temperature fixed points, the route raises
+`SemiempiricalEnergyError` and names every solution it found, because on such
+a system the reported total would be chosen by rounding rather than by the
+input (issue #154).
+
+That guard exists because convergence alone does not identify the answer
+here. A strained bridged bicycle or a weakly coupled symmetric dimer has
+several genuine zero-temperature PM6 fixed points, and hard occupations leave
+the SCF selecting between them on arithmetic noise. Norbornadiene converges
+cleanly to -33.0848096 Ha, and just as cleanly to -33.9206690 Ha -- 0.836 Ha
+(22.7 eV) lower -- after a 1e-9 A nudge of one bridgehead carbon; homotopy
+rungs reach -33.3644211, -33.8171396 and -33.9206691 on inputs differing by
+at most 1e-7 A. Four fleet hosts once reported four of those values for that
+one input and one build, each labelled converged. Thread count changes
+nothing (identical to 16 digits from 1 to 18 threads), so this is not an
+arithmetic-determinism defect that a deterministic reduction order would
+reach, and no path selects the basin reliably: the smeared paths are
+noise-sensitive too, and reporting the lowest candidate is not stable because
+the direct solution is sometimes itself the lowest. A refusal is therefore
+the honest outcome, and it is the same on every host.
 
 Gamma-periodic PM6 instead uses Pulay extrapolation of the physical
 commutator residual. Convergence requires both the density change and
@@ -308,6 +751,57 @@ from vibeqc.semiempirical import OMxModel
 model = OMxModel(mol, variant="om2")  # "om1", "om2", or "om3"
 print(f"Energy: {model.energy():.6f} Ha")
 ```
+
+OM1, OM2 and OM3 are experimental and a maintainer retirement target
+(2026-09-02); see the status admonition at the top of this page. They keep
+running until the deprecation lands, but new work should start from PM6 or
+MSINDO.
+Molecular OM2/OM3 support `run_job(mol, method="om2", hessian=True)` and
+`compute_hessian_fd(mol, "", method="OM2", hessian_options=...)` (likewise
+OM3). The Hessian uses central differences of the existing checked native
+numerical gradients: default outer step 0.005 bohr, inner energy-difference
+initial step 0.001 bohr. The unchanged native guard can refine individual
+inner components by factors of 0.1 up to three times. The gradient API does
+not report accepted component steps, so this provenance names the initial
+step and policy rather than claiming a fixed stencil. It returns Hartree/bohr squared force constants and signed
+cm inverse frequencies on the **implemented OMx surface**, with the same
+dispatcher defaults, element coverage, charge and spin. Every displaced SCF
+must converge and every gradient must be finite. This costs roughly
+quadratically many SCF evaluations in the number of Cartesian coordinates.
+Gaussian SCF/grid options and dipole derivatives are unsupported for this
+route; IR intensities are unavailable. Other basis-free methods still skip
+the runner Hessian request.
+
+Use a stationary geometry and check displacement-step convergence before
+interpreting frequencies. Negative frequencies denote imaginary modes; a
+partial Hessian describes only the unfrozen atoms. A returned Hessian does
+not establish electronic stability, published OMx implementation parity or
+physical accuracy. The existing integral stand-ins and long-bond limitations
+remain in force. The centered gradient-difference convention matches
+[ASE's vibrational analysis](https://docs.ase-lib.org/_modules/ase/vibrations/vibrations.html).
+
+How far the implemented surface is from published OM2 shows in a small
+measurement (vibe-qc 0.17.15 development build, main, 2026-10-11). An OM2
+optimisation of water from a standard start converges (largest gradient
+component 2e-5 Ha/bohr) to an O-H bond of 1.207 Å and an H-O-H angle of
+140.2°, against about 0.96 Å and 104.5° in experiment and in published OM2.
+Its Hessian gives 633, 3115 and 3158 cm⁻¹, stable against the outer step
+(0.0025 to 0.01 bohr changes them by less than 0.1 cm⁻¹), so the numbers are
+converged frequencies of the wrong surface: the bend is a third of the
+experimental 1595 cm⁻¹. Ammonia optimises to a nearly planar structure (the
+nitrogen 0.015 Å above the hydrogen plane, N-H 1.24 to 1.26 Å), and the
+planar geometry has no imaginary mode. Do not compare OMx geometries or
+frequencies from this build with experiment or with other OMx codes; use
+the route only to exercise the Hessian machinery, and use PM6 or MSINDO for
+chemistry.
+
+The restricted native `PM6Result` returned by molecular PM6 and OM2/OM3
+exposes `mo_energies` (Hartree) and `mo_coeffs` (AO rows, MO columns) as
+read-only properties, alongside the retained density and parameter identity.
+These arrays are the solver's returned orbitals. In OMx they may belong to
+the last effective Fock used by DIIS or recovery; they do not certify a
+rebuilt physical-Fock residual, density idempotency or electronic stability.
+An unconverged or empty result must be checked before using the arrays.
 
 ### Through `run_job`
 
@@ -476,8 +970,9 @@ literature-validated MgO DFTB set; no energy, structure, surface energy, EOS
 result, charge, or band gap from this control is validated MgO chemistry.
 
 Equation review found no sign, factor, or double-counting defect in the finite
-2-D Madelung construction. The separate 3-D gamma thermodynamic-limit defect
-tracked by issues #211, #425, and #444 remains outside this result. Damping,
+2-D Madelung construction. The separate 3-D gamma thermodynamic-limit defect,
+tracked by the former tracker's issues 211, 425 and 444 and described in the
+[long-range gamma design note](../design_seccm_gfn2_long_range_gamma.md), remains outside this result. Damping,
 smearing, disabled embedding, fallback SCF, or an invented repulsive spline
 must not be used to relabel a refused MgO slab as a converged result.
 
@@ -576,6 +1071,15 @@ vector, and `use_broyden=True` selects the modified Broyden quasi-Newton
 mixer. The two accelerators are mutually exclusive and both reject
 unphysical extrapolations back onto a conservative damped step.
 
+**Run record.** The result states the electrostatics it executed:
+`gamma_form` (`"klopman_ohno"` or `"elstner"`), `ewald_gamma`, `madelung`
+and `scc_mixer` (`"aitken"`, `"diis"` or `"broyden"`), and
+`route_plan.electrostatics_kernel` resolves to the dimensional kernel that
+ran (`madelung_wire_1d`, `ewald_gamma_parry_2d`, ...; `"none"` for the
+WS-truncated default). An `ewald_gamma` run also carries
+`route_plan.shell_gamma_form`, so its citations include the Ewald lattice
+sum and, for the Elstner form, Elstner 1998.
+
 **Gradients.** `compute_gradient=True` returns the analytic fixed-topology
 nuclear gradient of the converged per-cell energy:
 
@@ -611,9 +1115,13 @@ heavy-heavy two-electron tensor parity with the defining PM6 implementation
 remains open, so the adapter is not a quantitative PM6 reference. Bundled PM6
 records that require d orbitals fail closed: the complete PM6 spd Hamiltonian
 has not yet landed in the SECCM adapter, and treating those five d functions
-as p channels would return a different model. Madelung embedding is also not
-implemented, so neutral ionic crystals requiring long-range image
-electrostatics are outside the current PM6-SECCM scope. Its gradients
+as p channels would return a different model. The opt-in Madelung embedding
+(`madelung=True`, 1-D and 2-D; three cyclic dimensions fail closed) is
+described in the features table under "PM6-SECCM CCM Madelung embedding";
+an embedded run resolves `route_plan.electrostatics_kernel` to
+`madelung_wire_1d` or `madelung_parry_2d` and cites the CCM Madelung
+embedding route. Without the embedding a nontrivial cyclic topology needs
+the explicit `allow_truncated_electrostatics=True` acknowledgement. Its gradients
 (`compute_gradient=True`) use central
 differences of the converged per-cell energy over the frozen topology
 displacements (`gradient_method="finite_difference"`, `gradient_fd_step`
@@ -650,15 +1158,34 @@ a quantitative solid-state prediction. Both
 GFN2-SECCM assembles the
 WS-weighted supercell GFN2-xTB SCC the same way: one-center S/H0 blocks
 are the molecular ones, every directed two-center coupling (the H0 image
-block, the shell-resolved gamma, the shell-resolved multipole AES
-potential, the pair repulsion) is accumulated through the WS records with
+block, the shell-resolved gamma, the AES multipole integrals, the pair
+repulsion) is accumulated through the WS records with
 their fractional weights, and the per-cell energy is the finite-cluster
 total divided by the group order (`total_cyclic_energy` and the `cyclic_*`
-decomposition are reported). The SCC loop mirrors the molecular driver
-(damped simple mixing plus the stabilization retries); D4 dispersion and
-the experimental faithful AES are not part of the adapter. At T = 0, the
-molecular limit (1x1x1 cyclic cluster) still reproduces the validated
-molecular `run_gfn2_xtb` driver bit-for-bit. At finite temperature it reports
+decomposition are reported). The SCC loop mirrors the molecular driver:
+damped simple mixing plus the stabilization retries. A stalled primary
+attempt is handed to the retries from a budget-independent checkpoint
+(every 500 iterations, when its residual has stopped contracting) rather
+than from a fixed 500-iteration cut (issue 294); a contracting one runs on
+until the ladder's reserve, the budget the rungs need in full (1100
+primary iterations at the default `max_iter` of 3600 for a light-element
+cell, 500 with a post-Ar element), and every rung then gets its whole
+budget, a rung that cannot being skipped rather than truncated (the
+molecular driver's issue 306 contract). Below the stabilisation threshold
+(`max_iter < 2500`) the primary keeps the whole budget, so the iteration
+count can differ across that threshold while the energy does not. If the
+established retries all fail and some total budget remains, a final neutral
+Eyert-Broyden restart uses at most 500 remaining iterations with mixing 0.4
+and the originally requested temperature. This recovers the stretched
+faithful-AES hydrogen chain at explicit T = 0 (issue 379). Its solver,
+temperature, residuals and iteration count are recorded in `attempts`;
+an exhausted budget still fails closed. Successful earlier attempts and
+their allocations are unchanged. D4
+dispersion is not part of the adapter; the default AES is the faithful
+`aes_faithful=True` model described below. At T = 0, the molecular limit
+(1x1x1 cyclic cluster) still reproduces the validated molecular
+`run_gfn2_xtb` driver bit-for-bit when that driver runs the same AES model,
+that is with `aes_faithful=True`. At finite temperature it reports
 the identical molecular state and internal components, but maps the SECCM
 `energy` field to the variational Mermin free energy rather than the molecular
 driver's historical internal-energy field. All three are
@@ -671,24 +1198,38 @@ WS records at their physical image distances with their ownership weights, the
 same inventory the cyclic H0 assembly uses, so retyping a torus site by a
 lattice translation cannot move H0 (issue 354, fixed).
 
-**The default multipole AES moment integrals still depend on the coordinate
-representative typed for a torus site (issue 348), and `aes_faithful=True` is
-the fix.** With the default kernel the AES is the only remaining
-representative-dependent term in the route: on a 4-unit polar HF chain three
-representatives of one crystal give -5.230514880891, -5.230364176724 and
--5.230359290006 Ha, a 1.6e-4 Ha spread, while `include_aes=False` makes all
-three agree bit-for-bit. `aes_faithful=True` builds the multipole integrals
-over the same Wigner-Seitz records as the overlap and H0 and evaluates the
-Bannwarth 2019 Eq. 25 energy and Eqs. 39-44 Fock on the resulting
-atom-resolved cumulative moments; all three representatives then give
--5.233747472334 Ha. The two paths cannot be blended, because the ad-hoc
-kernel consumes shell-resolved moments and a pair inventory produces
-atom-resolved ones. The flag defaults off only so that molecular-limit bit
-parity with the molecular driver, whose own `aes_faithful` default is off,
-keeps its meaning; the two defaults move together.
+**The default AES is the representative-invariant Bannwarth model (issue
+140).** `run_gfn2_seccm` defaults to `aes_faithful=True`. It builds the
+multipole integrals over the same Wigner-Seitz records as the overlap and H0,
+and evaluates the Bannwarth 2019 Eq. 25 energy and Eqs. 39-44 Fock on the
+resulting atom-resolved cumulative moments. Eq. 27's shift terms make those
+moments origin-independent, so the energy, `e_aes` and charges do not depend
+on which lattice copy of a site was typed. On the issue's two-replica water
+torus and on a bent HF chain, every single-atom torus retyping and an atom
+permutation agree to about 1e-14 Ha.
+`aes_faithful=False` selects the molecular driver's ad-hoc shell-resolved
+kernel. Its moment integrals come from the home-cell molecule, so it is
+representative-dependent: on a 4-unit polar HF chain, three representatives
+of one crystal give -5.230514880891, -5.230364176724 and -5.230359290006 Ha,
+where the default gives -5.233747472334 Ha for all three. The two paths cannot
+be blended, because the ad-hoc kernel consumes shell-resolved moments and a
+pair inventory produces atom-resolved ones. Use `aes_faithful=False` only to
+reproduce pre-#140 SECCM numbers, or with `scc_mixer="newton"`, which is
+refused on the faithful path's joint `[dq; mu; theta]` iterate.
+
+**The SECCM and molecular AES defaults differ on purpose.** The molecular
+`run_gfn2_xtb` driver keeps `XTBSccOptions.aes_faithful = False`. The blocker
+that held it there, issue 777 (adenine basin multiplicity, #3 after the
+renumbering), is closed, and the closed-shell molecular parity matrix against
+xtb is closed on the faithful path, so moving the molecular default is the
+maintainer's decision on issue #522. A single-replica default
+SECCM run therefore equals `run_gfn2_xtb` with `aes_faithful=True` bit for bit,
+not the molecular default. For the test water, that is -5.033680484741314 Ha
+against -5.031468971990033 Ha.
+
 `include_aes=False` is an explicit channel-isolation control for validation,
-not a promoted quantitative Hamiltonian. Periodic *Gamma* GFN2 no longer
-shares this defect: its pair-complete one-electron support landed under issue
+not a promoted quantitative Hamiltonian. Periodic *Gamma* GFN2 does not
+have the ad-hoc kernel's representative dependence either: its pair-complete one-electron support landed under issue
 316, and issues 296/338 replaced the home-cell shell gamma and the ad-hoc
 damped multipole kernel with a translation-covariant Ewald-split lattice sum
 and the Bannwarth 2019 model on image-resolved moments (see "Periodic
@@ -700,12 +1241,22 @@ GFN2-SECCM returns a schema-versioned `result.hamiltonian_identity`; the same
 record is available as `result.route_plan.gfn2_hamiltonian_identity`. It
 records the requested electrostatics family and electronic temperature
 separately from the kernel and temperature that actually executed, plus
-`include_aes`, the two Madelung operator modifiers, the Ewald molecular
-on-site selector, and molecular delegation. This distinction matters when a
-one-cell Ewald request delegates to the exact molecular Hamiltonian or a
-T = 0 request converges on the bounded finite-T retry.
+`include_aes`, the AES model that ran (`aes_model`: `"bannwarth_record_camm"`
+for `aes_faithful=True`, `"adhoc_shell"` for the ad-hoc shell kernel, `"none"`
+when `include_aes=False`), the two Madelung operator modifiers, the Ewald
+molecular on-site selector, and molecular delegation. This distinction matters when a
+one-cell Ewald request delegates to the exact molecular Hamiltonian or an
+unspecified-temperature request converges on the bounded finite-T retry.
+Passing `electronic_temperature` explicitly (`0.0` included) pins every
+ladder rung and the molecular delegation to that temperature, as the
+molecular driver does; only the default `None` admits the finite-T rescue.
 `result.hamiltonian_identity.to_dict()` is the JSON-safe provenance payload
-for this standalone direct API, and `from_dict()` restores it exactly.
+for this standalone direct API, and `from_dict()` restores it exactly. The
+identity is at `schema_version` 2; a schema 1 payload predates `aes_model`,
+cannot say which AES model ran, and is refused rather than guessed. A result
+computed under the pre-issue-140 default (`adhoc_shell`) therefore no longer
+shares an identity with one computed under the current default
+(`bannwarth_record_camm`).
 
 Solver and acceptance provenance is separate from Hamiltonian identity.
 `result.run_controls` (also
@@ -714,7 +1265,8 @@ budget, charge threshold and mixing control, requested mixer, the fixed
 finite-torus gap tolerance, the requested and resolved Parry K=0 policy, and
 an immutable count plus SHA-256 identity for any supplied restart. Automatic
 stabilization applies a supplied restart only to the primary attempt; every
-fallback begins from neutral charges with the Simple mixer. The ordered
+fallback begins from neutral charges. The final remaining-budget recovery
+uses Eyert mixing; preceding fallback rungs use Simple mixing. The ordered
 `result.attempts` records the executed solver, rung controls, restart source,
 exit reason, and immutable residual trace for each attempt.
 `result.n_iter`, `result.scc_max_change_trace`, and the per-attempt counts and
@@ -722,6 +1274,29 @@ traces reconcile exactly. `result.selected_attempt_index` identifies the
 accepted final attempt. A bounded failure raises
 `GFN2SECCMConvergenceError`, a `RuntimeError` subclass whose `result` retains
 the same complete frozen ledger for diagnosis.
+
+For the supercell legacy AES route (`aes_faithful=False`), the convergence
+residual includes changes in shell dipoles and quadrupoles as well as shell
+charges. Neutral charges alone do not make a density-dependent AES
+Hamiltonian stationary. Each component uses `conv_tol_charge` in atomic
+units. This check does not establish stability or uniqueness of the SCC
+solution; distinct converged electronic states can remain.
+
+By default, `audit_states=True` spends the unused part of `max_iter` on
+one neutral-start alternative solve. It uses Eyert mixing, or Simple
+mixing if the accepted solve used Eyert. It retains the first accepted
+result under the requested controls. A same-Hamiltonian free-energy
+difference above 1e-6 Hartree per primitive cell emits
+`GFN2SECCMStateAmbiguityWarning`; it does not select the lower energy or
+reject a state based on translation symmetry. `result.state_audit`
+records the alternative result, comparison status, budget and selection
+reason. Its `to_dict()` includes the alternative controls and attempt
+ledger; unavailable failed-state observables serialize as null.
+`result.total_n_iter` includes both solves and never exceeds `max_iter`;
+`result.n_iter` and `result.attempts` describe the retained solve.
+Molecular delegation is skipped. A failed alternative or exhausted budget
+is reported explicitly, and even agreement does not prove uniqueness or
+global stability. Set `audit_states=False` for a single-start calculation.
 
 **Comparing SCC states (issue 421).** `converged` and `physical_basin`
 do not establish that two scan points reached the same electronic branch.
@@ -757,8 +1332,9 @@ limit quantitative interpretation of the affected routes.
 supercells (bulk Cu/Pd/Ag, doped semiconductors) have a degenerate
 frontier whose T = 0 occupation can switch branches between neighbouring
 geometries, making the energy surface discontinuous; a small temperature
-(for example 0.005 Ha) converges branch-free and the reported energy is
-the Mermin free energy A = E - T*S (`free_energy` is an alias, `entropy`
+(for example 0.005 Ha) smooths occupations but does not guarantee a unique
+SCC state. The reported energy is the Mermin free energy A = E - T*S
+(`free_energy` is an alias, `entropy`
 and `smearing_temperature` are recorded). A smeared run still measures and
 records its frontier gap in `homo_lumo_gap`; what finite temperature
 changes is only the *verdict*. At T = 0 a frontier at or below the guard
@@ -796,7 +1372,8 @@ closed).
 `ewald_gamma=True` supports 1-D wires and 2-D slabs, and is mutually
 exclusive with `madelung`. It combines the bare-Coulomb Ewald kernel with
 the WS-folded Klopman-Ohno-minus-Coulomb correction and on-site hardness.
-**Non-molecular 3-D cyclic topologies fail closed (issue #444)** before
+**Non-molecular 3-D cyclic topologies fail closed** ([design note](../design_seccm_gfn2_long_range_gamma.md);
+former-tracker issue 444) before
 the divergent kernel is assembled. A finite WS sum is not a thermodynamic
 limit: the pair-dependent remainder decays as `R^-3`, whose neutral-cell
 coefficient need not cancel in three dimensions. Exact zero-image molecular
@@ -805,7 +1382,7 @@ is not a molecular test. No Elstner mapping, changed finite-distance GFN2
 energetics, or replacement scientific default is supplied by this containment.
 See [the derivation and fixed-charge controls](../design_seccm_gfn2_long_range_gamma.md).
 
-Historical MgO/corundum bulk energies and the named #130 Cu energy/size
+Historical MgO/corundum bulk energies and the named former-tracker issue 130 Cu energy/size
 assertions remain evidence, not reachable 3-D `ewald_gamma` production
 expectations. The corresponding Cu recipes now pin the explicit rejection;
 small charges or a converged SCC solve do not establish a thermodynamic
@@ -819,7 +1396,7 @@ tested T = 0 simple-mixing route and fails closed; this measured
 nonconvergence is not a proof that no exact fixed point exists. Earlier
 trees could land fcc Cu in a charge-density-wave basin associated with the
 d-first transition-metal parameter rotation fixed with issue 43; those
-historical solver results do not override #444's route rejection.
+historical solver results do not override that route rejection.
 `include_aes=False` is an
 experimental validation knob that removes the WS-folded anisotropic
 second-order channel for SCC instability isolation; its energy misses a
@@ -979,10 +1556,28 @@ reported under their own names:
   partially filled manifold and is strictly positive. It is a legitimate
   quantity but it is **not** the band gap.
 * `is_metallic` is the structural gapless flag: true when some occupation
-  is fractional or the measured `indirect_gap` is `<= 0`. Screen on this
-  rather than on the sign of a float -- under a zero-temperature global
-  aufbau fill the pooled gap can never be negative, so a "negative gap"
-  test alone is vacuous on mesh rows.
+  is fractional, the Fermi level crosses a band (below), or the measured
+  `indirect_gap` is `<= 0`. Screen on this rather than on the sign of a
+  float -- under a zero-temperature global aufbau fill the pooled gap can
+  never be negative, so a "negative gap" test alone is vacuous on mesh rows.
+
+**The Fermi level crossing a band (GitLab #176).** Under the global fill a
+band that dips below the Fermi level at one k-point and rises above it at
+another is occupied at the first and empty at the second, and every
+occupation is still an integer. The state classes above then never overlap,
+so the state-by-state edges measure a positive "gap" for a metal: the spacing
+of the sampled levels around the Fermi level. When the occupations are
+integer and the occupied-state count differs between k-points, the edges are
+instead taken from the band pair at the Fermi filling (valence band
+`ceil(n_f) - 1`, conduction band `floor(n_f)` of the energy-sorted spectrum,
+`n_f = N / 2`), so `indirect_gap` is the negative band overlap and
+`is_metallic` is true. Zero-weight band-structure points are filled with the
+step function at the chemical potential the weighted points fix, so their
+count can differ without any crossing; the band pair then measures the
+correct positive gap and the record stays insulating. The ab-initio `.out`
+band block, the `.system` fields of every periodic route and
+`vibeqc.frontier_bands` read the same edges through
+`vibeqc.band_edges.result_band_edges`, the Python twin of this kernel.
 
 `gap <= 0` (equivalently `is_metallic`) means "metallic or gapless as
 computed", not a defect flag.
@@ -994,7 +1589,7 @@ gated with its missing analytic core-valence ECP.
 ### DFTB periodic
 
 ```{note}
-**Periodic SCC-DFTB uses the Elstner gamma with Ewald summation (issue #425,
+**Periodic SCC-DFTB uses the Elstner gamma with Ewald summation (former-tracker issue 425,
 fixed 2026-09-07).** The periodic `gamma` matrix used to be built by
 truncating the Klopman-Ohno form `1/sqrt(R^2 + eta^2)` in real space. That is
 a sum of `1/R`, divergent in three dimensions, and a pair-distance cutoff
@@ -1019,8 +1614,7 @@ not the Ewald split alone, is what supplies the thermodynamic limit.
 staged decision the flag lands first and the molecular cutover follows a
 published repin table, so that one method name keeps meaning one gamma. The
 molecular move is large on polar systems -- 13 kcal/mol on water, 28 on the
-water dimer -- and is tracked in
-`handovers/HANDOVER_GFN2_PERIODIC_ELECTROSTATICS.md`.
+water dimer.
 ```
 
 **Full-k geometry and cell optimization at finite electronic temperature.**
@@ -1184,15 +1778,15 @@ run_job(mol, method="rks", functional="PBE", basis="def2-svp", optimize=True)
 |--------|--------|-----------------|----------|----------|------------|----------|
 | DFTB0 / UDFTB0 | Screening/preopt | In-house parameters, not DFTB+ parity | Analytic | Gamma; full-k DFTB0 closed-shell | molecular/Gamma yes; full-k closed-shell only | 91 in-house |
 | DFTB0-SECCM | Gated experimental | In-house screening parameters, explicit repulsive-pair scope; finite-cluster closure | Analytic, fixed topology | 1-D / 2-D / 3-D direct finite torus | no | H, C, N, O, F, P, S, Cl |
-| SCC-DFTB-SECCM | Gated experimental | Molecular-limit bit parity with SCC-DFTB; 1-D chain within 60 microhartree of the independent dense-k limit at 32 cells; charged cells through opt-in Madelung/Ewald embedding | Analytic, fixed topology | 1-D/2-D embedded; odd-replica 3-D embedded with `gamma_form="elstner"` (#211); 1-D/2-D and odd-replica 3-D unembedded finite torus | no | in-house DFTB screening set |
+| SCC-DFTB-SECCM | Gated experimental | Molecular-limit bit parity with SCC-DFTB; 1-D chain within 60 microhartree of the independent dense-k limit at 32 cells; charged cells through opt-in Madelung/Ewald embedding | Analytic, fixed topology | 1-D/2-D embedded; odd-replica 3-D embedded with `gamma_form="elstner"` (former-tracker issue 211); 1-D/2-D and odd-replica 3-D unembedded finite torus | no | in-house DFTB screening set |
 | PM6-SECCM | Gated experimental | Molecular-limit bit parity with PM6 inside the current s/p-only envelope; full heavy-heavy tensor parity remains open and d-orbital records fail closed | FD, fixed topology | 1-D/2-D/3-D finite torus | no | bundled MOPAC, s/p records only |
 | OM2/OM3-SECCM / GFN2-SECCM | Gated experimental | OMx-SECCM: molecular-limit bit parity with `run_omx_v2`; WS-weighted supercell Fock with cited eq-13 (default) or eq-10 three-center image weighting. GFN2-SECCM: molecular-limit bit parity with `run_gfn2_xtb`; WS-weighted supercell shell-resolved SCC (image-block H0, shell gamma, multipole AES, GAM3) | not implemented | OMx: exact zero-image molecular limit by default; 1-D/2-D/3-D cyclic-image topologies only with the explicit non-quantitative truncated-electrostatics acknowledgement. GFN2: 1-D/2-D/3-D finite torus | no | published OMx / fetched GFN2 sets |
 | SCC-DFTB / USCC | Screening/preopt | In-house parameters, not DFTB+ parity | Analytic | Gamma; full-k SCC-DFTB closed-shell | molecular/Gamma yes; full-k closed-shell only | 91 in-house |
-| GFN2-xTB | Gated experimental | External xTB parity matrix still open | Analytic molecular and Gamma-periodic derivatives. The periodic gradient and all-nine stress match gapped finite differences; public reaction-path forces remain FD while broader parity is open. | Gamma experimental; full-k gated | no | 86 fetched (LGPL) |
+| GFN2-xTB | Gated experimental | Closed-shell molecular SCC electronic energy plus repulsion within 2e-5 Ha of xtb 6.7.0 on a 49-system matrix; D4 beyond Ne, the periodic matrix and the open-shell route remain open | Analytic molecular and Gamma-periodic derivatives. The periodic gradient and all-nine stress match gapped finite differences; public reaction-path forces remain FD while broader parity is open. | Gamma experimental; full-k gated | no | 86 fetched (LGPL) |
 | PM6 / UPM6 | Molecular development | H-only and H-heavy s/p interactions are source-correct; full heavy-heavy two-center tensor parity remains open. Spherical Klopman-Ohno fallback applies where MOPAC diatomic data is absent | FD | Gamma experimental, closed-shell | molecular yes; periodic no | 75 chemical-element records from the bundled MOPAC cache |
 | PM7 / UPM7 | Gated | Published feathered electrostatics and coupled NDDO terms are not implemented | unavailable | unavailable | no | 75 chemical-element parameter records retained for implementation |
-| OM2 / OM3 | Validated molecular prescreening | Published relative energetics match H3- and ethane fixtures, but integral stand-ins leave bond minima ~0.1-0.2 Å long and external implementation parity is open | FD | Bloch-periodic route gated; topology-bound OMx-SECCM experimental | molecular yes; periodic no | 5 published (H,C,N,O,F) |
-| OM1 | Experimental (warns) | Analytic core-valence ECP (Kolb-Thiel 1993) not implemented; X-H bonds ~0.3 A short, close contacts can collapse | FD | Bloch-periodic and topology-bound OM1-SECCM routes gated | molecular yes; periodic no | 5 published (H,C,N,O,F) |
+| OM2 / OM3 | Experimental; retirement target (2026-09-02) | Validated molecular prescreening fixtures: published relative energetics match H3- and ethane fixtures, but integral stand-ins leave bond minima ~0.1-0.25 Å long (water: O-H 1.21 Å, H-O-H 140°) and external implementation parity is open | FD | Bloch-periodic route gated; topology-bound OMx-SECCM experimental | molecular yes; periodic no | 5 published (H,C,N,O,F) |
+| OM1 | Experimental (warns); retirement target (2026-09-02) | Analytic core-valence ECP (Kolb-Thiel 1993) not implemented; X-H bonds ~0.3 A short, close contacts can collapse | FD | Bloch-periodic and topology-bound OM1-SECCM routes gated | molecular yes; periodic no | 5 published (H,C,N,O,F) |
 | MSINDO | Production within scope | Reference MSINDO parity <=1 uHa for INDO and closed-shell NDDO fixtures, including Al-Cl SPDD | FD plus analytic INDO molecular/CCM; analytic closed-shell NDDO molecular | SECCM 1-D/2-D/3-D + Ewald | molecular INDO UHF s/p/d within validated fixtures; NDDO and SECCM closed-shell | H-Xe INDO; NDDO energy/gradient H,Li-F,Na-Cl |
 
 The same implementation labels are available from Python through
@@ -1211,6 +1805,27 @@ displacement loops are C++-backed, but they remain finite-difference stopgaps
 for those methods. The lookup accepts public method
 aliases such as `dftb0`, `scc-dftb`, `gfn2xtb`, `om2`, `om2-gradient-fd`,
 `gfn2`, `msindo`, and `ccm`.
+
+Route *maturity* has exactly one source. A concrete route plan's `maturity`
+field carries it, drawn from
+`vibeqc.semiempirical.routes.SEMIEMPIRICAL_MATURITIES` (`production`,
+`experimental`, `native_fd`, `mixed_native`, `gated_unimplemented`). The
+`backend` label above is a separate axis naming where a kernel lives, and the
+`production` flag is the one field the two tables share: it tracks
+`plan.maturity == "production"` for every reachable route, pinned by a sweep in
+the test suite. A dormant C++ `PeriodicTier` enum used to carry a third,
+disagreeing vocabulary and was removed. Molecular MSINDO-NDDO analytic
+gradients and MSINDO-COSMO energies have `mixed_native` maturity and
+`production=False`; this label does not change their kernels or validation
+scope. The `nddo` and `msindo-nddo` aliases enforce the same restrictions as
+`msindo` with `nddo=True`: neither COSMO nor SECCM accepts that Hamiltonian.
+COSMO gradient requests remain unsupported. Periodic semiempirical runs record
+`route_maturity` and `route_status` in the `.system` manifest's `[run]`
+section and in the archived job spec, and the `.out` "Semiempirical options"
+block prints the same value as `maturity = ...` for every route, production
+included, so a run's own artifacts state the maturity its route claimed. The
+same block and manifest carry the `placeholder_repulsive_pairs` record of a
+DFTB route (see the known limitations below).
 
 Direct `run_semiempirical(...)` results compute gradients lazily when
 `result.gradient()` is called. DFTB0/SCC-DFTB, GFN2-xTB, PM6/UPM6, and OMx
@@ -1327,12 +1942,27 @@ from vibeqc.semiempirical.methods.gfn2_params import load_gfn2_params
 
 params = load_gfn2_params(allow_fetch=False)
 print(params.parameter_identity())  # published:gfn2-xtb-2019-v1
-print(params.content_sha256())      # 0b3c70a5...
+print(params.content_sha256())      # 7c42ae77...
 ```
 
 The hash attests the *parsed parameter object*, not the upstream file
 bytes; the file's own digest is carried separately in the cache header as
 `source_sha256`.
+
+**Re-attestation of 2026-10-12 (issue #520).** The pinned digest changed
+from `0b3c70a5...` to `7c42ae77...` because the parsed object gained the
+per-element multipole damping radius and valence coordination number of
+the anisotropic electrostatics (eq 29 of the paper, R0_A and N_val,A) for
+Z = 11 to 86. Those two tables are not part of `param_gfn2-xtb.txt`; the
+reference implementations carry them in code (xtb `src/xtb/data.f90`,
+tblite `p_rad` and `p_vcn`), and the converter had listed only Z = 1 to
+10, so every heavier element ran with a 3.0 bohr radius and a valence
+coordination number of zero. The parameters read from the upstream file
+are bit-identical across the change; the period-2 rows of the parity
+matrix are unchanged, and NaF, KF, MgF2, ZnF2, CdF2 and SiF4 move from
+0.7 to 4.5 mHa off xtb to within 2 uHa. A cache written by the earlier
+converter is recognised by its zero valence coordination numbers and
+refreshed on the next load.
 
 **Re-attestation of 2026-08-27 (issues #43 and #446).** The pinned digest
 changed from `71b83ab4...` to `0b3c70a5...` because a transcription error
@@ -1447,7 +2077,9 @@ These runners require the external program to be installed on `$PATH`
 - **Periodic systems** support Gamma-point energy routes for DFTB0/SCC-DFTB,
   GFN2-xTB, PM6, and OMx. Public full-k semiempirical support is DFTB0 and
   SCC-DFTB only, closed-shell only. Increase the lattice cutoff (`cutoff_bohr`)
-  for tight cells.
+  for tight cells and for diffuse elements. Li and Ga functions still overlap
+  past the 15-bohr default, and the full-k drivers refuse an S(k) that the
+  cutoff leaves indefinite, naming `cutoff_bohr`. Rock-salt LiH needs 25 bohr.
 - **Memory** is negligible, the basis is minimal (one function
   per valence shell).
 
@@ -1463,17 +2095,29 @@ These runners require the external program to be installed on `$PATH`
   Absolute energies, equilibrium geometries and EOS fits from those runs are
   placeholder physics; fixed-geometry differences (k-mesh or supercell
   convergence, Madelung on/off, Gamma vs multi-k) remain exactly valid.
+  The same pair list is part of the run's record, not only of stderr: the
+  `.out` states it (a `placeholder_repulsive_pairs` line in the periodic
+  "Semiempirical options" block, a "DFTB repulsive qualification" section
+  on the molecular route), the `.system` manifest carries it as
+  `placeholder_repulsive_pairs` in `[run]`, and the archived QVF job spec
+  repeats it under `options`. An empty list means every pair was checked
+  and none is a placeholder; the key is absent for routes that have no
+  repulsive table (GFN2-xTB, PM6, OMx, MSINDO).
 - GFN2-xTB uses a finite, physical-distance-screened AES image inventory but
-  still lacks a production periodic multipole Ewald construction and a closed
-  external `xtb` parity matrix ({ref}`semiempirical-status`).
+  still lacks a production periodic multipole Ewald construction and a
+  periodic external `xtb` parity matrix; the molecular closed-shell matrix is
+  closed on the electronic energy, and the total differs from xtb by the D4
+  term for elements beyond Ne ({ref}`semiempirical-status`).
 - PM6 reports a PM6-like total, not a MOPAC heat of formation; use MOPAC
   out-of-process when exact MOPAC convention parity is required.
 - Periodic PM6 cancels neutral-pair lattice monopoles, but bare PM6 has no
   validated rare-gas dispersion model; do not use its dissociative fcc-Ar
   curve as a physical equation of state.
-- OM2/OM3 are validated molecular development/prescreening paths within their
-  documented H/C/N/O/F scope; they are not external-parity production claims.
-  OM1 remains experimental until the analytic core-valence ECP lands.
+- OM1, OM2 and OM3 are experimental and a maintainer retirement target
+  (2026-09-02): OM2/OM3 remain validated molecular development/prescreening
+  paths within their documented H/C/N/O/F scope, not external-parity
+  production claims, and OM1 lacks the analytic core-valence ECP. Nothing
+  has been removed yet; plan new work on PM6 or MSINDO instead.
 - Periodic GFN2/NDDO gradients are finite-difference only;
   analytic periodic NDDO gradients are deferred.
 - MSINDO molecular closed-shell analytic gradients and closed-shell CCM

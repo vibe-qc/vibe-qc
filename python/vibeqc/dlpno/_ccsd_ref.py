@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from ..solvers._scf import solve_dense_fock
+
 
 @dataclass
 class RefCCSDResult:
@@ -497,7 +499,9 @@ def run_ref_rohf_ccsd(
     )
 
 
-def _semicanonicalize_spin(f_mo: np.ndarray, B_mo: np.ndarray, n_occ: int):
+def _semicanonicalize_spin(
+    f_mo: np.ndarray, B_mo: np.ndarray, n_occ: int, *, spin=None,
+):
     """Diagonalise the occ-occ and vir-vir Fock blocks (semicanonicalisation).
 
     Returns ``(f_sc, B_sc, eps)``: the MO-basis Fock rotated so its occupied
@@ -515,12 +519,16 @@ def _semicanonicalize_spin(f_mo: np.ndarray, B_mo: np.ndarray, n_occ: int):
     n_mo = f_mo.shape[0]
     U = np.zeros((n_mo, n_mo))
     eps = np.zeros(n_mo)
-    eo, Vo = np.linalg.eigh(f_mo[:n_occ, :n_occ])
-    U[:n_occ, :n_occ] = Vo
-    eps[:n_occ] = eo
-    ev, Vv = np.linalg.eigh(f_mo[n_occ:, n_occ:])
-    U[n_occ:, n_occ:] = Vv
-    eps[n_occ:] = ev
+    for block, label in ((slice(0, n_occ), "occupied"),
+                         (slice(n_occ, n_mo), "virtual")):
+        if block.start == block.stop:
+            continue  # A spin channel may have no occupied or virtual orbitals.
+        result = solve_dense_fock(
+            f_mo[block, block], spin=spin,
+            basis_id=f"semicanonical-mo-{label}",
+        )
+        U[block, block] = result.eigenvectors
+        eps[block] = result.eigenvalues
     f_sc = U.T @ f_mo @ U
     B_sc = np.einsum("Ppq,pi,qj->Pij", B_mo, U, U, optimize=True)
     return f_sc, B_sc, eps
@@ -569,8 +577,8 @@ def run_ref_ump2(
     e_hf : float
         Reference energy (passed through to the result).
     """
-    fa, Ba, eps_a = _semicanonicalize_spin(f_mo_a, B_mo_a, n_occ_a)
-    fb, Bb, eps_b = _semicanonicalize_spin(f_mo_b, B_mo_b, n_occ_b)
+    fa, Ba, eps_a = _semicanonicalize_spin(f_mo_a, B_mo_a, n_occ_a, spin="alpha")
+    fb, Bb, eps_b = _semicanonicalize_spin(f_mo_b, B_mo_b, n_occ_b, spin="beta")
     n_mo = fa.shape[0]
     no = n_occ_a + n_occ_b
     nv = (n_mo - n_occ_a) + (n_mo - n_occ_b)

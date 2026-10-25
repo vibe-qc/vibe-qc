@@ -13,8 +13,8 @@ These tests enforce the SSOT contract:
   and reads back at least one structure + one volume.
 * **Schema-drift guard (Rule 3).**  Every kind in
   `_IMPLEMENTED_KINDS` has a matching `oneOf` branch in the schema,
-  and every `kind: {const: ...}` in the schema appears in either
-  `_IMPLEMENTED_KINDS` or `_RESERVED_KINDS`.  Adding a writer without
+  and every `kind: {const: ...}` in the schema appears in
+  `_IMPLEMENTED_KINDS`, `_SCHEMA_ONLY_KINDS` or `_RESERVED_KINDS`.  Adding a writer without
   a schema branch (or vice versa) fails this guard.
 * **Three new format features.**  `volume.difference` with operand
   cross-references, `reaction.path` self-contained waypoints, and
@@ -36,6 +36,7 @@ import pytest
 from vibeqc.output.formats.qvf import (
     _IMPLEMENTED_KINDS,
     _RESERVED_KINDS,
+    _SCHEMA_ONLY_KINDS,
     _SCHEMA_PATH,
     _load_canonical_schema,
     validate_qvf,
@@ -224,14 +225,21 @@ class TestSchemaDriftGuard:
             f"{sorted(missing)}"
         )
 
+    def test_schema_only_kinds_are_schema_branches_not_writer_kinds(self):
+        schema_kinds = _schema_kind_consts(_load_canonical_schema())
+        assert _SCHEMA_ONLY_KINDS <= schema_kinds
+        assert not _SCHEMA_ONLY_KINDS & (_IMPLEMENTED_KINDS | _RESERVED_KINDS)
+
     def test_every_schema_branch_has_a_registry_entry(self):
         """Every advertised `kind: {const: ...}` in the schema must
-        appear in `_IMPLEMENTED_KINDS` or `_RESERVED_KINDS`. Adding a
-        schema branch without bumping the registry breaks this guard.
+        appear in `_IMPLEMENTED_KINDS`, `_SCHEMA_ONLY_KINDS` (canonical
+        kinds this writer does not emit) or `_RESERVED_KINDS`. Re-vendoring
+        a schema with a new branch without updating a registry breaks this
+        guard.
         """
         schema = _load_canonical_schema()
         schema_kinds = _schema_kind_consts(schema)
-        registered = _IMPLEMENTED_KINDS | _RESERVED_KINDS
+        registered = _IMPLEMENTED_KINDS | _SCHEMA_ONLY_KINDS | _RESERVED_KINDS
         missing = schema_kinds - registered
         assert not missing, (
             "kinds in the schema's Section.oneOf missing from the "

@@ -16,7 +16,7 @@
 //     Comput. 15, 1652 (2019), doi:10.1021/acs.jctc.8b01176, Eqs. 21-22)
 //     and of the in-house SCC-DFTB set.  Its remainder decays only as
 //     -eta^2/(2 R^3), so a three-dimensional image sum of the remainder
-//     converges conditionally in the pair cutoff (issues #425, #444).  The
+//     converges conditionally in the pair cutoff (former-tracker issues 425 and 444).  The
 //     lattice-summed kernel is still translation covariant and continuous
 //     in every atomic coordinate; it is cutoff-dependent by construction,
 //     exactly as the tblite/xtb periodic GFN1 kernel is.

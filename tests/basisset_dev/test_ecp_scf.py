@@ -8,8 +8,7 @@ that Phase 14a-c (libecpint integration) plus the Phase 14c-extension
 
 The ``test_single_atom_scf`` cases for ECP-bearing files still
 xfail because they don't auto-populate ``ecp_centers`` from the
-basis-loaded ECP info — that's Phase 14e and is documented in the
-handover.
+basis-loaded ECP info (the still-pending Phase 14e behavior).
 
 Run::
 
@@ -76,7 +75,7 @@ def _ecp_center(z: int) -> "vq.ECPCenter":
         # that vDZP uses non-standard core sizes per element. The
         # library name ``ecp10mdf`` is wrong for I (vdzp uses 28-core
         # for I); but ``ecp46mdf`` would also be wrong (vdzp removes
-        # 28 e⁻, not 46). We document this Phase 14e gap in the handover.
+        # 28 e⁻, not 46). We document this Phase 14e gap in the original investigation.
         # No test case here for vDZP — vDZP needs inline-ECP feed.
     ],
 )

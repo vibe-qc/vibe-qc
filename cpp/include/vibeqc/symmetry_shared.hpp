@@ -19,6 +19,25 @@ struct SymmetryPlan {
     std::uint64_t bytes = 0, work = 0;
 };
 
+namespace detail {
+inline constexpr int kCartesianRotationMaximumL = 6;
+inline constexpr int kCartesianRotationMaximumSize = 28;
+// Fixed workspace shared with the periodic pure-shell polynomial projection.
+struct CartesianShellRotationWorkspace {
+    std::array<std::array<int,3>,28> powers{};
+    std::array<double,28*28> cart{};
+    std::array<double,7*7*7> polynomial{}, next{};
+};
+void cartesian_shell_polynomials(CartesianShellRotationWorkspace&, int l,
+                                const std::array<double,9>& inverse_rotation);
+}
+SymmetryPlan plan_symmetry_cartesian_rotation(int l, const SymmetryBudget&);
+// Row-major coefficient action in the native axial-normalized Cartesian AO
+// convention. Orthogonal spatial rotations need not give Euclidean-unitary
+// Cartesian shell actions. This is not a physical metric certificate.
+std::vector<double> symmetry_cartesian_rotation(int l, const double* rotation,
+    double tolerance, const SymmetryBudget&);
+
 class SymmetryGroup {
 public:
     std::uint64_t order() const { return order_; }

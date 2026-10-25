@@ -43,6 +43,8 @@ reproduces the ROHF driver to machine precision; see
 
 from __future__ import annotations
 
+from .bipole_domain import DEFAULT_BIPOLE_SR_IMAGE_PRECISION
+
 
 from .guess import periodic_result_selection
 
@@ -273,7 +275,7 @@ def run_roks_periodic_multi_k_ewald3d(
     linear_dep_threshold: float = 1e-7,
     canonical_orth_normalize_diag_first: bool = True,
     auto_optimize_truncation: bool = True,
-    sr_image_precision: Optional[float] = 1.0e-6,
+    sr_image_precision: Optional[float] = DEFAULT_BIPOLE_SR_IMAGE_PRECISION,
     sr_image_extent_bohr: Optional[float] = None,
     progress: Union[bool, ProgressLogger, None] = None,
     initial_density_k: Optional[Sequence] = None,

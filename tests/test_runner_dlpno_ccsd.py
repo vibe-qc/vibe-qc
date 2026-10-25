@@ -1,7 +1,7 @@
 """run_job integration for method="dlpno-ccsd" / "dlpno-ccsd(t)".
 
 M5b wired both to the O(N⁶) pilot; M3c re-wired both ``dlpno-ccsd`` and
-``dlpno-ccsd(t)`` to the reduced-scaling local solver
+``dlpno-ccsd(t)`` to the PNO-space local solver
 (`dlpno.ccsd_local_solver`), the latter with the local DLPNO-(T)
 (`dlpno.triples_local`) on the converged amplitudes. The O(N⁶) pilot is
 still reachable by explicitly passing a ``DLPNOCCSDPilotOptions``.
@@ -43,7 +43,7 @@ class TestRunJobDLPNOCCSD:
         out = (tmp_path / "h2.out").read_text()
         # The default closed-shell path is the rotated-occupied compatibility
         # correction; exact == canonical (T) at full domains.
-        assert "DLPNO-CCSD(T) local reduced-scaling (M3c)" in out
+        assert "DLPNO-CCSD(T) local PNO-space (M3c)" in out
         assert "E((T) correction)" in out
         assert "rotated-occupied (T1) compatibility correction" in out
         assert "triples_mode='t1'" in out
@@ -54,6 +54,37 @@ class TestRunJobDLPNOCCSD:
         bib = (tmp_path / "h2.bibtex").read_text()
         assert "riplinger_dlpno_2013" in bib
         assert "guo_dlpno_t1_2018" not in bib
+        # The canonical spatial (T) behind (T1) is spin-integrated by spin
+        # class, not the Rendell W/V expression of the local (T0) kernel.
+        assert "rendell_lee_komornicki_triples_1991" not in bib
+
+    def test_local_t0_cites_the_expression_its_kernel_evaluates(
+        self, tmp_path, monkeypatch
+    ):
+        """The compiled closed-shell local (T0) evaluates the Rendell, Lee
+        and Komornicki (1991) W/V expression, so a run that executes it cites
+        that paper in every artifact; the (T1) default above does not."""
+        from vibeqc.dlpno import triples_local
+        from vibeqc.dlpno.ccsd_local_solver import LocalCCSDOptions
+
+        if not triples_local._HAVE_CPP_LOCAL_TRIPLES:
+            pytest.skip("core built without dlpno_ccsd_local_triples")
+        monkeypatch.chdir(tmp_path)
+        res = run_job(
+            _h2(),
+            basis="def2-svp",
+            method="dlpno-ccsd(t)",
+            output="h2-t0",
+            dlpno_ccsd_options=LocalCCSDOptions(
+                compute_triples=True, triples_mode="local"
+            ),
+        )
+        assert res.dlpno_ccsd.triples_executed
+        key = "rendell_lee_komornicki_triples_1991"
+        assert key in (tmp_path / "h2-t0.bibtex").read_text()
+        assert "Rendell" in (tmp_path / "h2-t0.references").read_text()
+        manifest = tomllib.loads((tmp_path / "h2-t0.system").read_text())
+        assert key in {row["key"] for row in manifest["citations"]["entries"]}
 
     def test_all_screened_triples_are_not_claimed(self, tmp_path, monkeypatch):
         """All artifacts report that an all-screened (T1) request skipped (T)."""
@@ -113,20 +144,20 @@ class TestRunJobDLPNOCCSD:
         # H2 is two electrons ⇒ CCSD = FCI; the local solver must hit it.
         assert -0.05 < r.e_corr < -0.02
         out = (tmp_path / "h2c.out").read_text()
-        assert "DLPNO-CCSD local reduced-scaling (M3c)" in out
+        assert "DLPNO-CCSD local PNO-space (M3c)" in out
         assert "canonical CCSD" in out  # full-domain == canonical CCSD note
-        assert "Residual domain" in out and "= extended" in out
+        assert "Residual domain" in out and "= pno" in out
         assert "E((T) correction)" not in out
 
         manifest = tomllib.loads((tmp_path / "h2c.system").read_text())
-        assert manifest["run"]["dlpno_residual_domain"] == "extended"
+        assert manifest["run"]["dlpno_residual_domain"] == "pno"
         records = [
             json.loads(line)
             for line in (tmp_path / "h2c.scf.jsonl").read_text().splitlines()
             if line.strip()
         ]
         done = next(r for r in records if r["event"] == "dlpno_ccsd_done")
-        assert done["residual_domain"] == "extended"
+        assert done["residual_domain"] == "pno"
 
     def test_aux_basis_kwarg_reaches_route(self, tmp_path, monkeypatch):
         """run_job(aux_basis=...) selects the DLPNO-CCSD RI basis (BUG 113)."""
@@ -183,7 +214,7 @@ class TestRunJobDLPNOCCSD:
         assert res.energy_total == pytest.approx(r.e_total, abs=1e-12)
 
         out = (tmp_path / "oh.out").read_text()
-        assert "DLPNO-UCCSD(T) local reduced-scaling" in out
+        assert "DLPNO-UCCSD(T) local PNO-space" in out
         assert "E((T) correction)" in out
         assert "E(UCCSD correlation)" in out
         assert "DLPNO-(T0)" in out
@@ -298,13 +329,54 @@ class TestRunJobDLPNOCCSD:
         assert skipped_done["triples_algorithm"] == (
             "not executed for this result"
         )
-        assert skipped_done["engine"] == "local reduced-scaling (M3c)"
+        assert skipped_done["engine"] == "local PNO-space (M3c)"
         manifest = tomllib.loads(
             (tmp_path / "guo-skipped.system").read_text()
         )
         keys = {row["key"] for row in manifest["citations"]["entries"]}
         assert "guo_dlpno_t1_2018" not in keys
         assert "guo_openshell_dlpno_triples_2020" not in keys
+
+    def test_open_shell_t0_cites_its_sources(self, tmp_path, monkeypatch):
+        """The open-shell local (T0) is Guo et al.'s 2020 open-shell
+        DLPNO-CCSD(T0) evaluating the Watts, Gauss and Bartlett (1993)
+        spin-orbital (T); an executed run cites both in every artifact and
+        not the iterative 2018 source."""
+        from vibeqc.dlpno.uccsd_local_solver import LocalUCCSDOptions
+
+        monkeypatch.chdir(tmp_path)
+        res = run_job(
+            self._oh(),
+            basis="sto-3g",
+            method="dlpno-ccsd(t)",
+            output="t0-executed",
+            dlpno_ccsd_options=LocalUCCSDOptions(
+                n_frozen=0,
+                localise="boys",
+                tcut_pno=0.0,
+                tcut_mkn=0.0,
+                tcut_pno_singles=0.0,
+                tcut_pairs=0.0,
+                coupling_radius=0.0,
+                compute_triples=True,
+                aux_basis="cc-pvdz-ri",
+            ),
+        )
+        assert res.dlpno_ccsd.triples_executed
+        bibtex = (tmp_path / "t0-executed.bibtex").read_text()
+        assert "guo_openshell_dlpno_triples_2020" in bibtex
+        assert "watts_gauss_bartlett_openshell_triples_1993" in bibtex
+        assert "guo_dlpno_t1_2018" not in bibtex
+        references = (tmp_path / "t0-executed.references").read_text()
+        assert "Watts" in references
+        assert "Guo" in references
+        manifest = tomllib.loads((tmp_path / "t0-executed.system").read_text())
+        keys = {row["key"] for row in manifest["citations"]["entries"]}
+        assert {
+            "guo_openshell_dlpno_triples_2020",
+            "watts_gauss_bartlett_openshell_triples_1993",
+        } <= keys
+        assert "guo_dlpno_t1_2018" not in keys
 
     def test_open_shell_ccsd_no_triples(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
@@ -319,7 +391,7 @@ class TestRunJobDLPNOCCSD:
         assert r.converged
         assert r.e_t == 0.0
         out = (tmp_path / "ohc.out").read_text()
-        assert "DLPNO-UCCSD local reduced-scaling" in out
+        assert "DLPNO-UCCSD local PNO-space" in out
         assert "E((T) correction)" not in out
         assert "Threshold convention" in out and "NormalPNO" in out
         assert "tcut_pairs 0.0001" in out

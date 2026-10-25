@@ -1,6 +1,7 @@
 #include "vibeqc/newton.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <cmath>
 #include <vector>
@@ -583,13 +584,24 @@ UHFStabilityResult uhf_internal_stability_lowest(
         (n_alpha > 0 && n_vir_alpha > 0) ? n_vir_alpha * n_alpha : 0;
     const Eigen::Index dim_beta =
         (n_beta > 0 && n_vir_beta > 0) ? n_vir_beta * n_beta : 0;
-    const Eigen::Index dim = dim_alpha + dim_beta;
+    const int sector = opts.restricted_spin_sector;
+    if (sector != 0 && sector != 1 && sector != -1) {
+        throw std::invalid_argument("restricted spin sector must be 0, +1 or -1");
+    }
+    if (sector != 0 && (n_alpha != n_beta || dim_alpha != dim_beta
+            || C_alpha.rows() != C_beta.rows() || C_alpha.cols() != C_beta.cols()
+            || !C_alpha.isApprox(C_beta, 1e-12)
+            || !eps_alpha.isApprox(eps_beta, 1e-12))) {
+        throw std::invalid_argument("spin-sector stability requires identical restricted spin blocks");
+    }
+    const Eigen::Index dim = sector == 0 ? dim_alpha + dim_beta : dim_alpha;
 
     UHFStabilityResult out;
     if (dim == 0) {
         // No rotation degrees of freedom at all — trivially stable.
         out.converged = true;
         out.lowest_eigenvalue = 0.0;
+        out.stop_reason = StabilityStop::trivial;
         return out;
     }
 
@@ -614,7 +626,7 @@ UHFStabilityResult uhf_internal_stability_lowest(
                 diag(k++) = eps_alpha(n_alpha + a) - eps_alpha(i);
             }
         }
-        for (Eigen::Index i = 0; i < n_beta && dim_beta > 0; ++i) {
+        for (Eigen::Index i = 0; i < n_beta && dim_beta > 0 && sector == 0; ++i) {
             for (Eigen::Index a = 0; a < n_vir_beta; ++a) {
                 diag(k++) = eps_beta(n_beta + a) - eps_beta(i);
             }
@@ -631,7 +643,10 @@ UHFStabilityResult uhf_internal_stability_lowest(
         } else {
             ka = Eigen::MatrixXd();
         }
-        if (dim_beta > 0) {
+        if (sector != 0) {
+            ka /= std::sqrt(2.0);
+            kb = sector * ka;
+        } else if (dim_beta > 0) {
             kb = Eigen::Map<const Eigen::MatrixXd>(
                 v.data() + dim_alpha, n_vir_beta, n_beta);
         } else {
@@ -640,6 +655,11 @@ UHFStabilityResult uhf_internal_stability_lowest(
     };
     auto pack = [&](const Eigen::MatrixXd& ka, const Eigen::MatrixXd& kb) {
         Eigen::VectorXd v(dim);
+        if (sector != 0) {
+            Eigen::Map<Eigen::MatrixXd>(v.data(), n_vir_alpha, n_alpha) =
+                (ka + sector * kb) / std::sqrt(2.0);
+            return v;
+        }
         if (dim_alpha > 0) {
             Eigen::Map<Eigen::MatrixXd>(v.data(), n_vir_alpha, n_alpha) = ka;
         }
@@ -679,8 +699,22 @@ UHFStabilityResult uhf_internal_stability_lowest(
     // directions and retain several Ritz vectors so every symmetry sector is
     // sampled while refining the global lowest root.
     if (opts.max_iter <= 0) {
+        out.stop_reason = StabilityStop::not_run;
         return out;
     }
+    // #342: the wall budget is checked wherever the matvec cap is, so the
+    // solve never spends more than one matvec past it. The first probe
+    // always runs: a subspace of at least one vector is needed for the
+    // Ritz step that reports the last eigenvalue estimate.
+    const auto t_solve0 = std::chrono::steady_clock::now();
+    auto wall_spent_s = [&]() {
+        return std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - t_solve0).count();
+    };
+    auto wall_budget_spent = [&]() {
+        return opts.wall_budget_s > 0.0
+            && wall_spent_s() >= opts.wall_budget_s;
+    };
     const Eigen::Index n_track = 1;
     const Eigen::Index n_seed = std::min<Eigen::Index>(
         {4, dim, static_cast<Eigen::Index>(opts.max_iter)});
@@ -720,7 +754,10 @@ UHFStabilityResult uhf_internal_stability_lowest(
         static const std::vector<Eigen::VectorXd> kNoExtra;
         orthogonalize(probe, kNoExtra);
         const double norm = probe.norm();
-        if (norm <= 1e-12 || out.n_matvec >= opts.max_iter) return false;
+        if (norm <= 1e-12 || out.n_matvec >= opts.max_iter
+            || (out.n_matvec > 0 && wall_budget_spent())) {
+            return false;
+        }
         probe /= norm;
         V.push_back(probe);
         HV.push_back(matvec(probe));
@@ -797,9 +834,17 @@ UHFStabilityResult uhf_internal_stability_lowest(
         x = ritz_x.front();
         if (all_converged && n_roots == n_track) {
             out.converged = true;
+            out.stop_reason = StabilityStop::converged;
             break;
         }
-        if (out.n_matvec >= opts.max_iter) break;
+        if (out.n_matvec >= opts.max_iter) {
+            out.stop_reason = StabilityStop::matvec_budget;
+            break;
+        }
+        if (wall_budget_spent()) {
+            out.stop_reason = StabilityStop::wall_budget;
+            break;
+        }
 
         // Precondition the lowest Ritz pair. Multi-sector coverage comes from
         // the dressed starting block and the low Ritz vectors retained across
@@ -888,16 +933,23 @@ UHFStabilityResult uhf_internal_stability_lowest(
         bool appended = false;
         for (const auto& correction : corrections) {
             if (static_cast<Eigen::Index>(V.size()) >= max_sub
-                || out.n_matvec >= opts.max_iter) {
+                || out.n_matvec >= opts.max_iter
+                || wall_budget_spent()) {
                 break;
             }
             V.push_back(correction);
             HV.push_back(matvec(correction));
             appended = true;
         }
-        if (!appended && out.n_matvec < opts.max_iter) break;
+        if (!appended && out.n_matvec < opts.max_iter) {
+            out.stop_reason = wall_budget_spent()
+                ? StabilityStop::wall_budget
+                : StabilityStop::stagnated;
+            break;
+        }
     }
 
+    out.wall_s = wall_spent_s();
     out.lowest_eigenvalue = theta;
     const double x_norm = x.norm();
     if (x_norm > 0.0) x /= x_norm;

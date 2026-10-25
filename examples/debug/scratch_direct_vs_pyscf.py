@@ -1,3 +1,9 @@
+# HISTORICAL DIAGNOSTIC, NO LONGER RUNNABLE.
+# This script imports vibeqc.periodic_rhf_gdf._pyscf_cell_from_vibeqc and _build_permutation_matrix,
+# which no longer exists in vibeqc (the PySCF-backed GDF spike it
+# probed was retired). It is retained unchanged as a record of the
+# diagnostic; see examples/debug/README.md, "Historical, no longer
+# runnable".
 """Test build_fock_2e_real_space (DIRECT method) vs PySCF on MgO RHF.
 
 Plan:
