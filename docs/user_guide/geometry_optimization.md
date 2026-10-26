@@ -227,15 +227,9 @@ except GeomOptNotConvergedError as err:
     restart_from = err.system        # last Molecule; continue from here
 ```
 
-For a capped run, inspect the trajectory and electronic convergence first.
-If it is progressing toward the required force target, raise `max_opt_steps`
-or start a new optimization from the last geometry. A fresh run does not
-restore the prior optimizer's Hessian history. Changing backend may help a
-specific failure, but neither a backend change nor a larger budget guarantees
-convergence. Loosening `fmax` changes the scientific acceptance criterion;
-do so only when that tolerance is suitable for the intended result and record
-it explicitly. The [worked tutorial](../tutorial/geometry_optimization.md#when-a-run-stops-before-convergence)
-shows how to inspect saved ASE forces.
+To get past a capped run, raise `max_opt_steps`, loosen `fmax`, restart from
+the last geometry, or try another backend (the Brent backend above is slower
+per step but takes no uphill step).
 
 The library functions `optimize_molecule` and `optimize_molecule_brent` do not
 raise. They return a `MolecularOptimizeResult` whose `converged` is `False`

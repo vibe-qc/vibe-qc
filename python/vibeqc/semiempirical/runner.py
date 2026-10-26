@@ -544,8 +544,6 @@ def _gfn2_parameter_provenance(model) -> dict[str, Any] | None:
         "gfn2_cache_sha256": str(snapshot["cache_sha256"]),
         "gfn2_cache_source_sha256": str(snapshot["cache_source_sha256"]),
         "gfn2_cache_source_url": str(snapshot["cache_source_url"]),
-        "gfn2_d4_model": str(snapshot.get("d4_model", "legacy_eeq")),
-        "gfn2_d4_dispersion_sha256": str(getattr(native_result, "dispersion_sha256", "")),
         "gfn2_d4_functional": str(snapshot["d4_functional"]),
         "gfn2_d4_s6": float(snapshot["d4_s6"]),
         "gfn2_d4_s8": float(snapshot["d4_s8"]),
@@ -557,10 +555,6 @@ def _gfn2_parameter_provenance(model) -> dict[str, Any] | None:
         "gfn2_d4_refdata_sha256": str(snapshot["d4_refdata_sha256"]),
         "gfn2_d4_refdata_source_sha256": str(
             snapshot["d4_refdata_source_sha256"]
-        ),
-        "gfn2_d4_refdata_revision": str(snapshot.get("d4_refdata_revision", "unavailable")),
-        "gfn2_d4_refdata_sources_sha256": str(
-            snapshot.get("d4_refdata_sources_sha256", "unavailable")
         ),
         "gfn2_max_iter": int(snapshot["max_iter"]),
         "gfn2_conv_tol_charge": float(snapshot["conv_tol_charge"]),

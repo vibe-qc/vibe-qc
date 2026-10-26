@@ -1,11 +1,10 @@
 # Post-SCF properties
 
-Supported molecular `run_job` calculations report **atomic charges**,
-**bond orders**, and the **dipole moment** in their output. Individual
-analyses can be unavailable even when the SCF succeeds; inspect the report
-and population sidecars rather than treating a missing field as zero.
-This page covers molecular SCF properties, with polarizability on
-closed-shell RHF only; see
+Every `run_job` calculation now reports a properties block at the end
+of the `.out` file with **atomic charges**, **bond orders**, and the
+**dipole moment**, the standard sanity-check output every QC program
+emits. Everything on this page is production on molecular SCF results, the
+polarizability on closed-shell RHF only; see
 [Methods: theory and status](../methods.md#how-to-read-the-status-labels).
 
 ## Theory
@@ -73,19 +72,12 @@ the bare $Z_A$ is used and every ECP atom carries a spurious $n_{\mathrm{core}}$
 the same H2S call returns $q_{\mathrm S} = +9.89$ e.
 
 ```python
-# doc-audit: skip - requires the converged ECP result and its matching mol/basis
 import vibeqc as vq
 from vibeqc.ecp_metadata import effective_nuclear_charges_from
 
-z_eff = effective_nuclear_charges_from(mol, result)
-q = vq.mulliken_charges(result, basis, mol, nuclear_charges=z_eff)
-h = vq.hirshfeld_charges(result, basis, mol, nuclear_charges=z_eff)
-dip = vq.dipole_moment(result, basis, mol, nuclear_charges=z_eff)
+h = vq.hirshfeld_charges(result, basis, mol,
+                         nuclear_charges=effective_nuclear_charges_from(mol, result))
 ```
-
-Use the metadata on the result that actually ran. A basis name alone is
-not sufficient to reconstruct the ECP Hamiltonian. For an all-electron
-result the same helper returns the ordinary nuclear charges.
 
 **Dipole moment and its origin.** With the origin $\mathbf O$,
 
@@ -157,46 +149,35 @@ Dipole moment (origin: centre of mass)
          |μ|        0.81069504      2.0606
 ```
 
-The excerpt illustrates the report layout; it is not a required numerical
-match. The Hirshfeld column requires a successful grid and SAD promolecule
-calculation. If that analysis fails, the other available sections can still
-be written. Review missing analyses and their diagnostics in
-[the population sidecars](output_files.md#output-h2opopulationtxtjson-properties-dump-v08x).
-Calling a property helper directly does not provide this best-effort wrapper:
-its errors propagate to the caller.
+The Hirshfeld column appears whenever the grid build + SAD
+promolecule succeed (effectively always for standard bases). If
+either step fails the table falls back to the two-column
+Mulliken / Löwdin layout, the properties block is best-effort
+and never crashes the run.
 
 Bond orders below 0.10 are suppressed from the table to keep the
 output compact; the full matrix is available programmatically.
 
 ## Programmatic access
 
-This block is standalone. Use the installed engine environment; positions
-are in bohr and the geometry is fixed. Check convergence before evaluating
-properties, and retain the same molecule and basis as the SCF calculation.
-
 ```python
 import vibeqc as vq
 
-mol = vq.Molecule([
-    vq.Atom(8, [0.0, 0.0, 0.0]),
-    vq.Atom(1, [0.0, 1.43, -0.98]),
-    vq.Atom(1, [0.0, -1.43, -0.98]),
-])
+mol = vq.Molecule.from_xyz("h2o.xyz")
 basis = vq.BasisSet(mol, "6-31g*")
 result = vq.run_rhf(mol, basis)
-if not result.converged:
-    raise RuntimeError("Water RHF did not converge; inspect result.scf_trace")
 
 # Per-atom charges (numpy array, length = n_atoms)
 mul = vq.mulliken_charges(result, basis, mol)
 low = vq.loewdin_charges(result, basis, mol)
 
-# Hirshfeld returns a dataclass; `.charges` is its bare-array view.
-# Inspect the integrated electron count as well as the partial charges.
+# Hirshfeld charges — real-space partition on the Becke-Lebedev grid,
+# far less basis-sensitive than Mulliken/Löwdin. Returns a rich
+# HirshfeldResult dataclass; `.charges` is the bare-array view.
 h = vq.hirshfeld_charges(result, basis, mol)
 print("Hirshfeld q(O):", h.charges[0])
 print("Grid integration sanity:",
-      f"integral(rho) = {h.molecule_norm:.4f}; expected {mol.n_electrons()}")
+      f"∫ρ_mol = {h.molecule_norm:.4f}  vs n_e expected.")
 
 # Bond-order matrix (n_atoms × n_atoms numpy)
 B = vq.mayer_bond_orders(result, basis, mol)
@@ -208,7 +189,7 @@ print(f"|μ| = {dip.total_debye:.3f} Debye  (origin: {dip.origin})")
 print(f"μ = ({dip.x:.4f}, {dip.y:.4f}, {dip.z:.4f}) a.u.")
 ```
 
-The charge, bond-order and dipole helpers accept the result from the molecular SCF
+All four methods accept the result from any of the four molecular SCF
 drivers (`run_rhf`, `run_uhf`, `run_rks`, `run_uks`). UHF / UKS results
 are handled correctly, the total density `D_α + D_β` is used for
 populations and dipole, and Mayer bond orders use the spin-resolved
@@ -248,64 +229,43 @@ writes it into the `.out` properties block and the `.qvf`
 
 ### Static polarizability sidecar
 
-`run_job` has no polarizability option. For a closed-shell RHF job, reuse its
-returned result for a separate CPHF calculation. This standalone example
-runs the SCF once and writes a JSON analysis file in your run directory:
+`run_job` has no polarizability option, so the supported route for a
+polarizability is a sidecar next to the standard artifact set:
 
 ```python
 import json
 import numpy as np
 import vibeqc as vq
 
-mol = vq.Molecule([
-    vq.Atom(8, [0.0, 0.0, 0.0]),
-    vq.Atom(1, [0.0, 1.43, -0.98]),
-    vq.Atom(1, [0.0, -1.43, -0.98]),
-])
-result = vq.run_job(mol, basis="def2-svp", method="rhf", output="water")
-if not result.converged:
-    raise RuntimeError("Water RHF did not converge; inspect water.out")
+options = vq.RHFOptions()
+vq.run_job(mol, basis="def2-svp", method="rhf", rhf_options=options,
+           output="water")                      # full artifact set + dipole
 
 basis = vq.BasisSet(mol, "def2-svp")
+result = vq.run_rhf(mol, basis=basis, options=options)
 alpha = np.asarray(vq.dipole_polarizability_rhf(result, basis, mol))
-mu = vq.dipole_moment(result, basis, mol)
+mu = vq.dipole_moment(result, basis, mol)       # NOT compute_dipole
 
-with open("water.properties.json", "w", encoding="utf-8") as stream:
-    json.dump({
-        "method": "RHF",
-        "basis": "def2-svp",
-        "polarizability_au": alpha.tolist(),
-        "polarizability_isotropic_au": float(np.trace(alpha) / 3.0),
-        "dipole_au": [mu.x, mu.y, mu.z],
-        "dipole_total_debye": mu.total_debye,
-        "dipole_origin_bohr": list(mu.origin),
-    }, stream, indent=2)
+json.dump({
+    "polarizability_au": alpha.tolist(),
+    "polarizability_isotropic_au": float(np.trace(alpha) / 3.0),
+    "dipole_au": [mu.x, mu.y, mu.z],
+    "dipole_total_debye": mu.total_debye,
+}, open("water.properties.json", "w"), indent=1)
 ```
-
-This user-written JSON is separate from the runner's managed `.system`
-manifest. Keep it alongside the job output, and use a new output stem when
-preserving an earlier calculation. The ordinary properties helpers read the
-reference density; a correlated total energy on a result wrapper does not
-make these quantities correlated-density properties.
 
 `dipole_polarizability_rhf` returns the symmetric `(3, 3)` static
 tensor in atomic units; pass a precomputed `eri=` if you are also
 running `dynamic_polarizability_rhf` on the same system, so the ERI
-tensor is built once. CPHF uses a dense four-index AO ERI tensor, even though
-its response solve avoids forming the full orbital Hessian. Budget for
-$O(N_\mathrm{bf}^4)$ integral storage before scaling beyond small examples;
-see [Memory management](memory.md). Both live in `vibeqc.cphf`; only
+tensor is built once. Both live in `vibeqc.cphf`; only
 `dipole_polarizability_rhf` is re-exported at the top level, so import the
-dynamic one from the module. The property fields and JSON serialization are covered by
+dynamic one from the module. This recipe is pinned end to end in
 `tests/test_properties.py`
-(`test_property_sidecar_dipole_and_polarizability`); that test uses a separate
-low-level SCF for its analysis.
+(`test_property_sidecar_dipole_and_polarizability`).
 
 `dynamic_polarizability_rhf(result, basis, mol, frequencies)` evaluates
 $\alpha(i\omega)$ on the imaginary axis for a scalar or a sequence of
-nonnegative frequency magnitudes (atomic units). A scalar input returns a
-`(3, 3)` tensor; a sequence returns a `(n_freq, 3, 3)` array. These are
-imaginary-axis responses, not real-frequency absorption spectra:
+frequencies (atomic units) and returns a `(n_freq, 3, 3)` array:
 
 ```python
 import numpy as np
@@ -317,8 +277,6 @@ mol = vq.Molecule([vq.Atom(8, [0.0, 0.0, 0.0]),
                    vq.Atom(1, [0.0, -1.43, -0.98])])   # bohr
 basis = vq.BasisSet(mol, "sto-3g")
 result = vq.run_rhf(mol, basis)
-if not result.converged:
-    raise RuntimeError("Water RHF did not converge; inspect result.scf_trace")
 
 omegas = [0.0, 0.25, 0.5, 1.0]
 alpha_iw = np.asarray(dynamic_polarizability_rhf(result, basis, mol, omegas))
@@ -368,9 +326,6 @@ h2o = Molecule([Atom(8, [0.0, 0.0, 0.0]),
 # run_job writes an "## Atomization energy" block into the .out file
 res = run_job(h2o, basis="sto-3g", method="rhf", atomization=True,
               output="h2o_atomization")
-
-if not res.converged:
-    raise RuntimeError("Water RHF did not converge; inspect h2o_atomization.out")
 
 # The same numbers through the library call (free atoms are cached per element)
 atm = atomization_energy(h2o, res.energy, "rhf", "sto-3g")
@@ -444,10 +399,9 @@ the D4 C6 scaling step (see [`docs/roadmap.md` § v0.10.0](../roadmap.md)).
 - **Dipole values for charged species are origin-dependent**; callers
   should choose an origin that matches the convention they want to
   report (center of charge, nuclear centroid, etc.).
-- **Periodic analyses are route-specific.** Periodic runners do write output
-  and population sidecars on supported routes. Use their accepted density,
-  overlap and k-point conventions, not these molecular recipes on a cell
-  converted to `Molecule`. For example, BIPOLE bulk output explicitly marks
-  the ordinary molecular dipole and Hirshfeld partition as unsupported.
-  See [periodic population output](output_files.md#output-h2opopulationtxtjson-properties-dump-v08x)
-  for availability and missing-data semantics.
+- **Periodic systems are not yet covered** by the properties block.
+  Results from the periodic SCF drivers (`run_rhf_periodic_scf` for
+  HF, `run_rks_periodic_scf` for KS) don't currently flow through the
+  `.out` output infrastructure; periodic dipole moments themselves
+  are subtle anyway (require a Berry-phase polarization treatment
+  for unambiguous values), and arrive in a later phase.

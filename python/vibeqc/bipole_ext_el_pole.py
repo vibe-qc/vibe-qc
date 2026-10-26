@@ -512,7 +512,6 @@ def bipole_ewald_reciprocal_cutoff(
     alpha_bohr_inv: float,
     *,
     madelind: int = 6,
-    tolerance: float | None = None,
 ) -> float:
     """Reciprocal Ewald ``K_max`` of the BIPOLE routes, resolved for the
     splitting ``alpha`` actually in use (GitLab #674).
@@ -543,15 +542,6 @@ def bipole_ewald_reciprocal_cutoff(
     energy drivers and every analytic-gradient site derive ``K_max`` from
     this one function, so the gradient differentiates the reciprocal sum
     the energy evaluated.
-
-    When ``tolerance`` is supplied, also require the reciprocal Gaussian
-    exp(-K_max**2 / (4 alpha**2)) <= tolerance. This is the reciprocal
-    counterpart of the direct-space erfc envelope, not a bound on the full
-    omitted energy (charge, geometry and shell multiplicities still matter).
-    The CRYSTAL calibration remains a floor; omitting tolerance preserves
-    the historical helper contract. Production SCF and its derivative/response
-    consumers pass the same requested precision. See Saunders et al., Eq. (44)
-    and Property 11, doi:10.1080/00268979200102671.
     """
     alpha = float(alpha_bohr_inv)
     if not math.isfinite(alpha) or alpha <= 0.0:
@@ -562,13 +552,7 @@ def bipole_ewald_reciprocal_cutoff(
         V_cell_bohr3, madelind=madelind
     )
     alpha_crystal = crystal_default_ewald_alpha(V_cell_bohr3)
-    cutoff = k_max_crystal * max(1.0, alpha / alpha_crystal)
-    if tolerance is not None:
-        tolerance = float(tolerance)
-        if not math.isfinite(tolerance) or not 0.0 < tolerance < 1.0:
-            raise ValueError("Ewald reciprocal tolerance must be finite and in (0, 1)")
-        cutoff = max(cutoff, 2.0 * alpha * math.sqrt(-math.log(tolerance)))
-    return cutoff
+    return k_max_crystal * max(1.0, alpha / alpha_crystal)
 
 
 def compute_reciprocal_lattice_vectors(

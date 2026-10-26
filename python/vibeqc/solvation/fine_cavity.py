@@ -1294,14 +1294,6 @@ class FineCavity:
         return np.ones(self.n_points, dtype=np.float64)
 
     @property
-    def exponent_follows_area(self) -> bool:
-        """Yes: a CFC segment's Gaussian exponent is ``zeta / sqrt(a_i)`` of its
-        own area, which moves with the geometry, so the matrix has an area
-        derivative off the diagonal as well. See
-        :func:`vibeqc.solvation.cavity_derivative.cavity_A_adjoints`."""
-        return True
-
-    @property
     def charge_representation(self) -> str:
         """Gaussian charges. Not a preference -- a requirement (#744).
 

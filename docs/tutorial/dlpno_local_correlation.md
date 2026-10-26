@@ -50,20 +50,6 @@ claim Saitow 2017's additional `TScaleTCutPairs=0.33`, which assumes a single
 ROHF/QRO-like spatial-orbital set rather than independent UHF alpha and beta
 spaces.
 
-## Before running
-
-Use a separate run directory and the installed engine's Python. Coordinates
-below are in bohr; run the first block before the continuations. The one-call
-example uses the chemical-core default, while the threshold experiment is
-explicitly all-electron on both sides. Compare only results with matching
-geometry, orbital and auxiliary bases, core count and reference settings.
-
-Check both stages: the high-level wrapper forwards SCF convergence, while
-`dlpno_mp2.converged` or `dlpno_ccsd.converged` describes the local solver.
-Retain output files with the resolved thresholds rather than inferring them
-from a preset name in an older example. Historical recovery percentages are
-not a verdict on a new system or a changed threshold recipe.
-
 ## One-call DLPNO-MP2
 
 The whole method is reachable through `run_job` with
@@ -83,8 +69,6 @@ mol = vq.Molecule([
 
 result = vq.run_job(mol, basis="cc-pvdz", method="dlpno-mp2", output="h2o_dlpno")
 r = result.dlpno_mp2
-if not result.converged or not r.converged:
-    raise RuntimeError("SCF or DLPNO-MP2 did not converge")
 print(r.e_corr, result.energy_total)
 ```
 
@@ -126,14 +110,11 @@ the method really converge to the canonical answer? Sweep `TCutPNO`
 against canonical RI-MP2 with the *same* fitting basis:
 
 ```python
-# doc-audit: skip - continues with mol and vq from the first example
 from vibeqc.density_fitting import DensityFitting
 from vibeqc.dlpno.mp2 import DLPNOMP2Options, run_dlpno_mp2
 
 basis = vq.BasisSet(mol, "cc-pvdz")
 hf = vq.run_rhf(mol, basis)
-if not hf.converged:
-    raise RuntimeError("RHF did not converge for the threshold study")
 
 mp2_opts = vq.MP2Options()
 mp2_opts.density_fit = True
@@ -165,8 +146,6 @@ for label, opts in (
                                tcut_pno_weak=0.0, tcut_mkn=0.0)),
 ):
     r = run_dlpno_mp2(mol, basis, hf, df, opts)
-    if not r.converged:
-        raise RuntimeError(f"DLPNO-MP2 did not converge for threshold {label}")
     avg = sum(r.pno_per_pair.values()) / len(r.pno_per_pair)
     print(f"{label:>6s}  {r.e_corr:14.8f}  "
           f"{r.e_corr / canonical.e_correlation:9.4%}  {avg:5.1f}")
@@ -207,7 +186,6 @@ the method block. The same high-level switch works for canonical/DLPNO and
 restricted/unrestricted MP2/CCSD routes:
 
 ```python
-# doc-audit: skip - continues with mol and vq from the first example
 default = vq.run_job(
     mol, basis="cc-pvdz", method="dlpno-mp2",
     dlpno_thresholds="normal",
@@ -216,8 +194,8 @@ default = vq.run_job(
 all_electron = vq.run_job(
     mol, basis="cc-pvdz", method="dlpno-mp2",
     frozen_core=False,       # ORCA NoFrozenCore
-    dlpno_thresholds="normal",  # hold thresholds fixed while changing frozen core
-    output="h2o_all_electron_normal",
+    dlpno_thresholds="tight",
+    output="h2o_all_electron_tight",
 )
 ```
 
@@ -252,12 +230,9 @@ below describe their explicitly labelled historical recipes rather than a
 newly measured current-default value.
 
 ```python
-# doc-audit: skip - continues with mol and vq from the first example
 result = vq.run_job(mol, basis="cc-pvdz", method="dlpno-ccsd",
                     output="h2o_cc")
 cc = result.dlpno_ccsd
-if not result.converged or not cc.converged:
-    raise RuntimeError("SCF or DLPNO-CCSD did not converge")
 print(f"E_corr(CCSD) = {cc.e_corr:.8f}  total = {result.energy_total:.8f}")
 ```
 
@@ -316,12 +291,9 @@ the local triple list). The (T) vanishes identically for two-electron
 systems.
 
 ```python
-# doc-audit: skip - continues with mol and vq from the first example
 result = vq.run_job(mol, basis="cc-pvdz", method="dlpno-ccsd(t)",
                     output="h2o_cct")
 cc = result.dlpno_ccsd
-if not result.converged or not cc.converged:
-    raise RuntimeError("SCF or DLPNO-CCSD did not converge")
 print(f"E_corr(CCSD) = {cc.e_corr:.8f}  (T) = {cc.e_t:.8f}  "
       f"total = {result.energy_total:.8f}")
 # E_corr(CCSD) = -0.20802771  (T) = -0.00280334  total = -76.23514493
@@ -360,9 +332,6 @@ ORCA 6.1 value of 0.16). The checked-in
 reproduces that recipe explicitly:
 
 ```python
-# doc-audit: skip - continues with mol and vq from the first example
-from vibeqc.dlpno.ccsd_local_solver import LocalCCSDOptions
-
 LocalCCSDOptions(n_frozen=0, tcut_pno=1e-7, tcut_pairs=1e-4,
                  tcut_mkn=0.0, residual_domain="pair",
                  triples_mode="t1", compute_triples=True)

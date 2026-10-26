@@ -109,7 +109,7 @@ they drive an **external** SCF program (CRYSTAL today) out of process
 through the co-located `vibe-basis` driver, so they need that driver
 installed.
 
-These seven modules import `vibe_basis` at module load:
+These six modules import `vibe_basis` at module load:
 
 | Module | Role |
 |---|---|
@@ -119,7 +119,6 @@ These seven modules import `vibe_basis` at module load:
 | `basis_optimization.recipes.crystal_stage2` | bulk-solid stage |
 | `basis_optimization.recipes.crystal_stage3` | full test-set stage |
 | `basis_optimization.recipes.production` | production refit |
-| `basis_optimization.recipes.topology_scan` | topology scan of one shell type |
 
 Without the driver they raise `ModuleNotFoundError: No module named
 'vibe_basis'` at import. For a standalone environment that does not build
@@ -160,50 +159,6 @@ them (locally or through the `vq` queue), and parses what comes back;
 the energies are computed by the external program. It is versioned
 independently of vibe-qc, see `vibe-basis/VERSIONING.md`.
 ```
-
-### Scanning a shell's topology
-
-`recipes.topology_scan.run_topology_scan` asks how many functions of one
-angular momentum an element should carry in a crystal. It starts from a
-bundled pob record and runs `vibe_basis.topology.greedy_scan`. Each round
-proposes three kinds of move: add a tighter function, add a more diffuse
-one, or drop one. Every candidate is relaxed before it is scored. The
-exponents of the element's uncontracted shells of that type are optimised
-in log space with BOBYQA, bounded below by 0.15, the limit the rev2
-optimisation used (Vilela Oliveira et al. 2019). The relaxed exponents seed
-the next round. The scan stops when two rounds in a row gain less than the
-threshold, 1 kJ/mol per cell by default.
-
-```python
-from vibe_basis.io.structures import STRUCTURES
-from vibe_basis.transports.vq import VqTransport
-from vibeqc.basis_optimization.recipes.topology_scan import (
-    crystal23_engine_factory, run_topology_scan,
-)
-
-factory = crystal23_engine_factory(
-    VqTransport(host="my-crystal-host", default_cpus=1), crystal_binary="crystal23"
-)
-report = run_topology_scan(STRUCTURES["MgO"], "Mg", "D", factory, "runs/mgo-d")
-print(report.shipped_gap_kj, report.result.stopped_because)
-```
-
-Each candidate is scored on three things: the total energy per cell in
-kJ/mol, its primitive count, and the log10 condition number of the
-element's one-centre overlap. `report.ranked_front()` lists the Pareto
-front, and `runs/mgo-d/scan_record.json` records every candidate. Each
-record holds its move, its seed and relaxed exponents and every energy
-point. Every energy is journalled in `energies.jsonl`. A scan restarted on
-the same directory reuses each finished point, and retries a point that
-was lost in transit instead of passing it to the optimiser as a failure.
-
-With total energy as the objective, an added function never raises the
-energy. The shipped topology therefore lands on, or within the threshold
-of, the front almost by construction (`report.shipped_gap_kj`). Exact
-front membership depends on the relaxation tolerance, which is why the
-gap is the reported quantity. A scan on total energy checks that the
-search runs and ranks. A claim that a topology is better needs the
-cohesive objective, `vibe_basis.objective.CohesiveObjective`.
 
 ## The one-call recipe
 

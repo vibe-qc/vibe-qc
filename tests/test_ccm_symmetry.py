@@ -380,9 +380,9 @@ def test_symmetry_reduced_cderi_equals_unreduced_mgo_multicell():
     orb = ccm_symmetry_unique_atom_pairs(ccm, sym)
     assert orb.n_unique < orb.n_total
     opts = _flat_lat_opts(25.0)
-    l_full = ccm_neutral_cderi(ccm, ke_cutoff=80.0, lat_opts=opts, tail_ke_cutoff=_NO_TAIL,
+    l_full = ccm_neutral_cderi(ccm, ke_cutoff=80.0, lat_opts=opts,
                                canonical_auxiliary_basis=True)
-    l_red = ccm_neutral_cderi(ccm, ke_cutoff=80.0, lat_opts=opts, tail_ke_cutoff=_NO_TAIL,
+    l_red = ccm_neutral_cderi(ccm, ke_cutoff=80.0, lat_opts=opts,
                               symmetry=sym)
     scale = float(np.max(np.abs(l_full)))
     # < 1e-9: whitening-amplification floor, see _flat_lat_opts
@@ -1373,41 +1373,3 @@ def test_direct_driver_cderi_symmetry_passthrough():
     e_sym = run_ccm_rhf_direct(ccm, ke_cutoff=60.0,
                                cderi_symmetry=True).energy
     assert abs(e_sym - e_plain) < 1e-10
-
-
-def test_reconstruct_raw_pairs_before_noncommuting_whitener(monkeypatch):
-    from types import SimpleNamespace
-    import vibeqc.aux_basis as ab
-    from vibeqc.periodic.ccm import symmetry
-    from vibeqc.periodic.ccm.neutral import _ccm_neutral_cderi_symm_reduced
-
-    # Exact raw tensor symmetry, deliberately noncommuting W. Scattering WT
-    # instead gives a different result even though the raw reconstruction is exact.
-    raw = np.array([[[1., 3.], [3., 2.]], [[2., 3.], [3., 1.]]])
-    representative = raw.copy()
-    representative[:, 1, :] = 0.
-    whitener = np.diag([1., 2.])
-    swap = np.array([[0., 1.], [1., 0.]])
-    assert not np.allclose(swap @ whitener, whitener @ swap)
-    seen = []
-
-    def fit(*args, **kwargs):
-        assert kwargs['canonical_auxiliary_basis'] is True
-        assert kwargs['fit_pair_list'].tolist() == [[0, 0], [0, 1]]
-        transform = kwargs['_canonical_three_center_transform']
-        reconstructed = transform(representative.copy())
-        np.testing.assert_allclose(reconstructed, raw, atol=0., rtol=0.)
-        seen.append(True)
-        return (whitener @ reconstructed.reshape(2, -1)).reshape(2, 2, 2)
-
-    monkeypatch.setattr(ab, 'build_lpq_bloch_native_fft', fit)
-    monkeypatch.setattr(symmetry, 'ccm_symmetry_basis_rotations', lambda *a: [np.eye(2), swap])
-    basis = SimpleNamespace(nbasis=2, shells=lambda: [SimpleNamespace(atom_index=i) for i in range(2)])
-    ccm = SimpleNamespace(n_atoms=2, basis=basis, ao_atom=np.array([0, 1]), cluster_system=None)
-    sym = SimpleNamespace(cluster_order=2, invariant_ops=[SimpleNamespace(P=np.eye(2)), SimpleNamespace(P=swap)])
-    orbits = SimpleNamespace(representatives=[(0, 0), (0, 1)], n_unique=2, n_total=4,
-                             reduction_factor=2., orbit_op=np.array([[-1, -1], [1, 1]]),
-                             orbit_rep=np.array([[0, 1], [1, 0]]))
-    actual = _ccm_neutral_cderi_symm_reduced(ccm, sym, orbits, None, None, 80.)
-    assert seen == [True]
-    np.testing.assert_allclose(actual, (whitener @ raw.reshape(2, -1)).reshape(2, 2, 2), atol=0., rtol=0.)

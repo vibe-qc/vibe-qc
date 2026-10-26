@@ -184,16 +184,6 @@ def _transform(values, matrices, permutation):
     return transformed.transpose(_PERMUTATIONS[permutation]), work
 
 
-def _validate_source_support(source, actions):
-    """Bind optional producer support evidence to this exact shell map."""
-    if type(source) is _MantaSource and source.support_certificate is not None:
-        support = source.support_certificate
-        support.validate(source._provider)
-        validate = getattr(support, 'validate_maps', None)
-        if validate is not None:
-            validate(np.ascontiguousarray([a.destinations for a in actions]))
-
-
 def _real_shell_actions(group, actions):
     """Validate molecular block laws and return inverse coefficient actions."""
     first = actions[group.identity]
@@ -287,7 +277,6 @@ class ShellQuartetPlan:
         identity = source.source_identity
         _text(identity, 'source identity')
         inverse_blocks = _real_shell_actions(group, actions)
-        _validate_source_support(source, actions)
         operations = (group.identity,) if mode != 'spatial' else (group.identity,) + tuple(g for g in range(ng) if g != group.identity)
         permutations = range(1 if mode == 'none' else 8)
         seen, schedules = set(), []
@@ -445,17 +434,6 @@ def _molecular_provider_kind(provider):
     return kind
 
 
-def _source_support_requirements(provider, operations, budget):
-    """Optional producer support evidence; never a numerical audit waiver."""
-    from . import _vibeqc_core as core
-    if not hasattr(core._manta, 'plan_molecular_source_support'):
-        return None, None
-    native = core._manta.ResourceBudget()
-    native.memory_bytes = budget.maximum_bytes
-    native.scalar_terms = budget.maximum_work
-    return core._manta.plan_molecular_source_support(provider, operations, native), native
-
-
 def manta_quartet_requirements(molecule, basis, provider, operation_count, *, budget: Budget, mode='spatial', schedule='stored', maximum_omitted_norm=None, bounds=None):
     """Complete count-only factory reservation, before shell/action snapshots.
 
@@ -492,10 +470,6 @@ def manta_quartet_requirements(molecule, basis, provider, operation_count, *, bu
         from .symmetry_quartets_streaming import _streaming_requirements
         requirements = _streaming_requirements
     byte_count, work = requirements(n, ns, ng, maximum_shell, p.modeled_peak_bytes, group.bytes, mode)
-    support, _ = _source_support_requirements(provider, ng, budget)
-    if support is not None:
-        byte_count += support.additional_bytes
-        work += support.scalar_terms
     byte_count += bound_bytes
     work += bound_work
     if maximum_omitted_norm is not None:
@@ -526,28 +500,20 @@ class _MantaSource:
     _provider_kind: str
     shell_offsets: np.ndarray
     modeled_peak_bytes: int
-    support_certificate: object
 
-    def __init__(self, provider, offsets, session=None, support_certificate=None):
+    def __init__(self, provider, offsets, session=None):
         object.__setattr__(self, '_provider_kind', _molecular_provider_kind(provider))
         object.__setattr__(self, '_provider', provider)
         object.__setattr__(self, '_session', session)
         object.__setattr__(self, 'shell_offsets', _freeze(offsets))
-        if support_certificate is not None:
-            from . import _vibeqc_core as core
-            if type(support_certificate) is not core._manta.MolecularSourceSupport:
-                raise TypeError('native molecular source support certificate required')
-            support_certificate.validate(provider)
-        object.__setattr__(self, 'support_certificate', support_certificate)
-        extra = 0 if support_certificate is None else support_certificate.plan.additional_bytes
-        object.__setattr__(self, 'modeled_peak_bytes', int(provider.plan.modeled_peak_bytes)+extra)
+        object.__setattr__(self, 'modeled_peak_bytes', int(provider.plan.modeled_peak_bytes))
 
     @property
     def source_identity(self):
         return self._provider.source_identity
 
     def with_session(self):
-        return _MantaSource(self._provider, self.shell_offsets, self._provider.session(), self.support_certificate)
+        return _MantaSource(self._provider, self.shell_offsets, self._provider.session())
 
     def evaluate(self, quartet):
         receipt = (self._session or self._provider).evaluate(quartet)
@@ -596,16 +562,6 @@ def qualify_manta_quartets(molecule, basis, rotations, translations, *,
     actions = tuple(build_molecular_space_action(molecule, basis,
         np.ascontiguousarray(r), np.ascontiguousarray(t), source=space, target=space,
         budget=budget) for r, t in zip(rotations, translations))
-    support, native = _source_support_requirements(provider, ng, budget)
-    certificate = None
-    if support is not None:
-        from . import _vibeqc_core as core
-        # The producer checks its own immutable radial channels/support. Shared
-        # actions still own group/metric/angular transport, and the complete
-        # numerical audit below still owns finite-operator equivariance.
-        certificate = core._manta.certify_molecular_source_support(provider,
-            rotations, translations, np.ascontiguousarray([a.destinations for a in actions]),
-            1e-9, native)
     plan_type = ShellQuartetPlan
     options = {}
     if schedule == 'streaming':
@@ -614,6 +570,5 @@ def qualify_manta_quartets(molecule, basis, rotations, translations, *,
         options['maximum_omitted_norm'] = maximum_omitted_norm
         options['bounds'] = bounds
         options['qualification'] = qualification
-    return plan_type(group, actions, _MantaSource(provider, actions[0].offsets,
-        support_certificate=certificate),
+    return plan_type(group, actions, _MantaSource(provider, actions[0].offsets),
         source_tolerance=source_tolerance, budget=budget, mode=mode, **options)

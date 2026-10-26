@@ -133,20 +133,20 @@ class GeneralizedEigenProblem:
 class InteriorEigenProblem:
     """Interior eigenvalue problem: find roots near a target shift s.
 
-    Wraps a standard or generalized eigenproblem with a shift so that solvers targeting
+    Wraps a standard eigenproblem with a shift so that solvers targeting
     extremal eigenvalues can find interior ones via spectral transformation
     (shift-and-invert).
 
     Attributes
     ----------
-    problem : EigenProblem or GeneralizedEigenProblem
-        The underlying Hermitian problem, including its overlap metric.
+    problem : EigenProblem
+        The underlying Hermitian problem.
     sigma : float
         Target shift.  Solvers that support shift-and-invert will find
         eigenvalues closest to s.
     """
 
-    problem: EigenProblem | GeneralizedEigenProblem
+    problem: EigenProblem
     sigma: float = 0.0
 
 
@@ -532,8 +532,7 @@ def solve_eigenproblem(
         # Propagate the interior shift into solver options
         if options.sigma is None:
             options = replace(options, sigma=problem.sigma)
-        # Unwrap without bypassing generalized metric admission and reduction.
-        problem = problem.problem
+        return strategy.solve(problem.problem, options)
 
     # Dispatch generalised problems
     if isinstance(problem, GeneralizedEigenProblem):

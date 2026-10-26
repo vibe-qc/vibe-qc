@@ -66,34 +66,15 @@ def require_denial(donor):
     raise ValueError("donor prefix remains readable")
 
 
-def bound_function(library, name, expected_path):
-    function = getattr(library, name)
-    observed = loaded_symbol_path(ctypes.cast(function, ctypes.c_void_p).value)
-    if observed != expected_path:
-        raise ValueError("FFTW symbol resolved outside candidate library: " + name)
-    return function
-
-
-def native_operation(library_path, constants, threads_path=None):
-    # Resolve through the threaded handle too: its transitive core dependency
-    # must be this candidate core, not a same-name donor or system library.
-    library = ctypes.CDLL(str(threads_path or library_path))
+def native_operation(library_path, constants):
+    library = ctypes.CDLL(str(library_path))
     plan = library.fftw_plan_dft_1d
     execute = library.fftw_execute
     destroy = library.fftw_destroy_plan
-    for name in ("fftw_plan_dft_1d", "fftw_execute", "fftw_destroy_plan"):
-        bound_function(library, name, library_path)
-    cleanup = None
-    if threads_path is not None:
-        initialize = bound_function(library, "fftw_init_threads", threads_path)
-        configure = bound_function(library, "fftw_plan_with_nthreads", threads_path)
-        cleanup = bound_function(library, "fftw_cleanup_threads", threads_path)
-        initialize.argtypes, initialize.restype = [], ctypes.c_int
-        configure.argtypes, configure.restype = [ctypes.c_int], None
-        cleanup.argtypes, cleanup.restype = [], None
-        if initialize() == 0:
-            raise ValueError("FFTW thread initialization failed")
-        configure(2)
+    for function in (plan, execute, destroy):
+        observed = loaded_symbol_path(ctypes.cast(function, ctypes.c_void_p).value)
+        if observed != library_path:
+            raise ValueError("FFTW symbol resolved outside candidate library")
     pair = ctypes.c_double * 2
     array = pair * 4
     source = array(*(pair(float(i), 0.0) for i in range(1, 5)))
@@ -107,16 +88,12 @@ def native_operation(library_path, constants, threads_path=None):
     destroy.restype = None
     handle = plan(4, source, target, constants["forward"], constants["estimate"])
     if not handle:
-        if cleanup is not None:
-            cleanup()
         raise ValueError("FFTW refused the four-point plan")
     try:
         execute(handle)
         result = [[float(x[0]), float(x[1])] for x in target]
     finally:
         destroy(handle)
-        if cleanup is not None:
-            cleanup()
     expected = [[10.0, 0.0], [-2.0, 2.0], [-2.0, 0.0], [-2.0, -2.0]]
     if any(not math.isfinite(a) or abs(a - b) > 1e-12
            for row, reference in zip(result, expected) for a, b in zip(row, reference)):
@@ -128,39 +105,28 @@ def child_probe(request):
     require_denial(request["donor"])
     root = canonical(request["candidate"])
     library = contained_file(root, request["library"])
-    threads = (contained_file(root, request["threads_library"])
-               if "threads_library" in request else None)
-    if threads == library:
-        raise ValueError("threaded and core libraries must be distinct")
     header = contained_file(root, "include/fftw3.h")
-    libraries = [library] + ([threads] if threads is not None else [])
-    before = {str(path): file_digest(path) for path in [*libraries, header]}
+    before = {str(path): file_digest(path) for path in (library, header)}
     # Open the actual candidate header and use its constants in the native call.
     # This is header ABI data, not a chemistry basis-data qualification.
     constants = header_constants(header.read_bytes())
     result = native_operation(library, constants)
-    threaded_result = native_operation(library, constants, threads) if threads else None
     if any(file_digest(Path(path)) != digest for path, digest in before.items()):
         raise ValueError("candidate bytes changed during probe")
-    response = {"schema": "vibeqc.fftw-prefix-probe/1", "decision": "observed",
+    return {"schema": "vibeqc.fftw-prefix-probe/1", "decision": "observed",
             "isolation": "denied-donor-prefix", "operation": "fftw-four-point-dft",
             "result": result, "constants": constants,
-            "libraries": [{"path": str(path), "sha256": before[str(path)]} for path in libraries],
+            "libraries": [{"path": str(library), "sha256": before[str(library)]}],
             "data": [{"path": str(header), "sha256": before[str(header)]}],
             "data_scope": "FFTW header ABI constants",
             "source_build_provenance": "not_attested", "seed_admission": "not_evaluated"}
-    if threaded_result is not None:
-        response["threaded"] = {"requested_threads": 2, "result": threaded_result,
-                                "worker_count": "not_observed", "backend": "separate-threads-library"}
-    return response
 
 
 def run_probe(request):
     if sys.platform != "darwin" or not Path("/usr/bin/sandbox-exec").is_file():
         raise ValueError("donor-read isolation unsupported on this platform")
-    if set(request) not in ({"candidate", "donor", "library"},
-                            {"candidate", "donor", "library", "threads_library"}):
-        raise ValueError("expected candidate, donor, library and optional threads_library")
+    if set(request) != {"candidate", "donor", "library"}:
+        raise ValueError("expected exactly candidate, donor and library")
     root, donor = canonical(request["candidate"]), canonical(request["donor"])
     if not root.is_dir() or not donor.is_dir():
         raise ValueError("candidate and donor must be directories")
@@ -170,13 +136,7 @@ def run_probe(request):
         next(entries, None)
     library = contained_file(root, request["library"])
     header = contained_file(root, "include/fftw3.h")
-    paths = [library, header]
-    if "threads_library" in request:
-        threads = contained_file(root, request["threads_library"])
-        if threads == library:
-            raise ValueError("threaded and core libraries must be distinct")
-        paths.append(threads)
-    before = {str(path): file_digest(path) for path in paths}
+    before = {str(path): file_digest(path) for path in (library, header)}
     # Use sandbox parameters, not interpolation of filesystem paths into SBPL.
     profile = '(version 1)(allow default)(deny file-read* (subpath (param "DONOR")))'
     environment = {k: v for k, v in os.environ.items()

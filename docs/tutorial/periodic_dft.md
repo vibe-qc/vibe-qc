@@ -1,19 +1,9 @@
 # Periodic KS-DFT
 
-This lesson demonstrates the low-level KS dispatcher
-`run_rks_periodic_scf` with explicit Ewald and grid controls. For a calculation
-that writes the standard output family and provenance, prefer
-`run_periodic_job`; see [periodic methods](../user_guide/periodic_methods.md).
-The [periodic HF lesson](periodic_hf.md) introduces the cell and sampling model.
-
-## Run the baseline
-
-Save the first block as a script in a separate run directory and use the
-installed engine's Python. Coordinates and lattice lengths are in bohr, and
-printed energies are per simulation cell in hartree. Later blocks continue
-with its `sysp`, `basis`, `kpoints` and `opts`. This example has different vacuum
-and sampling settings from the HF lesson, so its energy is not a controlled
-HF-versus-DFT comparison without first matching those settings.
+Switch from HF to DFT by using `PeriodicKSOptions` instead of
+`PeriodicSCFOptions` and calling the KS dispatcher
+`run_rks_periodic_scf` (the recommended user-facing entry point, 
+mirrors `run_rhf_periodic_scf` from [Periodic HF on a 1D H chain](periodic_hf.md)):
 
 ```python
 import numpy as np
@@ -24,7 +14,7 @@ from vibeqc import (
 
 # The chain runs along x; it is a dim=3 cell with 30 bohr of transverse
 # vacuum, because no route has a consistent 1-D Coulomb gauge for dim=1.
-unit_cell = [Atom(1, [0, 0, 0]), Atom(1, [1.4, 0, 0])]
+unit_cell = [Atom(1, [0, 0, 0]), Atom(1, [0, 0, 1.4])]
 sysp = PeriodicSystem(
     dim=3,
     lattice=np.diag([4.0, 30.0, 30.0]),
@@ -43,8 +33,6 @@ opts.conv_tol_energy = 1e-10
 opts.lattice_opts.coulomb_method = CoulombMethod.EWALD_3D
 
 result = run_rks_periodic_scf(sysp, basis, kpoints, opts)
-if not result.converged:
-    raise RuntimeError("Periodic PBE did not converge; inspect its SCF trace")
 
 print(f"E_KS per cell  = {result.energy:.10f}")
 print(f"  E_Coulomb    = {result.e_coulomb:.10f}")
@@ -103,8 +91,7 @@ metal oxides, dense ionic crystals), use ``EWALD_3D``. The
 two flags compose: turn both on for tight crystals.
 
 ```python
-# doc-audit: skip - continues with opts and CoulombMethod from the baseline
-opts.lattice_opts.coulomb_method = CoulombMethod.EWALD_3D
+opts.lattice_opts.coulomb_method = vq.CoulombMethod.EWALD_3D
 opts.use_periodic_becke = True       # the integration-weight fix
 opts.becke_image_radius_bohr = 10.0
 ```
@@ -118,26 +105,10 @@ periodic Becke partition.
 Reuse the molecular-DFT grid controls:
 
 ```python
-# doc-audit: skip - continues with the baseline system, options and result
-baseline = run_rks_periodic_scf(sysp, basis, kpoints, opts)
-if not baseline.converged:
-    raise RuntimeError("Grid-study baseline did not converge")
-baseline_energy = baseline.energy
 opts.grid.n_radial = 99
 opts.grid.n_theta  = 29
 opts.grid.n_phi    = 58
-refined = run_rks_periodic_scf(sysp, basis, kpoints, opts)
-if not refined.converged:
-    raise RuntimeError("Refined-grid periodic PBE did not converge")
-print(f"Energy change = {(refined.energy - baseline_energy) * 1e6:+.3f} microhartree/cell")
 ```
-
-Changing an options object does not change an already computed result. The
-grid-study block first evaluates a baseline using the current options, then
-changes only the grid resolution. This also accounts for any Becke image-radius
-change made in the preceding block. Leave all other controls unchanged during
-this comparison. Independently converge k sampling, transverse vacuum
-and lattice support rather than changing them in the same comparison.
 
 The grid is built over the unit-cell atoms. Since v0.9.x, the default
 is the **periodic** Becke partition (`use_periodic_becke=True`), which

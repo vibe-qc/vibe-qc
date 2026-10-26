@@ -23,7 +23,6 @@ from ._vibeqc_core._manta import (
     DerivativeTiles,
     plan_derivatives,
     BlochPhasePlan, BlochPhaseCertificate, plan_bloch_phase, certify_bloch_phase,
-    FourierConstructionPlan, FourierConstructionCertificate, plan_auxiliary_fourier_construction, certify_auxiliary_fourier_panel,
     FourierPlan,
     FourierReceipt,
     FourierResult,
@@ -104,7 +103,6 @@ __all__ = [
     "one_electron_capability", "plan_one_electron", "compute_one_electron",
     "OneElectronDerivative", "plan_one_electron_derivative", "compute_one_electron_derivative",
     "BlochPhasePlan", "BlochPhaseCertificate", "plan_bloch_phase", "certify_bloch_phase",
-    "FourierConstructionPlan", "FourierConstructionCertificate", "plan_auxiliary_fourier_construction", "certify_auxiliary_fourier_panel",
     "FourierPlan", "FourierReceipt", "FourierResult", "plan_fourier", "plan_auxiliary_fourier",
     "compute_fourier_panel", "compute_auxiliary_fourier_panel",
     "FittingPlan", "FittingTiles", "plan_fitting",
@@ -446,10 +444,10 @@ __all__ += ["PeriodicGDFShortRangeOptions", "PeriodicGDFShortRangePlan", "Period
             "PeriodicGDFShortRangeResult", "plan_periodic_gdf_short_range", "compute_periodic_gdf_short_range"]
 
 from ._vibeqc_core._manta import (
-    PeriodicGDFWeightPlan, PeriodicGDFWeightCertificate, plan_periodic_gdf_weight, certify_periodic_gdf_weight, certify_periodic_gdf_lattice_weight,
+    PeriodicGDFWeightPlan, PeriodicGDFWeightCertificate, plan_periodic_gdf_weight, certify_periodic_gdf_weight,
     PeriodicGDFKernelOptions, PeriodicGDFPlan, PeriodicGDFReceipt, PeriodicGDFResult, plan_periodic_gdf, compute_periodic_gdf,
 )
-__all__ += ["PeriodicGDFWeightPlan", "PeriodicGDFWeightCertificate", "plan_periodic_gdf_weight", "certify_periodic_gdf_weight", "certify_periodic_gdf_lattice_weight", "PeriodicGDFKernelOptions", "PeriodicGDFPlan", "PeriodicGDFReceipt", "PeriodicGDFResult", "plan_periodic_gdf", "compute_periodic_gdf"]
+__all__ += ["PeriodicGDFWeightPlan", "PeriodicGDFWeightCertificate", "plan_periodic_gdf_weight", "certify_periodic_gdf_weight", "PeriodicGDFKernelOptions", "PeriodicGDFPlan", "PeriodicGDFReceipt", "PeriodicGDFResult", "plan_periodic_gdf", "compute_periodic_gdf"]
 
 from ._vibeqc_core._manta import (
     PeriodicGDFPairTreePlan, PeriodicGDFPairTreeEntry, PeriodicGDFCapsuleMask,
@@ -690,10 +688,3 @@ __all__ += [
 from ._vibeqc_core._manta import (PeriodicOverlapImageRankResult,
     plan_periodic_overlap_image_rank, bound_periodic_overlap_image_rank)
 __all__ += ["PeriodicOverlapImageRankResult", "plan_periodic_overlap_image_rank", "bound_periodic_overlap_image_rank"]
-
-from ._vibeqc_core._manta import (MetricConstructionPlan, MetricConstructionCertificate,
-    plan_metric_construction, certify_metric_construction)
-__all__ += ["MetricConstructionPlan", "MetricConstructionCertificate", "plan_metric_construction", "certify_metric_construction"]
-
-from ._vibeqc_core._manta import RepresentationCertificate, plan_representation, certify_representation
-__all__ += ["RepresentationCertificate", "plan_representation", "certify_representation"]

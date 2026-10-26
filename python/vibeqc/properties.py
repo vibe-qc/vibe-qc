@@ -70,12 +70,10 @@ __all__ = [
 ]
 
 
-# Standard atomic masses (u), index 0 unused: the IUPAC conventional values
-# (good to ~1e-3 u), through plutonium. Elements with no stable isotope (Tc, Pm,
-# Po-Pu apart from Th, Pa and U) carry the mass number of their longest-lived
-# isotope. The table has to reach the elements an ECP basis exists for: the
-# harmonic frequencies, thermochemistry and molecular dynamics all mass-weight,
-# and a table that stopped at Kr refused every job with a heavy atom.
+# Standard atomic masses (u), index 0 unused.  Dalton approximate values --
+# good to ~1e-3 u -- plenty for center-of-mass computation. We ship a
+# subset sufficient for H-Kr; for heavier elements callers pass an
+# explicit origin.
 _ATOMIC_MASSES: tuple[float, ...] = (
     0.0,
     1.008,   4.003,                                              # H  He
@@ -84,14 +82,6 @@ _ATOMIC_MASSES: tuple[float, ...] = (
     39.098, 40.078, 44.956, 47.867, 50.942, 51.996, 54.938, 55.845,   # K-Fe
     58.933, 58.693, 63.546, 65.38,  69.723, 72.630, 74.922, 78.971,   # Co-Se
     79.904, 83.798,                                                    # Br Kr
-    85.468, 87.62,  88.906, 91.224, 92.906, 95.95,  98.0,   101.07,   # Rb-Ru
-    102.906, 106.42, 107.868, 112.414, 114.818, 118.710, 121.760, 127.60,  # Rh-Te
-    126.904, 131.293,                                                  # I  Xe
-    132.905, 137.327, 138.905, 140.116, 140.908, 144.242, 145.0,  150.36,  # Cs-Sm
-    151.964, 157.25,  158.925, 162.500, 164.930, 167.259, 168.934, 173.045,  # Eu-Yb
-    174.967, 178.486, 180.948, 183.84,  186.207, 190.23,  192.217, 195.084,  # Lu-Pt
-    196.967, 200.592, 204.38,  207.2,   208.980, 209.0,   210.0,   222.0,    # Au-Rn
-    223.0,   226.0,   227.0,   232.038, 231.036, 238.029, 237.0,   244.0,    # Fr-Pu
 )
 
 

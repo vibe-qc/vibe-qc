@@ -214,8 +214,7 @@ def test_external_xc_difference_domain_counts_missing_unique_cells(
     assert actual == tuple(ordered)
 
 
-@pytest.mark.parametrize("partition_radius", [2.0, 4.1, 6.0])
-def test_external_xc_adapter_domain_is_difference_closed_and_variational(partition_radius):
+def test_external_xc_adapter_domain_is_difference_closed_and_variational():
     from vibeqc.pair_resolved_truncation import pair_resolved_domain
 
     provider = _QuadraticDensityProvider()
@@ -228,7 +227,7 @@ def test_external_xc_adapter_domain_is_difference_closed_and_variational(partiti
         system,
         functional,
         grid_options=_coarse_atom_grid_options(),
-        image_radius_bohr=partition_radius,
+        image_radius_bohr=4.1,
         lattice_options=lattice_options,
     )
 
@@ -398,8 +397,7 @@ def test_explicit_weighted_kpoint_list_is_not_a_finite_torus():
         _reject_reduced_kmesh(explicit, system)
 
 
-@pytest.mark.parametrize("partition_radius", [2.0, 4.1, 6.0])
-def test_external_xc_multik_weighted_complex_directional_derivative(partition_radius):
+def test_external_xc_multik_weighted_complex_directional_derivative():
     provider = _QuadraticDensityProvider()
     _, functional = _functional(provider)
     system, basis = _system_and_basis(length=4.0)
@@ -409,7 +407,7 @@ def test_external_xc_multik_weighted_complex_directional_derivative(partition_ra
         system,
         functional,
         grid_options=_coarse_atom_grid_options(),
-        image_radius_bohr=partition_radius,
+        image_radius_bohr=4.1,
         lattice_options=lattice_options,
     )
     kmesh = core.monkhorst_pack(system, [2, 1, 1])
@@ -1110,111 +1108,3 @@ def test_low_level_external_gpw_gapw_reject_ecp_paired_basis(route):
                 functional=name,
                 quiet=True,
             )
-
-
-@pytest.mark.parametrize("mode", ["gamma", "uks", "multik"])
-@pytest.mark.parametrize("requested_reach", [0.0, -1.0, 2.0, 7.0])
-def test_external_xc_partition_does_not_change_density_support(
-    monkeypatch, mode, requested_reach,
-):
-    """Hold quadrature fixed to isolate the AO support from partition error."""
-    provider = _QuadraticDensityProvider()
-    _, functional = _functional(provider)
-    system, basis = _system_and_basis(length=4.0)
-    options = _short_lattice_options(cutoff=4.1)
-    options.becke_image_radius_bohr = requested_reach
-    grid = external_xc.build_periodic_becke_grid(
-        system, grid_options=_coarse_atom_grid_options(), image_radius_bohr=4.1,
-    )
-    radii = []
-
-    def fixed_grid(*args, **kwargs):
-        radii.append(kwargs["image_radius_bohr"])
-        return grid
-
-    monkeypatch.setattr(external_xc, "build_periodic_becke_grid", fixed_grid)
-    expected_reach = min(requested_reach, 4.1) if requested_reach > 0 else 4.1
-    density = np.array([[0.7, 0.1], [0.1, 0.5]])
-    mesh = core.monkhorst_pack(system, [2, 1, 1])
-    outputs, inputs, domains = [], [], []
-    for partition in (2.0, 4.1, 6.0):
-        context = PeriodicExternalXC.prepare(
-            basis, system, functional, image_radius_bohr=partition,
-            lattice_options=options,
-        )
-        assert context.lattice_options.becke_image_radius_bohr == expected_reach
-        domains.append([tuple(c.index) for c in context.cells])
-        if mode == "gamma":
-            outputs.append(context.build_gamma(density))
-        elif mode == "uks":
-            outputs.append(context.build_gamma_uks(0.6 * density, 0.4 * density))
-        else:
-            outputs.append(context.build_kpoints([density, density], mesh))
-        inputs.append({key: np.asarray(provider.calls[-1][key]).copy()
-                       for key in ("rho_alpha", "rho_beta", "tau_alpha", "tau_beta")})
-    assert radii == [2.0, 4.1, 6.0]
-    assert options.becke_image_radius_bohr == requested_reach
-    assert domains[0] == domains[1] == domains[2]
-    for actual, features in zip(outputs[1:], inputs[1:]):
-        for reference, value in zip(outputs[0], actual):
-            np.testing.assert_array_equal(value, reference)
-        for key in features:
-            np.testing.assert_array_equal(features[key], inputs[0][key])
-
-
-@pytest.mark.parametrize("field,value", [
-    ("cutoff_bohr", 0.0), ("cutoff_bohr", -1.0),
-    ("cutoff_bohr", np.nan), ("cutoff_bohr", np.inf),
-    ("becke_image_radius_bohr", np.nan), ("becke_image_radius_bohr", np.inf),
-])
-def test_external_xc_rejects_invalid_density_support_before_grid(monkeypatch, field, value):
-    _, functional = _functional(_QuadraticDensityProvider())
-    system, basis = _system_and_basis()
-    options = _short_lattice_options()
-    setattr(options, field, value)
-
-    def unexpected(*args, **kwargs):
-        pytest.fail("invalid density support reached grid construction")
-
-    monkeypatch.setattr(external_xc, "build_periodic_becke_grid", unexpected)
-    with pytest.raises(ValueError, match="must be finite"):
-        PeriodicExternalXC.prepare(basis, system, functional, lattice_options=options)
-
-
-@pytest.mark.parametrize("hf_fraction", [0.0, 0.25])
-def test_gpw_external_scf_preserves_density_reach(monkeypatch, hf_fraction, record_property):
-    """Converged analytic-provider regression, not a SKALA checkpoint test."""
-    from vibeqc.periodic_gapw_j import run_periodic_rks_gpw
-
-    provider = _QuadraticDensityProvider()
-    name, _ = _functional(provider, hf_exchange_fraction=hf_fraction)
-    system, basis = _system_and_basis(length=4.0)
-    grid_options = _coarse_atom_grid_options()
-    atom_grid = external_xc.build_periodic_becke_grid(
-        system, grid_options=grid_options, image_radius_bohr=4.1,
-    )
-    monkeypatch.setattr(external_xc, "build_periodic_becke_grid", lambda *a, **kw: atom_grid)
-    energies = []
-    for partition, density_reach in ((2.0, 0.0), (4.1, 0.0), (2.0, 2.0)):
-        options = _short_lattice_options(cutoff=4.1)
-        options.becke_image_radius_bohr = density_reach
-        result = run_periodic_rks_gpw(
-            system, basis, functional=name,
-            grid=PlaneWaveGrid(np.eye(3) * 4.0, 12, 12, 12),
-            max_iter=60, quiet=True, use_diis=False,
-            external_xc_grid_options=grid_options,
-            external_xc_image_radius_bohr=partition,
-            external_xc_lattice_options=options,
-        )
-        assert result.converged
-        energies.append(result.energy)
-    # The first two runs have the same density operator and fixed quadrature.
-    # Independent SCFs can differ by a rounding step in parallel reductions.
-    # Keep the comparison at machine roundoff, far below SCF convergence.
-    assert energies[0] == pytest.approx(energies[1], rel=0., abs=32*np.finfo(float).eps)
-    # Explicitly requesting the old truncated support remains possible and
-    # actually changes this cell: it must not be selected by partition alone.
-    assert abs(energies[2] - energies[0]) > 1.0e-4
-    record_property("full_reach_energy_Eh", energies[0])
-    record_property("narrow_reach_energy_Eh", energies[2])
-    record_property("partition_only_energy_difference_Eh", energies[1] - energies[0])

@@ -83,12 +83,7 @@ def _refuse_unsupported_ecp_optimization(
     options: Sequence[object],
     route: str,
 ) -> None:
-    """Fail before work unless this is a supported mean-field ECP gradient.
-
-    RHF/UHF/RKS/UKS have one, in gas phase and in solvent: the solvated
-    gradient adds reaction-field terms that never touch the ECP to the same
-    ECP-aware gas-phase gradient.
-    """
+    """Fail before work unless this is a supported gas-phase ECP gradient."""
 
     from .ecp_metadata import (
         basis_sidecar_has_ecp_operator,
@@ -111,6 +106,19 @@ def _refuse_unsupported_ecp_optimization(
             "mean-field ECP gradients are supported. Refusing before "
             "SCF/trajectory work rather than differentiating an unverified "
             "or bare-Z post-HF Hamiltonian."
+        )
+
+    if solvent is not None:
+        from .solvation import resolve_solvent
+
+        solvent_model = resolve_solvent(solvent)
+    else:
+        solvent_model = None
+    if solvent_model is not None and not solvent_model.is_gas_phase:
+        raise NotImplementedError(
+            f"{route}: ECP+CPCM molecular gradients are not implemented, so "
+            "the optimizer cannot follow the reported solvated energy. Run "
+            "the ECP optimization in gas phase or use an all-electron basis."
         )
 
 

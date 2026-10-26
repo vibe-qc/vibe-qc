@@ -914,7 +914,7 @@ def _periodic_metric_action_admission(bound):
         scope=('declared-stored-coupling;stored-factor-plus-conditional-metric-assembly-response;fixed-density-family'
                if bound.metric_action_assembly_requested else
                'declared-stored-coupling-representation;factor-product-versus-ideal-retained-inverse;fixed-density-family;no-integral-or-fock-roundoff'),
-        excludes=['coupling-basis-data-and-vector-generation', 'coupling-construction',
+        excludes=['primitive-fourier-coupling-phase-and-reciprocal-prefactor-evaluation', 'coupling-construction',
                   'metric-domain-and-screening-perturbations', 'executed-fock-and-energy-arithmetic', 'total-relaxed-energy'])
 
 
@@ -1105,18 +1105,17 @@ def _periodic_fitting_provenance(info, plan, options, density_envelope=None, fit
         row['assembly_rank'] = dict(
             requested=metric.assembly_rank_requested, qualified=metric.assembly_rank_qualified,
             phase_included=metric.assembly_phase_included, weight_included=metric.assembly_weight_included,
-            prefactor_included=metric.assembly_prefactor_included, fourier_included=metric.assembly_fourier_included, integrals_included=metric.assembly_integrals_included, representation_included=metric.assembly_representation_included,
             perturbation_bound=metric.assembly_perturbation_bound, certificate_identity=metric.assembly_certificate_identity,
-            qualification='lower-triangle-metric-rank-under-sr-integral-phase-lattice-weight-auxiliary-fourier-and-pure-transform-assembly-error',
-            excludes=['coupling-evaluation', 'basis-data-generation',
+            qualification='lower-triangle-metric-rank-under-sr-phase-reciprocal-weight-and-stored-operand-assembly-error',
+            excludes=['primitive-integral-and-transform-arithmetic', 'fourier-and-coupling-phase-and-reciprocal-prefactor-evaluation',
                       'momentum-and-translation-generation', 'source-domains-and-screening', 'retained-space-rotation', 'inverse-response', 'total-energy'])
         row['assembly_response'] = {name: getattr(metric.assembly_response, name) for name in (
             'qualified', 'dimension', 'rank', 'perturbation_bound', 'frobenius_perturbation_bound',
             'retained_lower', 'gap_lower', 'divided_difference_bound', 'projector_error_bound',
             'inverse_error_bound', 'factor_inverse_error_bound')}
         row['assembly_response'].update(
-            qualification='finite-retained-projector-and-inverse-response-to-sr-integral-phase-lattice-weight-auxiliary-fourier-and-pure-transform-metric-assembly',
-            excludes=['coupling-basis-data-and-vector-generation', 'source-domains-and-screening',
+            qualification='finite-retained-projector-and-inverse-response-to-sr-phase-reciprocal-weight-and-stored-operand-metric-assembly',
+            excludes=['primitive-fourier-coupling-phase-and-reciprocal-prefactor-evaluation', 'source-domains-and-screening',
                       'coupling-perturbations', 'fock-and-energy-propagation', 'total-relaxed-energy'])
         row['inverse_certificate'] = _periodic_metric_inverse(metric.inverse_certificate)
     fitting['controls'] = {name: getattr(options.fitting, name) for name in (
@@ -1314,7 +1313,7 @@ def periodic_ks_provenance(result, mesh, options, python_bytes):
     if fitted:
         numerics.extend(('manta_periodic_ri_fock', 'manta_hermitian_spectrum', 'manta_hermitian_inverse'))
         if options.fitting.metric_assembly_rank:
-            numerics.extend(('manta_bloch_phase_enclosure', 'manta_gdf_weight_enclosure', 'manta_auxiliary_fourier_enclosure', 'manta_metric_integral_enclosure', 'manta_representation_enclosure'))
+            numerics.extend(('manta_bloch_phase_enclosure', 'manta_gdf_weight_enclosure'))
         if receipt.fitting_info is not None and receipt.fitting_info.fitting_bound is not None:
             numerics.append('manta_periodic_ri_fitting_accuracy')
             if receipt.fitting_info.fitting_bound.metric_action_requested:
@@ -1585,7 +1584,7 @@ def _exchange_fitting_evidence(r, plan, response, scale, targets):
     evidence['metric_assembly'] = {name: getattr(r, 'metric_assembly_' + name) for name in (
         'requested', 'qualified', 'matrix_bound', 'energy_bound', 'identity', 'channels', 'error_bounds')}
     evidence['metric_assembly']['scope'] = 'conditional metric-source response; fixed stored coupling; raw physical K component; unweighted spin-density family'
-    evidence['metric_assembly']['excludes'] = ['coupling evaluation and basis/vector data generation', 'coupling construction',
+    evidence['metric_assembly']['excludes'] = ['primitive/Fourier/coupling-phase/reciprocal-prefactor evaluation', 'coupling construction',
         'metric domain/screening perturbations', 'stored factor error', 'executed K/Fock/energy arithmetic',
         'BvK/source correction', 'total relaxed energy']
     evidence['response_roundoff_bound'] = response.fitted_exchange_roundoff_bound
@@ -1609,7 +1608,7 @@ def _periodic_ri_hf_provenance(result, mesh, options, python_bytes, method):
     evidence['citation_methods'][0] = f'manta_periodic_ri_{method}'
     evidence['citation_numerics'] = ['manta_periodic_ri_fock', 'manta_hermitian_spectrum', 'manta_hermitian_inverse']
     if options.fitting.metric_assembly_rank:
-        evidence['citation_numerics'].extend(('manta_bloch_phase_enclosure', 'manta_gdf_weight_enclosure', 'manta_auxiliary_fourier_enclosure', 'manta_metric_integral_enclosure', 'manta_representation_enclosure'))
+        evidence['citation_numerics'].extend(('manta_bloch_phase_enclosure', 'manta_gdf_weight_enclosure'))
     if result.receipt.assembly_roundoff.evaluated:
         evidence['citation_numerics'].append('manta_periodic_assembly_roundoff')
         if result.receipt.assembly_roundoff.retained_coulomb_included:

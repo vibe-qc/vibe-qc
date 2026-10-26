@@ -7,11 +7,12 @@ JCTC 15, 1652 (2019), doi:10.1021/acs.jctc.8b01176, using the charge scaling
 of Caldeweyher et al., JCP 150, 154122 (2019), doi:10.1063/1.5090222.
 
 These are fixed-geometry operands, not a self-consistent calculation. The
-builder accepts pinned published references and covalent CN derivatives,
-or explicit native references and EEQ coordination numbers for controls. Neither an EEQ charge solve nor a
+builder currently consumes the independently generated native references
+and native EEQ coordination numbers. Neither an EEQ charge solve nor a
 charge-dependent ATM term belongs in this charge functional. Its native
 snapshot supplies both the SCC potential and matched geometry derivatives.
-The public molecular model supplies published reference/CN operands.
+Published reference conventions and the high-level model/output integration
+remain separate work; the public GFN2 model does not select this module yet.
 """
 
 from __future__ import annotations
@@ -145,8 +146,8 @@ class D4ChargeFunctional:
         return energy, potential, gradient
 
 
-def build_d4_charge_functional(mol, reference_data, damping_parameters, *, coordination=None):
-    """Build SCC operands with explicit reference and coordination conventions.
+def build_d4_charge_functional(mol, reference_data, damping_parameters):
+    """Build internal SCC operands with native reference/CN conventions.
 
     No reference data are fetched or generated here. Unsupported elements
     and malformed coefficients raise instead of silently dropping dispersion.
@@ -163,19 +164,13 @@ def build_d4_charge_functional(mol, reference_data, damping_parameters, *, coord
     values = np.asarray([p.s6, p.s8, p.s9, p.a1, p.a2])
     if not np.all(np.isfinite(values)) or np.any(values < 0) or p.a2 <= 0:
         raise ValueError("D4 charge functional requires physical damping parameters")
-    if coordination is None:
-        cn = eeq_coordination_numbers(mol)
-        cn_jacobian = np.column_stack([
-            eeq_response_gradient(mol, row, np.zeros(len(numbers))).reshape(-1)
-            for row in np.eye(len(numbers))
-        ])
-    else:
-        cn, cn_jacobian = coordination
-        cn = np.asarray(cn, dtype=float)
-        cn_jacobian = np.asarray(cn_jacobian, dtype=float)
-        if (cn.shape != (len(numbers),) or cn_jacobian.shape != (3*len(numbers), len(numbers))
-                or not np.all(np.isfinite(cn)) or not np.all(np.isfinite(cn_jacobian))):
-            raise ValueError("D4 coordination operands must be finite and geometry-sized")
+    cn = eeq_coordination_numbers(mol)
+    # Unit CN sensitivities with zero charge sensitivity isolate the exact
+    # native CN Jacobian. Built once per geometry, outside SCC iterations.
+    cn_jacobian = np.column_stack([
+        eeq_response_gradient(mol, row, np.zeros(len(numbers))).reshape(-1)
+        for row in np.eye(len(numbers))
+    ])
     owners, shifted_q, effective, hardness, weights, offsets = [], [], [], [], [], [0]
     cn_derivatives = []
     for a, z in enumerate(numbers):

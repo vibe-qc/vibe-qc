@@ -857,32 +857,6 @@ XCTorusPlan xc_torus_plan(XCTorusContext* ctx,
     return plan;
 }
 
-// The density and potential screens are independent: P(g) may suppress a
-// density term whose derivative is still needed. Only identical retained
-// index lists may share the immutable rectangle cover. Keep the two-list
-// fallback, including its ordering and signed-torus representatives.
-struct XCTorusPlans {
-    XCTorusPlan density, separate_potential;
-    bool shared = false;
-    const XCTorusPlan& potential() const {
-        return shared ? density : separate_potential;
-    }
-};
-
-XCTorusPlans xc_torus_plans(XCTorusContext* ctx,
-                            const std::vector<BraKetPair>& pairs,
-                            const std::vector<int>& density_live,
-                            const std::vector<int>& potential_live,
-                            const std::vector<ScreenedImageAO>* tab,
-                            int nbf) {
-    XCTorusPlans out;
-    out.shared = density_live == potential_live;
-    out.density = xc_torus_plan(ctx, pairs, density_live, tab, nbf);
-    if (!out.shared)
-        out.separate_potential = xc_torus_plan(ctx, pairs, potential_live, tab, nbf);
-    return out;
-}
-
 struct XCTorusAOView {
     const Eigen::MatrixXd& chi;
     const std::array<Eigen::MatrixXd, 3>& grad;
@@ -1588,9 +1562,8 @@ static PeriodicXCContribution build_xc_periodic_impl(const BasisSet& basis,
             live_pair_indices(pairs, tab, screen, &p_max);
         const std::vector<int> live_v =
             live_pair_indices(pairs, tab, screen, nullptr);
-        const auto plans = xc_torus_plans(torus, pairs, live, live_v, &tab, nbf);
-        const auto& density_plan = plans.density;
-        const auto& potential_plan = plans.potential();
+        const auto density_plan = xc_torus_plan(torus, pairs, live, &tab, nbf);
+        const auto potential_plan = xc_torus_plan(torus, pairs, live_v, &tab, nbf);
         profile.elapsed.finish(6);
         const auto view = [&](int i) -> XCTorusAOView {
             return {tab[i].chi, tab[i].dchi, tab[i].full ? nullptr : &tab[i].bfs};
@@ -2711,9 +2684,8 @@ static PeriodicUKSXCContribution build_xc_periodic_uks_impl(
             live_pair_indices(pairs, tab, screen, &p_max);
         const std::vector<int> live_v =
             live_pair_indices(pairs, tab, screen, nullptr);
-        const auto plans = xc_torus_plans(torus, pairs, live, live_v, &tab, nbf);
-        const auto& density_plan = plans.density;
-        const auto& potential_plan = plans.potential();
+        const auto density_plan = xc_torus_plan(torus, pairs, live, &tab, nbf);
+        const auto potential_plan = xc_torus_plan(torus, pairs, live_v, &tab, nbf);
         const auto view = [&](int i) -> XCTorusAOView {
             return {tab[i].chi, tab[i].dchi, tab[i].full ? nullptr : &tab[i].bfs};
         };

@@ -50,13 +50,11 @@ exact requests. A dry run reports this selection policy without fetching.
 That command pulls the current `main` development source, rebuilds any native
 dependencies whose source changed, refreshes the Python package
 inside your `.venv/`, and prints the new banner so you can confirm
-the selected source and linked libraries are the ones you intended. A
-same-version development update may change the source SHA without changing
-the version string. Cached updates are faster than clean builds; a Libint
-recipe change can require hours, depending on the selected kernels and host.
+the version flipped. About 30 seconds wall-time on a vanilla
+`git pull` (no native-dep changes); 5-15 minutes if a vendored
+library version bumped between releases.
 
-The following historical banner illustrates the fields to inspect; your
-version, codename and linked-library versions will differ:
+After the script finishes you should see a banner like:
 
 ```
 ╔═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╗
@@ -130,10 +128,9 @@ adopted. Ordinary in-place updates do not claim ownership of shared venvs.
 `--clean` is the nuclear option: combines `--rebuild-native-deps`
 + `--recreate-venv`, removes native source/build/install trees, and wipes
 Python build caches. It never removes the tracked basis library.
-This can take hours and discards reusable build work. Use it only when a
-specific broken build requires a full reset, not as a routine update or a
-substitute for recording source and library versions. The default update
-already checks dependency drift and rebuilds affected libraries.
+Takes 15-40 min on a clean run but is guaranteed reproducible,
+use after a known-bad build state, before publishing benchmark
+numbers, or when bisecting a regression.
 
 `--dry-run` previews everything without touching anything: the
 target commit, build-stamp drift against the currently-checked-out
@@ -145,11 +142,12 @@ fetching or rebuilding anything and directs you to `install.sh`; it never
 reports a partial update as success. For environment-only lifecycle work, use
 `reinstall.sh` or `uninstall.sh`.
 
-For existing separate release and development installations, run
-`update.sh --release` in the release checkout and `update.sh --dev` in the
-development checkout. Follow the
-[existing-installation checklist](#updating-an-existing-development-or-release-installation)
-for each one.
+If you keep two checkouts side-by-side (one for production runs,
+one for dev), use `update.sh` (or `--release`) inside the release
+tree and `update.sh --dev` inside the dev tree. The lighter-weight
+zsh [`vibe-update`](#maintaining-dev--release--experimental-side-by-side)
+helper later in this page knows about both trees and refreshes them
+in one shot.
 
 `-h` / `--help` prints the same option list inline.
 
@@ -220,21 +218,37 @@ incident and the recovery procedures for related failure modes
 The managed updater also holds cross-platform checkout and environment locks,
 checks ownership and build provenance, targets only drifted dependencies,
 verifies the installed extension, and rolls back a replaced environment on
-failure. A normal update proceeds through these stages:
+failure. The commands below are only a diagnostic outline for understanding an
+update on an origin that publishes a `release` branch; they are not a safe
+drop-in equivalent for normal maintenance. If the origin publishes only
+version tags, use the managed updater to select its newest stable tag, or
+request a specific published tag with `--branch vX.Y.Z`. A selected tag
+leaves a detached HEAD and is not pulled as a branch:
 
-| Stage | What to inspect if it fails |
-|---|---|
-| Preflight and ownership | Selected checkout, venv and ownership marker; preserve another owner's environment |
-| Source selection | Requested ref and the refs actually advertised by the selected origin |
-| Dependency refresh | Recipe drift, artifact checks and the named dependency's build log |
-| Editable installation | Compiler diagnostics and the Python interpreter used for the build |
-| Runtime verification | Loaded extension, dependency identity and final banner |
+```sh
+# 1. Refuse if working tree is dirty (silently stashing user work
+#    is worse than failing loud)
+git diff --quiet && git diff --cached --quiet || \
+    { echo "uncommitted changes -- commit or stash"; exit 1; }
 
-Use `--dry-run` to preview the requested operation and `doctor.sh` to inspect
-local health. Diagnose the first failed stage before requesting a full clean
-rebuild. Do not delete lock files or retained build state to bypass a refusal.
-The updater's verification proves installation consistency; method acceptance
-still needs the appropriate numerical comparison.
+# 2. Branch-only example: this origin must publish a release branch
+git fetch origin --tags
+git checkout release
+git pull --ff-only origin release        # only on branches; tags don't pull
+
+# 3. Rebuild any native deps whose source changed
+./scripts/setup_native_deps.sh
+
+# 4. Refresh the Python package (rebuilds the C++ extension)
+.venv/bin/pip install -e '.[test]'
+
+# 5. Confirm the new banner
+.venv/bin/python -c "import vibeqc; vibeqc.print_banner()"
+```
+
+Step 3 is the heavy one if anything changed. The managed build stamps and
+artifact checks skip current dependencies and rebuild only drifted or damaged
+ones, so a vanilla update usually takes seconds.
 
 ## Switching between releases
 
@@ -245,7 +259,7 @@ specific tag.
 ```sh
 ./scripts/update.sh --ref <existing-tag>
 # ... run the calculation, compare ...
-./scripts/update.sh --release             # back to the published release
+./scripts/update.sh --ref release         # back to current
 ```
 
 The on-disk state is fully consistent at each step. Outputs from
@@ -267,7 +281,7 @@ the next regression-test pass).
 To go back to the published release:
 
 ```sh
-./scripts/update.sh --release
+./scripts/update.sh --ref release
 ```
 
 ## Common issues
@@ -505,82 +519,196 @@ the environment with rollback.
 
 ### Tests fail after update
 
-Preserve the first failure and check the loaded runtime before changing
-settings. Reproduce the affected test rather than launching the entire
-scientific inventory:
-
 ```sh
-.venv/bin/python -m pytest tests/test_<affected_area>.py -q
+.venv/bin/python -m pytest tests/
 ```
 
-Report the exact command, banner, source commit and failure output using the
-[troubleshooting checklist](troubleshooting.md#prepare-a-reproducible-report).
-Do not use the affected method for production conclusions until the regression
-is understood. A failure in one operation does not invalidate unrelated
-measured results or require stopping healthy runtimes.
+If a few tests fail right after a major update, that's a real signal
+worth investigating, please open an issue with the banner output and
+the pytest tail. **Don't** ignore the failures and run "real"
+calculations on the build until the regression is understood.
 
-## Updating an existing development or release installation
+## Shell aliases for daily workflow
 
-Use the lifecycle updater for each existing checkout, rather than combining
-`git pull` and `pip install` in a shell function. The updater handles native
-recipe drift, environment ownership, build locks and verification together.
-A successful Python reinstall alone does not establish that native libraries
-match the source.
-
-From the checkout you intend to update:
+If you activate the venv and run updates many times a day, a few zsh
+aliases save typing. Adapt the paths to your install.
 
 ```sh
-git status --short
-./scripts/doctor.sh
-./scripts/update.sh --release --dry-run
-./scripts/update.sh --release
+# --- vibeqc helpers (~/.zshrc) ---
+alias vibe-up='cd /path/to/vibe-qc && source .venv/bin/activate'
+alias vibe-up-experimental='cd /path/to/vibe-qc-experimental && source .venv/bin/activate'
+alias vibe-down='deactivate 2>/dev/null; cd ~'
 ```
 
-Use `--dev` instead of `--release` in both commands for development main.
-The dry run previews policy and local state without fetching; it does not
-prove that the remote ref is available or that a later build will succeed.
-Resolve local changes with their owner before updating. Do not discard or
-stash another session's work to make the updater proceed.
+`vibe-up` jumps to the repo and activates the venv; `vibe-down`
+deactivates and returns home. `vibe-up-experimental` activates a
+separate venv tracking an experimental feature branch (e.g.
+`feature/v0.7-pyscf-pbc-parity` while the periodic-SCF bug-fix work
+is in flight), see the next section for what an experimental tree
+is for.
 
-For an existing installation using a non-default environment, pass its
-`--venv` value consistently. Keep each editable installation attached to the
-source checkout and native dependencies it was built against. Companion
-products update independently; see [toolset lifecycle](toolset_lifecycle.md).
+### Maintaining dev + release (+ experimental) side-by-side
 
-After the updater succeeds, inspect the banner and run a small known input
-from the [quickstart](quickstart.md). Record the loaded runtime identity when
-comparing old and new results. An unchanged package version does not prove
-that a development build is unchanged.
+If you keep two checkouts, one tracking `main` for development, one
+tracking `release` for production runs, the function below pulls
+both, reinstalls the Python package, and verifies each tree by
+importing the freshly-installed package.
+
+The function also knows about an optional **`experimental`** tree:
+a third checkout tracking a feature branch you want to keep current
+without disrupting your day-to-day dev / release setup. Typical
+uses: previewing in-flight bug-fix branches (e.g. the
+`feature/v0.7-pyscf-pbc-parity` periodic-SCF work), evaluating a
+breaking-change branch before it merges to `main`, or running
+side-by-side comparisons against the dev tree on the same data.
+The experimental tree is **opt-in**, if `/path/to/vibe-qc-experimental`
+doesn't exist, `vibe-update` silently skips it.
+
+```sh
+vibe-update() {
+  local target="${1:-all}"
+  local errors=0
+  local repo  # NOT 'path' -- see footgun note below
+
+  case "$target" in
+    dev|release|experimental|all|both) ;;
+    *) echo "vibe-update: unknown target '$target' -- try dev / release / experimental / all"
+       return 2 ;;
+  esac
+
+  local GIT
+  for candidate in /opt/homebrew/bin/git /usr/local/bin/git /usr/bin/git; do
+    [[ -x "$candidate" ]] && { GIT="$candidate"; break; }
+  done
+  [[ -n "$GIT" ]] || { echo "vibe-update: no git found"; return 1; }
+
+  local PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+  export PATH  # zsh's `local PATH` does not auto-export to subprocesses
+
+  for tree in dev release experimental; do
+    # Selection rules:
+    #   target=all          → every configured tree
+    #   target=both         → dev + release (back-compat alias for the
+    #                         pre-experimental default)
+    #   target=<tree-name>  → just that one
+    case "$target" in
+      all|"$tree") ;;
+      both) [[ "$tree" == experimental ]] && continue ;;
+      *) continue ;;
+    esac
+
+    case "$tree" in
+      dev)          repo=/path/to/vibe-qc-dev ;;
+      release)      repo=/path/to/vibe-qc-release ;;
+      experimental) repo=/path/to/vibe-qc-experimental ;;
+    esac
+
+    # Experimental is opt-in: if the directory doesn't exist and the
+    # user didn't ask for it explicitly, skip silently rather than
+    # erroring out -- most users won't have an experimental checkout.
+    if [[ ! -d "$repo" ]]; then
+      [[ "$tree" == experimental && "$target" != experimental ]] && continue
+      echo; echo "=== $tree ($repo) ==="
+      echo "  ✗ no checkout at $repo -- skipping"; ((errors++))
+      continue
+    fi
+
+    echo; echo "=== Updating $tree ($repo) ==="
+    [[ -d "$repo/.venv" ]] || { echo "  ✗ no .venv at $repo -- skipping"; ((errors++)); continue; }
+    pushd "$repo" >/dev/null || { ((errors++)); continue; }
+
+    "$GIT" fetch origin && "$GIT" pull --ff-only \
+      || { echo "  ✗ pull failed"; ((errors++)); popd >/dev/null; continue; }
+
+    # Keep pip itself current -- without this, every install prints a
+    # "[notice] A new release of pip is available" pestering the user
+    # with the `python -m pip install --upgrade pip` command they could
+    # run to silence it. Doing it here suppresses the notice and keeps
+    # the venv aligned with whatever pip version `pip install -e` wants.
+    "$repo/.venv/bin/python" -m pip install --quiet --upgrade pip \
+      || { echo "  ✗ pip self-upgrade failed"; ((errors++)); popd >/dev/null; continue; }
+
+    "$repo/.venv/bin/pip" install -e "$repo" --no-deps --quiet \
+      || { echo "  ✗ pip install failed"; ((errors++)); popd >/dev/null; continue; }
+
+    "$repo/.venv/bin/python" -c \
+      "import vibeqc; print(f'  ✓ vibe-qc {vibeqc.__version__} from {vibeqc.__file__}')"
+
+    popd >/dev/null
+  done
+
+  echo
+  (( errors > 0 )) && { echo "vibe-update: $errors tree(s) failed"; return 1; }
+  echo "vibe-update: done"
+}
+```
+
+Usage:
+- `vibe-update`, every configured tree (dev + release, plus
+  experimental if you've checked one out).
+- `vibe-update dev` / `vibe-update release` / `vibe-update experimental`
+  - that one tree only.
+- `vibe-update both`, dev + release only, skipping experimental.
+  Back-compat alias from the pre-experimental version of this
+  function.
+
+#### Setting up the experimental tree
+
+```sh
+git clone https://github.com/vibe-qc/vibe-qc.git /path/to/vibe-qc-experimental
+cd /path/to/vibe-qc-experimental
+git checkout feature/v0.7-pyscf-pbc-parity     # or whichever branch
+./scripts/setup_native_deps.sh                  # if it differs from your dev tree
+python3 -m venv .venv
+.venv/bin/pip install -e '.[test]'
+```
+
+After that, `vibe-update` (no args) will keep all three trees current
+on every invocation; `vibe-up-experimental` activates its venv when
+you want to actually use it.
+
+This is a lighter-weight cousin of `./scripts/update.sh --dev`, it skips
+the native-deps rebuild and the banner print, so it's only safe when
+no vendored library version bumped between pulls. For release-day
+updates or after a known native-dep bump, prefer `update.sh`.
+
+### Two zsh footguns baked into the function above
+
+Both bit during the original write-up; documenting them here so the
+next reader doesn't rediscover them the hard way.
+
+**Don't name the variable `path`.** zsh ties the lowercase `path`
+array to the uppercase `PATH` scalar via `typeset -T`. Assigning
+`path=/some/dir` silently overwrites `$PATH`, after which git can no
+longer find `ssh` and the pull fails with
+`error: cannot run ssh: No such file or directory`. The function uses
+`repo` for this reason.
+
+**`local PATH=...` needs an explicit `export PATH`.** Inside a zsh
+function, `local` declares but does not re-export the variable to
+forked subprocesses. Without `export`, the localized PATH stays
+inside the shell and git's child processes (in particular `ssh`)
+don't see it. Same symptom as the `path`/`PATH` tie above, different
+cause.
+
+Bash users can adapt the same function, `local` semantics differ
+slightly, but the `path`/`PATH` collision is a zsh-only issue.
 
 ## Long-running calculations across an update
 
-Keep the checkout, environment and native libraries used by a running
-calculation unchanged until it finishes. A loaded extension is not a complete
-snapshot: later Python imports, data reads and subprocesses can still read
-files from the installation. An in-place update can mix source or library
-versions within one workflow.
+If you have a long calculation in flight and want to update vibe-qc
+without disturbing it, **don't**: in-flight `python` processes hold
+references to the loaded `_vibeqc_core.so`, so an update mid-flight
+doesn't break the running job, but starting a new calculation in
+the same shell will pick up the new code immediately. Cleanest is:
 
-1. Identify the environment and checkout used by the active job, including
-   queued jobs that will start from that path.
-2. Let those jobs finish before updating that installation, or use an already
-   separate installation for new work while leaving the active one intact.
-3. After updating, verify the interpreter, package path and banner in a new
-   Python process before submitting subsequent jobs.
+1. Wait for the running job to finish (or pause it via `Ctrl-Z` and
+   `bg` if you must).
+2. Update.
+3. Start subsequent jobs.
 
-`Ctrl-Z`, `bg`, `nohup` and `tmux` change process or terminal handling; they do
-not isolate an installation. A suspended job can resume into changed files.
-A second venv in the same editable checkout also shares the source and native
-dependency trees. Restart notebooks and long-lived Python workers after an
-update instead of relying on modules already imported into them.
-
-For a queue-managed runtime, use the queue's supported update and activation
-workflow and preserve runtime generations still serving jobs. Use a healthy
-available runtime while a replacement builds; only cases requiring a missing
-fix need to wait for it.
-
-The updater's lifecycle/build locks coordinate supported installation tools;
-they are not proof that an arbitrary manually launched calculation has stopped.
-For background-run patterns, see the [running guide](running.md).
+For background-run patterns (`tmux` + `tee`), see the
+[running guide](running.md).
 
 ## Read-only health check
 
@@ -601,15 +729,8 @@ It reports on:
   `pyvenv.cfg` / runtime-python mismatch;
 - the banner (which library versions are actually linked).
 
-The doctor builds and installs nothing and does not fetch or switch Git
-refs. It reads local Git state, so an "in sync with origin/main" message
-compares against the last fetched remote-tracking ref; it does not establish
-that no upstream update exists. Select a non-default environment explicitly
-with `./scripts/doctor.sh --venv .venv-name`.
-
-Exit code is 0 if every check passes, 1 if any warning is emitted. Read the
-reported warning before choosing a repair; a dirty working tree alone can
-produce a nonzero result. The exit status is scriptable:
+No builds. No installs. No git operations. Exit code is 0 if every
+check passes, 1 if anything emitted a warning, so it's scriptable:
 
 ```sh
 if ./scripts/doctor.sh >/dev/null; then

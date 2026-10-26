@@ -98,7 +98,6 @@ struct UksRecoveryDiagnosticContext {
 };
 thread_local UksRecoveryDiagnosticContext* recovery_diagnostic = nullptr;
 thread_local detail::UKSOperatorCapture* operator_capture = nullptr;
-thread_local detail::UKSDIISCapture* diis_capture = nullptr;
 
 Eigen::MatrixXd build_spin_density(const Eigen::MatrixXd& C, int nocc) {
     if (nocc <= 0) return Eigen::MatrixXd::Zero(C.rows(), C.rows());
@@ -1339,10 +1338,6 @@ UKSResult run_uks_scf_once(const BasisSet& basis,
     // histories can stall the SCF tail. The adaptive depth policy
     // (R_CDIIS / AD_CDIIS) is baked in via make_diis.
     DIIS diis = make_diis(opts);
-    if (diis_capture) {
-        diis_capture->overlap = S;
-        diis_capture->orthogonalizer = X;
-    }
     EDIIS ediis(opts.diis_subspace_size);
     ADIIS adiis(opts.diis_subspace_size);
     KDIIS kdiis(opts.diis_subspace_size);
@@ -1613,18 +1608,6 @@ UKSResult run_uks_scf_once(const BasisSet& basis,
                 {"xc_alpha", xc.V_alpha}, {"xc_beta", xc.V_beta},
                 {"physical_fock_alpha", F_alpha}, {"physical_fock_beta", F_beta}};
         }
-        detail::UKSDIISFrame* captured = nullptr;
-        if (diis_capture && iter >= diis_capture->first && iter <= diis_capture->last) {
-            diis_capture->frames.emplace_back();
-            captured = &diis_capture->frames.back();
-            captured->state.iteration = iter;
-            captured->state.values = {{"energy", E_total}, {"gradient", grad_norm},
-                {"delta_energy", iter == 1 ? 0.0 : dE}};
-            captured->state.matrices = {{"density_alpha", Da_used}, {"density_beta", Db_used},
-                {"physical_fock_alpha", F_alpha}, {"physical_fock_beta", F_beta},
-                {"residual_alpha", err_a}, {"residual_beta", err_b}};
-        }
-        diis.set_capture(captured ? &captured->diis : nullptr);
         detail::UKSRecoveryFrame frame;
         if (diagnostic) {
             frame.iteration = iter;
@@ -1854,11 +1837,6 @@ UKSResult run_uks_scf_once(const BasisSet& basis,
             have_prev_fock = true;
         }
 
-        if (captured) {
-            captured->state.values["accelerator_step"] = accelerator_step_this_iter;
-            captured->state.matrices["search_fock_alpha"] = F_alpha;
-            captured->state.matrices["search_fock_beta"] = F_beta;
-        }
         result.scf_trace.push_back(SCFIteration{
             iter, E_total, (iter == 1) ? 0.0 : dE, grad_norm, diis_sub,
         });
@@ -3028,25 +3006,6 @@ UKSResult run_uks_with_operator_capture(const Molecule& mol, const BasisSet& bas
     struct Scope {
         explicit Scope(UKSOperatorCapture& r) { operator_capture = &r; }
         ~Scope() { operator_capture = nullptr; }
-    } scope(report);
-    return run_uks(mol, basis, opts);
-}
-UKSResult run_uks_with_diis_capture(const Molecule& mol, const BasisSet& basis,
-    const UKSOptions& opts, UKSDIISCapture& report) {
-    if (diis_capture || operator_capture || recovery_diagnostic || opts.stability_check
-        || basis.nbasis() > 64 || opts.diis_subspace_size > 16 || !opts.use_diis
-        || (opts.scf_accelerator != SCFAccelerator::DIIS
-            && opts.scf_accelerator != SCFAccelerator::R_CDIIS
-            && opts.scf_accelerator != SCFAccelerator::AD_CDIIS)
-        || report.first < 1 || report.last < report.first
-        || report.last - report.first >= 32 || report.last > opts.max_iter) {
-        throw std::invalid_argument("Invalid bounded UKS DIIS capture request");
-    }
-    report.frames.clear();
-    report.frames.reserve(report.last - report.first + 1);
-    struct Scope {
-        explicit Scope(UKSDIISCapture& r) { diis_capture = &r; }
-        ~Scope() { diis_capture = nullptr; }
     } scope(report);
     return run_uks(mol, basis, opts);
 }

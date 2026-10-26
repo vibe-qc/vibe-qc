@@ -4827,7 +4827,7 @@ def _classic_source_descriptor(system, orbital, auxiliary, q, *, ke_cutoff,
                                tail_ke_cutoff, cutoff, linear_dep_thr,
                                fit_screen_threshold, fit_pair_list, omega_screen,
                                canonical_auxiliary_basis, policy, bounded_mesh=False,
-                               physical_kernel=None, metric_precision_digits=0):
+                               physical_kernel=None):
     return _fit_record_json(dict(
         version="classic-ft-source-v1",
         source_signature=_range_separated_gdf_source_signature(system, orbital, auxiliary),
@@ -4838,9 +4838,6 @@ def _classic_source_descriptor(system, orbital, auxiliary, q, *, ke_cutoff,
         fit_pair_list=None if fit_pair_list is None else np.asarray(fit_pair_list),
         omega_screen=float(omega_screen), canonical_auxiliary_basis=bool(canonical_auxiliary_basis),
         support_policy=policy, reciprocal_enumeration="bounded-index-order" if bounded_mesh else "legacy-norm-order", q_zero="omit p squared <= 1e-12", normalization="libint AO, 4*pi/(volume*p squared)",
-        **({} if not metric_precision_digits else dict(
-            spectral_construction='mpmath-eighe-two-precision-v1',
-            metric_precision_digits=int(metric_precision_digits))),
         **({} if physical_kernel is None else dict(physical_kernel=physical_kernel,
             zero_mode_restoration='external exact overlap; erfc positive pi/(V*omega_screen^2), erf negative counterpart plus full Madelung'))),
         8 * 1024**2)
@@ -4866,9 +4863,7 @@ def _record_classic_support(callback, cap, descriptor, system, ao_basis, aux_bas
                             if json.loads(descriptor).get('physical_kernel') == 'erf' else
                             "4*pi/(V*p^2), multiplied by -expm1(-p^2/(4*omega_screen^2)) only when omega_screen > 0"),
                     zero_mode="omit p^2 <= 1e-12; no finite erfc zero-mode restoration inside this builder"),
-        rank=int(np.count_nonzero(metric.keep)),
-        **({} if getattr(metric, 'spectral_receipt', None) is None else dict(
-            spectral_construction=json.loads(metric.spectral_receipt)))), cap))
+        rank=int(np.count_nonzero(metric.keep))), cap))
 
 
 class _RsgdfQMetricCacheEntry(NamedTuple):
@@ -4879,8 +4874,6 @@ class _RsgdfQMetricCacheEntry(NamedTuple):
     keep: np.ndarray
     pair_keep_ao: Optional[np.ndarray]
     source_descriptor: str = ""
-    inverse_sqrt: Optional[np.ndarray] = None
-    spectral_receipt: Optional[str] = None
 
 
 def build_lpq_bloch_native_fft(
@@ -4901,7 +4894,6 @@ def build_lpq_bloch_native_fft(
     omega_screen: float = 0.0,
     progress: Optional[Any] = None,
     _q_metric_cache: Optional[dict] = None,
-    _canonical_three_center_transform: Optional[Any] = None,
     support_policy: Optional[str] = None,
     memory_byte_cap: Optional[int] = None,
     reciprocal_candidate_cap: int = 2_000_000,
@@ -5398,15 +5390,6 @@ def build_lpq_bloch_native_fft(
     U = q_metric.eigvecs
     keep = q_metric.keep
     n_kept = int(keep.sum())
-    # Pair symmetry must act before whitening: a numerically ill-conditioned
-    # inverse square root need not commute accurately with auxiliary rotations.
-    if _canonical_three_center_transform is not None:
-        if not canonical_auxiliary_basis:
-            raise ValueError("three-center reconstruction requires the canonical auxiliary frame")
-        reconstructed = np.asarray(_canonical_three_center_transform(T))
-        if reconstructed.shape != T.shape:
-            raise ValueError("three-center reconstruction changed the tensor shape")
-        T = reconstructed
     T_flat = T.reshape(T.shape[0], -1)
     if canonical_auxiliary_basis:
         kept_vectors = U[:, keep]
@@ -6108,7 +6091,6 @@ def build_lpq_bloch_native_fft_shared_q(
     lat_opts: Optional[LatticeSumOptions] = None,
     linear_dep_thr: float = 1e-9,
     canonical_auxiliary_basis: bool = False,
-    metric_precision_digits: int = 0,
     fit_screen_threshold: float = 0.0,
     fit_pair_list: Optional[np.ndarray] = None,
     omega_screen: float = 0.0,
@@ -6190,16 +6172,8 @@ def build_lpq_bloch_native_fft_shared_q(
     # the single-pair builder's `k_ket = k_bra + q`).
     k_kets = k_bras + q[None, :]
 
-    precision_reserve = 0
-    if metric_precision_digits:
-        from ._classic_spectral import spectral_workspace_bytes
-        if not canonical_auxiliary_basis:
-            raise ValueError('precision-controlled classic factors require canonical auxiliary coordinates')
-        precision_reserve = spectral_workspace_bytes(int(aux_basis.nbasis), metric_precision_digits)
-        if memory_byte_cap is None or memory_byte_cap <= precision_reserve:
-            raise MemoryError('precision-controlled classic fitting requires a sufficient explicit budget')
     mesh_byte_cap = _classic_build_reservation(
-        ao_basis, aux_basis, n_batch, max(int(tail_chunk_g) // max(n_batch, 1), 1), None if memory_byte_cap is None else memory_byte_cap-precision_reserve, image_candidate_cap)
+        ao_basis, aux_basis, n_batch, max(int(tail_chunk_g) // max(n_batch, 1), 1), memory_byte_cap, image_candidate_cap)
     if support_policy is not None or _support_recorder is not None or memory_byte_cap is not None:
         R_g = _classic_pair_cells(system, ao_basis, lat_opts.cutoff_bohr, policy, image_candidate_cap)
     else:
@@ -6233,8 +6207,7 @@ def build_lpq_bloch_native_fft_shared_q(
         cutoff=lat_opts.cutoff_bohr, linear_dep_thr=linear_dep_thr,
         fit_screen_threshold=fit_screen_threshold, fit_pair_list=fit_pair_list,
         omega_screen=omega_screen, canonical_auxiliary_basis=canonical_auxiliary_basis,
-        policy=policy, bounded_mesh=memory_byte_cap is not None, physical_kernel=kernel,
-        metric_precision_digits=metric_precision_digits)
+        policy=policy, bounded_mesh=memory_byte_cap is not None, physical_kernel=kernel)
     Gq_tail = np.empty((0, 3), dtype=float)
     pair_ft_options = ({"pair_cutoff_bohr": float(lat_opts.cutoff_bohr)}
                        if policy == "physical_pairs" else {})
@@ -6440,15 +6413,7 @@ def build_lpq_bloch_native_fft_shared_q(
             M = np.real(M)
         M = 0.5 * (M + M.conj().T)
 
-        inverse_sqrt, spectral_receipt = None, None
-        if metric_precision_digits:
-            from ._classic_spectral import retained_spectral_construction
-            eigvals, U, inverse_sqrt, receipt = retained_spectral_construction(
-                M, linear_dep_thr, digits=metric_precision_digits,
-                memory_byte_cap=precision_reserve)
-            spectral_receipt = json.dumps(receipt, sort_keys=True)
-        else:
-            eigvals, U = np.linalg.eigh(M)
+        eigvals, U = np.linalg.eigh(M)
         max_eig = float(eigvals[-1]) if len(eigvals) > 0 else 0.0
         if max_eig <= 0:
             raise RuntimeError(
@@ -6469,8 +6434,6 @@ def build_lpq_bloch_native_fft_shared_q(
             keep=_immutable_fit_array(keep),
             pair_keep_ao=None if pair_keep_ao is None else _immutable_fit_array(pair_keep_ao),
             source_descriptor=source_descriptor,
-            inverse_sqrt=None if inverse_sqrt is None else _immutable_fit_array(inverse_sqrt),
-            spectral_receipt=spectral_receipt,
         )
         if _q_metric_cache is not None:
             _q_metric_cache[q_key] = q_metric
@@ -6487,11 +6450,9 @@ def build_lpq_bloch_native_fft_shared_q(
         T_flat = T.reshape(T.shape[0], -1)
         if canonical_auxiliary_basis:
             kept_vectors = U[:, keep]
-            inverse_sqrt = q_metric.inverse_sqrt
-            if inverse_sqrt is None:
-                inverse_sqrt = (
-                    kept_vectors / np.sqrt(eigvals[keep])[None, :]
-                ) @ kept_vectors.conj().T
+            inverse_sqrt = (
+                kept_vectors / np.sqrt(eigvals[keep])[None, :]
+            ) @ kept_vectors.conj().T
             Lpq = inverse_sqrt @ T_flat
             n_factor = T.shape[0]
         else:

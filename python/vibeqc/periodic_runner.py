@@ -7771,10 +7771,6 @@ def run_periodic_job(
     # #519 RG-6: how variant="real-gamma" holds its fitted integrals,
     # "dense" | "block" | "block-star". None keeps the dense default.
     aiccm_cderi_storage: Optional[str] = None,
-    # #519 RG-14: the torus spin sector of the two neutral producers,
-    # "legacy" | "per-cell" | an integer total multiplicity. None keeps
-    # each producer's historical convention ("legacy").
-    aiccm_spin_state: object = None,
     output: Union[str, os.PathLike] = "output",
     use_diis: bool = True,
     # Diagonalisation solver for the SCF procedure.
@@ -8143,22 +8139,6 @@ def run_periodic_job(
         not depend on the choice; the ``.system`` manifest records
         ``cderi_storage_executed``. Not combinable with ``correlation=``,
         whose treatments read the dense array.
-    aiccm_spin_state
-        With ``method="aiccm"`` and ``variant="real-gamma"`` or
-        ``"neutral-bloch"`` only (#519, RG-14): the spin sector of the
-        torus. ``None`` runs ``"legacy"``, each producer's historical
-        convention (real-Gamma pairs a doublet cell by supercell parity,
-        neutral-Bloch replicates the cell's counts at every k point), so a
-        doublet cell on a torus of more than one cell executes different
-        sectors on the two variants. ``"per-cell"`` replicates the cell's
-        ``(n_alpha, n_beta)`` with spins aligned on both variants; an
-        integer is the total torus multiplicity, which ``neutral-bloch``
-        runs only when it is uniform per cell. A total multiplicity fixes
-        ``n_alpha - n_beta`` only; it does not select an antiferromagnetic
-        or other broken-symmetry arrangement. The executed counts are
-        recorded in the ``.system`` manifest (``aiccm_spin_state``) and the
-        QVF convention record; an open-shell sector with an inferred
-        reference runs UHF/UKS.
     correlation
         With ``method="aiccm"`` only, and optional: ``None`` (default) is an
         SCF-only run. ``"mp2"``, ``"ccsd"``, ``"dlpno-mp2"`` and
@@ -8658,30 +8638,9 @@ def run_periodic_job(
                 "default) or pass the variant's own route."
             )
         jk_method = _aiccm_member
-        # #519 RG-14: the spin sector is resolved before the shell-aware
-        # reference inference, so an explicit total multiplicity above 1
-        # reaches the unrestricted reference even on a singlet cell.
-        _aiccm_spin_state = "legacy"
-        if aiccm_spin_state is not None:
-            if _aiccm_variant not in ("real-gamma", "neutral-bloch"):
-                raise ValueError(
-                    "run_periodic_job: aiccm_spin_state= selects the torus "
-                    "spin sector of the neutral producers (variant="
-                    "'real-gamma' | 'neutral-bloch'); got variant="
-                    f"{_aiccm_variant!r}. Drop the keyword there.")
-            from .periodic.ccm.spin_state import normalize_spin_state_request
-
-            # The request's form is checked now; the mesh-dependent counts
-            # are resolved on the cluster by the producer.
-            _aiccm_spin_state = normalize_spin_state_request(
-                aiccm_spin_state, who="run_periodic_job(aiccm_spin_state)")
-        _explicit_open = (
-            isinstance(_aiccm_spin_state, int) and int(_aiccm_spin_state) > 1)
         method_upper = _infer_aiccm_scf_reference(
             system, functional=functional, scf_reference=scf_reference
         )
-        if scf_reference is None and _explicit_open and method_upper in ("RHF", "RKS"):
-            method_upper = "UKS" if method_upper == "RKS" else "UHF"
         _aiccm_correlation = resolve_aiccm_correlation(correlation)
         _aiccm_cderi_storage = None
         if aiccm_cderi_storage is not None:
@@ -8834,23 +8793,20 @@ def run_periodic_job(
     else:
         _aiccm_correlation = None
         _aiccm_cderi_storage = None
-        _aiccm_spin_state = "legacy"
         if (
             variant is not None or scf_reference is not None
             or correlation is not None or aiccm_allow_vacuum_padding
-            or aiccm_cderi_storage is not None or aiccm_spin_state is not None
+            or aiccm_cderi_storage is not None
         ):
             raise ValueError(
                 "run_periodic_job: variant=, scf_reference=, correlation=, "
-                "aiccm_allow_vacuum_padding=, aiccm_cderi_storage= and "
-                "aiccm_spin_state= select "
+                "aiccm_allow_vacuum_padding= and aiccm_cderi_storage= select "
                 "an AICCM formulation and require method='aiccm'; got "
                 f"method={method!r}, variant={variant!r}, "
                 f"scf_reference={scf_reference!r}, "
                 f"correlation={correlation!r}, "
                 f"aiccm_allow_vacuum_padding={aiccm_allow_vacuum_padding!r}, "
-                f"aiccm_cderi_storage={aiccm_cderi_storage!r}, "
-                f"aiccm_spin_state={aiccm_spin_state!r}."
+                f"aiccm_cderi_storage={aiccm_cderi_storage!r}."
             )
         method_upper = method.upper()
     # --- DLPNO front door (increment B2b) --------------------------
@@ -11042,9 +10998,6 @@ def run_periodic_job(
             reject_bipole_fractional_legacy_gauge,
             reject_bipole_unsupported_ks_functional,
             validate_bipole_kmesh,
-        )
-        validate_bipole_kmesh(
-            _requested_bloch_kmesh, driver="run_periodic_job BIPOLE", system=system,
         )
 
         if method_upper in ("RKS", "UKS"):
@@ -13420,8 +13373,6 @@ def run_periodic_job(
                   f"{bool(aiccm_allow_vacuum_padding)} (IID 291 / R6)\n")
             write("    cderi storage       = "
                   f"{_aiccm_cderi_storage or 'dense'}\n")
-            write(f"    spin state          = {_aiccm_spin_state!r} "
-                  "(#519 RG-14; executed counts in the manifest)\n")
             if _aiccm_correlation is not None:
                 write(f"    correlation         = {_aiccm_correlation} "
                       "(neutral-RI, EXPERIMENTAL)\n")
@@ -13447,7 +13398,6 @@ def run_periodic_job(
                 allow_vacuum_padding=bool(aiccm_allow_vacuum_padding),
                 fit_source=("classic" if fit_source == "auto" else fit_source),
                 cderi_storage=(_aiccm_cderi_storage or "dense"),
-                spin_state=_aiccm_spin_state,
                 **(
                     {
                         "grid_options": opts.grid,
@@ -13634,8 +13584,6 @@ def run_periodic_job(
             _nb_fit_kw = {} if fit_source == "auto" else {"fit_source": fit_source}
             write("    allow_vacuum_padding = "
                   f"{bool(aiccm_allow_vacuum_padding)} (IID 291 / R6)\n")
-            write(f"    spin state          = {_aiccm_spin_state!r} "
-                  "(#519 RG-14; executed counts in the manifest)\n")
             if _aiccm_correlation is not None:
                 write(f"    correlation         = {_aiccm_correlation} "
                       "(neutral-RI on the Bloch SCF folded to real-Gamma "
@@ -13657,7 +13605,6 @@ def run_periodic_job(
                 # about the construction, not about a fit approximation.
                 symmetry=False,
                 allow_vacuum_padding=bool(aiccm_allow_vacuum_padding),
-                spin_state=_aiccm_spin_state,
                 return_lattice_density=bool(write_density or output_qvf),
                 options=opts,
                 progress=plog,
@@ -17252,15 +17199,6 @@ def run_periodic_job(
         # The whole-operator identity (#519): equal on a Theorem-1 pair.
         _manifest_run_fields["neutral_source_identity"] = (
             _nb("neutral_source_identity") or "not-recorded")
-        # The executed spin sector (#519 RG-14): what the producer ran,
-        # beside the operator identity it ran it on.
-        _manifest_run_fields["aiccm_spin_policy"] = _nb("spin_policy")
-        _nb_state = _nb("spin_state")
-        _manifest_run_fields["aiccm_spin_state"] = (
-            dict(_nb_state) if isinstance(_nb_state, dict) else "not-recorded")
-        _nb_occ = _nb("occupation")
-        _manifest_run_fields["aiccm_occupation"] = (
-            dict(_nb_occ) if isinstance(_nb_occ, dict) else "not-recorded")
         # IID 291 / R6: the opt-in and the directions that measured as
         # vacuum, read off the producer's record. A padded-regime energy
         # must never pass for a measured-3-D one.
@@ -17322,13 +17260,6 @@ def run_periodic_job(
             _rg("fit_source") or "not-recorded")
         _manifest_run_fields["neutral_source_identity"] = (
             _rg("neutral_source_identity") or "not-recorded")
-        _manifest_run_fields["aiccm_spin_policy"] = _rg("spin_policy")
-        _rg_state = _rg("spin_state")
-        _manifest_run_fields["aiccm_spin_state"] = (
-            dict(_rg_state) if isinstance(_rg_state, dict) else "not-recorded")
-        _rg_occ = _rg("occupation")
-        _manifest_run_fields["aiccm_occupation"] = (
-            dict(_rg_occ) if isinstance(_rg_occ, dict) else "not-recorded")
         # How the fitted integrals were held (#519 RG-6): one operator in
         # every storage, recorded for cost and reproducibility.
         _manifest_run_fields["cderi_storage_executed"] = (
@@ -18151,8 +18082,7 @@ def run_periodic_job(
                 )
                 flush()
                 _rg_opt = run_ccm_direct_optimize(
-                    CCMSystem(system, _rg_mesh, str(basis.name),
-                              spin_state=_aiccm_spin_state),
+                    CCMSystem(system, _rg_mesh, str(basis.name)),
                     functional=(functional
                                 if method_upper in ("RKS", "UKS") else None),
                     exxdiv=_rg_exxdiv,

@@ -16,48 +16,6 @@ from typing import Callable
 import numpy as np
 
 
-def factor_conjugation_measurements(factors, partners, *, column_tile=64):
-    """Separate fixed-gauge conjugation from complete Coulomb block fidelity.
-
-    Inputs are (auxiliary, pair-column) matrices for q and -q. The caller
-    must align conjugate AO/character columns and concatenate *all* pairs
-    sharing q; testing each pair separately misses cross-pair operators.
-    For self-inverse q, partners is the corresponding column permutation.
-
-    With Sun et al., JCP 147, 164119 (2017), Sec. II, Eqs. (13), (16)-(18),
-    the real-AO Fourier convention gives M(-q)=M(q)*, T(-q)=T(q)* and
-    L(-q)=L(q)* for L=M_ret^(-1/2) T in original auxiliary coordinates.
-    The operator is L_x^T L_y*, invariant under a common unitary auxiliary
-    rotation within each transfer. Its conjugation defect is distinct from
-    entry fidelity. Neither measurement alone certifies physical accuracy.
-
-    Every column, auxiliary component and cross-column block is included.
-    Tiling bounds the temporary Gram matrices, not the borrowed inputs.
-    No projection, alignment, rank selection, tolerance or repair is applied.
-    """
-    a, b = np.asarray(factors), np.asarray(partners)
-    if (a.ndim != 2 or a.shape != b.shape or min(a.shape) < 1
-            or not np.isfinite(a).all() or not np.isfinite(b).all()):
-        raise ValueError("finite matching (auxiliary, pair-column) matrices required")
-    if (isinstance(column_tile, (bool, np.bool_))
-            or not isinstance(column_tile, (int, np.integer)) or column_tile < 1):
-        raise ValueError("column_tile must be a positive integer")
-    dtype = np.result_type(a.dtype, b.dtype, np.complex128)
-    a, b = a.astype(dtype, copy=False), b.astype(dtype, copy=False)
-    entry, operator = 0., 0.
-    for lo in range(0, a.shape[1], column_tile):
-        x, y = a[:, lo:lo+column_tile], b[:, lo:lo+column_tile]
-        entry = max(entry, float(np.max(np.abs(x-y.conj()))))
-        for start in range(0, a.shape[1], column_tile):
-            ax, bx = a[:, start:start+column_tile], b[:, start:start+column_tile]
-            operator = max(operator, float(np.max(np.abs(
-                x.T @ ax.conj() - y.conj().T @ bx))))
-    return dict(factor_conjugation_max=entry,
-                real_representation_loss_lower_bound=entry/2,
-                coulomb_conjugation_max=operator,
-                auxiliary_components=a.shape[0], pair_columns=a.shape[1])
-
-
 @dataclass(frozen=True)
 class OperatorConvention:
     """Explicit labels supplied by the caller; labels are not verification."""

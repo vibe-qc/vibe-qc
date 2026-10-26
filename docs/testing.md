@@ -7,9 +7,6 @@ appropriate compute resources; it need not block every implementation merge.
 
 ## Inventory and counting
 
-The figures below are a historical snapshot, not a current suite count. Use
-the manifest and lane inventory for current file membership.
-
 Snapshot at source `0819b1771c84` (2026-09-26): **933 test files and 15,028
 `test_*` function/method definitions** under `tests/`. Definitions are not collected
 pytest cases: parametrization expands them, and dependencies can skip modules.
@@ -48,36 +45,33 @@ T1 itself is mixed. Basis/source/changelog files are contracts; derivative guard
 files contain both mocked/refusal tests and numerical checks. A single function
 can run several methods, so test count is not calculation count. Large periodic,
 CC, scaling and reference acceptance remains a separate measured activity with
-inputs, runtime identity, tolerances and a reference comparison. Green CI alone
+inputs, runtime identity, tolerances and an independent verdict. Green CI alone
 is not that verdict. Experimental T3 work does not become a routine release gate.
 
 ## Execution policy
 
-The current [repository policy](https://github.com/vibe-qc/vibe-qc/blob/main/AGENTS.md)
-separates local development checks from candidate qualification:
-
-| Work | Required evidence |
+| Trigger | What runs |
 |---|---|
-| Documentation prose | Focused text, local-link and anchor check |
-| Non-scientific code | One focused functional check |
-| Scientific implementation | Focused source/functionality check before landing; complete calculation and reference comparison for scientific acceptance |
-| Native changes | Rebuild the affected native code for checks that execute it; verify loaded runtime identity |
-| Ordinary development build, push or merge | Local checks; skip CI with `[skip ci]` and push option `ci.skip` where supported |
-| Daily release candidate, when new commits exist | Full candidate CI under the authorized release owner |
+| Python-only, test-only or CI-YAML-only MR | Privacy, policy tests, Python syntax and T1 selection checks; relevant companion/tooling jobs; no native rebuild |
+| C++/native build input MR | Cheap gates by default; set `VIBEQC_BUILD_NATIVE=1` to add incremental compile/import |
+| Main push | Privacy, and website verification when applicable |
+| Release candidate | Cached native build, T1, pinned viewer contracts, vibe-basis and schema checks, docs |
+| Manual web pipeline with `VIBEQC_FULL_VALIDATION=1` | Explicit native/T1/viewer validation plus companion gates |
 
-Do not request manual, API or scheduled CI for development refs. A pipeline
-configuration's available jobs are not an instruction to run them on each
-change. Candidate qualification includes native build/runtime checks, T1,
-pinned viewer contracts, vibe-basis, schemas and documentation; consult the
-[release process](release_process.md) for the current candidate workflow.
+This intentionally defers native compiler errors, Python runtime errors and
+Python/native mismatches to focused local work, a development build or release
+validation. There is no default C++ compilation gate on an MR. Opt in with
+`VIBEQC_BUILD_NATIVE=1` for an MR touching native inputs, or use full validation.
 
-For scientific acceptance, submit a complete calculation through `vq` and
-compare against ORCA or CRYSTAL when available. Record matched inputs,
-source/native runtime identity, measured values, units and tolerances.
-Justify alternative numerical evidence if the external reference is
-unavailable. A runner may validate its own implementation and reuse qualifying
-prior evidence. Pending calculations neither count as PASS nor block unrelated
-ready work or the daily candidate build.
+Routine docs edits no longer build the entire Sphinx site. MR docs builds are
+limited to docs configuration/theme/build scripts and CI configuration; candidates,
+release and web pipelines still build the site. A prose cross-reference can
+therefore fail later. QVF schema conformance is path-filtered on MRs, and CI-YAML
+edits no longer exercise the unrelated vibe-basis installation lifecycle.
+CI edits no longer rebuild the native core merely because the YAML changed.
+Superseded validation jobs are interruptible; candidate auto-cancellation remains
+disabled. Builds that are still needed remain serialized by the native resource
+group.
 
 ## Commands
 

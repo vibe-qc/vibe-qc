@@ -486,7 +486,7 @@ def run_pbc_bipole_rhf(
         driver="run_pbc_bipole_rhf",
     )
     reject_bipole_lone_non_gamma_kpoint(
-        kmesh, system=system,
+        kmesh,
         driver="run_pbc_bipole_rhf",
     )
     from ._vibeqc_core import PeriodicRHFOptions

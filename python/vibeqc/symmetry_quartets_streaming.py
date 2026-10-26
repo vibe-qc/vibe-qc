@@ -285,8 +285,6 @@ class StreamingShellQuartetPlan:
         identity = source.source_identity
         _text(identity, 'source identity')
         inverse_blocks = _real_shell_actions(group, actions)
-        from .symmetry_quartets import _validate_source_support
-        _validate_source_support(source, actions)
         schedule = PairQuartetSchedule(group, np.stack([a.destinations for a in actions]),
             budget=budget, mode=mode)
         screen_audit = None

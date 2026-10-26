@@ -102,43 +102,6 @@ name follows Saunders and co-workers ({vibeqc-cite}`saunders_bipole_1992`).
   same mixed density as the physical Fock build. The orbital projectors
   used for level shifts remain separate from that evaluated density.
 
-  For physical 3D RKS/UKS, an unset density-image radius now grows the XC
-  support independently of the integral cutoffs, using the largest contracted
-  Gaussian AO envelope at amplitude `1e-4` (the same estimate as GDF/CCM).
-  The kernel receives the complete active bra/ket difference domain. This is
-  an amplitude heuristic, not a bound on total density or XC-energy error;
-  converge the image support and quadrature separately. Becke partition
-  weights do not determine AO support ({vibeqc-cite}`becke_grid_1988`).
-
-  A positive `options.lattice_opts.becke_image_radius_bohr` keeps an explicit
-  finite density radius, capped at `cutoff_bohr`. Set it to `cutoff_bohr` to
-  reproduce the former shared finite support. Historical index-ball and
-  explicit molecular-home density domains retain their previous settings.
-  `result.resolved_domain.xc_lattice` records any separate expanded XC
-  options; the one- and two-electron integral snapshots retain their original
-  cutoffs. Analytic KS gradients refuse independently expanded XC support
-  until that derivative is implemented. Use finite differences with the same
-  SCF options; no broader force qualification is implied.
-
-  Native built-in XC reuses its torus grouping plan when the density and
-  potential retain exactly the same screened pair indices. Different screens
-  retain separate plans: a negligible density contribution can still have a
-  nonzero potential derivative. This changes planning work only, preserving
-  pair order, image support, signed mesh phases and numerical contractions.
-
-  Declared full multi-k meshes must contain every reciprocal-grid address
-  exactly once for the current cell and shift. Stale cells, off-grid points
-  and duplicate addresses are rejected before integral work or a dry-run
-  manifest is written. Point order and reciprocal-lattice wraps are preserved.
-
-  Symmetry-reduced k-point input is checked against the native reduction
-  of the current cell, mesh and shift before expansion to the full grid.
-  Stale coordinates, duplicate representatives and contradictory star maps
-  are rejected. Consistently reordered representatives and reciprocal-lattice
-  wraps are accepted. Rebuild the k-mesh after changing the cell or symmetry,
-  or provide the full mesh. This admission check does not enable an IBZ-only
-  BIPOLE SCF.
-
   At finite temperature, RKS/UHF/UKS evaluate entropy from the natural
   occupations of the same density used for each iteration's energy,
   including mixed and restart densities. An atomic or restart seed whose
@@ -167,25 +130,15 @@ name follows Saunders and co-workers ({vibeqc-cite}`saunders_bipole_1992`).
   remain open under #657/#593. This does not widen the 0.18 release matrix.
 
   The **real-space** half of that one-electron Ewald sum is sized from
-  the resolved Ewald `α`, not just from `nuclear_cutoff_bohr`. At
+  the Ewald `α`, not from `nuclear_cutoff_bohr`. Because BIPOLE pins
   CRYSTAL's `α = 2.8 / V^{1/3}`, the screened kernel at the nearest
   image is `erfc(α·L) = erfc(2.8) ≈ 7.5e-5` for a cubic cell of *any*
   side, and it never shrinks with the box, so the driver raises the
   one-electron cutoff to `sqrt(-ln ewald_precision) / α` when your
   `nuclear_cutoff_bohr` falls short of it, and says so in the SCF log.
   Tightening `ewald_precision` therefore widens the real-space
-  envelope as well as the reciprocal one. The reciprocal radius is the
-  larger of the calibrated CRYSTAL envelope and
-  `2 α sqrt(-ln ewald_precision)`, so its Gaussian damping factor meets
-  the requested precision. SCF, gradients and response reconstruction use
-  this same radius, recorded in `resolved_domain`. Without the precision
-  floor the reciprocal damping stayed near `1.4e-8` even for tighter inputs
-  (#677). The damping target is not an omitted-energy bound: charge factors,
-  shell multiplicities and basis support still require convergence checks.
-  This follows the Ewald lattice sums and screening-parameter invariance in
-  Saunders et al., Eq. (44), Property 11 and Eq. (55),
-  [doi:10.1080/00268979200102671](https://doi.org/10.1080/00268979200102671).
-  Your `cutoff_bohr`, the electronic J/K cell set, is unchanged. Before this (issue #478) a
+  envelope as well as the reciprocal one. Your `cutoff_bohr`, the
+  electronic J/K cell set, is unchanged. Before this (issue #478) a
   fixed cutoff truncated an image tail decaying only as `1/L`, leaving
   a `+0.226·N_e²/L` mHa monopole self-image in the Γ molecular limit.
 

@@ -43,10 +43,8 @@ on `$PATH`) → vendored native deps (libint, libxc, spglib, FFTW3,
 libecpint, basis library, idempotent, each per-dep script
 short-circuits when its `third_party/<dep>/install/` tree is
 present) → `.venv` creation → editable `pip install -e .[<extras>]`
-→ banner. A clean native build can take hours: the default `5_4_4` Libint
-recipe alone is estimated at 1.5 to 2 hours in installer help. Incremental
-builds reuse current dependencies and compiler outputs; elapsed time depends
-on the machine, selected kernels and cache state.
+→ banner. Total wall-clock on a fresh box: ~15-40 min for native
+deps, ~30 s for the editable install.
 
 The command above is the tested macOS development bootstrap. On another
 platform, select your installed Python with `--python`.
@@ -63,36 +61,16 @@ the flags.
 
 ## Per-clone venvs
 
-Reuse the existing checkout and its environment when they are appropriate
-for the task. If independent checkouts already exist, each needs its own
-installation; a linked worktree also needs correctly associated dependencies
-and build state. An editable `pip install -e .` records source paths, and the
-native extension uses the dependency trees selected at build time. Sharing a
-venv across checkouts can load Python from one tree and native code from another.
+Every independent checkout needs its own `.venv` at the checkout
+root, and a linked `git worktree` is not a substitute for a checkout when
+you build or measure. The editable
+`pip install -e .` pins the C++ extension to that checkout's own
+`third_party/<dep>/install/` trees and to its `cpp/` source, 
+sharing a venv across checkouts loads the wrong native libraries.
 
 Run `install.sh` once per fresh clone; it lands the venv at
 `<checkout-root>/.venv` by default. To keep multiple branches in
 one tree with side-by-side venvs, use `--venv .venv-<name>`.
-
-## Choose the smallest useful check
-
-Before changing source, inspect `git status --short` and fetch incoming work.
-Preserve other sessions' changes, environments and running jobs. Source
-synchronization and runtime rebuilding are separate operations:
-
-| Change | Check or rebuild |
-|---|---|
-| Documentation prose | Check text, links and anchors; no native rebuild |
-| Python behavior | Run the affected test with the intended interpreter |
-| C++ implementation or bindings | Incrementally rebuild the core, then run the affected test |
-| Native dependency recipe | Rebuild the affected dependency and any core code that consumes changed headers or ABI |
-| No relevant source/runtime change | Reuse qualifying passing evidence |
-
-Check both Python and native module paths when a test depends on the compiled
-core. The [troubleshooting checklist](troubleshooting.md#prepare-a-reproducible-report)
-provides commands and explains what to record. An import check establishes
-loadability, not numerical correctness. Scientific acceptance uses a complete
-calculation and matched reference under the [testing policy](testing.md).
 
 ## Rebuild after upstream binding changes
 

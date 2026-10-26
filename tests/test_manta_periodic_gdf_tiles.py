@@ -179,7 +179,7 @@ def test_metric_assembly_decimal_stored_operand_enclosure(scale):
     source=manta.PeriodicGDFTiles(**a);actual=source.metric()
     sr=manta.FittingTiles([aux,aux],request=_request('erfc',a['options'].omega,2))
     ft=manta.compute_auxiliary_fourier_panel(aux,np.zeros((1,3))).values.reshape(2)
-    weight=_decimal_gdf_weight(np.zeros(3),a['options'].omega,_decimal_metric_prefactor(system.lattice),'coulomb',0.,True)
+    weight=_decimal_gdf_weight(np.zeros(3),a['options'].omega,4*np.pi/512.,'coulomb',0.,True)
     bounds=np.array(actual.metric_assembly_error_bounds).reshape(2,2)
     with localcontext() as ctx:
         ctx.prec=250
@@ -241,7 +241,7 @@ def _decimal_gdf_weight(momentum,omega,prefactor,kernel,physical,zero):
     from decimal import Decimal as D,localcontext
     with localcontext() as ctx:
         ctx.prec=250
-        p2=sum(D(float(x))**2 for x in momentum);c=prefactor if isinstance(prefactor,D) else D(float(prefactor));eta=D(float(omega));w=D(float(physical))
+        p2=sum(D(float(x))**2 for x in momentum);c=D(float(prefactor));eta=D(float(omega));w=D(float(physical))
         if zero:
             return D(0) if kernel=='erf' else (-c/(4*eta*eta) if kernel=='coulomb' else c/4*(1/(w*w)-1/(eta*eta)))
         if p2<=D(1e-24):return D(0)
@@ -299,10 +299,10 @@ def test_metric_weight_decimal_fourier_gram(scale,physical):
     p=manta.PeriodicGDFKernelOptions();p.kernel='erf';p.omega=physical;a['physical_kernel']=p
     a['options'].metric_assembly_rank=True;source=manta.PeriodicGDFTiles(**a);actual=source.metric()
     ft=manta.compute_auxiliary_fourier_panel(aux,a['vectors']).values.reshape(2)
-    # The lattice-form reference now includes true pi and the exact determinant.
-    weight=_decimal_gdf_weight(a['q'],a['options'].omega,_decimal_metric_prefactor(system.lattice),'erf',physical,False)
+    # Stored reciprocal prefactor is the explicitly declared reference operand.
+    weight=_decimal_gdf_weight(a['q'],a['options'].omega,4*np.pi/512.,'erf',physical,False)
     bounds=np.asarray(actual.metric_assembly_error_bounds).reshape(2,2)
-    assert actual.receipt.metric_weight_included and actual.receipt.metric_prefactor_included
+    assert actual.receipt.metric_weight_included
     with localcontext() as ctx:
         ctx.prec=250
         for i in range(2):
@@ -313,44 +313,3 @@ def test_metric_weight_decimal_fourier_gram(scale,physical):
                 assert error<=D(float(bounds[i,j]))
     a['options'].metric_assembly_rank=False
     np.testing.assert_array_equal(actual.values,manta.PeriodicGDFTiles(**a).metric().values)
-
-
-def _decimal_metric_prefactor(lattice):
-    from decimal import Decimal as D,localcontext
-    from tests.test_manta_fourier import _decimal_phase
-    _decimal_phase([0.,0.,0.],[0.,0.,0.])
-    with localcontext() as ctx:
-        ctx.prec=250;a=[[D(float(x)) for x in row] for row in lattice]
-        determinant=sum(a[0][i]*(a[1][(i+1)%3]*a[2][(i+2)%3]-a[1][(i+2)%3]*a[2][(i+1)%3]) for i in range(3))
-        return 4*_decimal_phase.pi/abs(determinant)
-
-
-@pytest.mark.parametrize('lattice',[
-    8*np.eye(3),np.array([[6.,.2,.1],[0.,6.2,.15],[0.,0.,6.4]]),
-    np.diag([-8.,7.,6.]),np.array([[1e4,1e4,0.],[1e4,1e4+1.,0.],[0.,0.,2.]]),
-    1e-100*np.eye(3),1e100*np.eye(3),
-])
-@pytest.mark.parametrize('kernel',['coulomb','erf','erfc'])
-@pytest.mark.parametrize('zero',[False,True])
-def test_metric_prefactor_independent_agm_determinant(lattice,kernel,zero):
-    from decimal import Decimal as D,localcontext
-    p=manta.PeriodicGDFKernelOptions();p.kernel=kernel;p.omega=.4
-    q=np.zeros(3) if zero else np.array([.3,-.7,1.1]);prefactor=_decimal_metric_prefactor(lattice)
-    exact=_decimal_gdf_weight(q,.65,prefactor,kernel,.4,zero);evaluated=float(exact)*1.00001
-    c=manta.certify_periodic_gdf_lattice_weight(lattice,q,.65,p,zero,evaluated)
-    assert D(c.lower)<=exact<=D(c.upper)
-    with localcontext() as ctx:
-        ctx.prec=250;assert abs(D(evaluated)-exact)<=D(c.error_bound)
-    assert np.isfinite(c.error_bound)
-
-
-@pytest.mark.parametrize('field,quantity',[('memory_bytes','modeled_peak_bytes'),('scalar_terms','scalar_terms'),('kernel_terms','kernel_terms')])
-def test_metric_prefactor_caps_and_unresolved_volume(field,quantity):
-    p=manta.PeriodicGDFKernelOptions();b=manta.ResourceBudget();plan=manta.plan_periodic_gdf_weight(b)
-    setattr(b,field,getattr(plan,quantity)-1)
-    with pytest.raises((ValueError,RuntimeError),match='budget'):manta.certify_periodic_gdf_lattice_weight(np.full((3,3),np.nan),np.zeros(3),.65,p,False,0.,b)
-    setattr(b,field,getattr(plan,quantity));assert manta.certify_periodic_gdf_lattice_weight(np.eye(3),np.zeros(3),.65,p,False,0.,b).error_bound==0.
-    with pytest.raises(ValueError,match='finite lattice'):manta.certify_periodic_gdf_lattice_weight(np.full((3,3),np.nan),np.zeros(3),.65,p,False,0.,b)
-    for lattice in (np.ones((3,3)),np.array([[1.,1.,1.],[1.,1.+1e-8,1.],[1.,1.,1.+1e-8]])):
-        with pytest.raises(RuntimeError,match='volume sign'):manta.certify_periodic_gdf_lattice_weight(lattice,np.ones(3),.65,p,False,0.,b)
-    with pytest.raises((RuntimeError,OverflowError),match='overflow'):manta.certify_periodic_gdf_lattice_weight(1e200*np.eye(3),np.ones(3),.65,p,False,0.,b)

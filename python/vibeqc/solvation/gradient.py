@@ -267,7 +267,6 @@ def _A_matrix_adjoints(
         representation=representation,
         switching=switching if representation == GAUSSIAN_CHARGE else None,
         n_points_per_sphere=getattr(cavity, "n_points_per_sphere", None),
-        exponent_follows_area=bool(getattr(cavity, "exponent_follows_area", True)),
     )
 
 
@@ -743,6 +742,8 @@ def cpcm_gradient(
         hydrogen-bond term, whose energy is not differentiable in the
         geometry.
     """
+    from vibeqc.ecp_metadata import refuse_molecular_ecp_derivative_route
+
     # First, before any work: a Direct COSMO-RS result either carries the
     # feedback the extra terms need, or is refused.
     feedback = _direct_cosmors_feedback_for_gradient(solvent_result)
@@ -759,45 +760,28 @@ def cpcm_gradient(
             route="cpcm_gradient",
             spin=1 if method.lower() == "rks" else 2,
         )
-    # An ECP reference is differentiable here: the reaction-field terms below
-    # never touch the ECP (the nuclear ESP takes the effective charges and the
-    # electronic ESP is a plain point-charge integral derivative), and the
-    # gas-phase piece is the ordinary ECP-aware analytic gradient, whose own
-    # contract check proves it differentiates the Hamiltonian the SCF solved.
-    # So the options must repeat that ECP; with none given, repeat the result's.
-    from vibeqc.ecp_metadata import molecular_result_has_ecp_operator
-
-    has_ecp = molecular_result_has_ecp_operator(scf_result)
-    # The cavity potential and the SCF must agree on whether there is an ECP:
-    # effective charges on one side and a bare-Z gradient on the other (or the
-    # reverse) differentiate two different Hamiltonians.
+    refuse_molecular_ecp_derivative_route(
+        molecule,
+        basis,
+        options=options,
+        result=scf_result,
+        route="cpcm_gradient",
+    )
     if solvent_result.z_eff is not None:
-        bare_z = np.asarray([float(a.Z) for a in molecule.atoms], dtype=np.float64)
-        cavity_sees_ecp = not np.allclose(
+        bare_z = np.asarray(
+            [float(atom.Z) for atom in molecule.atoms], dtype=np.float64
+        )
+        if not np.allclose(
             np.asarray(solvent_result.z_eff, dtype=np.float64),
             bare_z,
             atol=1e-12,
             rtol=0.0,
-        )
-    else:
-        cavity_sees_ecp = False
-    if cavity_sees_ecp and not has_ecp:
-        raise NotImplementedError(
-            "cpcm_gradient: ECP nuclear derivatives need the SCF result's ECP "
-            "provenance, and this result records none although the cavity was "
-            "built with effective nuclear charges; refusing to combine an "
-            "ECP-aware CPCM potential with a bare-Z gas-phase gradient"
-        )
-    if has_ecp and int(getattr(scf_result, "ecp_total_ncore", 0) or 0) > 0 and not cavity_sees_ecp:
-        raise NotImplementedError(
-            "cpcm_gradient: the SCF replaced core electrons with an ECP but the "
-            "cavity potential was built with bare nuclear charges; the reaction "
-            "field would see the wrong net charge"
-        )
-    if options is None and has_ecp:
-        from vibeqc.gradient_options import gradient_options_from_result_ecp
-
-        options = gradient_options_from_result_ecp(scf_result)
+        ):
+            raise NotImplementedError(
+                "cpcm_gradient: ECP nuclear derivatives are not implemented; "
+                "refusing to combine an ECP-aware CPCM ESP with a bare-Z "
+                "gas-phase gradient"
+            )
     cav = solvent_result.cavity
     cpcm = solvent_result.cpcm
     q = np.asarray(cpcm.q, dtype=np.float64)

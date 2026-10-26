@@ -213,10 +213,7 @@ thing.
 
 Post-HF is library-only on every line. With `method="aiccm"` the SCF
 reference is inferred (`functional` decides HF versus KS, the multiplicity
-and electron parity decide restricted versus unrestricted; on the two
-neutral variants `aiccm_spin_state` names the torus spin sector, `"legacy"`
-by default, `"per-cell"` or a total multiplicity, resolved before that
-dispatch, see the user guide;
+and electron parity decide restricted versus unrestricted;
 `scf_reference="rhf" | "uhf"` selects a Hartree-Fock reference explicitly on
 every variant; `scf_reference="rohf" | "roks"` is explicit and refused by
 every variant today), so MP2, CCSD(T), and DLPNO are reached through the drivers tabulated

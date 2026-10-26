@@ -3,8 +3,7 @@ import errno
 import importlib.util
 from pathlib import Path
 import sys
-from unittest.mock import MagicMock, patch
-from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
@@ -97,31 +96,3 @@ def test_parent_rejects_overlapping_prefixes(tmp_path):
         with pytest.raises(ValueError, match="disjoint"):
             probe.run_probe({"candidate": str(tmp_path.resolve()),
                              "donor": str(tmp_path.resolve()), "library": "fake"})
-
-
-@pytest.mark.parametrize("substituted", ["fftw_plan_dft_1d", "fftw_execute", "fftw_destroy_plan",
-                                        "fftw_init_threads", "fftw_plan_with_nthreads", "fftw_cleanup_threads"])
-def test_threaded_symbol_substitution_is_refused(substituted, tmp_path):
-    core, threads = tmp_path / "core", tmp_path / "threads"
-    library = MagicMock()
-    names = ["fftw_plan_dft_1d", "fftw_execute", "fftw_destroy_plan",
-             "fftw_init_threads", "fftw_plan_with_nthreads", "fftw_cleanup_threads"]
-    paths = {id(getattr(library, name)): (tmp_path / "wrong" if name == substituted
-             else core if index < 3 else threads) for index, name in enumerate(names)}
-    with patch.object(probe.ctypes, "CDLL", return_value=library), \
-         patch.object(probe.ctypes, "cast", side_effect=lambda fn, _: SimpleNamespace(value=id(fn))), \
-         patch.object(probe, "loaded_symbol_path", side_effect=lambda address: paths[address]):
-        with pytest.raises(ValueError, match="outside candidate library: " + substituted):
-            probe.native_operation(core, {"forward": -1, "estimate": 64}, threads)
-    library.fftw_init_threads.assert_not_called()
-    library.fftw_plan_dft_1d.assert_not_called()
-
-
-def test_threaded_initialization_failure_prevents_plan(tmp_path):
-    library = MagicMock()
-    library.fftw_init_threads.return_value = 0
-    with patch.object(probe.ctypes, "CDLL", return_value=library), \
-         patch.object(probe, "bound_function", side_effect=lambda lib, name, path: getattr(lib, name)):
-        with pytest.raises(ValueError, match="initialization failed"):
-            probe.native_operation(tmp_path / "core", {"forward": -1, "estimate": 64}, tmp_path / "threads")
-    library.fftw_plan_dft_1d.assert_not_called()

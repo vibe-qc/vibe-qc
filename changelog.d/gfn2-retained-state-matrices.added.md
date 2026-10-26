@@ -1,1 +1,0 @@
-- Molecular GFN2 results expose detached density, orbital-coefficient, overlap and last-diagonalized Hamiltonian matrices from the executed SCF, including exhaustion. State audits can now inspect the original solve without running a separate delegated calculation. Document branch continuity and stability limits; preserve the unresolved Li4 regression.

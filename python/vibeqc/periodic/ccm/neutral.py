@@ -645,17 +645,26 @@ def _ccm_neutral_cderi_symm_reduced(
         L_{Q, a, b} = S_{P,mu,ν} (P_aux)_{Q P} P_{a mu} P_{b ν} L_{P, mu, ν}
         with (a, b) on the atom pair (g A, g B) for (mu, ν) on (A, B).
 
-    Reconstruct the raw three-center tensor T by this group action, then
-    apply the same canonical metric inverse square root W as the full build.
-    In exact arithmetic W commutes with the auxiliary rotations. Numerically,
-    a near-null retained metric mode amplifies tiny symmetry residuals, so
-    scattering W T would introduce an avoidable commutator (P_aux W - W P_aux)T.
-    Scattering T before whitening avoids that assumption without changing the
-    metric, retained modes, or the factor-level comparison tolerance.
-
-    The finite Bloch-sum cell list still limits raw three-center covariance:
-    atom-shifted copies of a truncated list differ at its boundary. A converged
-    lattice cutoff remains necessary; whitening does not remove that error.
+    It holds for the *computed* tensor to the accuracy of ONE ingredient:
+    the Bloch-sum lattice cell list. The reciprocal |G| <= G_max ball, the
+    Coulomb kernel (and its erfc-screened attenuation, a function of
+    ``|G+q|`` only, hence equally point-group invariant), the per-shell
+    calibration scales, and the 2c metric
+    ``M`` (hence its matrix function ``M^{-1/2}``, which commutes with
+    ``P_aux``; measured invariant to 2e-14) are exactly point-group
+    invariant, and at Γ the fractional-translation phases of non-symmorphic
+    ops cancel between the aux and AO-pair Fourier factors. The cell list,
+    however, enters pair covariance through *atom-shifted* copies of
+    itself, so a finite radius leaves a truncated inter-cell tail that is
+    not orbit-symmetric: the covariance residual equals the tail size at
+    the cutoff (measured on C-diamond sto-3g at Γ: 8e-9 relative at the
+    15-bohr default, 2e-15 at 20 bohr, 6e-16 at 25+ bohr -- exponential in
+    the cutoff, same knob as the builder's documented lattice-cutoff
+    accuracy floor). Consequently the reduced build equals the un-reduced
+    one to machine precision at a cell-list-converged cutoff (pinned
+    < 1e-10 in ``tests/test_ccm_symmetry.py``), and to the truncation
+    floor -- the un-reduced build's own accuracy floor, ~5e-9 relative on
+    the cderi, ~1e-12 on the SCF energy -- at the standard default.
 
     The petite-list strategy itself (compute one representative integral
     block per orbit, scatter the rest by the group action) is the
@@ -690,54 +699,51 @@ def _ccm_neutral_cderi_symm_reduced(
         f"{len(pair_list)}/{n_sh * n_sh} shell pairs)\n",
         Level.VERBOSE)
 
-    def reconstruct_three_center(T):
-        # Scatter: batch all member pairs of one op into a single aux-rotation
-        # GEMM, then apply the small per-pair orbital Wigner-D blocks.
-        rots_aux = ccm_symmetry_basis_rotations(sym, aux_modrho)
-        members_by_op: dict[int, list[tuple[int, int]]] = {}
-        for A in range(n):
-            for B in range(n):
-                g = int(orbits.orbit_op[A, B])
-                if g >= 0:
-                    members_by_op.setdefault(g, []).append((A, B))
-
-        naux = T.shape[0]
-        lf = T.reshape(naux, nbf * nbf)
-        for g, mems in members_by_op.items():
-            op = sym.invariant_ops[g]
-            src_cols = []
-            for (A, B) in mems:
-                ra, rb = orbits.representatives[int(orbits.orbit_rep[A, B])]
-                src_cols.append(
-                    (atom_ao[ra][:, None] * nbf + atom_ao[rb][None, :]).ravel())
-            pl = rots_aux[g] @ lf[:, np.concatenate(src_cols)]
-            lo = 0
-            for (A, B), sc in zip(mems, src_cols):
-                ra, rb = orbits.representatives[int(orbits.orbit_rep[A, B])]
-                ia, ib = atom_ao[A], atom_ao[B]
-                blk = pl[:, lo:lo + sc.size].reshape(naux, ia.size, ib.size)
-                lo += sc.size
-                # T_{Q,a,b} = S_{mu,ν} P[a,mu] P[b,ν] (P_aux T)_{Q,mu,ν}
-                T[:, ia[:, None], ib[None, :]] = np.einsum(
-                    "Qmn,am,bn->Qab", blk,
-                    op.P[np.ix_(ia, atom_ao[ra])],
-                    op.P[np.ix_(ib, atom_ao[rb])],
-                    optimize=True)
-        return T
-
     gamma = np.zeros(3)
     # Canonical aux frame is REQUIRED: the covariance above is stated in the
     # aux-AO basis; the compact eigenmode frame carries arbitrary per-build
     # rotations (see the builder docstring) under which pair columns are not
     # comparable.
-    return np.ascontiguousarray(np.real(np.asarray(build_lpq_bloch_native_fft(
+    L = np.ascontiguousarray(np.real(np.asarray(build_lpq_bloch_native_fft(
         ccm.cluster_system, ccm.basis, aux_modrho, gamma, gamma,
         ke_cutoff=ke_cutoff, tail_ke_cutoff=tail_ke_cutoff, lat_opts=opts,
         canonical_auxiliary_basis=True, fit_pair_list=pair_list,
         omega_screen=float(omega_screen),
-        _canonical_three_center_transform=reconstruct_three_center,
     ))))
 
+    # Scatter: batch all member pairs of one op into a single aux-rotation
+    # GEMM, then apply the small per-pair orbital Wigner-D blocks.
+    rots_aux = ccm_symmetry_basis_rotations(sym, aux_modrho)
+    members_by_op: dict[int, list[tuple[int, int]]] = {}
+    for A in range(n):
+        for B in range(n):
+            g = int(orbits.orbit_op[A, B])
+            if g >= 0:
+                members_by_op.setdefault(g, []).append((A, B))
+
+    naux = L.shape[0]
+    lf = L.reshape(naux, nbf * nbf)
+    for g, mems in members_by_op.items():
+        op = sym.invariant_ops[g]
+        src_cols = []
+        for (A, B) in mems:
+            ra, rb = orbits.representatives[int(orbits.orbit_rep[A, B])]
+            src_cols.append(
+                (atom_ao[ra][:, None] * nbf + atom_ao[rb][None, :]).ravel())
+        pl = rots_aux[g] @ lf[:, np.concatenate(src_cols)]
+        lo = 0
+        for (A, B), sc in zip(mems, src_cols):
+            ra, rb = orbits.representatives[int(orbits.orbit_rep[A, B])]
+            ia, ib = atom_ao[A], atom_ao[B]
+            blk = pl[:, lo:lo + sc.size].reshape(naux, ia.size, ib.size)
+            lo += sc.size
+            # L_{Q,a,b} = S_{mu,ν} P[a,mu] P[b,ν] (P_aux L)_{Q,mu,ν}
+            L[:, ia[:, None], ib[None, :]] = np.einsum(
+                "Qmn,am,bn->Qab", blk,
+                op.P[np.ix_(ia, atom_ao[ra])],
+                op.P[np.ix_(ib, atom_ao[rb])],
+                optimize=True)
+    return L
 
 
 def _fold_star_reconstruct(l_rep, op, ka, kb, trs, ao_at, aux_at):

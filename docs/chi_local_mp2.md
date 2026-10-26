@@ -150,13 +150,6 @@ fallback. Both must recover **every** retained complex AO factor entry within
 and symmetric admission uses the same tolerance. Incompatible auxiliary
 gauges refuse; no retained rank, support or source identity changes.
 
-The read-only [factor-fidelity payload](../examples/periodic/chi_factor_fidelity.py)
-reports this fixed-gauge defect separately from complete within-transfer
-Coulomb-block conjugation. A small operator defect does not override entry
-admission. The [reciprocal-40 investigation](chi_mp2_convergence.md#retained-eigenspace-fidelity-at-reciprocal-40)
-localizes an archived LiH refusal to retained-eigenspace forward accuracy near
-the metric cutoff; its original factors remain refused.
-
 For N cells, define the unitary orbital transform and the retained factor
 convention by
 

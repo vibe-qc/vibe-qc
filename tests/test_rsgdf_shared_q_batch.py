@@ -178,46 +178,6 @@ def _range_separated_fit_options():
     )
 
 
-@pytest.mark.parametrize('fraction', [0., .23, .5])
-def test_classic_precision_preserves_complete_support_and_conjugate_operator(fraction):
-    pytest.importorskip('mpmath')
-    import json
-    from vibeqc import _vibeqc_core as core
-    system, basis, auxiliary = _range_separated_fit_fixture()
-    shells = list(auxiliary.shells())
-    auxiliary = core.BasisSet(system.unit_cell_molecule(), shells+[shells[0]],
-                              'duplicate-auxiliary', coefficients_pre_normalized=True)
-    reciprocal = np.asarray(system.reciprocal_lattice())
-    q = reciprocal[:, 0]*fraction
-    bras = np.array([[0., 0., 0.], [.13, -.04, .07]])
-    lat = LatticeSumOptions(); lat.cutoff_bohr = 6.; lat.pair_complete_1e = True
-    opts = dict(ke_cutoff=3., lat_opts=lat, linear_dep_thr=1e-9,
-                canonical_auxiliary_basis=True, support_policy='physical_pairs',
-                memory_byte_cap=256*2**20, image_candidate_cap=10000, tail_chunk_g=64)
-    records = []
-    baseline = build_lpq_bloch_native_fft_shared_q(system,basis,auxiliary,bras,q,
-        _support_recorder=records.append, **opts)
-    cache = {}
-    precise = build_lpq_bloch_native_fft_shared_q(system,basis,auxiliary,bras,q,
-        metric_precision_digits=35, _q_metric_cache=cache, _support_recorder=records.append, **opts)
-    old, new = map(json.loads, records)
-    for key in ('reciprocal_base','reciprocal_tail','cell_enclosure_cart_bohr','metric_keep','rank'):
-        assert new[key] == old[key]
-    assert new['spectral_construction']['original_double_rank_preserved']
-    for a,b in zip(baseline,precise):
-        np.testing.assert_allclose(a.reshape(len(a),-1).conj().T@a.reshape(len(a),-1),
-                                   b.reshape(len(b),-1).conj().T@b.reshape(len(b),-1),atol=2e-11,rtol=0)
-    opposite = build_lpq_bloch_native_fft_shared_q(system,basis,auxiliary,-bras,-q,
-        metric_precision_digits=35, **opts)
-    np.testing.assert_allclose(precise, np.conj(opposite), atol=1e-10, rtol=0)
-    reordered = build_lpq_bloch_native_fft_shared_q(system,basis,auxiliary,bras[::-1],q,
-        metric_precision_digits=35, _q_metric_cache=cache, **opts)
-    np.testing.assert_array_equal(reordered, precise[::-1])
-    with pytest.raises(ValueError, match='different source'):
-        build_lpq_bloch_native_fft_shared_q(system,basis,auxiliary,bras,q,
-            metric_precision_digits=45, _q_metric_cache=cache, **opts)
-
-
 def test_range_separated_canonical_frame_preserves_gram_and_auxiliary_covariance():
     from vibeqc import _vibeqc_core as core
     from vibeqc.aux_basis import _build_lpq_range_separated_shared_q

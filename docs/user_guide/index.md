@@ -18,14 +18,12 @@ you're new to vibe-qc.
 | choose a periodic Coulomb route | [Periodic methods](periodic_methods.md) | [Periodic JK routes](../periodic_jk_routes.md) |
 | run the ab initio cyclic cluster model (experimental) | [AICCM](aiccm.md) | [chi-CCM](aiccm2026dev_b.md), [Gamma-CCM](../aiccm2026dev_a.md) |
 | converge a crystal calculation | [k-points](k_points.md) | [Smearing](smearing.md), [density fitting](density_fitting.md) |
-| interpret experimental SECCM electronic stability | [SECCM stability](seccm_stability.md) | [MSINDO](msindo.md), [SCF convergence](scf_convergence.md) |
 | select an integral engine or J/K algorithm (experimental) | [Integral engines](integral_engines.md) | [MANTA developer reference](manta.md), [density fitting](density_fitting.md) |
 | understand files and provenance | [Output files](output_files.md) | [Logging](logging.md), [citations](citations.md) |
 | analyze IAO charges, spins and bonds | [IAO analysis](iao_population.md) | [Numerical comparisons](iao_validation.md) |
 | hand a wavefunction to another program | [TREXIO](trexio.md) | [Output files](output_files.md), [citations](citations.md) |
 | open or automate a QVF result | [QVF and vibe-view](../visualization.md) | [vibe-view CLI](vibe_view_cli.md) |
 | run on another host | [Queue](queue.md) | [Running](../running.md) |
-| fit selected molecular semiempirical parameters (experimental) | [Parameter-opt](parameter_opt.md) | [Supported scope and qualification](parameter_opt.md#supported-scope), [design roadmap](../design/parameter_opt.md) |
 
 ## Tutorial, guide, or API reference?
 
@@ -48,7 +46,6 @@ you're new to vibe-qc.
 molecules
 basis_sets
 basis_optimization
-parameter_opt
 cohesive_energies
 naming
 functionals
@@ -64,7 +61,6 @@ ovgf
 composites
 mlip
 semiempirical
-seccm_stability
 semiempirical_mlip_comparison
 msindo
 dft_plus_u

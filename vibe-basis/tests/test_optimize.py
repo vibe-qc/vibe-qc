@@ -92,22 +92,6 @@ class TestOptimizeNlopt:
         # May be inf at some points, but the result should be finite
         assert not np.isnan(result.fun)
 
-    def test_absolute_tolerances_hold_on_a_total_energy_scale(self):
-        """ftol_rel is relative to |f|: on a -7e5 kJ/mol cell energy it stops
-        long before the minimum. The absolute tolerances do not."""
-        offset = -723_000.0
-
-        def energy(x: np.ndarray) -> float:
-            return offset + 50.0 * float((x[0] - 0.4) ** 2)
-
-        loose = optimize_nlopt(energy, x0=np.array([-1.0]), bounds=[(-3.0, 3.0)],
-                               initial_step=0.3)
-        tight = optimize_nlopt(energy, x0=np.array([-1.0]), bounds=[(-3.0, 3.0)],
-                               initial_step=0.3, tol=0.0, ftol_abs=1e-6,
-                               xtol_abs=1e-4)
-        assert abs(loose.x[0] - 0.4) > 0.1
-        assert tight.x[0] == pytest.approx(0.4, abs=1e-3)
-
 
 # ---------------------------------------------------------------------------
 # scipy L-BFGS-B

@@ -32,8 +32,7 @@ import numpy as np
 
 from ._vibeqc_core import BasisSet, LatticeSumOptions, PeriodicSystem
 
-__all__ = ["xc_image_cutoff_bound", "xc_lattice_opts", "xc_lattice_opts_at",
-           "bipole_xc_lattice_opts"]
+__all__ = ["xc_image_cutoff_bound", "xc_lattice_opts", "xc_lattice_opts_at"]
 
 # Absolute AO amplitude below which a shell is taken not to reach a point.
 # Measured on fixed converged densities (PBE, STO-3G). Cubic Al2O3 model:
@@ -152,28 +151,3 @@ def xc_lattice_opts_at(
     if hasattr(opts, "pair_complete_1e"):
         opts.pair_complete_1e = False
     return opts
-
-
-def bipole_xc_lattice_opts(system, basis, base_opts, *, requested_radius, plog=None):
-    """Grow only BIPOLE XC support for an unset physical 3-D image reach.
-
-    A positive caller radius selects a finite domain explicitly. Historical
-    index domains retain their reproduction settings. The envelope is an AO
-    amplitude heuristic, not a bound on the omitted density or XC energy.
-    """
-    if (int(system.dim) != 3 or not base_opts.pair_complete_1e
-            or float(requested_radius) > 0.0):
-        return base_opts
-    radius = max(float(base_opts.cutoff_bohr), xc_image_cutoff_bound(system, basis))
-    if radius == float(base_opts.cutoff_bohr):
-        return base_opts
-    from .pbc_bipole_common import _lattice_options_passthrough
-
-    options = _lattice_options_passthrough(base_opts)
-    options.coulomb_method = base_opts.coulomb_method
-    options.cutoff_bohr = radius
-    options.becke_image_radius_bohr = radius
-    if plog is not None:
-        plog.info(f"BIPOLE XC image cutoff {base_opts.cutoff_bohr:.2f} -> {radius:.2f} bohr "
-                  f"(AO amplitude {XC_IMAGE_AMPLITUDE:g}; integral supports unchanged)")
-    return options

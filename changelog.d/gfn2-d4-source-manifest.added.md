@@ -1,1 +1,0 @@
-- GFN2 output now captures the published D4 source revision and complete input-manifest hash beside the exact converted-record hash. This distinguishes portable pinned input identity from platform-dependent conversion bits without changing numerical operands or hash checks.

@@ -132,15 +132,6 @@ class CCMRealGammaConvention:
     #: in every storage (#519 RG-5, RG-10), so it is not part of the source
     #: identity; recorded for cost and reproducibility.
     cderi_storage: str = "dense"
-    #: The spin sector the producer executed (#519 RG-14): the ``as_dict()``
-    #: of :class:`~vibeqc.periodic.ccm.spin_state.CCMSpinState`, read off the
-    #: driver result, and the requested policy (``"legacy"``, ``"per-cell"``
-    #: or a total multiplicity, as a string).
-    spin_state: Optional[dict] = None
-    spin_policy: str = "legacy"
-    #: How the sector's electrons were distributed (#519 RG-15): the
-    #: ``as_dict()`` of the producer's ``OccupationRecord``.
-    occupation: Optional[dict] = None
 
 
 @dataclass
@@ -290,7 +281,6 @@ def run_real_gamma_scf(
     follow_instability: bool = False,
     fit_source: str = "classic",
     cderi_storage: str = "dense",
-    spin_state: object = "legacy",
 ) -> CCMRealGammaResult:
     """Run the real-Γ direct-route SCF and adapt it to the runner contract.
 
@@ -328,14 +318,6 @@ def run_real_gamma_scf(
     (default), per transfer ``"block"`` or star-reduced ``"block-star"``;
     the three are one operator. A correlated run needs the dense array its
     treatment reads, so the runner keeps correlation on dense storage.
-
-    ``spin_state`` (#519, RG-14) selects the torus spin sector:
-    ``"legacy"`` (default, the supercell parity rule), ``"per-cell"`` (the
-    cell's counts replicated with spins aligned) or an integer total
-    multiplicity; see :mod:`vibeqc.periodic.ccm.spin_state`. It is resolved
-    on the cluster before the driver runs, a sector that is open shell
-    refuses the restricted ``method``, and the executed counts are recorded
-    on the convention record as ``spin_state``.
 
     ``initial_guess`` admits HCORE (the AUTO default), READ with
     ``initial_density`` and an explicit ``"SAD"`` on the supercell (#519,
@@ -413,15 +395,7 @@ def run_real_gamma_scf(
         basis=unit_basis,
         system=system,
     )
-    ccm = CCMSystem(system, nrep, basis_name, spin_state=spin_state)
-    # A stand-in cluster (unit tests) may carry no resolved state.
-    resolved_state = getattr(ccm, "spin_state", None)
-    if (method_upper in ("RHF", "RKS") and resolved_state is not None
-            and not resolved_state.closed_shell):
-        raise ValueError(
-            f"run_real_gamma_scf: method={method_upper!r} is a restricted "
-            "reference but the resolved spin sector is open shell "
-            f"({ccm.spin_state.describe()}); use UHF/UKS for this sector.")
+    ccm = CCMSystem(system, nrep, basis_name)
 
     kw = dict(initial_density=initial_density, cderi_build=cderi_build,
               cderi_symmetry=cderi_symmetry,
@@ -515,12 +489,6 @@ def run_real_gamma_scf(
         instability_follow=tuple(getattr(res, "instability_follow", ()) or ()),
         cderi_storage=str((getattr(res, "cderi_info", None) or {}).get(
             "storage", storage)),
-        spin_state=(None if getattr(res, "spin_state", None) is None
-                    else res.spin_state.as_dict()),
-        spin_policy=(str(spin_state) if resolved_state is None
-                     else str(resolved_state.requested)),
-        occupation=(None if getattr(res, "occupation", None) is None
-                    else res.occupation.as_dict()),
     )
 
     open_shell = getattr(res, "density_alpha", None) is not None and \

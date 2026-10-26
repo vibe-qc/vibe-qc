@@ -372,7 +372,7 @@ def run_pbc_bipole_uks(
         driver="run_pbc_bipole_uks",
     )
     reject_bipole_lone_non_gamma_kpoint(
-        kmesh, system=system,
+        kmesh,
         driver="run_pbc_bipole_uks",
     )
     from ._vibeqc_core import PeriodicKSOptions as _PKSOpts
@@ -794,15 +794,6 @@ def run_pbc_bipole_uks(
     if _chi_xc is None:
         _xc_image_radius = resolve_bipole_xc_density_reach(lat_opts_2e)
         lat_opts_2e.becke_image_radius_bohr = _xc_image_radius
-    _xc_lattice_opts = lat_opts_2e
-    if needs_xc_difference_support:
-        from .periodic_xc_domain import bipole_xc_lattice_opts
-
-        _xc_lattice_opts = bipole_xc_lattice_opts(
-            system, basis, lat_opts_2e,
-            requested_radius=opts.lattice_opts.becke_image_radius_bohr, plog=plog,
-        )
-        _xc_image_radius = float(_xc_lattice_opts.becke_image_radius_bohr)
     if exchange_split_active:
         plog.info(
             "  Gauge: corrected (full Bloch density, no spheropole"
@@ -987,7 +978,7 @@ def run_pbc_bipole_uks(
 
             exact_xc_cells = periodic_xc_difference_closed_cells(
                 system,
-                float(_xc_lattice_opts.cutoff_bohr),
+                float(lat_opts_2e.cutoff_bohr),
                 _xc_image_radius,
             )
             by_index = {
@@ -1507,7 +1498,6 @@ def run_pbc_bipole_uks(
 
     _resolved_domain = capture_bipole_domain(
         lattice_1e=lat_opts_1e, lattice_2e=lat_opts_2e,
-        xc_lattice=(None if _xc_lattice_opts is lat_opts_2e else _xc_lattice_opts),
         requested_lattice=opts.lattice_opts,
         ewald_options=ewald_options_1e, alpha=omega_used,
         reciprocal_cutoff=ewald_k_max, ewald_precision=ewald_precision,
@@ -1616,7 +1606,7 @@ def run_pbc_bipole_uks(
                     D_xc_alpha,
                     D_xc_beta,
                     kmesh,
-                    _xc_lattice_opts,
+                    lat_opts_2e,
                     xc_density_domain,
                 )
 
@@ -2859,7 +2849,7 @@ def run_pbc_bipole_uks(
         _xc_diagnostics, n_elec,
         context=("run_pbc_bipole_uks (Becke partition radius="
                  f"{float(opts.becke_image_radius_bohr):g} bohr)"),
-        lattice_options=_xc_lattice_opts,
+        lattice_options=lat_opts_2e,
     )
 
     return PBCBipoleUKSResult(

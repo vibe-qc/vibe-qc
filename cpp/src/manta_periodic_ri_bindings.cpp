@@ -51,7 +51,7 @@ void bind_manta_periodic_ri(py::module_& m) {
 #undef P
     auto i=py::class_<PeriodicRIQMetricInfo>(m,"PeriodicRIQMetricInfo");
 #define I(name) i.def_readonly(#name,&PeriodicRIQMetricInfo::name)
-    I(assembly_representation_included);I(assembly_integrals_included);I(assembly_fourier_included);I(assembly_prefactor_included);I(assembly_weight_included);I(assembly_phase_included);I(assembly_response);I(assembly_rank_requested);I(assembly_rank_qualified);I(assembly_perturbation_bound);I(assembly_certificate_identity);
+    I(assembly_weight_included);I(assembly_phase_included);I(assembly_response);I(assembly_rank_requested);I(assembly_rank_qualified);I(assembly_perturbation_bound);I(assembly_certificate_identity);
     I(inverse_certificate);I(spectrum);I(accuracy);I(rank);I(shell_calls);I(primitive_products);I(cutoff);I(negative_limit);I(minimum_eigenvalue);I(maximum_eigenvalue);
     I(hermiticity_residual);I(zero_transfer);I(metric_source_identity);I(canonical_metric_identity);I(factor_identity);
     I(projector_identity);I(source_identity);

@@ -237,7 +237,7 @@ worked example.
 
 At minimum, check:
 
-- `converged`, the final SCF residual, and the stage-specific verdict;
+- `converged` and the final SCF residual;
 - electron count, charge, multiplicity, and occupation pattern;
 - orbital or overlap diagnostics appropriate to the method;
 - spin contamination for unrestricted references;
@@ -248,17 +248,6 @@ At minimum, check:
 
 A plausible energy with the wrong state, wrong units, or unconverged sampling
 is not a successful calculation.
-
-For high-level runs, inspect the manifest's `[verdict]` as well as file delivery.
-`[outputs].status = "complete"` says that the output plan was fulfilled, not
-that the calculation is scientifically usable. Missing verdict fields in an
-older result mean unknown. The [manifest inspection example](../user_guide/output_files.md#inspect-a-manifest-before-analysis)
-shows how to read these fields without starting another calculation.
-
-Keep numerical convergence distinct from method validation: a converged SCF
-and a usable driver verdict still require the model and reference comparisons
-chosen in the planning worksheet. Record omitted or unavailable checks rather
-than turning them into a success label.
 
 ## Step 8: retain provenance
 

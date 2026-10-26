@@ -22,8 +22,6 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from ..solvers._scf import solve_dense_fock
-
 
 @dataclass
 class PAODomain:
@@ -493,9 +491,6 @@ def semicanonical_pao_basis(
     Q_vir: np.ndarray,
     ao_indices: np.ndarray,
     lindep_thresh: float = 1e-8,
-    *,
-    fock_basis_id: str | None = None,
-    spin: str = "restricted",
 ) -> tuple[np.ndarray, np.ndarray]:
     """Build an S-orthonormal, Fock-diagonal virtual basis for a domain.
 
@@ -523,12 +518,6 @@ def semicanonical_pao_basis(
         Global AO indices of the domain.
     lindep_thresh : float
         Overlap-eigenvalue threshold for removing PAO redundancy.
-    fock_basis_id : str or None
-        Named retained Fock coordinates for the shared checked solve.
-        Unnamed callers retain their existing solve pending acceptance.
-        Overlap redundancy removal remains the PAO producer's policy.
-    spin : str
-        Spin label of the named Fock frame.
 
     Returns
     -------
@@ -550,13 +539,8 @@ def semicanonical_pao_basis(
 
     F_x = X.T @ F_ao @ X
     F_x = 0.5 * (F_x + F_x.T)
-    if fock_basis_id is None:
-        eps_pao, c = np.linalg.eigh(F_x)
-        return X @ c, eps_pao
-    solved = solve_dense_fock(F_x, spin=spin, basis_id=fock_basis_id)
-    V_semi = X @ solved.eigenvectors
-    eps_pao = solved.eigenvalues
-    del solved  # Cache only the caller's required PAO coordinates.
+    eps_pao, c = np.linalg.eigh(F_x)
+    V_semi = X @ c
     return V_semi, eps_pao
 
 

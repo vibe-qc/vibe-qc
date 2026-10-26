@@ -674,9 +674,3 @@ Legacy dispatch validates the effective interior shift before backend work.
 An explicit `SolverOptions.sigma` overrides the interior descriptor shift;
 otherwise the descriptor supplies it. NaN and infinite effective shifts are
 refused without mutating caller options. Valid selection semantics are unchanged.
-
-Interior descriptors preserve the underlying generalized problem and its overlap
-metric. After resolving the effective shift, dispatch continues through the
-same metric admission, retained-rank reduction and residual qualification as an
-unwrapped generalized request. Invalid metrics remain explicit refusals; the
-wrapper cannot turn an AO generalized problem into a Euclidean solve.

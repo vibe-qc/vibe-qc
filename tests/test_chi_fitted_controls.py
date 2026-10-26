@@ -13,9 +13,7 @@ def controls(**kwargs):
 
 
 @pytest.mark.parametrize('field,value', [('pair_cutoff_bohr',0),('metric_threshold',-1),
-    ('reciprocal_cutoff_ha',np.nan),('memory_byte_cap',2.5),('support_record_byte_cap',True),
-    ('metric_precision_digits',True),('metric_precision_digits',29),
-    ('metric_precision_digits',101),('metric_precision_digits',35.5)])
+    ('reciprocal_cutoff_ha',np.nan),('memory_byte_cap',2.5),('support_record_byte_cap',True)])
 def test_invalid_control_cannot_reach_native(field,value):
     with pytest.raises(ValueError): replace(controls(),**{field:value})
 
@@ -27,9 +25,6 @@ def test_source_semantics_and_historical_are_explicit():
     with pytest.raises(NotImplementedError):controls(support_policy='historical_index_ball',auxiliary_cutoff_bohr=10.,omega_bohr_inv=.6).require_source('sr')
     with pytest.raises(ValueError):controls(tail_reciprocal_cutoff_ha=10.).require_source('classic')
     with pytest.raises(ValueError):controls(omega_bohr_inv=.6).require_source('classic')
-    controls(metric_precision_digits=45).require_source('classic')
-    with pytest.raises(NotImplementedError):
-        controls(metric_precision_digits=45, auxiliary_cutoff_bohr=9., omega_bohr_inv=.7).require_source('sr')
 
 
 def test_tail_ladder_fixes_one_electron_and_real_domain():
@@ -76,12 +71,6 @@ def test_operator_uses_exact_selected_domains_and_binds_reuse(monkeypatch,source
     # even when this controlled builder returns numerically identical factors.
     refined=build_chi_fitted_operator(sy,basis,aux,k,np.ones(3)/3,source=source,controls=replace(c,pair_cutoff_bohr=7.))
     assert refined.identity != op.identity
-    if source == 'classic':
-        precise=build_chi_fitted_operator(sy,basis,aux,k,np.ones(3)/3,source=source,
-                                        controls=replace(c,metric_precision_digits=45))
-        assert precise.identity != op.identity
-        assert calls[-1]['metric_precision_digits'] == 45
-        assert dict(precise.descriptor.numerical_support)['metric_precision_digits'] == 45
 
 
 def test_budget_and_invalid_weights_refuse_before_source(monkeypatch):

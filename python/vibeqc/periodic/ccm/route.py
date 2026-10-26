@@ -214,16 +214,8 @@ def run_ccm_scf(ccm, *, route="four-center", functional=None,
     # siblings. The neutral-bloch multi-k drivers read the unit cell's charge
     # and multiplicity; their multi-cell spin-bookkeeping limitation is
     # documented on run_ccm_uhf_gdf/run_ccm_uks_gdf.
-    # The sector is resolved on the cluster before this dispatch (#519
-    # RG-14): ``spin_state="legacy"`` reproduces the historical
-    # multiplicity-and-parity rule exactly, ``"per-cell"`` and an explicit
-    # total multiplicity select the other sectors.
-    state = getattr(ccm, "spin_state", None)
-    if state is not None:
-        closed = bool(state.closed_shell)
-    else:  # a stand-in cluster without a resolved state: the legacy rule
-        n_elec = int(ccm.supercell.n_electrons())
-        closed = (n_elec % 2 == 0) and int(ccm.supercell.multiplicity) == 1
+    n_elec = int(ccm.supercell.n_electrons())
+    closed = (n_elec % 2 == 0) and int(ccm.supercell.multiplicity) == 1
     if r == "four-center":
         selected_method = "aiccm2026dev-a" if method is None else method
         if (

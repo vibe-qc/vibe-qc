@@ -1655,54 +1655,16 @@ swallow failures; it just makes them debuggable. The max-iter
 path returns the non-converged result so callers that explicitly
 want to inspect a failed iterate keep working.
 
-## Inspect a manifest before analysis
-
-Use Python 3.11 or newer to inspect the TOML without importing the calculation
-engine. This is useful on a machine that only receives result files:
-
-```python
-from pathlib import Path
-import tomllib
-
-manifest_path = Path("output-h2o.system")
-with manifest_path.open("rb") as stream:
-    manifest = tomllib.load(stream)
-
-outputs = manifest.get("outputs", {})
-verdict = manifest.get("verdict", {})
-print("File delivery:", outputs.get("status", "unknown"))
-print("Driver result:", outputs.get("result_status", "unknown"))
-print("Usable:", verdict.get("usable", "unknown"))
-print("Stability:", verdict.get("stability", "unknown"))
-for artifact in outputs.get("files", []):
-    if artifact.get("component_errors"):
-        print("Component errors:", artifact.get("path"),
-              artifact["component_errors"])
-```
-
-This prints evidence; it does not certify the result. In automated consumers,
-use `vibeqc.output.usable_from_manifest(manifest)` when the engine package is
-available and handle all three outcomes: `usable`, `not_usable`, and `unknown`.
-For workflows requiring verified internal stability, also require
-`stability == "verified_stable"`. Neither condition establishes external
-validation, basis convergence or suitability of the physical model.
-
-Keep every trial in a separate directory or give it a distinct `output=` stem.
-Rerunning with the same stem can replace earlier files, and an old optional
-artifact is not evidence that the latest run produced it. Read the latest
-manifest's per-file outcomes and retain the original input alongside each run.
-
 ## `run_job` parameters
 
 | Parameter | Default | Purpose |
 |---|---|---|
 | `molecule` | required | `Molecule` in bohr coordinates |
 | `basis=` | required | libint-recognized basis name |
-| `method=` | `"auto"` | method selector; includes mean-field and correlated routes, with supported spellings and limits in [Methods](../methods.md) |
+| `method=` | `"auto"` | `"rhf"` / `"uhf"` / `"rks"` / `"uks"` / `"auto"` |
 | `functional=` | `None` | XC functional name for RKS/UKS (e.g. `"PBE"`, `"B3LYP"`) |
 | `output=` | `"output"` | path stem; files become `{output}.out`, `{output}.molden`, `{output}.traj` |
-| `optimize=` | `False` | optimize the geometry before the final calculation, where the selected method supports it |
-| `optimizer_backend=` | `"auto"` | `"auto"` prefers ASE when installed, otherwise native; explicit `"ase"`, `"native"` and `"brent"` select a backend, subject to method support |
+| `optimize=` | `False` | run BFGS (via ASE) before the final SCF |
 | `fmax=` | `0.05` | optimizer convergence in eV/Å (ASE convention) |
 | `max_opt_steps=` | `200` | optimizer iteration limit |
 | `write_molden_file=` | `None` (auto) | emit `.molden` when the route exposes a Gaussian AO wavefunction; explicit `True` guarantees it or fails before calculation |
@@ -1732,32 +1694,25 @@ manifest's per-file outcomes and retain the original input alongside each run.
 - no `functional` + multiplicity 1 → RHF
 - no `functional` + multiplicity ≥ 2 → UHF
 
-The return type depends on the method and requested corrections. A plain
-mean-field calculation returns its SCF result; correlated routes and some
-corrections return wrappers or method-specific results. Consult the method's
-API before assuming every result has the same fields or that `energy` denotes
-the uncorrected SCF energy. A dry run returns `None`.
-
-The table summarizes common controls, not the complete signature. See the
-[API reference](../api/index.md) and the relevant method page for additional
-options, result types and unsupported combinations.
+The return value is the underlying SCF result object (`RHFResult`,
+`UHFResult`, `RKSResult`, or `UKSResult`), so you can continue in
+Python after the call to inspect MO coefficients, density matrices, or
+feed the result to downstream post-SCF analysis.
 
 ## When to use `run_job` vs the low-level drivers
 
-Prefer `run_job` for a supported molecular workflow that should retain the
-standard output family, provenance and citations. A basis or functional sweep
-can call it repeatedly with a unique output stem for each point. Supply the
-appropriate options object for supported SCF controls; a sweep or a custom
-SCF option does not by itself require bypassing the high-level runner.
+`run_job` optimises for the *80% case*: one method on one geometry,
+producing a log and an orbital file. If you want to
 
-Use low-level drivers such as `run_rhf` and `run_rks` when composing an
-algorithm, inspecting intermediates, or exercising controls that the runner
-does not expose. Low-level calls do not automatically provide the complete
-output family. Use `vibeqc.output` writers when exporting their results, and
-retain the input and runtime identity explicitly.
+- sweep over basis sets / functionals in one script,
+- compose your own output format,
+- or call the SCF drivers with non-default numerical integration grids,
 
-For periodic systems, use `run_periodic_job` with a `PeriodicSystem`. It
-provides the same output-planning, dry-run and citation concepts, with
-route-dependent structural and wavefunction artifacts. Molecular and periodic
-keyword sets are not interchangeable; consult their respective signatures in
-the [API reference](../api/index.md).
+reach for the low-level API (`run_rhf`, `run_rks`, etc.) and
+`format_scf_trace` directly. For periodic systems, the matching
+high-level entry point is `run_periodic_job`, same artefact
+family (`.out` / `.system` / `.molden` / extended `.xyz` /
+`.POSCAR` / `.xsf` / `.bibtex` / `.references`), same dry-run +
+citation surfaces, accepts a `PeriodicSystem` instead of a
+`Molecule`. Everything `run_job` does internally is
+re-usable via the same public [API](../api/index.md).

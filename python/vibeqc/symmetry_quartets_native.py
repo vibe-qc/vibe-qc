@@ -9,26 +9,7 @@ from .symmetry_quartets import QuartetJKResult, ShellQuartetPlan
 from .symmetry_quartets_streaming import StreamingShellQuartetPlan
 
 
-def _source_requirements(plan, budget, reserved_bytes, reserved_work):
-    """Optional native producer bridge; never a generic protocol shortcut."""
-    from .symmetry_quartets import _MantaSource
-    if (not isinstance(plan, StreamingShellQuartetPlan) or type(plan.source) is not _MantaSource
-            or getattr(core, '_SymmetryQuartetSourceAccumulator', None) is None
-            or getattr(core._SymmetryQuartetAccumulator, 'accumulate_orbit', None) is None):
-        return None
-    # Count only: no workspace or source payload is allocated by the planner.
-    # An optional second workspace must not reject a previously valid native
-    # request. The checked Python reader uses the audit session when it will
-    # not fit alongside the admitted plan, targets and screening metadata.
-    source = core._plan_symmetry_quartet_source(plan.source._provider,
-        Budget(2**63-1, 2**63-1).native())
-    if (reserved_bytes+source.bytes > budget.maximum_bytes
-            or reserved_work+source.work > budget.maximum_work):
-        return None
-    return source
-
-
-def _requirements(plan, budget, density_count=1, targets=None, overhead=(0, 0)):
+def _requirements(plan, budget, density_count=1, targets=None):
     if not isinstance(plan, (ShellQuartetPlan, StreamingShellQuartetPlan)):
         raise TypeError('an admitted molecular quartet plan is required')
     if not getattr(plan, 'equivariance_qualified', True):
@@ -44,10 +25,7 @@ def _requirements(plan, budget, density_count=1, targets=None, overhead=(0, 0)):
     if planner is None:
         raise RuntimeError('native quartet executor is unavailable; use executor="numpy"')
     native = planner(n, ns, ng, elements, maximum, budget.native(), density_count, nj, nk)
-    size, work = plan.required_bytes+native.bytes+overhead[0], plan.required_work+native.work+overhead[1]
-    budget.admit(size, work)
-    source = _source_requirements(plan, budget, size, work)
-    total = Budget(size+(0 if source is None else source.bytes), work+(0 if source is None else source.work))
+    total = Budget(plan.required_bytes+native.bytes, plan.required_work+native.work)
     budget.admit(total.maximum_bytes, total.maximum_work)
     return total, native, maximum
 

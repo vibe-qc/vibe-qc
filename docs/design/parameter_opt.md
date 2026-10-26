@@ -1,12 +1,9 @@
 # Parameter-opt: generalized semiempirical parameter optimization
 
-Status: research design and implementation roadmap, 2026-10-26. The first
-P0-P3 molecular energy-fitting slice is implemented under issue #676; see the
-[parameter-opt guide](../user_guide/parameter_opt.md) for the available API and
-remaining acceptance. No generally validated new parameter set is delivered.
-The package is `vibeqc.parameter_opt`; the user-facing name is **parameter-opt**.
-Interfaces and later-stage features below remain proposals unless documented
-in the guide.
+Status: research design and implementation roadmap, 2026-10-26. No fitter,
+new parameter set or scientific accuracy claim is delivered by this document.
+The proposed package name is `vibeqc.parameter_opt`; the user-facing name is
+**parameter-opt**. All interfaces below are proposed, not executable APIs.
 
 ## Decision and scope
 

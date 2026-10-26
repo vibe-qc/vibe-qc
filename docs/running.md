@@ -110,23 +110,10 @@ output family. Common members are:
 | `.references`, `.bibtex` | citations selected by the route actually used |
 | `.perf`, `.scf.jsonl` | optional performance and structured event records |
 
-Check three separate outcomes before using a result:
-
-| Outcome | Evidence | What it does not establish |
-|---|---|---|
-| Process finished | exit status and stderr | convergence or a correct physical model |
-| Files were delivered | `[outputs].status`, per-file outcomes and expected artifacts in `.system` | scientific success; `complete` describes delivery |
-| Driver accepted the result | `[outputs].result_status` and `[verdict]`, including `usable` and stability | agreement with a reference or convergence of the basis and sampling |
-
-A `dry_run` manifest describes preflight only. An archive can exist even when
-an optional component failed; inspect its `component_errors` before using that
-component. Older manifests can lack verdict fields, which means unknown, not
-success. The full contract and a small inspection example are in
-[Input scripts and output files](user_guide/output_files.md#inspect-a-manifest-before-analysis).
-
-For optimized geometries or correlated methods, also inspect the requested
-stage's convergence and diagnostics. A converged SCF reference alone does not
-prove completion of every subsequent stage.
+The returned Python object and a plausible energy are not enough. Check that
+the result reports convergence, the `.system` status is complete, expected
+artifacts are present, and no warning changed the intended route. The full
+file-by-file contract is in [Input scripts and output files](user_guide/output_files.md).
 
 ## Monitor a foreground run
 
@@ -135,20 +122,8 @@ record goes to `{stem}.out`. To preserve terminal messages and Python errors
 as a separate operator log, use `tee`:
 
 ```sh
-# Bash or zsh: preserve failure from Python even when tee succeeds.
-set -o pipefail
 <vibe-qc-checkout>/.venv/bin/python input-water.py 2>&1 | tee console.log
-run_status=$?
-printf 'Run pipeline exit status: %s\n' "$run_status"
 ```
-
-Capture `$?` immediately after the pipeline. Without `pipefail`, it normally
-reports only whether `tee` succeeded, so an exception in Python can appear
-successful to a wrapper. A nonzero pipeline status may also indicate a log-write
-failure; inspect stderr. In a batch script, return this status with
-`exit "$run_status"` before the scheduler treats the script as successful.
-If using `set -e`, put the pipeline in an `if` statement when you need to
-capture its status and perform cleanup after a failure.
 
 The two files have different roles:
 
@@ -223,7 +198,6 @@ For an SSH session or a job longer than the terminal should own, use tmux:
 
 ```sh
 tmux new -s water-qz
-set -o pipefail
 OMP_NUM_THREADS=8 \
   <vibe-qc-checkout>/.venv/bin/python input-water-qz.py 2>&1 | tee console.log
 # Press Ctrl-B, then D, to detach.
@@ -305,19 +279,15 @@ cd ~/vibeqc-runs/install-check
 <vibe-qc-checkout>/.venv/bin/python quickstart.py
 ```
 
-Contributors should use the smallest check that exercises the changed
-behavior. Documentation prose needs a text/link check; code changes normally
-start with a focused test:
+Contributors should run the affected test lane rather than an outdated fixed
+list or the entire inventory by habit:
 
 ```sh
-.venv/bin/python -m pytest tests/test_<area>.py -q
+.venv/bin/python scripts/test_gate/run_full_suite.py \
+  --wt "$PWD" --list-lanes
+.venv/bin/python scripts/test_gate/run_full_suite.py \
+  --wt "$PWD" --py .venv/bin/python --lane <affected-lane>
 ```
-
-Use `scripts/test_gate/run_full_suite.py --list-lanes` to select a broader
-lane when the change warrants one. Rebuild native code only when the check
-needs a changed native implementation, and verify the loaded module identity.
-A passing source check is separate from scientific acceptance; see the
-[testing policy](testing.md).
 
 See [Developer test lanes](developer_test_lanes.md) and
 [Contributing](contributing.md) for impact selection and release confidence

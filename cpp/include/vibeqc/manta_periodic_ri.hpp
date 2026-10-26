@@ -64,7 +64,7 @@ struct PeriodicRIQMetricInfo {
     double cutoff=0.,negative_limit=0.,minimum_eigenvalue=0.,maximum_eigenvalue=0.,hermiticity_residual=0.;
     bool zero_transfer=false;
     HermitianInversePerturbationCertificate assembly_response;
-    bool assembly_rank_requested=false,assembly_rank_qualified=false,assembly_phase_included=false,assembly_weight_included=false,assembly_prefactor_included=false,assembly_fourier_included=false,assembly_integrals_included=false,assembly_representation_included=false;
+    bool assembly_rank_requested=false,assembly_rank_qualified=false,assembly_phase_included=false,assembly_weight_included=false;
     double assembly_perturbation_bound=0.;
     std::string assembly_certificate_identity;
     std::string metric_source_identity,canonical_metric_identity,factor_identity,projector_identity,source_identity;

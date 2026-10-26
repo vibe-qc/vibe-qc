@@ -17,7 +17,7 @@ first month with the code, with the canonical fix for each. The
 your end); this page covers the *recoverable* situations.
 
 For "I think I found a bug" cases see
-[contribution guide](contributing.md#where-to-report-what).
+[CONTRIBUTING.md](contributing.md) § Filing a bug.
 
 ## Triage the failure first
 
@@ -37,64 +37,16 @@ The first useful comparison changes one factor. If you simultaneously change
 the basis, guess, damping, thresholds, and geometry, a successful rerun does
 not identify the cause.
 
-## Check the environment before rebuilding
-
-From the engine checkout, inspect the intended interpreter without importing
-the native extension:
-
-```sh
-.venv/bin/python - <<'PYTHON'
-import importlib.util
-import sys
-from importlib.metadata import PackageNotFoundError, version
-
-print("Python:", sys.executable)
-spec = importlib.util.find_spec("vibeqc")
-print("Package:", None if spec is None else spec.origin)
-try:
-    print("Installed version:", version("vibe-qc"))
-except PackageNotFoundError:
-    print("No vibe-qc distribution metadata in this environment")
-PYTHON
-./scripts/doctor.sh --venv .venv
-```
-
-Replace `.venv` with the environment used by the failing command. The first
-check locates the Python package; it does not prove that its native extension
-loads or that the installed binary matches the source. If import succeeds,
-inspect the actual loaded modules and banner in a fresh process:
-
-```sh
-.venv/bin/python - <<'PYTHON'
-import vibeqc
-from vibeqc import _vibeqc_core, print_banner
-
-print("Python package:", vibeqc.__file__)
-print("Native extension:", _vibeqc_core.__file__)
-print_banner()
-PYTHON
-```
-
-A missing package points first to interpreter or installation selection. A
-missing native symbol after an update points to the
-[rebuild procedure](contributor_setup.md#rebuild-after-upstream-binding-changes).
-A loader error naming a shared library needs that library's path and version,
-not an SCF convergence adjustment. Keep the full exception and doctor output
-before repairing the installation. Do not rebuild an environment used by an
-active calculation; see [updating active installations](updating.md#long-running-calculations-across-an-update).
-
 ## A route refused the request
 
 Since v0.17.15 many routes fail closed: they refuse a request they cannot
 honour before any expensive work, with a message that names the reason and
-the remedy. A refusal identifies a boundary of the requested calculation.
-Read the message and check the supported route before changing a setting. Removing a
-requested feature or loosening a threshold can change the scientific question;
-it is not automatically a valid repair. The most common ones:
+the remedy. A refusal is not a crash. Read the message, change the one
+setting it names, and rerun. The most common ones:
 
 | Message begins with | What it means | Fix |
 |---|---|---|
-| `GeomOptNotConvergedError` / `Geometry optimization NOT CONVERGED` | A native or Brent optimisation (`optimizer_backend="native"` or `"brent"`) stopped at `max_opt_steps` or short of the gradient threshold; the job stops before the single point and the frequencies | Inspect the optimization trace; if it is still progressing, allow more steps or restart from the last geometry (`.xyz` or the exception's `.system`). Keep the required force threshold; see the note below |
+| `GeomOptNotConvergedError` / `Geometry optimization NOT CONVERGED` | A native or Brent optimisation (`optimizer_backend="native"` or `"brent"`) stopped at `max_opt_steps` or short of the gradient threshold; the job stops before the single point and the frequencies | Raise `max_opt_steps`, loosen `fmax`, or restart from the last geometry, which the `.xyz` holds and the error carries as `.system` |
 | `BasisOverlayIntegrityError`, exit status 78 | The generated basis overlay is missing, changed or copied without its content receipt, so no basis is selected from it | Regenerate it with `bash scripts/setup_basis_library.sh` (it needs Python 3.11 or newer) |
 | `run_periodic_job(method='dlpno-ccsd(t)'): ...` | The periodic DLPNO front door refuses functionals, non-GDF routes, `symmetry_reduce_k`, smearing, `dim < 3`, `optimize` and a `KPoints` object | See the refusal table in [local correlation on crystals](user_guide/periodic_local_correlation.md#refusals) |
 | `symmetry_reduce_k requires an attached symmetry model` | No space-group operations are attached to the system | Pass `symmetry="attach"` with `symmetry_reduce_k=True` |
@@ -103,14 +55,6 @@ it is not automatically a valid repair. The most common ones:
 | `jk_method='auto' refuses a 1-D wire` / `the GDF route runs on 3-D cells` | A `dim=1` system has no route with a consistent Coulomb gauge | Model the wire as a `dim=3` cell with vacuum on the two transverse axes and converge the vacuum |
 | `run_job does not implement LOBPCG SCF diagonalization` | `run_job(solver="lobpcg")` used to run Davidson silently | Use `solver="dense"` or `"davidson"`; LOBPCG is available on explicit problems through `vibeqc.solvers` |
 | `memory estimate: unsupported molecular Lebedev order 59` | A build before 2026-10-14 whose memory estimate did not know the orders 59 to 95 | Update to a current build of main, or use order 53 or lower |
-
-For a geometry optimization, distinguish **SCF convergence at one geometry**
-from **geometry convergence**. More optimization steps help a progressing
-trajectory, but do not repair an unconverged electronic state or an invalid
-model. Do not loosen `fmax` merely to produce a success flag. If the scientific
-application permits a different force tolerance, record it explicitly and
-check the final forces against it before using downstream energies or
-frequencies. See [geometry optimization](user_guide/geometry_optimization.md).
 
 ## SCF didn't converge
 
@@ -278,7 +222,6 @@ available RAM.
 ### Fix, in order of diagnosis
 
 ```python
-# doc-audit: skip - alternative option adjustments for an existing SCF setup
 # 1. If the dense AO ERI tensor dominates, use direct SCF.
 opts.scf_mode = vq.SCFMode.DIRECT
 
@@ -291,10 +234,10 @@ opts.density_fit = True
 opts.cosx = True
 
 # 4. Reduce the basis only if the smaller basis still answers the question.
-# In the existing run_job call, use basis="def2-svp".
+run_job(mol, basis="def2-svp", ...)
 
 # 5. Override last. You accept the risk of swap-thrashing or an OOM kill.
-# In the existing run_job call, use memory_override=True.
+run_job(mol, ..., memory_override=True)
 ```
 
 Choose from the largest category in `estimate_memory`, not from basis count
@@ -1070,38 +1013,22 @@ return an energy that depends on the summation cutoff.
 The [periodic Hartree-Fock tutorial](tutorial/periodic_hf.md) uses the
 vacuum-box form for this reason.
 
-(still-stuck)=
-## Prepare a reproducible report
+## Still stuck?
 
-Open a report in the [issue tracker](https://github.com/vibe-qc/vibe-qc/issues)
-with enough information to reproduce the failure:
+```
+https://github.com/vibe-qc/vibe-qc/issues
+```
 
-1. The exact command, full traceback and relevant `.out`/stderr context.
-2. A minimal input that preserves the failure: geometry or cell and units,
-   charge/spin, method, basis/ECP, k mesh, convergence controls and resource
-   limits. Include any small input data it needs.
-3. The `.system` manifest, when one was written, plus the installed banner
-   and Python/native module locations from the checks above. For source
-   installations, record the source repository and commit (`git rev-parse HEAD`), and
-   whether local changes were present (`git status --short`). A version
-   string alone cannot distinguish builds within a development version.
-4. What you expected and what happened. For a numerical discrepancy, include
-   the reference input/result, units, tolerance and matched approximations.
-   State which observations were measured and which are still hypotheses.
+When filing an issue, include:
 
-If no result or manifest was produced, report that fact and retain the
-original traceback; do not rerun with relaxed tolerances just to obtain an
-output file. Before posting publicly, inspect logs, manifests and inputs for
-private paths, hostnames, credentials or confidential structures. Replace
-private identifiers consistently while preserving the model and failure; do
-not post a complete environment-variable dump.
+1. The full error traceback.
+2. The minimal Python script that reproduces it.
+3. The `output-*.system` manifest (carries the hardware + library
+   versions vibe-qc needs to reproduce).
+4. The vibe-qc version (`python -c "from vibeqc import
+   VIBEQC_VERSION; print(VIBEQC_VERSION)"`).
 
-For a queued calculation, collect identity from the job's actual runtime,
-not the submission machine. Queue scheduling and viewer rendering issues
-belong to those companions' trackers; see the
-[contribution guide](contributing.md#where-to-report-what).
-
-The maintainer will triage. For security
+The maintainer or release chat will triage. For security
 vulnerabilities follow
 [SECURITY.md](https://github.com/vibe-qc/vibe-qc/blob/main/SECURITY.md)
 instead of opening a public issue.

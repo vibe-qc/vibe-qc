@@ -243,11 +243,6 @@ struct GFN2SCCAttempt {
     // The ladder rung's configured charge-mixing control.  The executed
     // solver name records when a polyalgorithm or accelerator interprets it.
     double ladder_charge_mixing = 0.0;
-    // The AES-potential damping the rung executed (XTBSccOptions::aes_damping,
-    // 1.0 = undamped).  The faithful path's stiff-AES rung lowers it to 0.02
-    // to converge open-d singlet atoms whose spherical fixed point is
-    // unstable under the on-site multipole feedback (vibe-qc#684).
-    double ladder_aes_damping = 1.0;
     double electronic_temperature = 0.0;
     SCCMixer scc_mixer = SCCMixer::Simple;
     bool restart_supplied = false;

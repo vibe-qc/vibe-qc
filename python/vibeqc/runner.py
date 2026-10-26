@@ -309,7 +309,6 @@ from .output.formats.semiempirical_record import (
     format_semiempirical_record_section,
     semiempirical_record_fields,
 )
-from .output.formats.solvation import solvation_model_lines
 from .output.formats.vibrational import (
     FD_HESSIAN_SURFACES,
     hessian_surface_lines,
@@ -4464,6 +4463,17 @@ def _refuse_molecular_ecp_derivative_request(
             "finite-difference Hessians. Run this post-HF calculation as a "
             "single point or use an all-electron basis."
         )
+
+    if solvent is not None:
+        from .solvation import resolve_solvent
+
+        solvent_model = resolve_solvent(solvent)
+        if solvent_model is not None and not solvent_model.is_gas_phase:
+            raise NotImplementedError(
+                "ECP+CPCM molecular gradients are not implemented; geometry "
+                "optimization and finite-difference Hessians require that "
+                "missing derivative. Use gas phase or an all-electron basis."
+            )
 
 
 def _refuse_molecular_ecp_correlated_route(
@@ -10924,7 +10934,6 @@ def run_job(
                 write(
                     "\n"
                     + section_header(f"## Implicit solvation ({_solvent_label})")
-                    + solvation_model_lines(_solvent_result)
                     + (
                         f"  Gas-phase total        = {render_energy_labeled(_eg, width=16, precision=10)}\n"
                         if _eg is not None
@@ -14291,21 +14300,6 @@ def run_job(
             # before anything is printed, so a job that skips or fails still
             # says which surface was asked for. vibeqc.output owns the wording.
             _hess_surface_supported = resolved_method in FD_HESSIAN_SURFACES
-            # The medium the SCF ran in is the medium the frequencies must
-            # describe: a solvated job whose Hessian differentiated the
-            # gas-phase gradient would print smooth, plausible, wrong numbers
-            # (#359 was this for optimizations).
-            _hess_solvent_model = None
-            _hess_solvent_label = None
-            if solvent is not None:
-                from .hessian import solvent_label as _solvent_label
-                from .solvation.driver import resolve_solvent as _resolve_solvent
-
-                _hess_solvent_model = _resolve_solvent(solvent)
-                if _hess_solvent_model is not None and _hess_solvent_model.is_gas_phase:
-                    _hess_solvent_model = None
-                if _hess_solvent_model is not None:
-                    _hess_solvent_label = _solvent_label(_hess_solvent_model)
             try:
                 _output_writer.set_hessian(
                     hessian_surface_manifest_fields(
@@ -14315,7 +14309,6 @@ def run_job(
                         basis=str(basis),
                         dispersion=_hess_dispersion_label,
                         available=_hess_surface_supported,
-                        solvent=_hess_solvent_label,
                     )
                 )
             except Exception as _hess_manifest_exc:  # noqa: BLE001
@@ -14418,7 +14411,6 @@ def run_job(
                             # surface the optimizer used (#548).
                             dispersion_params=None if (_hess_is_omx or _hess_source is not None) else _d4_surface,
                             source=_hess_source,
-                            solvent=_hess_solvent_model,
                         )
                         write(
                             "\n"
@@ -14434,7 +14426,6 @@ def run_job(
                                 functional=functional,
                                 basis=str(basis),
                                 dispersion=_hess_dispersion_label,
-                                solvent=_hess_solvent_label,
                             )
                             + f"  Finite-difference Hessian"
                             f"  (step = {_hess_opts.step_bohr:.3f} bohr,"

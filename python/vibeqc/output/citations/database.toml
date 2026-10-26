@@ -3829,7 +3829,7 @@ issue       = 16
 pages       = "164119"
 year        = 2017
 doi         = "10.1063/1.4998644"
-notes       = "Mixed Gaussian + plane-wave density fitting for crystals. Defines the analytic periodic AO-pair Fourier transform recursion that PySCF's pbc.df.GDF / ft_aopair implement and that vibe-qc's native builder (cpp/src/aopair_ft.cpp + python/vibeqc/aux_basis.build_lpq_native_fft) mirrors. Cite on every GDF / RSGDF SCF and on the EWALD_3D analytical Hartree J backend. Equations 16 and 22 also underpin the explicit-cell Fourier and selected reciprocal-Ewald Gram numerical kernels (cpp/src/bipole_ewald_gram.cpp); that leaf is not a complete BIPOLE Hamiltonian. Sec. II Eqs. (13), (16)-(18) and the spectral truncation discussion after Eq. (21) also define the real-AO conjugation convention used by chi factor-fidelity diagnostics; entry fidelity is reported separately from complete Coulomb-block fidelity. The opt-in classic precision-controlled retained construction preserves this spectral definition while checking the projector and inverse square root at two arithmetic precisions; it is an implementation precision policy, not a new fitting approximation."
+notes       = "Mixed Gaussian + plane-wave density fitting for crystals. Defines the analytic periodic AO-pair Fourier transform recursion that PySCF's pbc.df.GDF / ft_aopair implement and that vibe-qc's native builder (cpp/src/aopair_ft.cpp + python/vibeqc/aux_basis.build_lpq_native_fft) mirrors. Cite on every GDF / RSGDF SCF and on the EWALD_3D analytical Hartree J backend. Equations 16 and 22 also underpin the explicit-cell Fourier and selected reciprocal-Ewald Gram numerical kernels (cpp/src/bipole_ewald_gram.cpp); that leaf is not a complete BIPOLE Hamiltonian."
 
 [entries.ye_berkelbach_rsgdf_2021]
 kind        = "article"
@@ -7609,14 +7609,6 @@ _libxc_always           = ["libxc_2018"]
 # vibeqc.solvation.driver.solvation_citation_key.
 "cpcm_fine"             = ["cossi_cpcm_2003", "klamt_schuurmann_cosmo_1993", "klamt_fine_cavity_2018", "york_karplus_smooth_cosmo_1999", "lange_herbert_swig_2010", "tomasi_continuum_review_2005"]
 "cosmo_fine"            = ["klamt_schuurmann_cosmo_1993", "cossi_cpcm_2003", "klamt_fine_cavity_2018", "york_karplus_smooth_cosmo_1999", "lange_herbert_swig_2010", "tomasi_continuum_review_2005"]
-# CPCM and COSMO on the switched Lebedev cavity with Gaussian segment charges
-# (SolventModel charge_representation="gaussian", #681). The cavity stays the
-# Lebedev one, so Scalmani-Frisch's switching is cited; the kernel is the
-# Gaussian one (York & Karplus eq. 56, diagonal from Lange & Herbert eq. 3.7)
-# and not the point-charge CSC diagonal, so there is no Scalmani-Frisch diagonal.
-# Chosen by vibeqc.solvation.driver.solvation_citation_key.
-"cpcm_gaussian"         = ["cossi_cpcm_2003", "klamt_schuurmann_cosmo_1993", "scalmani_frisch_csc_2010", "york_karplus_smooth_cosmo_1999", "lange_herbert_swig_2010", "tomasi_continuum_review_2005"]
-"cosmo_gaussian"        = ["klamt_schuurmann_cosmo_1993", "cossi_cpcm_2003", "scalmani_frisch_csc_2010", "york_karplus_smooth_cosmo_1999", "lange_herbert_swig_2010", "tomasi_continuum_review_2005"]
 # COSMO-RS / COSMOSPACE thermodynamics (vibeqc.solvation.cosmors). Fires when
 # a job computes a sigma profile, sigma potential, chemical potential or any
 # property derived from them. The underlying COSMO surface cites its own
@@ -7831,9 +7823,6 @@ _libxc_always           = ["libxc_2018"]
 # The harmonic variant cites its source, not a claim of the full recurrence.
 "eigensolver_harmonic_davidson" = ["zuev_gplhr_2015"]
 "eigensolver_gplhr" = ["zuev_gplhr_2015"]
-"manta_representation_enclosure" = ["rump_verification_2010", "schlegel_frisch_spherical_1995"]
-"manta_metric_integral_enclosure" = ["rump_verification_2010", "mcmurchie_davidson_1978", "neese_shark_2023"]
-"manta_auxiliary_fourier_enclosure" = ["rump_verification_2010", "neese_shark_2023", "sun_berkelbach_gdf_2017"]
 "manta_gdf_weight_enclosure" = ["rump_verification_2010", "sun_berkelbach_gdf_2017"]
 "manta_bloch_phase_enclosure" = ["rump_verification_2010", "sun_berkelbach_gdf_2017"]
 "manta_hermitian_spectrum" = ["rump_lange_hermitian_bounds_2023"]
@@ -7980,26 +7969,3 @@ volume = 22
 issue = 2
 pages = "881-895"
 bibtex_key = "greiner_opentrustregion_2026"
-
-# Parameter fitting: shared by parameter-opt artifacts.
-[entries.forcebalance_2014]
-kind = "article"
-bibtex_key = "wang_forcebalance_2014"
-authors = ["Wang, Lee-Ping", "Martinez, Todd J.", "Pande, Vijay S."]
-title = "Building Force Fields: An Automatic, Systematic, and Reproducible Approach"
-journal = "Journal of Physical Chemistry Letters"
-year = 2014
-volume = "5"
-pages = "1885-1891"
-doi = "10.1021/jz500737m"
-
-[entries.golub_pereyra_2003]
-kind = "article"
-bibtex_key = "golub_pereyra_2003"
-authors = ["Golub, Gene", "Pereyra, Victor"]
-title = "Separable nonlinear least squares: the variable projection method and its applications"
-journal = "Inverse Problems"
-year = 2003
-volume = "19"
-pages = "R1-R26"
-doi = "10.1088/0266-5611/19/2/201"

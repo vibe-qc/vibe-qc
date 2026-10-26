@@ -724,7 +724,7 @@ def test_real_gamma_first_consumed_density(monkeypatch, method, read):
     payload = adapter.real_gamma_read_source(
         SimpleNamespace(ccm_result=source), open_shell=opened)
     expected = (sum(seed) if opened else seed) if read else np.diag([1., 0.])
-    monkeypatch.setattr(system_module, "CCMSystem", lambda *a, **k: ccm)
+    monkeypatch.setattr(system_module, "CCMSystem", lambda *a: ccm)
     monkeypatch.setattr(adapter, "BasisSet", lambda *a: object())
     monkeypatch.setattr(guards, "reject_bipole_ecp_options", lambda *a, **k: None)
     monkeypatch.setattr(core, "Functional", lambda *a: SimpleNamespace(

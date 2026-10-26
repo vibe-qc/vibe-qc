@@ -6,9 +6,6 @@
 #include "vibeqc/periodic_auxiliary_fourier.hpp"
 #include <cstring>
 #include "manta_ri_interval.hpp"
-#include "manta_verified_math.hpp"
-#include "manta_representation_enclosure.hpp"
-#include "manta_fourier_enclosure.hpp"
 
 namespace vibeqc::manta {
 namespace {
@@ -160,105 +157,5 @@ FourierResult compute_fourier_panel(const BasisSet& bra,const BasisSet* ket,
         row+=a.size();
     }
     return result;
-}
-
-BlochPhasePlan plan_representation(int l,bool pure,const ResourceBudget& budget) {
-    using namespace admission;margin(budget);if(l<0 || l>7)throw std::invalid_argument("MANTA representation angular order");
-    const Count nc=(l+1)*(l+2)/2,n=pure?2*l+1:nc;
-    BlochPhasePlan p;p.scalar_terms=pure?1048576:mul(n,nc);p.kernel_terms=mul(8,p.scalar_terms);
-    p.modeled_peak_bytes=add(add(budget.other_live_bytes,budget.backend_margin_bytes),add(65536,mul(128,mul(n,nc))));
-    cap(p.scalar_terms,budget.scalar_terms,"MANTA representation scalar budget exceeded");
-    cap(p.kernel_terms,budget.kernel_terms,"MANTA representation work budget exceeded");
-    cap(p.modeled_peak_bytes,budget.memory_bytes,"MANTA representation memory budget exceeded");return p;
-}
-RepresentationCertificate certify_representation(int l,bool pure,const ResourceBudget& budget) {
-    const auto plan=plan_representation(l,pure,budget);const auto proof=representation_enclosure(l,pure);
-    RepresentationCertificate out;out.evaluated=md::representation(l,pure);out.lower=out.upper=out.error_bounds=out.evaluated;
-    const Count n=out.evaluated.rows(),nc=out.evaluated.cols();
-    for(Count i=0;i<n;++i)for(Count j=0;j<nc;++j) {
-        const auto z=proof[i*nc+j];out.lower(i,j)=z.lo;out.upper(i,j)=z.hi;
-        const auto e=spectral_interval::sub({out.evaluated(i,j),out.evaluated(i,j)},z);
-        out.error_bounds(i,j)=std::max(std::abs(e.lo),std::abs(e.hi));
-    }
-    return out;
-}
-
-FourierConstructionPlan plan_auxiliary_fourier_construction(const BasisSet& basis,Count vectors,const ResourceBudget& budget) {
-    using namespace admission;margin(budget);auto leaf=ResourceBudget{};
-    const auto actual=plan_fourier(basis,nullptr,vectors,leaf);
-    const auto c=census(basis,7);const Count elements=mul(basis.nbasis(),vectors);
-    FourierConstructionPlan p;p.shell_calls=actual.shell_calls;p.primitive_products=actual.primitive_pairs;
-    p.scalar_terms=add(elements,add(mul(mul(c.primitives,vectors),add(1048576,mul(16384,c.maximum_cartesian))),
-        mul(mul(basis.nshells(),vectors),add(262144,mul(128,square(c.maximum_cartesian))))));
-    p.scalar_terms=add(p.scalar_terms,mul(basis.nshells(),plan_representation(c.maximum_l,true,ResourceBudget{}).scalar_terms));
-    p.kernel_terms=add(actual.kernel_terms,mul(8,p.scalar_terms));
-    p.modeled_peak_bytes=add(add(budget.other_live_bytes,budget.backend_margin_bytes),
-        add(actual.modeled_peak_bytes,add(524288,add(mul(256,elements),mul(128,square(c.maximum_cartesian))))));
-    cap(p.modeled_peak_bytes,budget.memory_bytes,"MANTA auxiliary Fourier construction memory budget exceeded");
-    cap(p.scalar_terms,budget.scalar_terms,"MANTA auxiliary Fourier construction scalar budget exceeded");
-    cap(p.kernel_terms,budget.kernel_terms,"MANTA auxiliary Fourier construction work budget exceeded");
-    cap(p.shell_calls,budget.shell_calls,"MANTA auxiliary Fourier construction shell budget exceeded");
-    cap(p.primitive_products,budget.primitive_quartets,"MANTA auxiliary Fourier construction primitive budget exceeded");
-    return p;
-}
-std::vector<spectral_interval::ComplexInterval> auxiliary_fourier_enclosure(const libint2::Shell& shell,const md::Matrix& vectors) {
-    namespace si=spectral_interval;namespace math=verified_math;si::require_arithmetic();
-    const int l=shell.contr[0].l;const auto& powers=md::cartesians(l);const auto transform=representation_enclosure(l,shell.contr[0].pure);
-    const Count ng=vectors.rows(),nc=powers.size(),ns=shell.size();
-    std::vector<si::ComplexInterval> result(ns*ng);
-    const auto pi=math::pi();const Eigen::Vector3d center(shell.O[0],shell.O[1],shell.O[2]);
-    // Integration by parts: h_n=(-i q/(2a))h_(n-1)+(n-1)/(2a)h_(n-2).
-    // h_0=1; common seed (pi/a)^(3/2) exp(-q.q/(4a)). This encloses
-    // exact stored Gaussian polynomials independently of rounded MD E data.
-    // Same Fourier convention as Neese2023/Sun2017; contract 5.62.
-    for(Count g=0;g<ng;++g) {
-        const Eigen::Vector3d q=vectors.row(g);const auto phase=certify_bloch_phase(-q,center,1.,ResourceBudget{});
-        const si::ComplexInterval exact_phase{{phase.real_lower,phase.real_upper},{phase.imag_lower,phase.imag_upper}};
-        si::Interval squared;for(int axis=0;axis<3;++axis)squared=si::add(squared,si::product(q[axis],q[axis]));
-        squared.lo=std::max(0.,squared.lo);std::vector<si::ComplexInterval> contracted(nc);
-        for(Count primitive=0;primitive<shell.alpha.size();++primitive) {
-            const double a=shell.alpha[primitive],coefficient=shell.contr[0].coeff[primitive];
-            const auto ratio=math::divide(pi,{a,a});
-            const auto decay=math::exp_negative(math::divide(squared,si::product(4.,a)));
-            const auto seed=si::product(si::product(ratio,math::sqrt_positive(ratio)),decay);
-            const auto half=math::divide({1.,1.},si::product(2.,a));
-            std::array<std::vector<si::ComplexInterval>,3> h;
-            for(int axis=0;axis<3;++axis) {
-                h[axis].resize(l+1);h[axis][0]=si::point(1.);
-                const si::ComplexInterval step{{},si::product(half,{-q[axis],-q[axis]})};
-                for(int n=1;n<=l;++n) {
-                    h[axis][n]=si::product(step,h[axis][n-1]);
-                    if(n>1)h[axis][n]=si::add(h[axis][n],si::product(
-                        si::ComplexInterval{si::product(half,{double(n-1),double(n-1)}),{}},h[axis][n-2]));
-                }
-            }
-            for(Count i=0;i<nc;++i) {
-                auto value=si::product(si::ComplexInterval{si::product(seed,{coefficient,coefficient}),{}},exact_phase);
-                for(int axis=0;axis<3;++axis)value=si::product(value,h[axis][powers[i][axis]]);
-                contracted[i]=si::add(contracted[i],value);
-            }
-        }
-        for(Count i=0;i<ns;++i)for(Count j=0;j<nc;++j)
-            result[i*ng+g]=si::add(result[i*ng+g],si::product(si::ComplexInterval{transform[i*nc+j],{}},contracted[j]));
-    }
-    return result;
-}
-FourierConstructionCertificate certify_auxiliary_fourier_panel(const BasisSet& basis,const md::Matrix& vectors,const ResourceBudget& budget) {
-    const auto p=plan_auxiliary_fourier_construction(basis,vectors.rows(),budget);
-    if(vectors.cols()!=3 || !vectors.allFinite())throw std::invalid_argument("MANTA auxiliary Fourier construction requires finite Cartesian vectors");
-    FourierConstructionCertificate out;out.evaluated=compute_fourier_panel(basis,nullptr,vectors,ResourceBudget{});
-    const Count n=basis.nbasis(),ng=vectors.rows(),elements=admission::mul(n,ng);
-    out.real_lower.resize(elements);out.real_upper.resize(elements);out.imag_lower.resize(elements);out.imag_upper.resize(elements);out.error_bounds.resize(elements);
-    Count offset=0;
-    for(const auto& shell:basis.libint()) {
-        const auto proof=auxiliary_fourier_enclosure(shell,vectors);
-        for(Count i=0;i<shell.size();++i)for(Count g=0;g<ng;++g) {
-            const auto& z=proof[i*ng+g];const Count k=g*n+offset+i;
-            out.real_lower[k]=z.real.lo;out.real_upper[k]=z.real.hi;out.imag_lower[k]=z.imag.lo;out.imag_upper[k]=z.imag.hi;
-            out.error_bounds[k]=spectral_interval::magnitude(spectral_interval::sub(spectral_interval::point(out.evaluated.values[k]),z));
-        }
-        offset+=shell.size();
-    }
-    return out;
 }
 } // namespace vibeqc::manta

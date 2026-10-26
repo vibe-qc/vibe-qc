@@ -4,8 +4,8 @@
 
 vibeqc_enable_native_collector() {
     if [ -z "${VIBEQC_NATIVE_BUILD_COLLECTOR:-}" ]; then
-        if [ -n "${VIBEQC_NATIVE_RECEIPT_DIR:-}${VIBEQC_NATIVE_SOURCE_ARCHIVE:-}" ]; then
-            echo "receipt/archive settings require VIBEQC_NATIVE_BUILD_COLLECTOR" >&2
+        if [ -n "${VIBEQC_NATIVE_RECEIPT_DIR:-}" ]; then
+            echo "VIBEQC_NATIVE_RECEIPT_DIR requires VIBEQC_NATIVE_BUILD_COLLECTOR" >&2
             return 3
         fi
         return 0
@@ -40,53 +40,6 @@ PYTHON
     local status=$?
     [ "$status" -eq 0 ] || return "$status"
     _vibeqc_collector_name="$1"
-    _vibeqc_collector_spec=""
-    if [ -n "${VIBEQC_NATIVE_SOURCE_ARCHIVE:-}" ]; then
-        # Only the unpatched pinned FFTW archive has an authenticated contract.
-        # Never infer source provenance from installed bytes or a version name.
-        [ "$1" = fftw ] || { echo "archive collector supports unpatched FFTW only" >&2; return 3; }
-        _vibeqc_collector_spec="$VIBEQC_NATIVE_RECEIPT_DIR/fftw-spec.json"
-        python3 - "$VIBEQC_NATIVE_SOURCE_ARCHIVE" "${FFTW_SHA256:-}" \
-            "${FFTW_VERSION:-}" "$SRC_DIR" "$BUILD_DIR" "$INSTALL_DIR" \
-            "$SCRIPT_DIR" "$REPO_ROOT" "$_vibeqc_collector_spec" <<'PYTHON'
-import hashlib
-import json
-from pathlib import Path
-import re
-import sys
-
-archive, expected, version, source, build, install, scripts, root, output = sys.argv[1:]
-try:
-    archive = Path(archive)
-    if not archive.is_absolute() or not archive.is_file() or archive.is_symlink():
-        raise ValueError("source archive must be an absolute regular file")
-    if not re.fullmatch(r"[0-9a-f]{64}", expected) or not re.fullmatch(r"[0-9]+(?:\.[0-9]+)+", version):
-        raise ValueError("missing FFTW recipe pin")
-    digest = hashlib.sha256()
-    with archive.open("rb") as stream:
-        for block in iter(lambda: stream.read(65536), b""):
-            digest.update(block)
-    if digest.hexdigest() != expected:
-        raise ValueError("source archive differs from the FFTW recipe pin")
-    spec = {"sources": {"fftw": source},
-            "authenticated_sources": {"fftw": {"archive": str(archive.resolve()),
-                "sha256": expected, "prefix": "fftw-" + version}},
-            "recipes": [str(Path(scripts) / name) for name in
-                ("build_fftw.sh", "_native_collector.sh", "_safe_build_env.sh",
-                 "_verify_source.sh", "_build_lock.sh")],
-            "cmake_builds": [build], "install": install, "artifacts": [],
-            "artifact_manifest": str(Path(build) / "install_manifest.txt"), "cwd": root}
-    # The external collector must authenticate extracted bytes before/after the
-    # build. This file merely passes the recipe's pin, not a qualification.
-    with Path(output).open("x") as stream:
-        json.dump(spec, stream, sort_keys=True)
-except (OSError, ValueError) as error:
-    print("native collector: " + str(error), file=sys.stderr)
-    raise SystemExit(3)
-PYTHON
-        local spec_status=$?
-        [ "$spec_status" -eq 0 ] || return "$spec_status"
-    fi
     # Defined only when explicitly enabled. Neither cache hits nor fetch-only
     # callers reach here. The original CMake command lines stay unchanged.
     cmake() {
@@ -95,13 +48,6 @@ PYTHON
                 command cmake "$@" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
                 ;;
             --build)
-                if [ -n "$_vibeqc_collector_spec" ]; then
-                    "$VIBEQC_NATIVE_BUILD_COLLECTOR" record \
-                        --spec "$_vibeqc_collector_spec" \
-                        --output "$VIBEQC_NATIVE_RECEIPT_DIR/$_vibeqc_collector_name.json" \
-                        -- cmake "$@"
-                    return $?
-                fi
                 "$VIBEQC_NATIVE_BUILD_COLLECTOR" record \
                     --source "$_vibeqc_collector_name=$SRC_DIR" \
                     --recipe "$SCRIPT_DIR/build_$_vibeqc_collector_name.sh" \

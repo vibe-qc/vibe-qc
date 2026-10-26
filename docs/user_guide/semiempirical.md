@@ -9,10 +9,9 @@ implementation, not a wrapper around external programs
 is documented separately because it is an external pre-trained model, not
 a semiempirical electronic-structure method ({doc}`mlip`).
 
-Experimental [parameter-opt](parameter_opt.md) supports selected molecular
-DFTB repulsion and PM6 electronic-parameter energy fits. Its
-[design roadmap](../design/parameter_opt.md) covers broader methods and later
-optimizers. Fitting does not change the method readiness statements below.
+Parameter fitting is planned in the [parameter-opt design and roadmap](../design/parameter_opt.md).
+It describes shared adapters and reference-driven fitting; it is not an available
+API and does not change the method readiness statements below.
 
 ```{warning}
 **Production readiness varies by method.** MSINDO is production within its
@@ -255,9 +254,10 @@ exchange-correlation term. The third-order term
 $E^{(3)} = \tfrac13\sum_{A,l}\Gamma_{A,l}\,q_{A,l}^{3}$ adds the charge
 dependence of the hardness, which keeps the SCC from over-polarising
 charged systems. Dispersion is the D4 model with charge-dependent $C_6$
-coefficients, coupled to the molecular SCC by default. The published reference
-data are cached externally, with a separate explicit legacy EEQ control.
-Where GFN2 helps: structures,
+coefficients; in vibe-qc it is a post-SCF term (the native D4 covers H, He,
+B, C, N, O, F and Ne and elsewhere returns zero with
+`GFN2D4UnsupportedWarning`), and the reported energy includes it so that
+comparisons with `xtb` are like for like. Where GFN2 helps: structures,
 vibrational frequencies and conformer energies of molecules and clusters
 across the periodic table at DFTB cost. Where it fails: reaction energies
 and barriers beyond its training, metals, and, in vibe-qc's implementation,
@@ -374,7 +374,8 @@ print(f"Energy: {model.energy():.6f} Ha")
 ```{warning}
 GFN2-xTB is **gated experimental**. The H{sup}`0`/overlap deep-state
 bug was fixed 2026-06-01, and molecular AES (dipole + quadrupole), the
-GAM3 third-order term, and self-consistent molecular D4 are implemented.
+GAM3 third-order term, and post-SCF native D4-style dispersion are now
+implemented.
 The classical repulsion term E_rep was restored to the total energy on
 2026-08-12 (Bannwarth, Ehlert & Grimme, JCTC 2019, Eqs. 8-9): it is a
 separate zeroth-order pairwise term, not something H0 parameterization
@@ -386,18 +387,15 @@ The molecular electronic model is at parity with xtb 6.7.0 since
 2026-10-12: on the 49-system matrix of `tests/test_gfn2_xtb_parity_matrix.py`
 (period 2 to 5 main group, Zn/Cd/Hg, Cu2, TiCl4, the OH- and NH4+ ions), the
 SCC electronic energy plus repulsion of every closed-shell row agrees with
-xtb to better than 2e-5 Ha and the repulsion to 1e-6 Ha. Since 2026-10-26
-the public total is at parity too: the default molecular route couples the
-pinned published D4 references in SCC, and on the same 45 closed-shell rows
-`GFN2Model.energy()` agrees with xtb's total to 12 uHa or better (TiCl4 is
-the largest residual, carried by the electronic channel) while the
-dispersion channel itself agrees to 0.05 uHa. The original native-table
-control (`d4_model="legacy_eeq"`) remains explicit and keeps its own
-reference-data scope. Gradient parity against xtb, periodic cells and the
-open-shell route are not covered by that matrix.
+xtb to better than 2e-5 Ha and the repulsion to 1e-6 Ha. The total energy
+still differs by the dispersion channel: the native post-SCF D4 covers H-Ar
+and Cu (0.6 mHa or better on the period-2 rows) and returns zero with a
+warning beyond, so a total with heavier elements omits the D4 term that xtb
+includes (issue #132). GFN2-xTB stays gated experimental on that channel, on the periodic
+gates below, and on the open-shell route, which fails closed.
 The remaining production gates are periodic AES image-cell multipole Ewald
 terms, stricter periodic molecular-limit parity, difficult periodic/polar
-fixtures, external gradient parity, and the unrestricted route. See
+fixtures, the D4 reference scope, and the unrestricted route. See
 {ref}`semiempirical-status`.
 The bounded h-BN expansion sweep at lattice scales 1.02 through 1.06 converges
 on a smooth branch when given an explicit 1000-iteration total budget; its
@@ -435,7 +433,7 @@ converges. Diamond-Si periodic PM6 now uses one shared gamma kernel for electron
 core image monopoles and crosses its 15-bohr shell boundary smoothly. The
 h-BN PM6 physics gap remains open; Bloch-periodic OMx is gated as described
 below.
-In the explicit legacy EEQ control, post-SCF native D4 covers H-Ar and Cu;
+The post-SCF native D4 term is included for H-Ar (Z = 1-18) and Cu;
 outside that reference-data set GFN2 returns zero D4 and emits
 `GFN2D4UnsupportedWarning`.
 
@@ -446,38 +444,15 @@ dynamics, and periodic calculations, see the
 ```
 
 **What the reported GFN2 energy contains, and how to compare it to `xtb`.**
-The molecular default uses faithful AES and self-consistent D4. Its native
-SCC energy includes the charge-dependent pairwise dispersion, its potential,
-and charge-independent neutral-reference ATM. `GFN2Model.energy()` reports
-that total Mermin free energy without adding dispersion a second time;
-`gradient()` uses the same native SCC and explicit D4 derivatives.
-The implementation follows Bannwarth, Ehlert and Grimme, JCTC **15**, 1652
-(2019), [section 2.2.6 and SI equations 51-55](https://doi.org/10.1021/acs.jctc.8b01176).
-
-Published D4 references are separately cached from pinned xTB 6.7.1 sources
-under LGPL-3.0-or-later, with both license texts and SHA-256 verification.
-No upstream executable or library computes the native results. Prepare the
-cache on a connected host before deploying it to an offline compute node:
-
-```python
-from vibeqc.semiempirical.methods.gfn2_d4_params import load_gfn2_d4_reference_data
-load_gfn2_d4_reference_data(allow_fetch=True)
-# After staging the cache, this must succeed without network access:
-load_gfn2_d4_reference_data(allow_fetch=False)
-```
-
-`VIBEQC_GFN2_D4_CACHE_DIR` selects the source directory; otherwise it is
-`$XDG_CACHE_HOME/vibeqc/gfn2-d4/<pinned-revision>` (default `~/.cache`).
-`VIBEQC_GFN2_OFFLINE=1` prohibits refreshes. Missing or mismatched sources or
-license files fail closed. The execution provenance records the reference
-source/content hashes and the geometry-specific native dispersion hash.
-
-Explicit `aes_faithful=False` preserves shell AES and the legacy post-SCF
-native EEQ D4 control. `d4_model="legacy_eeq"` also permits that dispersion
-control with faithful AES. These are different Hamiltonians and must be
-identified in comparisons. The low-level native binding without dispersion
-operands continues to report SCC alone. Historical results are unchanged;
-passing internal derivatives does not establish external gradient parity.
+`GFN2Model.energy()`, `run_semiempirical("gfn2_xtb", ...)` and
+`run_job(method="gfn2_xtb")` all return the **native SCC energy plus the
+post-SCF D4 dispersion correction**. The native binding
+`vibeqc._vibeqc_core.semiempirical.xtb.run_gfn2_xtb(...).energy` returns the
+SCC energy **alone**; the two interfaces differ by the post-SCF correction.
+This is a native D4-style approximation. The published GFN2 functional
+(Bannwarth, Ehlert & Grimme, *J. Chem. Theory Comput.* **15**, 1652-1671
+(2019), [doi:10.1021/acs.jctc.8b01176](https://doi.org/10.1021/acs.jctc.8b01176))
+includes charge-dependent two-body dispersion in SCC.
 
 Molecular GFN2 validates occupations in its parameterized valence space.
 The high-level GFN2 route remains closed-shell. The experimental native
@@ -546,7 +521,7 @@ host takes precedence over a hydride, except for hydrogen, whose canonical
 host remains H2. The bundled catalogue and dataset are unchanged by a
 custom generation run.
 
-| D4 choice | Explicit legacy EEQ control | Upstream GFN2 (`xtb` 6.7.1) |
+| D4 choice | Native molecular GFN2 | Upstream GFN2 (`xtb` 6.7.1) |
 |---|---|---|
 | Two-body charges | EEQ, computed after SCC | SCC charges and dispersion potential |
 | Reference data | Independently generated CPKS/PBE38 data | Upstream GFN2 reference data and charges |
@@ -577,11 +552,18 @@ GFN2 energy parity; the other differences in the table remain.
 The native ATM kernel uses negative C9 and energy `-C9 * angular_factor * damping`:
 equilateral triplets repel, while collinear triplets attract.
 
-The preceding native-table details describe the explicit `legacy_eeq`
-control and independent reference-data development. The default uses the
-pinned published table, electronegativity-weighted CNs, SCC charges and
-neutral ATM. Total-energy comparisons must match geometry, ensemble and
-executed model, without subtracting dispersion or fitting offsets.
+`aes_faithful=True` changes AES only. It retains this post-SCF D4 model;
+it does not enable upstream-faithful dispersion. Total-energy comparisons
+must include each program's dispersion and use the same geometry and ensemble.
+Subtracting dispersion can diagnose a difference, but cannot establish total
+energy or force parity. A few-percent C6 comparison is also insufficient for a
+0.1 mHa total-energy criterion. GFN2-xTB remains experimental, including its default faithful AES route.
+The molecular D4 force contribution finite-differences the same post-SCF energy,
+including ATM and the coordinate dependence of its EEQ charges and CN.
+The EEQ solve constrains the partial charges to the molecule's total charge
+for both energy and displaced force evaluations. Cations and anions therefore
+use their ionic charge for both pairwise and ATM dispersion.
+Guard: `tests/test_gfn2_xtb.py::TestGFN2PublicEnergyIsDispersionCorrected`.
 
 **Molecular AES derivative support.** The native result records its executed
 AES functional in the read-only `GFN2Result.aes_functional` field: `"shell"`
@@ -595,8 +577,7 @@ or this field.
 or `"faithful"` functional. Unknown or legacy results raise `ValueError` and
 must be recomputed with a current native build. `GFN2Model.gradient()` uses
 the recorded functional, including when reusing a cached energy result,
-and includes coupled D4 when recorded in the result; only the explicit
-legacy EEQ route adds its post-SCF D4 derivative. The public
+then adds the existing post-SCF D4 derivative. The public
 `GFN2Model`, its geometry-optimizer provider, and `run_job(method="gfn2_xtb")`
 use faithful AES by default. Pass `aes_faithful=False` to `GFN2Model`, or
 set the native SCC option to `False`, to reproduce the legacy shell model.
@@ -644,13 +625,7 @@ requested temperature, exact zero-temperature Aufbau by default. Two paths
 lead to a smeared solution: an explicit `electronic_temperature` on the
 native options, or the automatic stabilisation ladder accepting its
 `T = 0.005 Ha` rung for a system that stalls at `T = 0` (see the ladder
-notes below). For a molecule with an element beyond argon on the default
-atom-resolved AES, a stiff-AES rung at that temperature precedes the
-high-temperature rung and damps the AES potentials to 0.02 per iteration:
-the spherical state of an open-d singlet atom such as W, Os or Mo is an
-unstable fixed point of the on-site multipole feedback and converges only
-there, in about 50 iterations (issue 684; xtb 6.7.0 fails the same atoms).
-In both cases the SCC is stationary in the Mermin free energy
+notes below). In both cases the SCC is stationary in the Mermin free energy
 `A = E - T*S`, so that is what `GFN2Model.energy()` and `run_job` report
 (plus D4), what `compute_gfn2_gradient` differentiates through the converged
 fractional occupations (`GFN2Result.occupations`), and what an optimizer
@@ -662,52 +637,10 @@ and the `.out` carries the "Mermin free energy (finite electronic
 temperature)" block. At `T = 0` every value is the historical one, bit for
 bit.
 
-**Electronic branches and finite differences.** SCC convergence establishes
-stationarity under the requested controls, not uniqueness or a global minimum.
-At a symmetric geometry, distinct symmetry-related densities can have the same
-energy and different nuclear gradients. For example, square Li4 at
-`T = 0.005 Ha` can select different broken-symmetry densities after tiny
-coordinate displacements while retaining nearly identical atomic charges.
-The lower envelope of those branches can have a cusp, where a central
-difference need not equal the gradient of either branch.
-Compare densities and occupations before interpreting an energy difference as
-the derivative of one branch. Do not average gradients or force a symmetric
-density to conceal a branch change.
-
-The native molecular `GFN2Result` exposes `density`, `mo_coeffs`, `overlap` and
-`hamiltonian` as detached matrix copies from the same solve that produced its
-energy and gradient. Together with `occupations` and `mo_energies`, these allow
-checks of `P = C diag(occupations) C.T`, `C.T S C = I`, `H C = S C diag(eps)`
-and `trace(P S) = N`. The matrices also describe the last evaluated state on
-SCC exhaustion; check `converged` before using a gradient. In that case the
-last diagonalized `hamiltonian` may still contain damped potentials and need
-not equal the undamped Fock rebuilt from `density`. These records neither
-perform electronic-stability analysis nor guarantee branch continuation at
-another geometry. The original Li4 central-difference regression remains an
-unresolved state-selection diagnostic.
-
 The `.system` manifest records the parameter provenance a GFN2 number
 depends on, including `gfn2_cache_sha256` (the digest of the fetched
 parameter cache, `gfn2_xtb_params.toml`) and `gfn2_d4_refdata_sha256`, so a
 reported energy can be tied to the exact parameters that produced it.
-
-For published D4 data, `gfn2_d4_refdata_sha256` hashes the exact converted
-floating-point records used at execution. Identical upstream bytes can produce
-different last bits in the polarizability conversion and C6 quadrature on
-different math libraries or hardware. A login-host content hash therefore
-does not establish the expected compute-node content hash. Do not round the
-records or replace the recorded execution hash to make them agree.
-`gfn2_d4_refdata_source_sha256` identifies the raw polarizability source;
-`gfn2_d4_refdata_revision` and `gfn2_d4_refdata_sources_sha256` additionally
-identify the complete pinned input set, including the CN source and both
-license texts. The latter hashes UTF-8 JSON with sorted keys and compact
-separators, containing `revision` and `sources` (upstream relative path to raw
-SHA-256). These fields are captured before execution and are `unavailable`
-for the native legacy dataset. For portable preflight, verify the pinned
-source bytes and runtime version, then retain the exact converted hash from
-the execution host. A source match alone does not establish numerical
-equivalence; compare numerical results separately with the declared controls
-and tolerances.
 
 #### Where the parameter cache lives, and seeding it for offline hosts
 
@@ -880,43 +813,15 @@ from 1e-3 to 1e-6 bohr, the core Hamiltonian and two-center interaction
 matrices vary smoothly, and the energy difference at either fixed density
 shrinks with the displacement. The independently converged densities instead
 remain separated by Frobenius norms of about 2.838 and 2.836. This identifies
-root selection as the cause of these two jumps; that diagnostic alone did
-not repair the solver or establish electronic stability of either root. The
-0.02 Ha paired-energy guard remains unchanged. Retain the two refused cases in the earlier 12/14
+root selection as the cause of these two jumps; it does not repair the solver
+or establish electronic stability of either root. The 0.02 Ha paired-energy
+guard remains unchanged. Retain the two refused cases in the earlier 12/14
 endpoint record at `ea5255068774`; their final stored frames are not minima.
 A diagnostic fixed-point refinement from either captured density reached the
 same lower-energy root in each case, with consistent energy derivatives over
 those displacement steps. This is evidence for a smooth local branch, not
 a production recovery policy. No broader geometry or published-Hamiltonian
 parity claim follows.
-
-Restricted molecular OM2 now applies a bounded state-selection recovery
-before accepting a converged result. It rebuilds the physical Fock, checks
-the occupied-orbital projector and its commutator residual, then samples
-occupied-to-virtual rotations of +/-0.1 radians among the four frontier
-orbitals on each side. This costs at most 32 candidate energy evaluations
-per screen. A candidate must lower the unchanged implemented energy by more
-than `conv_tol`. Its density is refined with 30 percent new physical-Fock
-projector and 70 percent previous density for 32 steps, followed by fresh
-DIIS for the linear convergence tail. Up to two such restarts share the
-caller's original `max_iter` budget; `n_iter` includes recovery iterations.
-There are at most three descent screens, with no recursion or unbounded
-seed search. A detected descent that cannot finish within these bounds,
-an unconverged projector, or recovery above the previous energy by more than
-`conv_tol` fails closed.
-The default 200-iteration runner budget is used for the carbonyl validation;
-a smaller native API budget may still refuse the calculation.
-
-This screen follows the orbital-variation energy criterion of
-[Seeger and Pople, section III](https://doi.org/10.1063/1.434318), but samples
-only a fixed subset of real restricted rotations. Absence of a sampled
-descent is not a full electronic-stability test or proof of a global
-minimum. OM1, OM3 and unrestricted OM2 retain their existing selection
-policy. The 0.02 Ha finite-difference guard, its refinement steps and SCF
-convergence tolerance are unchanged. Historical CO2 and H2CO refusals remain
-valid evidence for their recorded runtime, independently of new recovery
-validation. This work does not expand the published-Hamiltonian parity or
-geometry accuracy claims.
 
 The restricted native `PM6Result` returned by molecular PM6 and OM2/OM3
 exposes `mo_energies` (Hartree) and `mo_coeffs` (AO rows, MO columns) as

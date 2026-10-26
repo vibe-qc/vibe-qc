@@ -7367,40 +7367,6 @@ m.def("compute_cosx_k",
        py::arg("event_iteration") = 42, py::arg("steps") = 12,
        "Private checkpoint replay; returns diagnostic records, never a certified SCF result.");
 
-    m.def("_run_uks_with_diis_capture", [](const vibeqc::Molecule& mol,
-        const vibeqc::BasisSet& basis, const vibeqc::UKSOptions& opts, int first, int last) {
-        vibeqc::detail::UKSDIISCapture capture;
-        capture.first = first; capture.last = last;
-        vibeqc::UKSResult result;
-        { py::gil_scoped_release release;
-          result = vibeqc::detail::run_uks_with_diis_capture(mol, basis, opts, capture); }
-        py::list frames;
-        for (const auto& f : capture.frames) {
-            py::dict row;
-            row["iteration"] = f.state.iteration;
-            row["values"] = py::cast(f.state.values);
-            row["matrices"] = py::cast(f.state.matrices);
-            row["focks"] = py::cast(f.diis.focks); row["errors"] = py::cast(f.diis.errors);
-            row["pushed_gram"] = f.diis.pushed_gram;
-            row["after_policy"] = f.diis.after_policy;
-            row["after_capacity"] = f.diis.after_capacity;
-            row["disposition"] = f.diis.disposition;
-            py::list attempts;
-            for (const auto& a : f.diis.attempts) {
-                py::dict solve; solve["gram"] = a.gram; solve["solution"] = a.solution;
-                solve["rank"] = a.rank; solve["usable"] = a.usable;
-                attempts.append(solve);
-            }
-            row["attempts"] = attempts; frames.append(row);
-        }
-        py::dict report;
-        report["overlap"] = capture.overlap; report["orthogonalizer"] = capture.orthogonalizer;
-        report["frames"] = frames;
-        return py::make_tuple(result, report);
-    }, py::arg("molecule"), py::arg("basis"), py::arg("options"),
-       py::arg("first"), py::arg("last"),
-       "Passive bounded DIIS history capture; unmodified SCF result plus raw diagnostic records.");
-
     m.def("_run_uks_with_operator_capture", [](const vibeqc::Molecule& mol,
         const vibeqc::BasisSet& basis, const vibeqc::UKSOptions& opts,
         const py::function& on_failure) -> vibeqc::UKSResult {
@@ -13088,10 +13054,6 @@ py::class_<vibeqc::semiempirical::SemiempiricalParameters>(
             &vibeqc::semiempirical::xtb::GFN2SCCAttempt::
                 ladder_charge_mixing)
         .def_readonly(
-            "ladder_aes_damping",
-            &vibeqc::semiempirical::xtb::GFN2SCCAttempt::
-                ladder_aes_damping)
-        .def_readonly(
             "electronic_temperature",
             &vibeqc::semiempirical::xtb::GFN2SCCAttempt::
                 electronic_temperature)
@@ -15178,24 +15140,6 @@ py::class_<vibeqc::semiempirical::SemiempiricalMethodRegistry>(
         .def_readonly("shell_dip_rms", &vibeqc::semiempirical::xtb::GFN2Result::shell_dip_rms)
         .def_readonly("charges", &vibeqc::semiempirical::xtb::GFN2Result::charges)
         .def_readonly("mo_energies", &vibeqc::semiempirical::xtb::GFN2Result::mo_energies)
-        .def_property_readonly("mo_coeffs",
-            [](const vibeqc::semiempirical::xtb::GFN2Result& result) {
-                return Eigen::MatrixXd(result.mo_coeffs);
-            }, "Detached copy of the last evaluated AO-to-MO coefficients.")
-        .def_property_readonly("density",
-            [](const vibeqc::semiempirical::xtb::GFN2Result& result) {
-                return Eigen::MatrixXd(result.density);
-            }, "Detached copy of the last evaluated total AO density. "
-               "Available on SCC exhaustion; not a stability certificate.")
-        .def_property_readonly("overlap",
-            [](const vibeqc::semiempirical::xtb::GFN2Result& result) {
-                return Eigen::MatrixXd(result.overlap);
-            }, "Detached copy of the AO overlap used by this calculation.")
-        .def_property_readonly("hamiltonian",
-            [](const vibeqc::semiempirical::xtb::GFN2Result& result) {
-                return Eigen::MatrixXd(result.hamiltonian);
-            }, "Detached copy of the last diagonalized SCC Hamiltonian. "
-               "On exhaustion this need not equal the undamped Fock of the returned density.")
         .def_readonly(
             "occupations",
             &vibeqc::semiempirical::xtb::GFN2Result::occupations,

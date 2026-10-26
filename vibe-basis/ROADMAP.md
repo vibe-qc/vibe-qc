@@ -13,7 +13,7 @@ is the contract that keeps the two honest about it.
 
 | | |
 |---|---|
-| **Source version (2026-10-26)** | 0.13.0 (M-0 done; code for M0, M1, M2 (0.11.0) and M3 (0.12.0, scan driver 0.13.0) landed; the gates of M0 to M3 are open, see § 4) |
+| **Source version (2026-10-19)** | 0.12.0 (M-0 done; code for M0, M1, M2 (0.11.0) and M3 (0.12.0) landed; the gates of M0 to M3 are open, see § 4) |
 | **1.0.0 criterion** | first production basis published from this driver + frozen backend/transport API ([`VERSIONING.md`](VERSIONING.md)) |
 | **vibe-qc's roadmap** | [`docs/roadmap.md`](../docs/roadmap.md) § "OPTBASIS-style basis optimiser" |
 
@@ -165,7 +165,7 @@ Current engine status:
 | Engine | Tier | State |
 |--------|:----:|-------|
 | `VibeQcEngine` | 2 | crystals and atoms; declared `zero_point` (Γ phonons, M1) and `counterpoise` (BOC-3). No `relax` capability; direct variable-cell relaxation fails closed. |
-| `Crystal23Engine` | 1 | emit, submit, parse, version-check and counterpoise implemented; direct-binary `invocation="stdin"` added. Bare atoms run as molecular C1 decks since `e76429fa` (#554, verified against the issue's molecular references). |
+| `Crystal23Engine` | 1 | emit, submit, parse, version-check and counterpoise implemented; direct-binary `invocation="stdin"` added. Bare-atom Mg failure remains open (#554). |
 | `GpawEngine` | 1 | declared, raises; wired to the validated PW worker at M5 |
 
 Optional stages follow `EnergyEngine.supports()`. `VibeQcEngine` declares
@@ -197,7 +197,7 @@ receive a version through the normal release process when their scope is ready.
 | **M0** | Cohesive pipeline: relax → hybrid SP → ZPE → atoms → assemble | 0.4.0 | two-engine: CRYSTAL23 reproduces `E_pob` < 1 kJ/mol; then vibe-qc reproduces CRYSTAL23 < 2 kJ/mol | 🟡 **API + engine landed; reference-arithmetic rung 1a passes; engine reproduction and cross-engine gates open. Variable-cell relaxation unavailable.** |
 | **M1** | Γ-point ZPE on the Gaussian route (FD Hessian **from energies** — see BOC-2) | Included by 0.12.0 | MgO + NaCl optical modes within 5 cm⁻¹ of the GAPW route; acoustic within 15 cm⁻¹ of zero | 🟡 **driver + engine landed; gate open** |
 | **M2** | `CohesiveObjective` vs the PW limit | 0.11.0 | evaluating at pob-TZVP-REV2 reproduces MD −24.6 / MAD 35.4 kJ/mol (n=28) | 🟡 **objective landed (0.11.0); rung 2a passes**: the published pob energies through `CohesiveObjective` give −24.58 / 35.40 with the static-lattice and counterpoise conventions pinned (`tests/basisset_dev/test_m2_gate_published_pob.py`); rung 2b, an engine reproducing those energies, is open (#224); its `VibeQcEngine` half is no longer blocked on BOC-3 |
-| **M3** | **Topology search — the d/f scan** | 0.12.0 | Mg-d in MgO + Si-d in SiC: terminates, ranked Pareto front, **rediscovers the shipped pob topology** on a total-energy objective | 🟡 **topology code landed (0.12.0); relax-and-score recipe `vibeqc.basis_optimization.recipes.topology_scan` landed (0.13.0); gate open** (#225) |
+| **M3** | **Topology search — the d/f scan** | 0.12.0 | Mg-d in MgO + Si-d in SiC: terminates, ranked Pareto front, **rediscovers the shipped pob topology** on a total-energy objective | 🟡 **topology code landed (0.12.0); gate open** (#225) |
 | **M4** | Campaign orchestration on `vq` | Unassigned | 200-eval campaign survives a mid-run kill and resumes identically; zero writes into managed checkouts | ⬜ |
 | **M5** | Cross-validation ladder (Gaussian ↔ PW limit) | Unassigned | ≥ 28 systems, rungs 1/2/2′/3 + extrapolation residual demonstrably smaller than the gap it measures | ⬜ |
 | **M6** | Production run — the optimised basis | **1.0.0** | runs on `VibeQcEngine`; held-out MAD beats pob-TZVP-REV2's 35.4 kJ/mol by a stated margin at equal-or-lower primitive count | ⬜ |
@@ -217,46 +217,32 @@ the published M2 reference is explicitly static lattice, with ZPE off and
 counterpoise on. That convention is not a temporary stub waiting for M1.
 M4 and M5 implementation need not wait for M3's scientific gate.
 
-### Current evidence and next gates (2026-10-26)
+### Current evidence and next gates (2026-10-19)
 
 - **M0/M2:** reference arithmetic and objective algebra pass, not a fresh
   28-system calculation. `test_m2_gate_published_pob.py` reproduces MD
   **+24.58** in candidate-minus-reference convention (−24.58 in the published
-  GPAW-minus-pob convention) and MAD **35.40 kJ/mol**, n=28. The reference
-  decks and outputs behind the 28 values are readable
-  (`vibe_basis.io.cohesive_reference`, path supplied by the caller), and
-  `recipes.cohesive_reference` recomputes each run from our own decks
-  (rung 2b, #224). The audit of those runs found two values that are not
-  pob-TZVP-rev2 numbers. MgO's bulk and O atom are in another basis. BaO's
-  bulk Ba carries an f function its counterpoise atoms lack. LiH's H atom
-  energy is SCF cycle 1 of a run that crashed. The counterpoise settings
-  vary per system (NSTAR 10 to 60, RMAX 5 to 10 Angstrom, relaxed or
-  starting cell). The recomputation has not run yet.
+  GPAW-minus-pob convention) and MAD **35.40 kJ/mol**, n=28. The CRYSTAL
+  reproduction needs the original 28 reference cells, or an explicit decision
+  to use other cells with a revised comparison tolerance (#224).
 - **BOC-3 is landed (e96c2a7c):** the ghost-cluster implementation removes
   the counterpoise capability blocker. The reported MgO comparisons agree
   within 2.7e-6 Ha for Mg in the tested bases and about 1e-7 Ha for O/STO-3G.
   The O/pob-TZVP-rev2 CRYSTAL comparison is incomplete. These checks do not
   establish the 28-system cohesive gate; cluster size and SCF cost remain
   practical constraints (#224).
-- **Bare atoms (#554, closed 2026-10-22):** the periodic P1 box gave Mg
-  about 0.31 Ha too low. Since `e76429fa` a bare atom is a molecular C1
-  deck, verified on CRYSTAL23 against the issue's molecular references (Mg
-  RHF STO-3G and pob-TZVP-rev2, O UHF triplet, all within 1e-6 Ha). Atoms
-  other than those three are untested on that route, and energies cached
-  from the old periodic route are not reused.
+- **Bare-atom failure (#554):** the default non-counterpoise CRYSTAL route
+  gives an unphysical Mg energy, about 0.31 Ha too low (roughly 800 kJ/mol
+  per Mg). Do not use that result as a valid cohesive reference. The tested
+  counterpoise route avoids this defect; other closed-shell atoms remain
+  untested. Preserve this scoped failure while running eligible work.
 - **M1:** the energy-difference Γ-Hessian driver exists, but its MgO/NaCl
   comparison with GAPW remains open. Γ-only ZPE is not a converged q-mesh
   thermochemical correction.
 - **M3 (#225):** the CRYSTAL stdin path is fixed (0bd5b77d) and one MgO
-  PW1PW/pob-TZVP-rev2 point converged at −275.47676757571 Ha. The
-  candidate-relaxation recipe and its model-engine check landed in 0.13.0
-  (`vibeqc.basis_optimization.recipes.topology_scan`,
-  `tests/basisset_dev/test_topology_scan_recipe.py`). On a model with known
-  optima the scan relaxes every candidate, seeds the next round from the
-  relaxed exponents and stops on its plateau rule after 3 rounds and about
-  200 energies. At 737 s per MgO point that is about 40 CPU-hours per system,
-  so the MgO/SiC campaign is sized by queue capacity, not by the optimiser.
-  The campaign has not produced a front yet. A pure-total-energy
+  PW1PW/pob-TZVP-rev2 point converged at −275.47676757571 Ha. That is a
+  prerequisite check, not a topology scan. The candidate-relaxation recipe,
+  focused contract check and MgO/SiC campaign remain. A pure-total-energy
   Pareto front is a weak rediscovery test because added functions generally
   lower variational energy; discriminating cohesive-objective evidence still
   requires M2's engine reproduction.
@@ -267,7 +253,7 @@ M4 and M5 implementation need not wait for M3's scientific gate.
 The next feature release can collect qualified driver changes without waiting
 for a production basis. **1.0 remains tied to the published production basis
 and frozen backend/transport API**, not the article deadline or the current
-0.13.0 number. A paper must identify the exact code and evidence it uses;
+0.12.0 number. A paper must identify the exact code and evidence it uses;
 implemented searches alone do not support an improved-basis claim.
 
 ---

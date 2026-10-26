@@ -27,12 +27,7 @@ is defined in [Methods: theory and status](../methods.md#how-to-read-the-status-
 grid section of the [functionals guide](../user_guide/functionals.md). Run
 the script from an empty scratch directory. The numbers were measured with
 the vibe-qc 0.17.17 development build (main, 2026-10-14); the wall times are
-from a laptop and include the whole job. Run the Python blocks in order in
-one script: the first defines `water` and imports `vq`, and later blocks reuse
-them. The explicit-grid helper caches each point in memory so that the radial
-series and reference comparisons do not repeat an identical calculation.
-Restarting Python clears that cache; use a new run directory to preserve the
-previous run's files.
+from a laptop and include the whole job.
 
 ## Named grid levels
 
@@ -61,8 +56,6 @@ for functional in ("pbe", "r2scan"):
         res = vq.run_job(water, basis="def2-svp", method="rks",
                          functional=functional, grid_level=level,
                          output=f"{functional}_{level}")
-        if not res.converged:
-            raise RuntimeError(f"SCF did not converge for {functional}/{level}")
         print(functional, level, f"{res.energy:.10f}")
 ```
 
@@ -89,10 +82,6 @@ object. Here the radial grid is held at 99 shells, pruning is off, so every
 shell carries the full rule, and the Lebedev order runs from 23 to 95:
 
 ```python
-# doc-audit: skip - continues with vq and water from the first block
-from functools import cache
-
-@cache
 def energy(functional, n_radial, order):
     opts = vq.RKSOptions()
     opts.grid.n_radial = n_radial
@@ -103,8 +92,6 @@ def energy(functional, n_radial, order):
     opts.conv_tol_energy = 1e-10
     res = vq.run_job(water, basis="def2-svp", method="rks", functional=functional,
                      rks_options=opts, output=f"{functional}_L{order}_R{n_radial}")
-    if not res.converged:
-        raise RuntimeError(f"SCF did not converge for {functional}, R={n_radial}, L={order}")
     return res.energy
 
 for order in (23, 29, 35, 41, 47, 53, 59, 65, 77, 95):
@@ -139,22 +126,6 @@ started, with "unsupported molecular Lebedev order 59".
 
 Hold the angular rule at order 59 and vary the number of Treutler-Ahlrichs
 radial shells:
-
-```python
-# doc-audit: skip - reuses the energy helper and water from earlier blocks
-for functional in ("pbe", "r2scan"):
-    reference = energy(functional, 200, 59)
-    for n_radial in (50, 75, 99, 150, 200):
-        value = energy(functional, n_radial, 59)
-        delta_microha = (value - reference) * 1e6
-        print(functional, n_radial, f"{value:.10f}", f"{delta_microha:+.3f} microhartree")
-```
-
-These differences use a finite-grid reference, not an exact integration limit.
-The values below are the previously measured example; the script prints your
-own values. If you change `water`, the basis, or the helper's settings in an
-interactive session, call `energy.cache_clear()` before repeating the study.
-The cache key contains only the functional and grid sizes.
 
 | Radial shells | PBE error, µHa | r2SCAN error, µHa |
 |---:|---:|---:|

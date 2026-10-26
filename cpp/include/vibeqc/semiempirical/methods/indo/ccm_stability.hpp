@@ -106,10 +106,10 @@ inline Eigen::MatrixXd ccm_stability_rotated_density(
 
 // Rotation angles (radians along the unstable mode) scanned for a restart
 // seed, and the energy a mode must be able to release before its saddle
-// triggers a flag or restart. A negative mode without enough scanned descent
-// is accepted by the numerical policy, with its negative curvature retained;
-// this does not prove the orbital Hessian is nonnegative.
-// Twin of msindo_ccm_stability.py; keep both in step.
+// counts as a different SCF solution. The analytic Hessian resolves the sign
+// of a near-zero mode only to about 1e-5, and DIIS cannot hold a stationary
+// point 1e-7 Ha below the current one, so such a mode is stable within the
+// SCF's resolution. Twin of msindo_ccm_stability.py; keep both in step.
 constexpr double kCcmRestartAngles[] = {0.1, 0.25, 0.5, 1.0, 2.0};
 constexpr double kCcmStabilityDescentTol = 1e-6;
 
@@ -120,9 +120,8 @@ constexpr double kCcmStabilityDescentTol = 1e-6;
 // ill-defined, an unresolved Hcore frontier (gap <= 1e-6 Ha), and otherwise
 // returns the converged state with internal_instability set, never silently.
 // The frozen MSINDO oracle clusters include such saddles, so this is the
-// policy that reproduces the reference program. lowest_stable attempts descent
-// from detected saddles within the cumulative budget. It guarantees neither
-// convergence nor branch continuity or a global minimum. For example,
+// policy that reproduces the reference program. lowest_stable descends from
+// every saddle to a stable minimum, which keeps E(geometry) on one branch:
 // a C3 chain bent by 3e-3 bohr has a resolved gap (1e-5 Ha) yet converges
 // from the Hcore guess 16.6 mHa above the continuous lower branch.
 //

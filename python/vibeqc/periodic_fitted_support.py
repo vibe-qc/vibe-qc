@@ -38,7 +38,6 @@ class ChiCoulombControls:
     image_candidate_cap: int = 2_000_000
     reciprocal_candidate_cap: int = 2_000_000
     support_record_byte_cap: int = 16 * 1024**2
-    metric_precision_digits: int = 0
 
     def __post_init__(self):
         for key, value in asdict(self).items():
@@ -51,11 +50,7 @@ class ChiCoulombControls:
             else:
                 if isinstance(value, bool) or not isinstance(value, numbers.Real) or not math.isfinite(float(value)):
                     raise ValueError(f'{key} must be finite real')
-                if key == 'metric_precision_digits':
-                    if value != int(value) or (value != 0 and not 30 <= value <= 100):
-                        raise ValueError('metric_precision_digits must be 0 or an integer from 30 to 100')
-                    object.__setattr__(self, key, int(value))
-                elif key.endswith('_cap'):
+                if key.endswith('_cap'):
                     if value != int(value) or value <= 0:
                         raise ValueError(f'{key} must be a positive integer')
                     object.__setattr__(self, key, int(value))
@@ -69,8 +64,6 @@ class ChiCoulombControls:
         if source not in ('classic', 'sr'):
             raise ValueError('explicit Coulomb controls require fit_source classic or sr; auto is ambiguous')
         if source == 'sr':
-            if self.metric_precision_digits:
-                raise NotImplementedError('precision-controlled spectral construction is classic-only')
             if self.support_policy != 'physical_pairs':
                 raise NotImplementedError('SR/LR has physical capsule support; historical_index_ball is classic-only')
             if self.auxiliary_cutoff_bohr is None or self.omega_bohr_inv is None:
@@ -240,7 +233,6 @@ def build_chi_fitted_operator(system, basis, auxiliary, kpoints_cart, weights, *
                 lat_opts=lat, linear_dep_thr=controls.metric_threshold,
                 fit_screen_threshold=controls.fit_screen_threshold,
                 canonical_auxiliary_basis=True, support_policy=controls.support_policy,
-                metric_precision_digits=controls.metric_precision_digits,
                 _support_recorder=record.append,
                 _support_record_byte_cap=controls.support_record_byte_cap,
                 memory_byte_cap=build_cap,reciprocal_candidate_cap=controls.reciprocal_candidate_cap,

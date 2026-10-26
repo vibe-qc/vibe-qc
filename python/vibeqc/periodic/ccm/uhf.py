@@ -205,10 +205,16 @@ def run_ccm_uhf(ccm, *, initial_guess: object = "AUTO", method="union12", max_it
                     np.einsum("msrn,rs->mn", eri, Da, optimize=True),
                     np.einsum("msrn,rs->mn", eri, Db, optimize=True))
 
-    from .spin_state import supercell_spin_counts
-
-    # The torus spin sector resolved on the cluster (#519 RG-14).
-    n_alpha, n_beta, spin_state = supercell_spin_counts(ccm, who="run_ccm_uhf")
+    n_elec = ccm.supercell.n_electrons()
+    mult = int(ccm.supercell.multiplicity)
+    n_unpaired = mult - 1
+    if (n_elec - n_unpaired) % 2 != 0 or n_unpaired > n_elec:
+        raise ValueError(
+            f"cluster electron count {n_elec} and multiplicity {mult} are "
+            "incompatible (n_alpha/n_beta non-integer)."
+        )
+    n_alpha = (n_elec + n_unpaired) // 2
+    n_beta = n_elec - n_alpha
 
     X = _orthonormaliser(S, lindep_tol)
     _require_retained_occ(

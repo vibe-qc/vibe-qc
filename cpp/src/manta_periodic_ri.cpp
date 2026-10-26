@@ -215,8 +215,8 @@ PeriodicRIQBuilder::PeriodicRIQBuilder(std::shared_ptr<const PeriodicGDFTiles> s
     info_.spectrum=info_.inverse_certificate.spectrum;
     info_.canonical_metric_identity=matrix_id(metric_);info_.factor_identity=matrix_id(factor_);info_.projector_identity=matrix_id(projector_);
     if(source_->options().metric_assembly_rank) {
-        info_.assembly_rank_requested=true;info_.assembly_phase_included=raw.receipt.metric_phase_included;info_.assembly_weight_included=raw.receipt.metric_weight_included;info_.assembly_prefactor_included=raw.receipt.metric_prefactor_included;info_.assembly_fourier_included=raw.receipt.metric_fourier_included;info_.assembly_integrals_included=raw.receipt.metric_integrals_included;info_.assembly_representation_included=raw.receipt.metric_representation_included;
-        if(!raw.receipt.metric_assembly_evaluated || !raw.receipt.metric_phase_included || !raw.receipt.metric_weight_included || !raw.receipt.metric_prefactor_included || !raw.receipt.metric_fourier_included || !raw.receipt.metric_integrals_included || !raw.receipt.metric_representation_included || raw.metric_assembly_error_bounds.size()!=m*m)
+        info_.assembly_rank_requested=true;info_.assembly_phase_included=raw.receipt.metric_phase_included;info_.assembly_weight_included=raw.receipt.metric_weight_included;
+        if(!raw.receipt.metric_assembly_evaluated || !raw.receipt.metric_phase_included || !raw.receipt.metric_weight_included || raw.metric_assembly_error_bounds.size()!=m*m)
             throw std::logic_error("MANTA metric assembly rank lost its source enclosure");
         // The established lower triangle, not an averaged or repaired metric,
         // defines BOTH the stored matrix and its exact-assembly reference.

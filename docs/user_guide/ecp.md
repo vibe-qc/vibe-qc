@@ -735,12 +735,9 @@ with ECPs.
 CPCM energies support both ECP routes, the bundled sidecars inline and an
 explicit XML library, and retain exact high-level SCF provenance even
 though the solvent macro-iterations use a low-level JK entry point
-internally. The ECP+CPCM gradient, the geometry optimization on it and the
-finite-difference Hessian are supported for RHF/UHF/RKS/UKS (the reaction field
-adds terms that never touch the ECP to the ECP-aware gas-phase gradient; see
-[Implicit solvation](solvation.md#heavy-elements-ecps)); analytic Hessians
-remain gas-phase and unavailable with ECPs. Population analyses and dipoles use
-the same per-atom effective nuclear charges as the valence-only Hamiltonian.
+internally. Every ECP+CPCM gradient, Hessian, and optimization route is
+still unsupported. Population analyses and dipoles use the same per-atom
+effective nuclear charges as the valence-only Hamiltonian.
 
 Diagnostic helpers:
 `vq.ecp_effective_charges(mol, ecp_centers, library_name)`,

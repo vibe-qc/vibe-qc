@@ -315,7 +315,7 @@ def run_pbc_bipole_uhf(
         driver="run_pbc_bipole_uhf",
     )
     reject_bipole_lone_non_gamma_kpoint(
-        kmesh, system=system,
+        kmesh,
         driver="run_pbc_bipole_uhf",
     )
 

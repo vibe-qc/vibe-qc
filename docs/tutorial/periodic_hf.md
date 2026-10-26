@@ -3,15 +3,6 @@
 The simplest non-trivial periodic system: a one-dimensional chain of
 H₂ dimers.
 
-## Run the baseline
-
-Use a working engine installation and an empty run directory outside the
-checkout; see [Running vibe-qc](../running.md). Coordinates and lattice lengths
-below are in bohr. The calculation uses a three-dimensional periodic array
-with transverse vacuum, not a true one-dimensional Coulomb boundary condition.
-The chosen vacuum and mesh are starting settings to converge, not certified
-values for an isolated chain.
-
 ```python
 import numpy as np
 import vibeqc as vq
@@ -42,10 +33,7 @@ result = run_periodic_job(
     jk_method="gdf",
     kpoints=kpoints,
     conv_tol_energy=1e-10,
-    output="h-chain-rhf-k4-vac15",
 )
-if not result.converged:
-    raise RuntimeError("Periodic RHF did not converge; inspect the output and SCF trace")
 print(f"E_RHF per cell = {result.energy:.10f}  ({result.n_iter} iters)")
 ```
 
@@ -63,38 +51,12 @@ branch is retained only for vacuum-padded molecular-limit diagnostics, not
 quantitative 1D solids. For a Gamma-only calculation, pass
 ``KPoints.gamma(sysp)``.
 
-## Turn the baseline into a convergence study
-
-Keep the atomic geometry and chain repeat length fixed while studying one
-numerical choice at a time. For each point, rebuild the `PeriodicSystem`, basis
-and k-point object together if the lattice changes, and use a distinct output
-stem. A k-point object belongs to the cell from which it was constructed.
-
-| Study | Change | Hold fixed |
-|---|---|---|
-| Chain sampling | mesh along x | transverse mesh components at 1, vacuum, basis and route |
-| Transverse separation | y and z lattice lengths | chain geometry, x mesh and numerical controls |
-| Lattice/fit support | the selected route's documented cutoffs | cell, basis and k mesh |
-
-Record energy per simulation cell, increments, convergence and resource use.
-Changing vacuum or k sampling can change cost substantially. Do not interpret
-an SCF stopping criterion as convergence of the vacuum, basis or lattice sums.
-See [periodic method routes](periodic_methods_compared.md) and
-[lattice-cutoff convergence](periodic_lattice_cutoff_convergence.md).
-
 ## Other ways to build a k-mesh, `vibeqc.KPoints`
 
 The `KPoints` builder fronts every common k-point input mode in a
-single API. The following are alternative constructor examples, not a sequence
-of calculations to append to the chain run. Three-dimensional meshes and
-auto-density meshes can add unwanted transverse sampling to a vacuum cell;
-keep `[N, 1, 1]` for the chain study. Symmetry and band-path helpers also need
-their optional dependencies. See the [k-point guide](../user_guide/k_points.md).
-
-The five most useful for everyday work:
+single API. The five most useful for everyday work:
 
 ```python
-# doc-audit: skip - alternative constructors using sysp and imports from the baseline
 # 1. Monkhorst-Pack (classical convention; auto-shifts even meshes by ½)
 kp = KPoints.monkhorst_pack(sysp, [6, 1, 1])
 

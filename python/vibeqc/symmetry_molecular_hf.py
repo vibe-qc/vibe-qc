@@ -305,41 +305,27 @@ class ScreenedMolecularJK(_MolecularJKCapture, core.JKBuilder):
                           max(b.maximum_work for b in choices))
         return self._requirements_for(targets, self._executor)
 
-    def _bridge_overhead(self, targets):
+    def _requirements_for(self, targets, executor):
+        if executor == 'ordered':
+            base = ordered_quartet_requirements(self._screening, len(targets),
+                targets=targets, budget=self._budget)[0]
+        else:
+            base = quartet_batch_requirements(self._screening._plan, len(targets),
+                targets=targets, budget=self._budget, executor=executor,
+                screening=self._screening)
         # Real inputs, complex packing, real exports and RHF fusion scratch.
         # Kernel inputs/exports are also reserved by base; double counting
         # here intentionally bounds overlapping bridge lifetimes.
         count = len(targets)
         outputs = sum(len(t) for t in targets)
-        size = 65536 + 32*(count+outputs+3)*self.n**2
+        size = base.maximum_bytes + 65536 + 32*(count+outputs+3)*self.n**2
         if self._executor == 'auto':
             # At most five HF signatures, ten scalar samples each, each
             # containing at most three density bounds; no matrix history.
             size += _ROUTE_RECEIPT_BYTES
         capture_bytes, capture_work = self._capture_requirements()
         size += capture_bytes
-        work = 32*(count+outputs+3)*self.n**2 + capture_work
-        return Budget(size, work)
-
-    def _kernel_budget(self, targets):
-        overhead = self._bridge_overhead(targets)
-        self._budget.admit(overhead.maximum_bytes, overhead.maximum_work)
-        return Budget(self._budget.maximum_bytes-overhead.maximum_bytes,
-                      self._budget.maximum_work-overhead.maximum_work)
-
-    def _requirements_for(self, targets, executor):
-        # Reserve live bridge/capture buffers before choosing an optional
-        # native source workspace. Execution uses this same remaining cap.
-        overhead = self._bridge_overhead(targets)
-        kernel_budget = self._kernel_budget(targets)
-        if executor == 'ordered':
-            base = ordered_quartet_requirements(self._screening, len(targets),
-                targets=targets, budget=kernel_budget)[0]
-        else:
-            base = quartet_batch_requirements(self._screening._plan, len(targets),
-                targets=targets, budget=kernel_budget, executor=executor,
-                screening=self._screening)
-        size, work = base.maximum_bytes+overhead.maximum_bytes, base.maximum_work+overhead.maximum_work
+        work = base.maximum_work + 32*(count+outputs+3)*self.n**2 + capture_work
         self._budget.admit(size, work)
         return Budget(size, work)
 
@@ -458,7 +444,6 @@ class ScreenedMolecularJK(_MolecularJKCapture, core.JKBuilder):
         if not isinstance(densities, tuple) or len(densities) != len(targets):
             raise TypeError('densities must be a tuple matching the target channels')
         reservation = self._requirements_for(targets, executor)
-        kernel_budget = self._kernel_budget(targets)
         for density in densities:
             self._density(density)
         start = perf_counter()
@@ -467,9 +452,9 @@ class ScreenedMolecularJK(_MolecularJKCapture, core.JKBuilder):
             packed[i] = density
         if executor == 'ordered':
             result = ordered_quartet_jk(self._screening, packed,
-                budget=kernel_budget, targets=targets)
+                budget=self._budget, targets=targets)
         else:
-            result = self._screening._plan.jk_batch(packed, budget=kernel_budget,
+            result = self._screening._plan.jk_batch(packed, budget=self._budget,
                 executor=executor, targets=targets, screening=self._screening)
         if np.any(result.j.imag) or np.any(result.k.imag):
             raise ValueError('real molecular source returned a complex J/K')

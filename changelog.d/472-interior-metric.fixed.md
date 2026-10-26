@@ -1,1 +1,0 @@
-- Interior eigenproblem wrappers now preserve generalized overlap validation, retained-rank reduction and metric-normalized orbitals instead of bypassing the generalized dispatcher.

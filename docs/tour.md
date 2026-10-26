@@ -27,8 +27,7 @@ from vibeqc import print_banner
 print_banner()
 ```
 
-The following historical release banner illustrates the layout; use your
-installed banner for the actual version, codename and library versions:
+For an installed wheel of a tagged release, the banner reads:
 
 ```
 ╔════════════════════════════════════════════════════════════════════════╗
@@ -40,10 +39,9 @@ installed banner for the actual version, codename and library versions:
 ╚════════════════════════════════════════════════════════════════════════╝
 ```
 
-A development banner also records the source revision. Retain it with the
-calculation, and check the loaded native module after a rebuild: a source
-revision alone does not prove an older extension was rebuilt. A historical
-example of the development layout is:
+Running from a development checkout, the banner instead carries the
+exact git revision so a calculation log unambiguously identifies the
+build that produced it:
 
 ```
 ╔════════════════════════════════════════════════════════════════════════╗
@@ -62,21 +60,6 @@ persisted SCF log always carries its provenance, see
 [release_process.md](release_process.md) for how to pin a calculation
 to a specific build.
 
-## Choose an entry point
-
-| Task | Entry point | What to expect |
-|---|---|---|
-| Molecular calculation with output files | `run_job` | Method dispatch and coordinated text, QVF, geometry and provenance output |
-| Periodic calculation | `run_periodic_job` | Periodic route selection and cell/k-point controls; see [periodic methods](user_guide/periodic_methods.md) |
-| Compose a calculation programmatically | `run_rhf`, `run_uhf`, `run_rks`, and related drivers | A result object; use the output helpers when you need persistent files |
-| Use ASE structures or optimizers | `vibeqc.ase.VibeQC` | ASE energies in eV, positions in angstrom and forces in eV/angstrom |
-| Solve a supplied eigenproblem | `vibeqc.solvers` | Eigenpairs and solver diagnostics; see [solver framework](user_guide/solver_framework.md) |
-
-Run examples in a calculation directory outside the source checkout, with the
-installed environment active. Blocks marked as continuations reuse objects
-from earlier sections; the isolated-atom example uses a separate variable so
-it does not replace the water molecule used in the DFT example.
-
 ## 0. The simple way: `run_job`
 
 If you just want the classic QC-program experience, write an input
@@ -84,25 +67,16 @@ script, run it, read a text log, `vibeqc.run_job` dispatches everything
 for you:
 
 ```python
-from vibeqc import Atom, Molecule, run_job
+from vibeqc import Molecule, run_job
 
-# Coordinates in bohr; no external input file is required.
-mol = Molecule([
-    Atom(8, [0.0, 0.0, 0.0]),
-    Atom(1, [0.0, 1.5, -1.16]),
-    Atom(1, [0.0, -1.5, -1.16]),
-])
+mol = Molecule.from_xyz("examples/h2o.xyz")
 
-result = run_job(
+run_job(
     mol,
     basis="6-31g*",
     method="rhf",              # or "rks" / "uhf" / "uks" / "auto"
-    output="output-h2o-rhf",   # file name stem, relative to this run directory
-    write_molden_file=True,     # request this optional export explicitly
+    output="output-h2o-rhf",   # file name stem
 )
-if not result.converged:
-    raise RuntimeError("SCF did not converge; inspect output-h2o-rhf.out")
-print(f"E(RHF) = {result.energy:.10f} Ha")
 ```
 
 Produces:
@@ -118,16 +92,6 @@ Produces:
   with `vibe-view open output-h2o-rhf.qvf`, or `vibe-view tui` to read
   it in a terminal with no display server. See
   [QVF and vibe-view](visualization.md).
-- `output-h2o-rhf.system`, the machine-readable run record; preserve it with
-  the input, `.out` file and native runtime identity.
-- `output-h2o-rhf.xyz` and the citation files, including `.bibtex` and
-  `.references`, for the geometry and methods used. See
-  [output files](user_guide/output_files.md) for defaults and optional exports.
-
-A result object and an output archive are not, by themselves, proof of
-convergence or scientific validity. Inspect the convergence status, selected
-method and state before comparing energies. See
-[planning a calculation](tutorial/planning_a_calculation.md).
 
 Geometry optimization is one flag:
 
@@ -157,15 +121,13 @@ own systems.
 
 ### Methods `run_job` understands
 
-The following table is a selection of molecular entry points, not the full
-method inventory. See [methods and status](methods.md) for correlation,
-semiempirical and composite routes and their qualification limits.
+The `method=` keyword accepts the four mean-field SCF methods plus
+the `vibeqc.solvers` wavefunction methods and an `"auto"` resolver:
 
 | `method=` | What runs |
 |---|---|
 | `"rhf"` / `"uhf"` | Restricted / unrestricted Hartree-Fock |
 | `"rks"` / `"uks"` | Restricted / unrestricted Kohn-Sham DFT (set `functional=`) |
-| `"rohf"` / `"roks"` | Restricted-open HF / KS; see the [route-specific controls](user_guide/rohf.md) |
 | `"auto"` | picks RHF / UHF / RKS / UKS from the molecule + `functional=` |
 | `"fci"` | exact Full CI in the (active) orbital space |
 | `"selected_ci"` | CIPSI-style selected CI |
@@ -186,29 +148,14 @@ hand.
 
 ## 1. Load a molecule
 
-From an XYZ file in your run directory, such as a copy of the repository's
-`examples/h2o.xyz` saved as `h2o.xyz`:
+From an XYZ file:
 
 ```python
-from vibeqc import from_xyz
-mol = from_xyz("h2o.xyz", charge=0, multiplicity=1)
+from vibeqc import Molecule, from_xyz
+mol = from_xyz("examples/h2o.xyz")                # uses defaults charge=0, mult=1
+# or:
+mol = from_xyz("examples/h2o.xyz", charge=-1, multiplicity=1)  # hydroxide
 ```
-
-XYZ positions are in angstrom; `from_xyz` converts them to internal bohr.
-Charge and multiplicity describe the supplied nuclei: changing water's charge
-does not remove a hydrogen atom to make hydroxide. For a hydroxide anion, use
-an O-H geometry and a singlet with charge -1:
-
-```python
-from vibeqc import Atom, Molecule
-hydroxide = Molecule([
-    Atom(8, [0.0, 0.0, 0.0]),
-    Atom(1, [0.0, 0.0, 1.83]),  # illustrative O-H distance in bohr
-], charge=-1, multiplicity=1)
-```
-
-The hydroxide example defines a system only; it does not establish an optimized
-geometry or a suitable production basis for an anion.
 
 Programmatic construction (positions in **bohr**, not Å):
 
@@ -226,7 +173,7 @@ inputs, and more:
 
 ```python
 from ase.io import read
-atoms = read("h2o.xyz")          # .xyz / .cif / .pdb / .poscar ...
+atoms = read("examples/h2o.xyz")          # .xyz / .cif / .pdb / .poscar ...
 # use atoms.calc = VibeQC(...) pattern below
 ```
 
@@ -239,8 +186,6 @@ from vibeqc import BasisSet, run_rhf, RHFOptions
 basis = BasisSet(mol, "6-31g*")
 result = run_rhf(mol, basis)
 print(f"E(RHF/6-31G*) = {result.energy:.6f} Ha")
-if not result.converged:
-    raise RuntimeError(f"RHF did not converge after {result.n_iter} iterations")
 print(f"converged in {result.n_iter} iterations")
 ```
 
@@ -251,21 +196,12 @@ Key options (`RHFOptions`):
 | `max_iter` | 100 | hard limit on SCF cycles |
 | `conv_tol_energy` | 1e-8 | \|ΔE\| threshold (Hartree) |
 | `conv_tol_grad` | 1e-6 | ‖F·D·S − S·D·F‖ threshold |
-| `damping` | 0.5 | initial fraction of previous density to mix in; 0 disables static density damping |
-| `dynamic_damping` | True | adapt the damping fraction during SCF |
-| `use_diis` | True | enable the selected Fock extrapolator |
-| `scf_accelerator` | `SCFAccelerator.EDIIS_DIIS` | hybrid energy-DIIS / commutator-DIIS accelerator |
+| `damping` | 0.5 | fraction of previous density to mix in (0 = off, required ~0.5 for some systems) |
+| `use_diis` | True | Pulay DIIS extrapolation |
 | `diis_start_iter` | 2 | DIIS begins at this iteration |
 | `diis_subspace_size` | 8 | history length; 2-12 for EDIIS, ADIIS, and their hybrids |
-| `initial_guess` | `InitialGuess.AUTO` | conservative system- and route-aware selection; see [initial guesses](user_guide/initial_guess.md) for explicit constructions and limits |
+| `initial_guess` | `InitialGuess.SAD` | `HCORE` or `SAD` (superposition of atomic densities) |
 | `scf_mode` | `SCFMode.AUTO` | Fock-build mode: `AUTO`, `CONVENTIONAL` (in-core ERI tensor), or `DIRECT` (on-the-fly screened integrals) |
-
-These are the molecular `RHFOptions` defaults in this source revision, not a
-prescription for all periodic or open-shell routes. AUTO chooses a supported
-seed construction; it does not promise the lowest electronic state. Static
-and dynamic damping are separate controls, so setting `damping=0` alone does
-not turn off adaptive damping. See [SCF convergence](user_guide/scf_convergence.md)
-for how these options interact.
 
 For large systems, set `scf_mode = SCFMode.DIRECT` to avoid retaining the
 4-index ERI tensor. The AUTO default in this version switches above 140 basis
@@ -284,8 +220,8 @@ columns are MOs), `density`, `fock`, `scf_trace`.
 ```python
 from vibeqc import Atom, BasisSet, Molecule, run_uhf, UHFOptions
 
-h_atom = Molecule([Atom(1, [0, 0, 0])], multiplicity=2)   # H atom (doublet)
-result = run_uhf(h_atom, BasisSet(h_atom, "sto-3g"))
+mol = Molecule([Atom(1, [0, 0, 0])], multiplicity=2)      # H atom (doublet)
+result = run_uhf(mol, BasisSet(mol, "sto-3g"))
 print(f"E(UHF) = {result.energy:.6f} Ha")
 print(f"<S^2> = {result.s_squared:.4f}  (ideal {result.s_squared_ideal:.4f})")
 ```
@@ -300,7 +236,7 @@ Closed-shell Kohn-Sham:
 
 ```python
 # doc-audit: skip - continues with the molecule constructed in section 1
-from vibeqc import BasisSet, run_rks, RKSOptions
+from vibeqc import run_rks, RKSOptions
 
 basis = BasisSet(mol, "6-31g*")
 opts = RKSOptions()
@@ -485,17 +421,18 @@ dir(vibeqc)
 Everything returning matrices returns NumPy arrays (zero-copy views of
 Eigen data where possible).
 
-## 9. Check a change with the relevant tests
+## 9. Running the tests
 
-Use the checkout's interpreter and select the smallest relevant test file or
-lane. A routine source edit does not require the complete research inventory
-or a clean native build. The [testing policy](testing.md) distinguishes source
-checks, numerical regressions and release validation; the
-[lane inventory](developer_test_lanes.md) lists focused commands.
+```sh
+.venv/bin/python -m pytest tests/ -v
+```
 
-For a native calculation test, first confirm that the loaded Python package
-and compiled extension match the intended source, as described in
-[contributor setup](contributor_setup.md). Tests comparing with an optional
-reference program can skip when that program is unavailable. A skipped
-comparison is not a numerical validation result. Documentation-only work
-needs a focused text, link or example check.
+By category:
+
+```sh
+pytest tests/test_rhf.py         # HF energies vs PySCF
+pytest tests/test_uhf.py         # UHF vs PySCF
+pytest tests/test_rks.py         # DFT vs PySCF
+pytest tests/test_gradient.py    # analytic gradients vs PySCF
+pytest tests/test_ase.py         # ASE calculator + geometry opt
+```

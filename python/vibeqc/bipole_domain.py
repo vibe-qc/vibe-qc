@@ -130,7 +130,6 @@ class BipoleResolvedDomain:
     # route built no padded erfc short-range term.
     sr_truncation_estimate: tuple | None = None
     schema: str = "vibeqc.bipole.resolved-domain.v1"
-    xc_lattice: OptionSnapshot | None = None
 
     def __post_init__(self):
         one, two = dict(self.lattice_1e.values), dict(self.lattice_2e.values)
@@ -146,12 +145,7 @@ class BipoleResolvedDomain:
                 else "historical_index_ball")
 
     def as_dict(self):
-        record = dict(asdict(self), policy=self.policy)
-        # Preserve existing finite-operator identities when XC shares the
-        # integral support; the optional field describes only a distinct sum.
-        if self.xc_lattice is None:
-            record.pop("xc_lattice")
-        return record
+        return dict(asdict(self), policy=self.policy)
 
     @property
     def settings_sha256(self):
@@ -198,11 +192,9 @@ def capture_bipole_domain(*, lattice_1e, lattice_2e, ewald_options,
                           ks_options=None, v_ne_grid_options=None,
                           xc_density_domain=None, exact_j_ke_cutoff=None,
                           nuclear_erfc_options=None, requested_lattice=None,
-                          sr_truncation_estimate=None, xc_lattice=None):
+                          sr_truncation_estimate=None):
     """Freeze already resolved settings, without choosing another cutoff."""
     return BipoleResolvedDomain(
-        xc_lattice=(None if xc_lattice is None else
-                    OptionSnapshot.capture(xc_lattice, LATTICE_FIELDS)),
         sr_truncation_estimate=(None if sr_truncation_estimate is None
                                 else tuple(sr_truncation_estimate.as_record())),
         requested_lattice=(None if requested_lattice is None else

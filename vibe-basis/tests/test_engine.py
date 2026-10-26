@@ -277,23 +277,6 @@ def test_stdin_invocation_stages_a_runner(tmp_path, monkeypatch):
     assert (wd / "MgO.d12").is_file()
 
 
-def test_mpi_invocation_stages_an_input_file_runner(tmp_path, monkeypatch):
-    """Pcrystal reads a file named INPUT; unbound ranks so jobs can share a host."""
-    monkeypatch.chdir(tmp_path)
-    transport = _CapturingTransport()
-    eng = Crystal23Engine(
-        transport=transport, crystal_wrapper="Pcrystal23", invocation="mpi", cpus=6
-    )
-    eng.crystal_energy("12 0\n99 0\nEND\n", _rocksalt(), method="pw1pw")
-    (wd, command), = transport.calls
-    assert command == ["sh", "run_crystal.sh"]
-    runner = (wd / "run_crystal.sh").read_text().splitlines()
-    assert runner[1:] == [
-        "cp MgO.d12 INPUT",
-        "exec mpirun --bind-to none -np 6 Pcrystal23 > MgO.out 2>&1",
-    ]
-
-
 def test_unknown_invocation_is_refused():
     with pytest.raises(ValueError, match="invocation"):
-        Crystal23Engine(transport=_CapturingTransport(), invocation="srun")
+        Crystal23Engine(transport=_CapturingTransport(), invocation="mpi")

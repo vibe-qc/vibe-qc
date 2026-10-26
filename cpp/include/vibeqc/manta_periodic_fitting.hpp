@@ -44,10 +44,6 @@ struct PeriodicGDFWeightCertificate { double lower=0.,upper=0.,error_bound=0.; }
 PeriodicGDFWeightPlan plan_periodic_gdf_weight(const ResourceBudget&);
 PeriodicGDFWeightCertificate certify_periodic_gdf_weight(const Eigen::Vector3d&,double,double,
     const PeriodicGDFKernelOptions&,bool,double,const ResourceBudget&);
-// The lattice form additionally encloses pi and abs(det(lattice)); exact
-// stored lattice entries and momentum/range values define the reference.
-PeriodicGDFWeightCertificate certify_periodic_gdf_lattice_weight(const Eigen::Matrix3d&,
-    const Eigen::Vector3d&,double,const PeriodicGDFKernelOptions&,bool,double,const ResourceBudget&);
 struct PeriodicGDFMultipolePlan {
     Count shell_calls=0,primitive_products=0,scalar_terms=0,kernel_terms=0,modeled_peak_bytes=0;
 };
@@ -112,7 +108,7 @@ struct PeriodicGDFReceipt {
     std::string reference_three_center_source_identity;
     double coupling_error_bound=0.,evaluated_coupling_error_bound=0.;
     bool coupling_error_evaluated=false;
-    bool metric_assembly_evaluated=false,metric_phase_included=false,metric_weight_included=false,metric_prefactor_included=false,metric_fourier_included=false,metric_integrals_included=false,metric_representation_included=false;
+    bool metric_assembly_evaluated=false,metric_phase_included=false,metric_weight_included=false;
     double maximum_metric_assembly_error=0.,maximum_metric_phase_error=0.,maximum_metric_weight_error=0.;
     std::string metric_assembly_certificate_identity;
     PeriodicGDFShortRangeReceipt short_range;

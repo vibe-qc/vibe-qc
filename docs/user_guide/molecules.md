@@ -19,39 +19,22 @@ mol = Molecule(
 
 ## Reading from files
 
-XYZ files store positions in angstrom; `from_xyz` converts them to bohr.
-Save this illustrative hydroxyl geometry as `oh.xyz` in your run directory:
-
-```text
-2
-OH geometry in angstrom; charge and multiplicity are supplied in Python
-O  0.0  0.0  0.00
-H  0.0  0.0  0.97
-```
-
-The same nuclear geometry can describe different electronic systems:
+XYZ coordinates (positions in Ångström are auto-converted to bohr):
 
 ```python
 from vibeqc import from_xyz
-
-radical = from_xyz("oh.xyz", charge=0, multiplicity=2)   # OH, 9 electrons
-hydroxide = from_xyz("oh.xyz", charge=-1, multiplicity=1)  # OH-, 10 electrons
-print(radical.n_electrons(), hydroxide.n_electrons())   # 9 10
+mol = from_xyz("examples/h2o.xyz")
+mol = from_xyz("examples/oh.xyz", charge=-1)
 ```
 
-Paths are relative to the process working directory. `from_xyz` reads the
-first XYZ frame; it does not infer molecular charge or multiplicity from the
-comment line. Supply both explicitly for ions and radicals. Omitting
-`multiplicity=2` for neutral OH leaves the default singlet and raises
-`ValueError`.
+Anything ASE reads, CIF, PDB, POSCAR, Gaussian inputs, etc.:
 
-The current lightweight XYZ parser recognises element symbols H through Kr.
-For other structure formats or heavier elements, see
-[ASE structure input](ase_integration.md#reading-structures-via-ase-io).
-ASE coordinates are also in angstrom; do not pass them unchanged to `Atom`,
-whose coordinates are in bohr. An ASE periodic structure needs a
-`PeriodicSystem` to retain its cell and boundary conditions; see
-[Periodic systems](periodic_systems.md).
+```python
+from ase.io import read
+atoms = read("crystal.cif")
+# Convert to a vibe-qc Molecule (for molecules) or build a
+# PeriodicSystem (for solids) - see the ASE integration page.
+```
 
 ## Programmatic construction
 
@@ -60,7 +43,6 @@ whose coordinates are in bohr. An ASE periodic structure needs a
 underlying molecule API exposes:
 
 ```python
-# doc-audit: skip - inspect mol from the programmatic example above
 mol.atoms                # list[Atom]      - property
 mol.charge               # int             - property
 mol.multiplicity         # int             - property
@@ -87,49 +69,30 @@ o2 = vq.Molecule(
 )
 basis = vq.BasisSet(o2, "6-31g*")
 result = vq.run_uhf(o2, basis)               # α/β occupations derived
-if not result.converged:
-    raise RuntimeError("O2 UHF did not converge; inspect result.scf_trace")
 ```
 
-Set the target state with `Molecule(charge=..., multiplicity=...)`.
-`multiplicity` means $2S+1$, not the number of unpaired electrons or
-$N_\alpha-N_\beta$. In particular, `multiplicity=2` requests a doublet.
-Do not set `UHFOptions().spin`; that is not a supported option.
+There is **no `spin` field on `UHFOptions`, `UKSOptions`,
+`PeriodicRHFOptions`, or any other SCF-options class**, setting
+`UHFOptions().spin = 2` raises `AttributeError`. The single source
+of truth for spin is `Molecule.multiplicity`, which keeps every
+RHF / UHF / RKS / UKS run against the same molecule consistent.
+This is a common point of confusion for users coming from PySCF
+(where `mol.spin` lives on the molecule but the SCF driver also
+accepts spin overrides) or from input-file codes (where spin sits
+in the run block).
 
-`Molecule.__init__` checks the following before any calculation:
-
-- The electron count $N = \sum_A Z_A - q$ must be nonnegative.
-- The multiplicity $M$ must be at least 1.
-- $N - (M - 1)$ must be nonnegative and even. Thus **even electron
-  counts need odd multiplicities**, and odd counts need even multiplicities.
-
-The spin partition is $N_\alpha = (N + M - 1)/2$ and
-$N_\beta = (N - M + 1)/2$. Examples:
-
-| System | `charge` | `multiplicity` | Electrons | $N_\alpha$, $N_\beta$ |
-|---|---|---|---|---|
-| H₂O singlet | 0 | 1 | 10 | 5, 5 |
-| OH radical doublet | 0 | 2 | 9 | 5, 4 |
-| OH⁻ singlet | -1 | 1 | 10 | 5, 5 |
-| O₂ triplet | 0 | 3 | 16 | 9, 7 |
-
-Incompatible values raise `ValueError`. Passing these checks establishes a
-valid electron partition, not that the requested state is the ground state.
-For charged species, set `charge` alongside `multiplicity`:
+`Molecule.__init__` validates that `multiplicity` is consistent
+with the electron count: `n_electrons` and `multiplicity` must have
+the same parity, otherwise construction raises `ValueError`. For
+charged species set `charge=` alongside `multiplicity=`:
 
 ```python
-import vibeqc as vq
-
 oh_minus = vq.Molecule(
     atoms=[vq.Atom(8, [0, 0, 0]), vq.Atom(1, [0, 0, 1.83])],
-    charge=-1,                               # OH-
+    charge=-1,                               # OH⁻
     multiplicity=1,                          # singlet
 )
 ```
-
-The native molecule properties are read-only. To change charge or spin,
-construct a new `Molecule` with the desired values, then construct its basis
-and run a new calculation. Use distinct result names when comparing states.
 
 ### Restricted vs unrestricted open shell (UHF vs ROHF)
 
@@ -141,8 +104,8 @@ For an open-shell system you can choose between unrestricted and
 restricted open-shell mean-field references:
 
 * **`run_uhf` / `method="uhf"`**, unrestricted: independent α and β
-  spatial orbitals. Its larger variational space can lower the energy
-  relative to ROHF, but it need not be **a spin eigenfunction** (⟨S²⟩ deviates from the ideal `S(S+1)`,
+  spatial orbitals. Variationally lowest single determinant, but **not a
+  spin eigenfunction** (⟨S²⟩ deviates from the ideal `S(S+1)`, 
   *spin contamination*).
 * **`run_rohf` / `method="rohf"`**, restricted open shell: one set of
   spatial orbitals, doubly-occupied (closed) + singly-occupied (open) +
@@ -152,8 +115,6 @@ restricted open-shell mean-field references:
   start than UHF.
 
 ```python
-import vibeqc as vq
-
 ch3 = vq.Molecule(
     atoms=[vq.Atom(6, [0, 0, 0]),
            vq.Atom(1, [+2.03, 0, 0]),
@@ -162,9 +123,7 @@ ch3 = vq.Molecule(
     multiplicity=2,                          # doublet radical
 )
 basis = vq.BasisSet(ch3, "6-31g*")
-rohf = vq.run_rohf(ch3, basis)
-if not rohf.converged:
-    raise RuntimeError("CH3 ROHF did not converge; inspect rohf.scf_trace")
+rohf = vq.run_rohf(ch3, basis)               # spin-pure: <S^2> = 0.75 exactly
 # or, end-to-end with output files + citations:
 vq.run_job(ch3, basis="6-31g*", method="rohf", output="ch3_rohf")
 ```
@@ -183,10 +142,7 @@ instead of assigning one arbitrary SOMO component; linear OH(2Pi), for
 example, uses occupations `2, 2, 2, 1.5, 1.5, 0, ...` across the pi pair.
 
 ```python
-# doc-audit: skip - continues with ch3 and basis from the preceding example
-roks = vq.run_roks(ch3, basis, functional="pbe")
-if not roks.converged:
-    raise RuntimeError("CH3 ROKS did not converge; inspect roks.scf_trace")
+roks = vq.run_roks(ch3, basis, functional="pbe")   # spin-pure KS
 vq.run_job(ch3, basis="6-31g*", method="roks", functional="b3lyp",
            output="ch3_roks")
 ```

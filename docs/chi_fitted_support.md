@@ -25,33 +25,6 @@ physical acceptance. Conflicting legacy cutoff arguments are rejected.
 
 ## Finite support and conventions
 
-### Precision-controlled classic metric
-
-Install the optional `chi-precision` extra (`pip install 'vibe-qc[chi-precision]'`)
-and set `ChiCoulombControls(..., metric_precision_digits=45)` to opt into
-precision-controlled retained spectral construction. The default `0` retains
-the existing arithmetic. Positive values from 30 through 100 are classic-only
-and require canonical auxiliary factors and an explicit memory budget.
-
-The implementation solves the same assembled binary Hermitian metric at the
-requested decimal precision and at 20 additional digits. It checks complete
-retained projectors and inverse square roots, eigen residuals, orthogonality,
-and distance from the unchanged absolute threshold. Both solves and binary64
-conversion must preserve the original double-precision retained mask. An
-unresolved boundary or changed rank refuses; no eigenvalues are clipped.
-All retained components participate in the canonical whitening matrix.
-The numerical workspace reserve is charged before integral construction;
-it is not a guarantee about Python allocator overhead or process RSS.
-
-This changes arithmetic, not physical supports, primitive integrals, fitting
-thresholds or local admission gates. It nevertheless produces a distinct
-factor source: the source record includes precision, algorithm, dependency
-version and verification receipts. Generate a new HF state with this source
-before correlation. Do not associate new factors with an old HF state or
-relabel the old archive. See the bounded
-[LiH qualification](chi_mp2_convergence.md#precision-controlled-retained-construction)
-for measured operator checks and remaining accuracy obligations.
-
 For classic `physical_pairs`, each AO shell pair includes every lattice image
 whose two centers are within `pair_cutoff_bohr`. The shared physical pair
 selector supplies a complete candidate enclosure; the native Fourier kernel

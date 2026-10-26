@@ -401,71 +401,6 @@ energy of an angle scan and converges again, at most
 the steps. The runner arm `run_real_gamma_scf` takes the same two switches,
 and the `.system` manifest records the frontier gap as `frontier_gap_ha`.
 
-### The spin sector of the torus
-
-Replicating a unit cell over the torus fixes its electron count,
-`N_c N_e`, but not its spin sector. Before #519 RG-14 each neutral producer
-had its own convention: the real-Gamma supercell drivers read the supercell
-multiplicity that `CCMSystem` derives (an explicit cell multiplicity of 3 or
-more replicates ferromagnetically, every other cell is paired by parity, so
-a doublet cell on an even torus runs as a supercell singlet), while the
-Bloch producer hands the unit cell to the multi-k drivers, which occupy the
-cell's `(n_alpha, n_beta)` at every k point. On the Li doublet cube
-(STO-3G, 7 bohr) at `(2,1,1)` the real-Gamma supercell singlet (3 alpha,
-3 beta) and the Bloch per-cell doublet (4 alpha, 2 beta) are 4.8 mHa/cell
-apart with one operator identity: two sectors of one Hamiltonian, not a
-representation error.
-
-`CCMSystem(..., spin_state=)`, `run_real_gamma_scf(spin_state=)`,
-`run_neutral_bloch_scf(spin_state=)` and
-`run_periodic_job(aiccm_spin_state=)` name the sector; it is resolved on
-the cluster before the shell-aware dispatch, and an impossible request
-(parity, count) fails at construction on every mesh.
-
-| `spin_state` | real-Gamma executes | neutral-Bloch executes |
-|---|---|---|
-| `"legacy"` (default) | the historical supercell rule above | the cell's counts at every k point, as always |
-| `"per-cell"` | the cell's `(n_alpha, n_beta)` replicated with spins aligned: `N_c (multiplicity - 1)` unpaired electrons | the same sector |
-| an integer `M` | `M` as the total torus multiplicity, `n_alpha - n_beta = M - 1` | the same sector when `M - 1` is a multiple of `N_c`; otherwise refused by name |
-
-The default changes nothing: both producers run what they ran, and the
-executed sector is now recorded on every result (`result.spin_state`, a
-`CCMSpinState` with the per-cell and torus counts, the arrangement and
-whether it is uniform per cell), in the `.system` manifest
-(`aiccm_spin_policy`, `aiccm_spin_state`) and in the QVF convention record.
-A total multiplicity fixes `n_alpha - n_beta` and nothing else: it does not
-select an antiferromagnetic or any other broken-symmetry arrangement of
-local moments, which the producers take no per-cell seed for. The Bloch
-producer represents only sectors that are `N_c` copies of one integer pair
-(Theorem 2 of the theory notes maps block-circulant densities with
-`Tr[D_sigma S] = N_c n_sigma` onto the Bloch state space); the supercell
-producer also runs the non-uniform ones, alone.
-
-A comparison between the producers needs both halves:
-`assert_matched_neutral_source` (one operator) and
-`assert_compatible_spin_state` (one executed sector: cells, charge,
-electrons, alpha and beta counts), or `assert_comparable_neutral_results`
-for both. A legacy pair at `N_c > 1` is refused by sector; a `"per-cell"`
-pair is one state and one energy. A READ density carries its sector too:
-the paired `(3, 3)` densities cannot start a `(4, 2)` run.
-
-Integer occupations are a further condition, and every result records it
-(`result.occupation`, an `OccupationRecord`: integer or ensemble, the
-largest departure from an integer, the per-k counts of the Bloch producer,
-the frontier gap and whether it is degenerate; in the manifest as
-`aiccm_occupation`). The real-Gamma loops occupy an aufbau determinant on
-the torus; the multi-k driver's zero-temperature fill gives every member of
-a frontier-degenerate group the same fraction, an ensemble with no
-determinant on the torus. On the Li doublet at `(2,2,1)` the per-cell
-quintet has such a frontier at the zone-boundary points (occupations 0.5),
-the counts match, the energies differ by 11 mHa/cell, and
-`assert_comparable_neutral_results` refuses the pair as an ensemble before
-any fold (`ccm_reference_from_bloch` refuses it too). A fixed per-k integer
-fill is not offered by the shared multi-k driver; such a torus is run on the
-real-Gamma producer alone, with its recorded frontier. The H cube doublet
-on `(2,2,1)` and `(2,2,2)` has no such degeneracy and the two producers
-agree to 1e-13 Ha/cell (`tests/test_ccm_spin_state.py`).
-
 ### Cross-code evidence
 
 `studies/aiccm-2026/ladder_pyscf.py` compares the real-Gamma energy per cell
@@ -566,13 +501,12 @@ periodic SCF.
   control, so an explicit `damping`, `fock_mixing`, `fmixing_percent`,
   `density_mixer` or `level_shift` fails closed on all three rather than
   being silently dropped.
-* Open-shell spin bookkeeping differs between the two neutral producers
-  under the default `aiccm_spin_state=None` (`"legacy"`): `neutral-bloch`
-  uses the multi-k convention (the UNIT cell's multiplicity, replicated
-  over the mesh), while `real-gamma` derives the spin from the SUPERCELL.
-  They ask the same question only at a torus of `(1,1,1)`.
-  `aiccm_spin_state="per-cell"` (or a total multiplicity) makes both run one
-  sector; see [The spin sector of the torus](#the-spin-sector-of-the-torus).
+* Open-shell spin bookkeeping differs between the two neutral producers:
+  `neutral-bloch` uses the multi-k convention (the UNIT cell's multiplicity,
+  replicated over the mesh), while `real-gamma` derives the spin from the
+  SUPERCELL. They ask the same question only at a torus of `(1,1,1)`, so an
+  open-shell comparison between the variants at a larger torus needs an
+  explicit spin-state decision first.
 * Post-HF from the runner is `correlation="mp2"` or `"ccsd"` on
   `variant="four-center"`, `variant="real-gamma"` and
   `variant="neutral-bloch"` (see [Correlation](#correlation)), plus

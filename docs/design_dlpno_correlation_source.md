@@ -228,40 +228,8 @@ active occupied pair indices to the source/frozen/spin coordinate label.
 It releases the result before the next spin or pair. Pair-density
 diagonalization, occupation cutoffs and the largest-occupation fallback
 are unchanged; they determine the retained space before its Fock solve.
-When singles PNOs are enabled on the compiled route, their retained Fock
-blocks also use the shared boundary with source/frozen/occupied/spin labels.
-Density selection, its singleton fallback and optional PAO projection are
-unchanged. The default full singles space needs no additional solve. Each
-singles result is released before the next occupied orbital. The density
-helper retains its old boundary for callers without a named Fock frame.
-Both compiled and union routes use the cached spin-PAO builder, which names
-its retained Fock frame by source, frozen count, atom domain and spin. Its PAO overlap
-eigensolve, strict rank cutoff, projection tails and empty-space policy
-remain local; only the already orthonormal Fock block enters the shared
-solve. The result is released before returning, while the existing cache
-keeps the lifted spin-virtual PAO coefficients. Union pairs and singles now
-reuse these coefficients for each atom-domain and spin instead of rebuilding
-the same PAOs. Combined-spin column ordering and empty-domain refusals are
-unchanged. Retained union pair-PNO and enabled singles-PNO Fock rotations
-also use the shared boundary. Their named frames include the source, frozen
-partition and pair or occupied index. Pair coordinates retain the combined
-alpha/beta space; singles coordinates are combined without PAOs and use the
-occupied spin with PAOs. Density selection, degenerate spin mixing and the
-singleton fallback are unchanged. The named density helper copies only the
-retained rotation to a NumPy-owned buffer to preserve lifting roundoff,
-then releases the solve result before the multiplication. This also applies
-to its compiled-singles caller. Default full union singles now use that same
-checked helper once per calculation, with a source/frozen/combined-spin
-frame. Identity-density ordering and the full virtual rank are preserved.
-Occupied orbitals share only the resulting coefficients and energies;
-each singles amplitude remains independent. The rotated-occupied `t1`
-compatibility path also uses the shared solve for each retained TNO Fock
-block, naming the source, frozen count, rotated occupied triple and combined
-alpha/beta coordinates. Triple density selection, its singleton fallback
-and the existing screening refusal are unchanged; each snapshot is released
-before the retained-space lift. Local T0 and iterative T1 TNO construction,
-native TNO kernels, other PAO callers and remaining C2 construction/state
-migrations retain their existing roles.
+PAO preparation, singles/TNO and union-route Fock rotations and the
+remaining C2 construction/state migrations retain their existing roles.
 This is the current independent-UHF compatibility correction, not a change
 to the single-set ROHF/QRO formulation in Saitow et al., DOI
 `10.1063/1.4981521`, Sec. II A.

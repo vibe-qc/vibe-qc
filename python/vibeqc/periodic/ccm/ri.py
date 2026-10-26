@@ -289,15 +289,6 @@ class CCMGDFResult:
     #: ``converged``/``n_iter``. Each row is the native ``SCFIteration``
     #: (``iter``, ``energy``, ``delta_e``, ``grad_norm``, ...).
     scf_trace: tuple = ()
-    #: The spin sector the producer executed
-    #: (:class:`~vibeqc.periodic.ccm.spin_state.CCMSpinState`, #519 RG-14):
-    #: the unit cell's counts at every k point, ``N_c`` times on the torus.
-    #: ``None`` only on results predating the field.
-    spin_state: object = None
-    #: How the sector's electrons were distributed over the levels
-    #: (:class:`~vibeqc.periodic.ccm.spin_state.OccupationRecord`, #519
-    #: RG-15): integer or ensemble, per-k counts, frontier gap.
-    occupation: object = None
 
     @property
     def xc_lattice_cutoff_bohr(self) -> float:
@@ -613,47 +604,6 @@ def _bloch_neutral_source(ccm, res, *, functional, active, driver_kwargs):
     )
 
 
-def _unit_for_bloch_state(ccm, executed):
-    """The unit cell carrying the per-cell multiplicity the Bloch run executes.
-
-    The multi-k drivers read ``system.multiplicity``; the executed sector's
-    per-cell multiplicity is the unit cell's own under ``"legacy"`` and
-    ``"per-cell"`` and may differ from it under an explicit total (a singlet
-    cell asked to run a uniform triplet torus), in which case an output-only
-    copy of the cell carries it. Geometry, lattice and charge are untouched.
-    """
-    from ..._vibeqc_core import Atom, PeriodicSystem
-
-    unit = ccm.unit_system
-    mult = int(executed.per_cell_multiplicity)
-    if mult == int(unit.multiplicity):
-        return unit
-    atoms = [Atom(int(a.Z), [float(x) for x in a.xyz]) for a in unit.unit_cell]
-    return PeriodicSystem(int(unit.dim), np.asarray(unit.lattice, dtype=float),
-                          atoms, charge=int(unit.charge), multiplicity=mult)
-
-
-def bloch_occupation_record(res, *, open_shell):
-    from .spin_state import bloch_occupation_record as _record
-
-    return _record(res, open_shell=open_shell)
-
-
-def _bloch_state_for(ccm, *, who, closed_shell):
-    """The executed sector of a Bloch run, refused when the producer's shell
-    does not match it (#519 RG-14)."""
-    from .spin_state import bloch_executed_state
-
-    executed = bloch_executed_state(ccm.spin_state, who=who)
-    if closed_shell and not executed.closed_shell:
-        raise ValueError(
-            f"{who}: the Bloch producer executes the unit cell's sector at "
-            f"every k point, which is open shell here ({executed.describe()}); "
-            "a closed-shell producer cannot run it. Use the unrestricted "
-            "sibling (run_ccm_uhf_gdf / run_ccm_uks_gdf).")
-    return executed
-
-
 def _ccm_gdf(ccm, aux_basis, functional, *, symmetry=False,
              who="run_ccm_rhf_gdf", allow_vacuum_padding=False,
              **driver_kwargs):
@@ -677,8 +627,7 @@ def _ccm_gdf(ccm, aux_basis, functional, *, symmetry=False,
     # caller never called (IID 498).
     _padded_axes = _reject_vacuum_padded_direct(
         ccm, who=who, allow_vacuum_padding=allow_vacuum_padding)
-    executed_state = _bloch_state_for(ccm, who=who, closed_shell=True)
-    unit = _unit_for_bloch_state(ccm, executed_state)
+    unit = ccm.unit_system
     basis = make_basis(unit.unit_cell_molecule(), ccm.basis_name)
     kmesh = monkhorst_pack(unit, list(ccm.nrep))
     kw = _gdf_guess_kwargs(driver_kwargs, is_ks=functional is not None)
@@ -749,9 +698,7 @@ def _ccm_gdf(ccm, aux_basis, functional, *, symmetry=False,
         neutral_source=neutral_source,
         vacuum_padding_allowed=bool(allow_vacuum_padding),
         vacuum_padded_axes=tuple(_padded_axes or ()),
-        scf_trace=tuple(getattr(res, "scf_trace", ()) or ()),
-        spin_state=executed_state,
-        occupation=bloch_occupation_record(res, open_shell=False))
+        scf_trace=tuple(getattr(res, "scf_trace", ()) or ()))
 
 
 def _validate_gdf_driver_conv_tol_grad(driver_kwargs, *, who):
@@ -863,9 +810,7 @@ def run_ccm_uhf_gdf(ccm, *, aux_basis=None, allow_vacuum_padding=False,
 
     _padded_axes = _reject_vacuum_padded_direct(
         ccm, who="run_ccm_uhf_gdf", allow_vacuum_padding=allow_vacuum_padding)
-    executed_state = _bloch_state_for(ccm, who="run_ccm_uhf_gdf",
-                                      closed_shell=False)
-    unit = _unit_for_bloch_state(ccm, executed_state)
+    unit = ccm.unit_system
     basis = make_basis(unit.unit_cell_molecule(), ccm.basis_name)
     kmesh = monkhorst_pack(unit, list(ccm.nrep))
     kw = _gdf_guess_kwargs(driver_kwargs, is_ks=False)
@@ -901,9 +846,7 @@ def run_ccm_uhf_gdf(ccm, *, aux_basis=None, allow_vacuum_padding=False,
             ccm, res, functional=None, active=True, driver_kwargs=driver_kwargs),
         vacuum_padding_allowed=bool(allow_vacuum_padding),
         vacuum_padded_axes=tuple(_padded_axes or ()),
-        scf_trace=tuple(getattr(res, "scf_trace", ()) or ()),
-        spin_state=executed_state,
-        occupation=bloch_occupation_record(res, open_shell=True))
+        scf_trace=tuple(getattr(res, "scf_trace", ()) or ()))
 
 
 def run_ccm_rks_gdf(
@@ -946,14 +889,17 @@ def run_ccm_uks_gdf(ccm, functional="pbe", *, aux_basis=None,
     unit cell with the nrep k-mesh
     (:func:`~vibeqc.run_kuks_periodic_gdf`). Returns a :class:`CCMGDFResult`.
 
-    .. note::
+    .. warning::
 
-       **Spin bookkeeping is per unit cell** in the multi-k driver, as on
-       :func:`run_ccm_uhf_gdf`: the executed sector is recorded on
-       ``result.spin_state``; ``CCMSystem(..., spin_state="per-cell")`` or
-       an explicit total multiplicity makes this producer and
-       :func:`run_ccm_uks_direct` execute one sector, and a sector that is
-       not uniform per cell is refused here (#519 RG-14).
+       **Spin bookkeeping is per unit cell** in the multi-k driver: the unit
+       cell's charge/multiplicity is what the KUKS reference sees, replicated
+       over the mesh. The CCM supercell's multiplicity (parity-derived for the
+       cluster) matches that convention only at ``nrep = (1,1,1)`` or when the
+       supercell spin equals the unit-cell spin times ``N_c``. Cross-route
+       open-shell comparisons against :func:`run_ccm_uks_direct` /
+       :func:`run_ccm_uhf_direct` (whose spin counts come from the *supercell*
+       multiplicity) are convention-matched only at ``(1,1,1)``; multi-cell
+       open-shell parity needs an explicit spin-state decision first.
     """
     _reject_external_xc_neutral_bloch(
         functional, spin=2, who="run_ccm_uks_gdf"
@@ -967,9 +913,7 @@ def run_ccm_uks_gdf(ccm, functional="pbe", *, aux_basis=None,
 
     _padded_axes = _reject_vacuum_padded_direct(
         ccm, who="run_ccm_uks_gdf", allow_vacuum_padding=allow_vacuum_padding)
-    executed_state = _bloch_state_for(ccm, who="run_ccm_uks_gdf",
-                                      closed_shell=False)
-    unit = _unit_for_bloch_state(ccm, executed_state)
+    unit = ccm.unit_system
     basis = make_basis(unit.unit_cell_molecule(), ccm.basis_name)
     kmesh = monkhorst_pack(unit, list(ccm.nrep))
     kw = _gdf_guess_kwargs(driver_kwargs, is_ks=True)
@@ -1007,9 +951,7 @@ def run_ccm_uks_gdf(ccm, functional="pbe", *, aux_basis=None,
             driver_kwargs=driver_kwargs),
         vacuum_padding_allowed=bool(allow_vacuum_padding),
         vacuum_padded_axes=tuple(_padded_axes or ()),
-        scf_trace=tuple(getattr(res, "scf_trace", ()) or ()),
-        spin_state=executed_state,
-        occupation=bloch_occupation_record(res, open_shell=True))
+        scf_trace=tuple(getattr(res, "scf_trace", ()) or ()))
 
 
 def run_ccm_rhf_ri_neutral(ccm, *, initial_guess: object = "AUTO", cderi=None, ke_cutoff=200.0, aux_basis=None,

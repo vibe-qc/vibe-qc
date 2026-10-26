@@ -20,12 +20,10 @@ import pytest
 from vibe_basis.topology import (
     DEFAULT_RATIO,
     BasisTopology,
-    Relaxed,
     ScanScore,
     Shell,
     TopologyError,
     even_tempered_ratio,
-    front_gap,
     greedy_scan,
     pareto_front,
     propose_moves,
@@ -346,89 +344,6 @@ def test_a_wider_beam_evaluates_more_candidates_per_round():
         greedy_scan(_mg(), "Mg", "D", evaluate, max_rounds=2, beam_width=width)
         counts[width] = len(seen)
     assert counts[3] > counts[1]
-
-
-def _relax_d_by(factor: float, target: int):
-    """Scale every D exponent by ``factor`` as the 'relaxation' and record it."""
-    def evaluate(t: BasisTopology) -> Relaxed:
-        shells = tuple(
-            Shell(s.shell_type, tuple(a * factor for a in s.exponents), s.coefficients)
-            if s.shell_type == "D" else s
-            for s in t.atoms["Mg"]
-        )
-        relaxed = BasisTopology({"Mg": shells})
-        score = ScanScore(objective=abs(relaxed.n_primitives - target) * 10.0,
-                          cost=float(relaxed.n_primitives))
-        return Relaxed(score, relaxed, {"seed_d": t.exponents("Mg", "D")})
-    return evaluate
-
-
-def test_a_relaxed_topology_seeds_the_next_round_and_is_reported():
-    res = greedy_scan(_mg(), "Mg", "D", _relax_d_by(2.0, 6), threshold=1.0)
-    base = res.candidates[0]
-    assert base["name"] == "round0:baseline"
-    assert base["detail"] == {"seed_d": (0.9, 0.3)}
-    assert base["topology"]["Mg"][1]["exponents"] == [1.8]
-    # Round 1 proposes from the relaxed baseline: add-high seeds 1.8 * 3.0.
-    high = next(c for c in res.candidates if c["name"] == "round1:slot0:add-high")
-    assert high["detail"]["seed_d"] == pytest.approx((5.4, 1.8, 0.6))
-    # The reported winner is the relaxed topology, not its seed.
-    assert max(res.topology.exponents("Mg", "D")) > 5.4
-
-
-def test_every_candidate_is_recorded_once_and_round_one_reuses_the_baseline():
-    seen = []
-
-    def evaluate(t: BasisTopology) -> ScanScore:
-        seen.append(t)
-        return ScanScore(objective=abs(t.n_primitives - 6) * 10.0,
-                         cost=float(t.n_primitives))
-
-    res = greedy_scan(_mg(), "Mg", "D", evaluate, threshold=1.0)
-    names = [c["name"] for c in res.candidates]
-    assert len(names) == len(set(names)) == len(seen)
-    assert "round1:slot0:baseline" not in names
-    assert set(res.front) <= set(names)
-    assert dict(res.scores()) == {c["name"]: c["score"] for c in res.candidates}
-    assert all(c["provenance"] and c["n_primitives"] for c in res.candidates)
-
-
-def test_a_round_is_evaluated_through_the_injected_map():
-    batches = []
-
-    def mapper(f, topologies):
-        batches.append(len(topologies))
-        return [f(t) for t in topologies]
-
-    greedy_scan(_mg(), "Mg", "D", _score_by_nprim(6), map_candidates=mapper)
-    assert batches and all(n >= 2 for n in batches)
-    with pytest.raises(TopologyError, match="results for"):
-        greedy_scan(_mg(), "Mg", "D", _score_by_nprim(6),
-                    map_candidates=lambda f, ts: [])
-
-
-def test_an_evaluator_must_return_a_score():
-    with pytest.raises(TopologyError, match="ScanScore or a Relaxed"):
-        greedy_scan(_mg(), "Mg", "D", lambda t: 1.0)
-
-
-def test_front_gap_measures_the_distance_behind_cheaper_rivals():
-    scored = {
-        "a": ScanScore(objective=-10.0, cost=4.0, instability=2.0),
-        "b": ScanScore(objective=-12.5, cost=4.0, instability=3.0),
-        "c": ScanScore(objective=-20.0, cost=5.0),
-    }
-    assert front_gap(scored, "b") == 0.0
-    assert front_gap(scored, "c") == 0.0
-    # c costs more, so it is no rival of a; b costs the same and is better.
-    assert front_gap(scored, "a") == pytest.approx(2.5)
-    # Comparing instability as well drops b, which is less stable than a.
-    assert front_gap(scored, "a", compare=("cost", "instability")) == 0.0
-    assert front_gap({"x": ScanScore(math.inf, 1.0)}, "x") == math.inf
-    with pytest.raises(TopologyError):
-        front_gap(scored, "a", compare=("objective",))
-    with pytest.raises(TopologyError):
-        front_gap(scored, "z")
 
 
 @pytest.mark.parametrize("kwargs", [

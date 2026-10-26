@@ -221,12 +221,6 @@ Eigen::MatrixXd DIIS::extrapolate_owned(Eigen::MatrixXd fock,
     const Eigen::Index rows = fock.rows();
     const Eigen::Index cols = fock.cols();
     push_history(std::move(fock), std::move(error));
-    if (capture_) {
-        *capture_ = {};
-        capture_->focks.assign(fock_history_.begin(), fock_history_.end());
-        capture_->errors.assign(error_history_.begin(), error_history_.end());
-        capture_->pushed_gram = gram_;
-    }
 
     // Adaptive depth management (Chupin et al. 2021). Runs before the FIFO
     // safety cap so the cap only ever acts as an upper bound.
@@ -241,12 +235,9 @@ Eigen::MatrixXd DIIS::extrapolate_owned(Eigen::MatrixXd fock,
             break;
     }
 
-    if (capture_) capture_->after_policy = fock_history_.size();
     while (fock_history_.size() > max_subspace_) {
         pop_oldest();
     }
-
-    if (capture_) capture_->after_capacity = fock_history_.size();
 
     VIBEQC_DIAG("diis", vibeqc::DiagLevel::DEBUG,
         "subspace=%zu  max=%zu  policy=%d",
@@ -255,7 +246,6 @@ Eigen::MatrixXd DIIS::extrapolate_owned(Eigen::MatrixXd fock,
     // ``fock`` and ``error`` have been moved from; the newest iterate now
     // lives at the back of the history. Everything below reads it from there.
     if (fock_history_.size() < 2) {
-        if (capture_) capture_->disposition = "insufficient_history";
         return fock_history_.back();  // Need two points to extrapolate.
     }
 
@@ -277,7 +267,6 @@ Eigen::MatrixXd DIIS::extrapolate_owned(Eigen::MatrixXd fock,
         const auto m = static_cast<Eigen::Index>(fock_history_.size());
         const double gram_scale = gram_.cwiseAbs().maxCoeff();
         if (!(gram_scale > 0.0) || !std::isfinite(gram_scale)) {
-            if (capture_) capture_->disposition = "invalid_gram_scale";
             return fock_history_.back();
         }
         Eigen::MatrixXd A = Eigen::MatrixXd::Zero(m + 1, m + 1);
@@ -304,14 +293,10 @@ Eigen::MatrixXd DIIS::extrapolate_owned(Eigen::MatrixXd fock,
         const bool usable =
             full_rank && sol.allFinite()
             && sol.head(m).cwiseAbs().maxCoeff() <= kMaxPulayCoeff;
-        if (capture_) capture_->attempts.push_back(
-            {gram_, sol, static_cast<int>(lu.rank()), usable});
         if (usable) {
-            if (capture_) capture_->disposition = "extrapolated";
             break;
         }
         if (m <= 2) {
-            if (capture_) capture_->disposition = "unusable_minimum_history";
             // ``pop_oldest`` only ever drops from the front, so the newest
             // iterate is still at the back.
             return fock_history_.back();

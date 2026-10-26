@@ -306,15 +306,6 @@ builders but bypass their ordinary pointwise or split XC path and use the same
 full-grid periodic adapter. The example below is an API smoke calculation in a
 deliberately simple 3D cell. It is not a converged chemistry benchmark.
 
-For the GPW/GAPW full-grid adapter, `external_xc_image_radius_bohr` selects
-only the Becke partition. The AO density uses
-`external_xc_lattice_options.cutoff_bohr`; a positive
-`external_xc_lattice_options.becke_image_radius_bohr` narrows its bra-image
-reach, capped at that cutoff. A nonpositive value uses the full cutoff.
-These two radii are independent, as in BIPOLE. Converge both the AO support
-and the quadrature; separating them does not certify diffuse-basis convergence
-or a real-checkpoint SKALA result.
-
 ```python
 import numpy as np
 import vibeqc as vq

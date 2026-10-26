@@ -87,13 +87,6 @@ cannot detect the second.
 
 ## Running the diagnostic
 
-Use a run directory outside the checkout and the installed engine's Python.
-Coordinates below are in bohr. This low-level example retains its HF result
-in memory for the auxiliary-basis comparison; it does not automatically write
-the full `run_job` output family. Save the input and printed diagnostics.
-The canonical comparison adds work and memory, so begin with this small case
-rather than enabling it across a production campaign.
-
 The example runs RHF on water/cc-pVTZ, then an SCS-MP2 with `cc-pvtz-ri`
 and `report_ri_residual=True`, which reports the per-bucket fit error
 alongside the OS and SS correlation energies:
@@ -112,8 +105,6 @@ basis = vq.BasisSet(mol, "cc-pvtz")
 
 rhf_opts = vq.RHFOptions(); rhf_opts.conv_tol_energy = 1e-10
 hf = vq.run_rhf(mol, basis, rhf_opts)
-if not hf.converged:
-    raise RuntimeError("RHF did not converge; do not compare RI residuals yet")
 
 opts = vq.MP2Options()
 opts.density_fit = True
@@ -125,8 +116,7 @@ opts.report_ri_residual = True  # ← opt-in flag
 
 mp2 = vq.run_mp2(mol, basis, hf, opts)
 
-if not mp2.ri_residual_reported:
-    raise RuntimeError("The requested canonical-versus-RI residual was not reported")
+assert mp2.ri_residual_reported
 print(f"E_os = {mp2.e_os:+.8f} Ha   "
       f"ΔE_os = {mp2.e_os_ri_residual:+.2e}")
 print(f"E_ss = {mp2.e_ss:+.8f} Ha   "
@@ -158,30 +148,9 @@ chasing sub-µHa parity against a reference calculation it is not.
 
 ## Aux-basis sweep, confirming a genuine fit residual
 
-Continue in the same script and reuse the converged HF reference. Keep the
-orbital basis, frozen-core count and spin-component scaling unchanged; only
-the auxiliary basis varies. Reuse the first result rather than recomputing it:
-
-```python
-# doc-audit: skip - continues with mol, basis, hf, opts and mp2 from the baseline
-residuals = {"cc-pvtz-ri": mp2}
-for auxiliary in ("cc-pvtz-ri", "cc-pvqz-ri"):
-    if auxiliary not in residuals:
-        opts.aux_basis = auxiliary
-        residuals[auxiliary] = vq.run_mp2(mol, basis, hf, opts)
-    fitted = residuals[auxiliary]
-    if not fitted.ri_residual_reported:
-        raise RuntimeError(f"Residual unavailable for {auxiliary}")
-    delta_scs = (opts.c_os * fitted.e_os_ri_residual
-                 + opts.c_ss * fitted.e_ss_ri_residual)
-    print(auxiliary, f"dOS={fitted.e_os_ri_residual:+.3e} Ha",
-          f"dSS={fitted.e_ss_ri_residual:+.3e} Ha", f"dSCS={delta_scs:+.3e} Ha")
-```
-
-The historical comparison below uses `cc-pvqz-ri` (242 functions) as the
-second fit, versus 141 functions for `cc-pvtz-ri`. Record your actual residuals
-and compare them with your chosen tolerance; these rows are not freshly
-measured results from your installation.
+A fit residual should shrink monotonically as you enlarge the
+aux basis. Re-running on `cc-pvqz-ri` (242 functions vs 141 for
+`cc-pvtz-ri`):
 
 | Aux basis | $n_{\mathrm{aux}}$ | $\Delta E_{\mathrm{os}}$ | $\Delta E_{\mathrm{ss}}$ | $\Delta E_{\mathrm{SCS}}$ |
 |---|---:|---:|---:|---:|
@@ -215,13 +184,12 @@ $V_{PQ}$ condition number (the latter is on
 
 ## Cost note
 
-The diagnostic adds a canonical AO-to-MO transformation alongside the RI
-build, so its runtime and peak-memory overhead depend on the system and
-integral path. Do not budget it as a fixed twofold runtime increase. Keep it off in production loops; only switch it on when you
+The diagnostic **doubles the runtime of an RI-MP2 call**, it forces
+the O(N⁵) canonical AO→MO transform alongside the O(n_aux · …) RI
+build. Keep it off in production loops; only switch it on when you
 need the answer it gives.
 
 ```python
-# doc-audit: skip - changes opts for subsequent calls, not existing results
 opts.report_ri_residual = False   # ← default, production
 ```
 

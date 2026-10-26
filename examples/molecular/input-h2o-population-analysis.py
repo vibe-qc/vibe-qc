@@ -1,6 +1,6 @@
 """Water, one SCF and every charge, bond-order and response property side by side.
 
-System: H2O/6-31G* at the fixed geometry specified below (bohr).
+System: H2O/6-31G* at the fixed geometry shared by these examples (bohr).
 Method: ``run_job(method="rhf", basis="6-31g*", iao_analysis=True,
 localize="ibo")``. ``iao_analysis=True`` attaches ``result.iao_analysis``
 (intrinsic-atomic-orbital charges and IAO-Wiberg bond orders, MINAO
@@ -17,15 +17,13 @@ Files (next to this script):
     input-h2o-population-analysis.qvf             wavefunction with IBO localised orbitals
     plus .molden / .system / .xyz sidecars
 
-Historical output (vibe-qc 0.17.x development build): oxygen charges Mulliken -0.888, Loewdin -0.657, Hirshfeld -0.360,
+Success: oxygen charges Mulliken -0.888, Loewdin -0.657, Hirshfeld -0.360,
 IAO -0.642 e (the spread between schemes is the lesson, the sum is zero
 for each); O-H bond orders Mayer 0.774, Wiberg 0.903, IAO-Wiberg 0.897;
 dipole moment 0.8871 e bohr = 2.255 D; static polarizability diagonal
 (2.631, 7.838, 5.352) bohr^3 in the molecular frame, isotropic 5.274
-bohr^3. These numbers illustrate the model differences; they are not
-current-build acceptance thresholds. Check SCF convergence and electron
-bookkeeping before interpreting the properties. This geometry differs from
-the introductory properties tutorial, so their numerical values need not match.
+bohr^3. Tolerance: 0.001 on charges and bond orders, 1e-4 on the dipole
+and polarizability (vibe-qc 0.17.x development build, Apple M5 Max, about 10 s).
 """
 
 from pathlib import Path
@@ -47,9 +45,7 @@ BASIS = "6-31g*"
 SYMBOLS = ["O", "H", "H"]
 
 result = vq.run_job(mol, basis=BASIS, method="rhf", iao_analysis=True, localize="ibo",
-                    output=str(HERE / STEM), write_molden_file=True)
-if not result.converged:
-    raise RuntimeError("Water RHF did not converge; inspect the job's .out file")
+                    output=str(HERE / STEM))
 basis = vq.BasisSet(mol, BASIS)
 
 mulliken = vq.mulliken_charges(result, basis, mol)

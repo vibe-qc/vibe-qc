@@ -1,1 +1,0 @@
-- Include pi and stored-cell volume in experimental MANTA reciprocal metric weight bounds, propagating through existing rank/inverse/J/K audits with strict unresolved-volume refusal.

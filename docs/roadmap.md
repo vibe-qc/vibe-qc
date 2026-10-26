@@ -54,9 +54,7 @@ The proposed [parameter-opt framework](design/parameter_opt.md) defines
 method adapters, DFT/hybrid/DLPNO reference protocols, constrained fitting,
 optional MINUIT2 and MILP backends, and an identifiability-guided multifidelity
 research method. Stages P0-P8 specify dependencies and acceptance criteria.
-Issue #676 implements the first P0-P3 molecular energy-fitting slice; see the
-[parameter-opt guide](user_guide/parameter_opt.md). Broader scientific acceptance
-remains open; no generally validated new parameter set is shipped.
+This is a design roadmap; no fitter or new parameter set is shipped.
 
 ## Release table
 
@@ -529,19 +527,10 @@ Reference: Neese group, *SHARK Integral Package and Task Driver*, ORCA
 
 ### `v1.x`, algorithmic and hardware acceleration
 
-- **GPU acceleration, proposed:** the
-  [GPU support concept](design/gpu_support.md) defines G0-G6 for CPU,
-  CUDA, HIP/ROCm and Metal backends, beginning with profiling,
-  density-fitting contractions and XC quadrature. Experimental feasibility
-  work can start before `v1.x`; production coverage remains this milestone's
-  theme, with no release version assigned. Gaming and professional GPUs
-  need device-specific memory and precision qualification. Apple support
-  starts with selective GPU arithmetic and CPU FP64 recovery. Integral
-  generation, periodic operations and correlated tensors follow measured
-  bottlenecks and scientific acceptance. Speedups are unmeasured; reduced
-  precision requires its own accuracy evidence. Optional NVIDIA cuEST
-  evaluation is a separate lower-priority track. The concept remains a
-  discussion draft, not an approved dependency or licensing change.
+- **GPU acceleration** Integral evaluation, tensor contractions,
+  cubic-scaling diagonalisations all map well to GPUs (TeraChem /
+  BrianQC / GPU4PySCF / GPU CP2K via DBCSR). Reduced precision
+  (mixed FP32/FP64, FP16 for some steps) gives further 2-4×.
 - **Tensor decompositions** THC (tensor hypercontraction) /
   Cholesky decomposition / ISDF (interpolative separable density
   fitting, increasingly popular for periodic GW / BSE). CD is

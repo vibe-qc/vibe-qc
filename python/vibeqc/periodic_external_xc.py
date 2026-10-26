@@ -411,21 +411,13 @@ class PeriodicExternalXC:
             options.cutoff_bohr = 25.0
         else:
             options = _copy_lattice_options(lattice_options)
-        cutoff = float(options.cutoff_bohr)
-        density_radius = float(options.becke_image_radius_bohr)
-        if not np.isfinite(cutoff) or cutoff <= 0.0:
+        options.becke_image_radius_bohr = image_radius
+        if float(options.cutoff_bohr) < image_radius:
             raise ValueError(
-                "periodic external XC cutoff_bohr must be finite and > 0"
+                "periodic external XC cutoff_bohr must be at least the "
+                "periodic Becke image radius; got "
+                f"{float(options.cutoff_bohr):.6g} < {image_radius:.6g} bohr"
             )
-        if not np.isfinite(density_radius):
-            raise ValueError("periodic external XC density image radius must be finite")
-        # Becke, JCP 88, 2547 (1988), Sec. II, Eqs. (3)-(7),
-        # DOI: 10.1063/1.454033: the partition weights the integrand; it
-        # must not truncate the AO density supplied to a full-grid provider.
-        # Match the native density support convention independently of the
-        # partition radius: unset means full ket reach, positive is capped.
-        density_radius = min(density_radius, cutoff) if density_radius > 0.0 else cutoff
-        options.becke_image_radius_bohr = density_radius
 
         # The XC kernel evaluates AO images a,s within ``cutoff_bohr`` and
         # accumulates the derivative into the difference block g=s-a.  Its
@@ -438,7 +430,7 @@ class PeriodicExternalXC:
             resolved_cells = periodic_xc_difference_closed_cells(
                 system,
                 float(options.cutoff_bohr),
-                density_radius,
+                image_radius,
             )
         else:
             resolved_cells = tuple(cells)
@@ -448,7 +440,7 @@ class PeriodicExternalXC:
                 for cell in periodic_xc_difference_closed_cells(
                     system,
                     float(options.cutoff_bohr),
-                    density_radius,
+                    image_radius,
                 )
             }
             missing = required.difference(present)

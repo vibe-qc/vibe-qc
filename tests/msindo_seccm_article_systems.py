@@ -6,17 +6,16 @@ and the slower uniqueness checks (``test_msindo_ccm.py``) cannot drift apart.
 
 The fcc clusters are built exactly as the article's builders build them: the
 primitive fcc cell replicated ``n x n x n``, with translations ``n`` times the
-primitive vectors. Each energy pins a converged native state and its audit
-at max_iter=400, conv_tol=1e-9 under the stated SCF state policy
+primitive vectors. Every energy is the audited stable state of the native
+kernel at max_iter=400, conv_tol=1e-9 under the stated SCF state policy
 (issue #249). Each 2x2x2 entry states its largest net atomic charge. For bare
 diamond 2x2x2 the neutral state the reference program converges to is a
 saddle of the WS-truncated bare Coulomb model (lowest orbital Hessian
 eigenvalue -1.76 Ha): the default "reference" policy returns it flagged, and
-the "lowest" policy finds a distinct local restricted minimum, which alternates
-+/-2.95 e on the two sublattices 2.75 Ha lower. The other pinned clusters have
-no reported internal instability at these geometries. These isolated checks
-do not prove stability throughout a volume grid, branch continuity, or a
-global electronic ground state.
+the "lowest" policy descends to the model's minimum, which alternates
++/-2.95 e on the two sublattices 2.75 Ha lower. The Madelung-embedded
+cluster and every 3x3x3 cluster are stable neutral minima under both
+policies.
 """
 
 from __future__ import annotations

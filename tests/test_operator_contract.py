@@ -2016,31 +2016,3 @@ def test_legacy_interior_shift_override_preserves_selection(override):
     np.testing.assert_allclose(result.eigenvalues, [-1. if override is None else 2.])
     assert result.converged and result.residuals.max() < 1e-12
     assert options.sigma == override
-
-
-@pytest.mark.parametrize("complex_case", [False, True])
-@pytest.mark.parametrize("override", [None, -.9])
-def test_interior_generalized_preserves_metric_and_retained_roots(complex_case, override):
-    u = _unitary(3, complex_case)
-    s = (u * np.array([.5, 2., 0.])) @ u.conj().T
-    f = (u * np.array([-.5, 4., 7.])) @ u.conj().T
-    options = SolverOptions(n_roots=1, sigma=override, tol=1e-10)
-    problem = InteriorEigenProblem(GeneralizedEigenProblem(matrix=f, overlap=s), sigma=2.1)
-    result = solve_eigenproblem(problem, options, solver="dense")
-    expected = 2. if override is None else -1.
-    index = 1 if override is None else 0
-    c = result.eigenvectors
-    target = u[:, index:index+1] / np.sqrt([.5, 2.][index])
-    np.testing.assert_allclose(result.eigenvalues, [expected], atol=1e-12)
-    np.testing.assert_allclose(c @ c.conj().T, target @ target.conj().T, atol=1e-12)
-    np.testing.assert_allclose(c.conj().T @ s @ c, np.eye(1), atol=1e-12)
-    assert result.converged and result.retained_rank == 2
-    assert result.residuals.max() < 1e-10
-    assert options.sigma == override
-
-
-@pytest.mark.parametrize("metric", [np.diag([1., -1.]), np.array([[1., .2], [0., 1.]])])
-def test_interior_generalized_refuses_invalid_metric(metric):
-    problem = InteriorEigenProblem(GeneralizedEigenProblem(matrix=np.diag([-1., 2.]), overlap=metric))
-    with pytest.raises(ValueError, match="overlap"):
-        solve_eigenproblem(problem, SolverOptions(n_roots=1), solver="dense")

@@ -9,9 +9,7 @@ reference policy repairs a saddle only where the reference program's
 Hcore/DIIS trajectory is ill-defined, an unresolved Hcore frontier
 (gap <= 1e-6 Ha), and otherwise returns the converged state flagged as
 internally unstable; the frozen MSINDO oracle clusters include such saddles.
-The lowest-stable policy attempts descent from detected saddles within the
-cumulative SCF budget; it guarantees neither convergence nor continuity
-between geometries, and does not establish a global minimum. A C3 chain bent by
+The lowest-stable policy descends from every saddle: a C3 chain bent by
 3e-3 bohr has a resolved gap (1e-5 Ha) yet converges from the Hcore guess
 16.6 mHa above the continuous lower branch.
 """
@@ -24,9 +22,9 @@ from . import msindo
 
 # Rotation angles (radians along the unstable mode) scanned for a restart seed.
 _RESTART_ANGLES = (0.1, 0.25, 0.5, 1.0, 2.0)
-# A negative mode without this much descent among the scanned rotations is
-# accepted by the numerical policy, with its negative curvature retained.
-# This finite scan is not a proof that the orbital Hessian is nonnegative.
+# A mode along which no scanned rotation lowers the energy by this much is
+# stable within the SCF's resolution: the analytic Hessian resolves its sign
+# to about 1e-5 and DIIS cannot hold a stationary point 1e-7 Ha below.
 STABILITY_DESCENT_TOL = 1e-6
 
 
@@ -85,9 +83,9 @@ def scf_rhf_ccm(H, G, blocks, Z, nocc, *, max_iter=200, conv_tol=1e-9,
     ``max_iter`` bounds the cumulative SCF iterations, including every
     stability restart. Stability is a local minimum test within RHF, not a
     global-minimum or unrestricted-spin claim. A state whose lowest Hessian
-    eigenvalue is negative but whose scanned rotations do not lower the energy
-    by :data:`STABILITY_DESCENT_TOL` is accepted by the numerical policy;
-    the negative eigenvalue is still reported. The lower-energy rotation sign is
+    eigenvalue is negative but whose unstable mode cannot lower the energy
+    by :data:`STABILITY_DESCENT_TOL` is accepted as stable within tolerance;
+    the eigenvalue is still reported. The lower-energy rotation sign is
     re-converged first with the whole remaining budget, the other sign only
     when the first does not descend. ``initial_density`` replaces the Hcore
     start of the primary SCF and bypasses frontier seeding and orbital

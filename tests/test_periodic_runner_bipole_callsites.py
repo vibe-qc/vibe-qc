@@ -2465,27 +2465,3 @@ def test_public_bipole_ecp_complete_single_point(tmp_path):
     assert result.n_electrons == 14
     assert abs(result.energy - (-29.3455846237986)) < 1e-6
     assert result.ecp_source.provider == "bipole-scalar-ecp-v1"
-
-
-@pytest.mark.parametrize("method,functional", [("RHF", None), ("UHF", None),
-                                               ("RKS", "pbe0"), ("UKS", "pbe0")])
-def test_bipole_stale_full_mesh_refuses_direct_and_before_dry_run(tmp_path, monkeypatch, method, functional):
-    system, basis = _h2_3d()
-    old_system = vq.PeriodicSystem(3, .9*np.asarray(system.lattice), list(system.unit_cell))
-    stale = vq.KPoints.monkhorst_pack(old_system, (2, 1, 1), shift=(0, 0, 0)).to_bloch_kmesh()
-    module_name = "vibeqc.pbc_bipole" + ("" if method == "RHF" else "_"+method.lower())
-    module = importlib.import_module(module_name)
-    options = vq.PeriodicRHFOptions() if functional is None else vq.PeriodicKSOptions()
-    if functional is not None:
-        options.functional = functional
-    def forbidden(*args, **kwargs):
-        raise AssertionError("stale mesh must refuse before lattice preparation")
-    monkeypatch.setattr(module, "prepare_bipole_lattice_options", forbidden)
-    with pytest.raises(ValueError, match="full kmesh points do not match"):
-        getattr(module, "run_pbc_bipole_"+method.lower())(system, basis, stale, options, progress=False)
-    stem = tmp_path / (method.lower()+"-stale-grid")
-    with pytest.raises(ValueError, match="full kmesh points do not match") as refusal:
-        vq.run_periodic_job(system, basis, method=method, functional=functional,
-                            jk_method="bipole", kpoints=stale, dry_run=True,
-                            output=stem, output_qvf=False, progress=False)
-    assert_preflight_refusal(stem, refusal.value)

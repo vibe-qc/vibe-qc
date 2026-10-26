@@ -1,1 +1,0 @@
-- Make BIPOLE `ewald_precision` tighten the reciprocal Gaussian envelope as well as the direct-space Ewald sum. Energy, gradient and response paths use the same resolved cutoff; historical helper calls without an explicit tolerance retain their calibration. This is a damping target, not a total-energy error bound.

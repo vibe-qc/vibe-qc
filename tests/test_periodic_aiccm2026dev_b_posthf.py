@@ -1355,8 +1355,7 @@ def test_unrestricted_real_torus_ump2_and_properties() -> None:
         )
     assert isinstance(result, AICCM2026DevBUMP2Result)
     assert result.converged
-    # Matched-reference spin-resolved contraction; see issue #668.
-    assert result.e_corr_per_cell == pytest.approx(-0.00024331328545584195, abs=2e-10)
+    assert result.e_corr_per_cell == pytest.approx(-0.0002432596727, abs=2e-10)
     assert result.e_corr_per_cell == pytest.approx(
         result.e_aa_per_cell + result.e_bb_per_cell + result.e_ab_per_cell,
         abs=1e-14,
@@ -1409,8 +1408,7 @@ def test_unrestricted_full_domain_uccsd_t_and_local_pno_limit() -> None:
         )
     assert isinstance(canonical, AICCM2026DevBUCCSDResult)
     assert canonical.converged
-    # Independent UCCSD on the same normal-ordered Hamiltonian; see #668.
-    assert canonical.e_corr_per_cell == pytest.approx(-0.00025786760890157673, abs=2e-10)
+    assert canonical.e_corr_per_cell == pytest.approx(-0.0002578091059, abs=2e-10)
     assert canonical.e_total_per_cell == pytest.approx(
         canonical.e_hf_per_cell
         + canonical.e_corr_per_cell

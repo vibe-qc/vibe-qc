@@ -51,4 +51,4 @@ Top-level surface
 # Keep in lockstep with pyproject.toml's [project] version — ``vb
 # --version`` reads this one, so a drift makes the CLI lie about what is
 # installed. Pinned by tests/test_versioning.py; scheme in VERSIONING.md.
-__version__ = "0.13.0"
+__version__ = "0.12.0"

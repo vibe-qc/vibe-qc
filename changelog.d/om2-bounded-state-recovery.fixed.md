@@ -1,1 +1,0 @@
-- Add bounded energy-lowering state-selection recovery for restricted molecular OM2, preserving the 0.02 Ha finite-difference guard and failing closed when recovery exhausts its budget.

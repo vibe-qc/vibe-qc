@@ -10,30 +10,6 @@ Every method page states the status label of what it runs (production,
 preview, experimental or gated) in the vocabulary of
 [Methods: theory and status](../methods.md#how-to-read-the-status-labels).
 
-## Before running a worked example
-
-Use a working engine installation and the interpreter from that environment;
-see [Running vibe-qc](../running.md). Save inputs in a separate run directory
-so calculation files stay beside the input rather than in the source checkout.
-
-- Run a page's setup block first. Later blocks may reuse its molecule, basis,
-  options or results; the page should identify these continuations explicitly.
-- Check coordinate units before replacing a geometry. Low-level `Atom`
-  coordinates are in bohr; XYZ inputs use the file reader's documented units.
-- Keep a unique output stem or directory for every trial. Preserve the input,
-  actual settings and runtime identity with results you intend to compare.
-- Check convergence before tabulating energies, computing properties or fitting
-  a trend. File creation alone does not establish success; see
-  [result inspection](../user_guide/output_files.md#inspect-a-manifest-before-analysis).
-- Treat displayed tables as recorded or illustrative results, according to the
-  page's provenance. They are not new measurements from your installation.
-  Iteration counts and timings can change with runtime and settings.
-
-The first calculation in each lesson is the starting point. Optional plotting
-requires Matplotlib in the same environment; a figure is not needed to inspect
-the tabulated values. Reuse computed results when plotting, and keep an
-unmodified baseline before exploring the suggested variations.
-
 ## Choose a learning path
 
 You do not have to read all of the tutorials. Pick the path that matches the

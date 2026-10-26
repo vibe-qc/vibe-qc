@@ -1,1 +1,0 @@
-- Fix GPW/GAPW full-grid external XC preparation overwriting the AO density-image reach with the Becke partition radius. Preserve the requested lattice density support and build its complete difference domain independently of the quadrature partition.

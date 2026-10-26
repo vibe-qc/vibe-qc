@@ -1135,7 +1135,7 @@ def _matching_ewald_options(
         float(reciprocal_cutoff_bohr_inv)
         if reciprocal_cutoff_bohr_inv is not None
         and float(reciprocal_cutoff_bohr_inv) > 0.0
-        else float(bipole_ewald_reciprocal_cutoff(V_cell, float(ewald_alpha), tolerance=tolerance))
+        else float(bipole_ewald_reciprocal_cutoff(V_cell, float(ewald_alpha)))
     )
     return _crystal_ewald_options(
         lattice_opts,
@@ -1223,7 +1223,7 @@ def _v_ne_ewald_gradient(
         float(reciprocal_cutoff_bohr_inv)
         if reciprocal_cutoff_bohr_inv is not None
         and float(reciprocal_cutoff_bohr_inv) > 0.0
-        else float(bipole_ewald_reciprocal_cutoff(V_cell, alpha, tolerance=precision))
+        else float(bipole_ewald_reciprocal_cutoff(V_cell, alpha))
     )
 
     cells_r_cart = np.array(
@@ -1365,7 +1365,7 @@ def _j_long_range_ewald_gradient(
     alpha = float(ewald_alpha)
     a_lat = np.asarray(system.lattice, dtype=float)
     V_cell = float(abs(np.linalg.det(a_lat)))
-    K_max = float(bipole_ewald_reciprocal_cutoff(V_cell, alpha, tolerance=precision))
+    K_max = float(bipole_ewald_reciprocal_cutoff(V_cell, alpha))
 
     cells_r_cart = np.array(
         [np.asarray(c.r_cart, dtype=float) for c in D_real.cells], dtype=float
@@ -1459,7 +1459,7 @@ def _k_long_range_ewald_gradient(
     alpha = float(ewald_alpha)
     a_lat = np.asarray(system.lattice, dtype=float)
     V_cell = float(abs(np.linalg.det(a_lat)))
-    K_max = float(bipole_ewald_reciprocal_cutoff(V_cell, alpha, tolerance=precision))
+    K_max = float(bipole_ewald_reciprocal_cutoff(V_cell, alpha))
     cells_r_cart = np.array(
         [np.asarray(c.r_cart, dtype=float) for c in D_real.cells], dtype=float
     )
@@ -1699,7 +1699,7 @@ def _bipole_de_dp_home_block(
     alpha = float(ewald_alpha)
     V = float(abs(np.linalg.det(np.asarray(system.lattice, dtype=float))))
     n_elec = int(system.n_electrons())
-    K_max = float(bipole_ewald_reciprocal_cutoff(V, alpha, tolerance=ewald_precision))
+    K_max = float(bipole_ewald_reciprocal_cutoff(V, alpha))
     v_bg = -np.pi * float(n_elec) / (alpha * alpha * V)
 
     cells = list(D_real.cells)
@@ -1996,7 +1996,7 @@ def _build_multi_k_bipole_b0_closed(
 
     alpha = float(ewald_alpha)
     V = float(abs(np.linalg.det(np.asarray(system.lattice, dtype=float))))
-    K_max = float(bipole_ewald_reciprocal_cutoff(V, alpha, tolerance=ewald_precision))
+    K_max = float(bipole_ewald_reciprocal_cutoff(V, alpha))
     S_lat = compute_overlap_lattice(basis, system, lattice_opts)
     T_lat = compute_kinetic_lattice(basis, system, lattice_opts)
     ew = _crystal_ewald_options(
@@ -2220,7 +2220,7 @@ def _build_multi_k_bipole_b0_open(
     alpha = float(ewald_alpha)
     a_hf = float(alpha_hf)
     V = float(abs(np.linalg.det(np.asarray(system.lattice, dtype=float))))
-    K_max = float(bipole_ewald_reciprocal_cutoff(V, alpha, tolerance=ewald_precision))
+    K_max = float(bipole_ewald_reciprocal_cutoff(V, alpha))
     S_lat = compute_overlap_lattice(basis, system, lattice_opts)
     T_lat = compute_kinetic_lattice(basis, system, lattice_opts)
     ew = _crystal_ewald_options(
@@ -2799,7 +2799,7 @@ def _multi_k_orbital_relaxation_ks_closed_diag(
         z_list.append(b / ediff)
 
     # Build KS grid and Fock for B0 differentiation.
-    K_max = float(bipole_ewald_reciprocal_cutoff(V, alpha, tolerance=ewald_precision))
+    K_max = float(bipole_ewald_reciprocal_cutoff(V, alpha))
     grid = _build_ks_grid(
         system, grid_options, use_periodic_becke, becke_image_radius_bohr
     )
@@ -2984,7 +2984,7 @@ def _multi_k_orbital_relaxation_ks_open_diag(
             ediff = evec[nocc:][None, :] - evec[:nocc, None]
             zstore.append(b / ediff)
 
-    K_max = float(bipole_ewald_reciprocal_cutoff(V, alpha, tolerance=ewald_precision))
+    K_max = float(bipole_ewald_reciprocal_cutoff(V, alpha))
     grid = _build_ks_grid(
         system, grid_options, use_periodic_becke, becke_image_radius_bohr
     )
@@ -3287,7 +3287,7 @@ def _multi_k_orbital_relaxation_open(
         return np.zeros((n_atoms, 3), dtype=np.float64)
 
     nbf = int(basis.nbasis)
-    K_max = float(bipole_ewald_reciprocal_cutoff(V, alpha, tolerance=ewald_precision))
+    K_max = float(bipole_ewald_reciprocal_cutoff(V, alpha))
     cells_r = np.array(
         [np.asarray(c.r_cart, dtype=float) for c in S_lat.cells], dtype=float
     )
@@ -3695,7 +3695,7 @@ def _reconstruct_bipole_fock_gamma_builder(
     a_hf = float(alpha_hf)
     nbf = int(basis.nbasis)
     V = float(abs(np.linalg.det(np.asarray(system.lattice, dtype=float))))
-    K_max = float(bipole_ewald_reciprocal_cutoff(V, alpha, tolerance=ewald_precision))
+    K_max = float(bipole_ewald_reciprocal_cutoff(V, alpha))
     S = compute_overlap_lattice(basis, system, lattice_opts)
     cells = list(S.cells)
     n_cells = len(cells)
@@ -3833,7 +3833,7 @@ def _bloch_cphf_rhs_analytic(
     V = float(abs(np.linalg.det(np.asarray(system.lattice, dtype=float))))
     n_elec = int(system.n_electrons())
     v_bg = -np.pi * float(n_elec) / (alpha * alpha * V)
-    K_max = float(bipole_ewald_reciprocal_cutoff(V, alpha, tolerance=ewald_precision))
+    K_max = float(bipole_ewald_reciprocal_cutoff(V, alpha))
 
     # MO-derived response densities (home blocks).
     Pz = C_vir @ z.T @ C_occ.T
@@ -4654,7 +4654,7 @@ def _bloch_cphf_rhs_analytic_open(
     V = float(abs(np.linalg.det(np.asarray(system.lattice, dtype=float))))
     n_elec = int(system.n_electrons())
     v_bg = -np.pi * float(n_elec) / (alpha * alpha * V)
-    K_max = float(bipole_ewald_reciprocal_cutoff(V, alpha, tolerance=ewald_precision))
+    K_max = float(bipole_ewald_reciprocal_cutoff(V, alpha))
     nva = Cavir.shape[1]
     nvb = Cbvir.shape[1]
 
@@ -5147,7 +5147,7 @@ def _j_long_range_ewald_gradient_multi_k(
         float(reciprocal_cutoff_bohr_inv)
         if reciprocal_cutoff_bohr_inv is not None
         and float(reciprocal_cutoff_bohr_inv) > 0.0
-        else float(bipole_ewald_reciprocal_cutoff(V_cell, alpha, tolerance=precision))
+        else float(bipole_ewald_reciprocal_cutoff(V_cell, alpha))
     )
 
     cells = list(D_real.cells)
@@ -5848,7 +5848,7 @@ def _k_long_range_ewald_gradient_multi_k(
         float(reciprocal_cutoff_bohr_inv)
         if reciprocal_cutoff_bohr_inv is not None
         and float(reciprocal_cutoff_bohr_inv) > 0.0
-        else float(bipole_ewald_reciprocal_cutoff(V_cell, alpha, tolerance=precision))
+        else float(bipole_ewald_reciprocal_cutoff(V_cell, alpha))
     )
     cells_r = np.array(
         [
@@ -6562,7 +6562,7 @@ def _gradient_domain_options(result, lattice_opts, *, system=None, basis=None):
     if system is not None and domain.ewald_alpha_bohr_inv is not None:
         from .bipole_ext_el_pole import bipole_ewald_reciprocal_cutoff
         volume = float(abs(np.linalg.det(np.asarray(system.lattice, dtype=float))))
-        reciprocal = bipole_ewald_reciprocal_cutoff(volume, domain.ewald_alpha_bohr_inv, tolerance=domain.ewald_precision)
+        reciprocal = bipole_ewald_reciprocal_cutoff(volume, domain.ewald_alpha_bohr_inv)
         if reciprocal != domain.reciprocal_cutoff_bohr_inv:
             raise ValueError("BIPOLE gradient reciprocal reach differs from the SCF domain")
         # Every E_nn derivative uses this shared constructor. Validate the
@@ -7386,16 +7386,6 @@ def _periodic_xc_grid_motion_correction_uks(
     return moving - np.asarray(fixed_grid_gradient, dtype=np.float64)
 
 
-def _reject_expanded_xc_analytic_gradient(result):
-    domain = getattr(result, "resolved_domain", None)
-    if getattr(domain, "xc_lattice", None) is not None:
-        raise NotImplementedError(
-            "BIPOLE analytic KS gradients do not yet differentiate independently "
-            "expanded XC image support; use compute_bipole_gradient_fd with the "
-            "same SCF options."
-        )
-
-
 def _ks_gradient_lattice_options(lattice_opts, use_periodic_becke, image_radius,
                                  *, legacy_partition_reach=False):
     """Match the SCF's periodic XC reach without mutating caller options."""
@@ -7457,7 +7447,6 @@ def compute_bipole_gradient_rks(
     )
     ewald_precision = float(getattr(result, "ewald_precision", 1e-8))
     _reject_m5_domain_analytic_gradient(result, "rks")
-    _reject_expanded_xc_analytic_gradient(result)
     _reject_range_separated_analytic_gradient(result, "rks")
     _warn_research_preview("rks")
     # Compare the caller's original snapshot before preparing XC-only fields.
@@ -7821,7 +7810,6 @@ def compute_bipole_gradient_uks(
     )
     ewald_precision = float(getattr(result, "ewald_precision", 1e-8))
     _reject_m5_domain_analytic_gradient(result, "uks")
-    _reject_expanded_xc_analytic_gradient(result)
     _reject_range_separated_analytic_gradient(result, "uks")
     _warn_research_preview("uks")
     # Compare the caller's original snapshot before preparing XC-only fields.

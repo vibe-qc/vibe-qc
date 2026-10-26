@@ -616,7 +616,6 @@ void stamp_single_attempt(
     attempt.allocated_max_iter = allocated_max_iter;
     attempt.n_iter = result.n_iter;
     attempt.ladder_charge_mixing = opts.charge_mixing;
-    attempt.ladder_aes_damping = opts.aes_damping;
     attempt.electronic_temperature = opts.electronic_temperature;
     attempt.scc_mixer = opts.scc_mixer;
     attempt.exit_reason = result.converged ? "converged" : "iteration_limit";
@@ -888,10 +887,8 @@ GFN2Result run_gfn2_xtb(
     // max_iter is the total public SCC budget, not a per-attempt allowance.
     // The default 3600-step budget preserves the established molecular GFN2
     // stabilization ladder (700 hybrid-primary steps, 1800 slow T=0 retry,
-    // 500 mild finite-T retry, and for extended-period molecules a 600-step
-    // high-T retry, which on the faithful path is a 100-step stiff-AES
-    // retry plus 500 high-T steps) while explicit smaller caps fail closed
-    // at the requested iteration count.
+    // 500 mild finite-T retry, and 600 high-T extended-period retry) while
+    // explicit smaller caps fail closed at the requested iteration count.
     // The primary allowance grew 500 -> 700 when the default SCC path became
     // the simple+DIIS polyalgorithm: a stalled-then-halved simple phase plus
     // the fixed DIIS warmup costs a bounded number of iterations up front,
@@ -906,44 +903,15 @@ GFN2Result run_gfn2_xtb(
         double charge_mixing;
         int max_iter;
         double electronic_temperature;
-        // AES-potential damping for the rung; < 0 inherits opts.aes_damping.
-        double aes_damping;
     };
     std::vector<Retry> retries;
     if (use_stabilization) {
         retries = {
-            {0.01, 1800, 0.0, -1.0},
-            {0.05, 500, 0.005, -1.0},
+            {0.01, 1800, 0.0},
+            {0.05, 500, 0.005},
         };
         if (has_extended_period_element(mol)) {
-            const bool stiff_aes = opts.aes_faithful;
-            if (stiff_aes) {
-                // Stiff-AES rung (vibe-qc#684).  Under the atom-resolved AES
-                // the spherical state of an open-d singlet atom (W, Os, Mo)
-                // is an unstable SCC fixed point: round-off anisotropy grows
-                // ~1e3 per iteration through the on-site dipole/quadrupole
-                // feedback until E_AES is +8 Ha, on every rung above and in
-                // xtb 6.7.0 as well (Os fails at 300 K, W at 1578 K).
-                // charge_mixing has no effect on that channel; aes_damping
-                // <= 0.02 with smearing converges W, Os and Mo to the
-                // spherical state in 46-49 iterations (W at 300 K:
-                // A = -2.215078 Ha, xtb -2.215078).  The mild rung above
-                // cannot carry that damping -- Na4 and cyclopropene then need
-                // more than its 500 iterations -- so it is a rung of its own.
-                // Only d-shell elements show the instability, so the rung
-                // exists for extended-period molecules and takes its
-                // 100-iteration budget from the high-T rung below
-                // (600 -> 500; the As cases that rung exists for converge in
-                // 38 and 219 iterations).  The reserve, and with it the
-                // primary attempt's extension ceiling, is therefore unchanged
-                // for every molecule, and light-element budgets are untouched
-                // (a reserve of 2400 made the slow T=0 rung fit at max_iter
-                // 3000 and starve the finite-T rung, #306).  The charge
-                // mixing 0.02 identifies the rung in the attempt ledger
-                // beside ladder_aes_damping.
-                retries.push_back({0.02, 100, 0.005, 0.02});
-            }
-            retries.push_back({0.05, stiff_aes ? 500 : 600, 0.05, -1.0});
+            retries.push_back({0.05, 600, 0.05});
         }
     }
     // vibe-qc#306: the ladder is not optional rescue capacity.  For the
@@ -1359,11 +1327,9 @@ GFN2Result run_gfn2_xtb(
         // (K/Ca and post-Ar p-block cases) can still oscillate after the H0
         // covalent-radius fix because their near-degenerate frontier states
         // need stronger occupation smoothing, so they receive one final
-        // bounded high-T retry (on the faithful path preceded by the 100-step
-        // stiff-AES rung, vibe-qc#684).  Light-element automatic
-        // stabilization remains bounded to 3000 SCC iterations;
-        // extended-period systems are bounded to 3600 SCC iterations with
-        // the default max_iter.
+        // bounded high-T retry.  Light-element automatic stabilization remains
+        // bounded to 3000 SCC iterations; extended-period systems are bounded
+        // to 3600 SCC iterations with the default max_iter.
         // The rungs were built above the SCC loop, because the primary
         // attempt's extension ceiling is derived from their total budget.
         for (const auto& retry : retries) {
@@ -1379,7 +1345,6 @@ GFN2Result run_gfn2_xtb(
             XTBSccOptions ropts = opts;
             ropts.charge_mixing = retry.charge_mixing;
             ropts.max_iter = retry.max_iter;
-            if (retry.aes_damping >= 0.0) ropts.aes_damping = retry.aes_damping;
             // vibe-qc#3: never override an EXPLICITLY requested electronic
             // temperature.  gfn2_driver.hpp promised that this driver's
             // default stays exact zero-temperature Aufbau, and the pybind

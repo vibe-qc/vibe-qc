@@ -104,7 +104,6 @@ Eigen::MatrixXd density(const OrderedJKBuilder& builder, const py::array& array)
 } // namespace
 
 void bind_manta_ri(py::module_&);
-void bind_manta_molecular_source(py::module_&);
 void bind_manta_bloch_fourier(py::module_&);
 void bind_manta_bloch_one_electron(py::module_&);
 void bind_manta_periodic_hartree(py::module_&);
@@ -175,7 +174,6 @@ void bind_manta(py::module_& parent) {
         .def_readwrite("other_live_bytes",&ResourceBudget::other_live_bytes)
         .def_readwrite("backend_margin_bytes",&ResourceBudget::backend_margin_bytes);
     bind_manta_ri(m);
-    bind_manta_molecular_source(m);
     bind_manta_bloch_fourier(m);
     bind_manta_bloch_one_electron(m);
     bind_manta_periodic_hartree(m);
@@ -370,21 +368,6 @@ void bind_manta(py::module_& parent) {
           py::arg("request")=OneElectronRequest{},py::arg("derivative")=OneElectronDerivative{},py::arg("budget")=ResourceBudget{});
     m.def("compute_one_electron_derivative",&compute_one_electron_derivative,py::arg("bra"),py::arg("ket"),
           py::arg("request")=OneElectronRequest{},py::arg("derivative")=OneElectronDerivative{},py::arg("budget")=ResourceBudget{});
-    py::class_<MetricConstructionPlan>(m,"MetricConstructionPlan")
-        .def_readonly("modeled_peak_bytes",&MetricConstructionPlan::modeled_peak_bytes)
-        .def_readonly("scalar_terms",&MetricConstructionPlan::scalar_terms)
-        .def_readonly("kernel_terms",&MetricConstructionPlan::kernel_terms)
-        .def_readonly("shell_calls",&MetricConstructionPlan::shell_calls)
-        .def_readonly("primitive_products",&MetricConstructionPlan::primitive_products);
-    py::class_<MetricConstructionCertificate>(m,"MetricConstructionCertificate")
-        .def_readonly("evaluated",&MetricConstructionCertificate::evaluated)
-        .def_readonly("lower",&MetricConstructionCertificate::lower)
-        .def_readonly("upper",&MetricConstructionCertificate::upper)
-        .def_readonly("error_bounds",&MetricConstructionCertificate::error_bounds);
-    m.def("plan_metric_construction",&plan_metric_construction,py::arg("bra"),py::arg("ket"),
-        py::arg("request")=fitting_request(2),py::arg("budget")=ResourceBudget{});
-    m.def("certify_metric_construction",&certify_metric_construction,py::arg("bra"),py::arg("ket"),
-        py::arg("request")=fitting_request(2),py::arg("budget")=ResourceBudget{});
     py::class_<FittingPlan>(m,"FittingPlan")
         .def_readonly("shape",&FittingPlan::shape)
         .def_readonly("shell_extents",&FittingPlan::shell_extents)
@@ -519,27 +502,6 @@ void bind_manta(py::module_& parent) {
     m.def("plan_bloch_phase",&plan_bloch_phase,py::arg("budget")=ResourceBudget{});
     m.def("certify_bloch_phase",&certify_bloch_phase,py::arg("momentum"),py::arg("translation"),
         py::arg("evaluated_phase"),py::arg("budget")=ResourceBudget{});
-    py::class_<FourierConstructionPlan>(m,"FourierConstructionPlan")
-        .def_readonly("modeled_peak_bytes",&FourierConstructionPlan::modeled_peak_bytes)
-        .def_readonly("scalar_terms",&FourierConstructionPlan::scalar_terms)
-        .def_readonly("kernel_terms",&FourierConstructionPlan::kernel_terms)
-        .def_readonly("shell_calls",&FourierConstructionPlan::shell_calls)
-        .def_readonly("primitive_products",&FourierConstructionPlan::primitive_products);
-    py::class_<FourierConstructionCertificate>(m,"FourierConstructionCertificate")
-        .def_readonly("evaluated",&FourierConstructionCertificate::evaluated)
-        .def_readonly("real_lower",&FourierConstructionCertificate::real_lower)
-        .def_readonly("real_upper",&FourierConstructionCertificate::real_upper)
-        .def_readonly("imag_lower",&FourierConstructionCertificate::imag_lower)
-        .def_readonly("imag_upper",&FourierConstructionCertificate::imag_upper)
-        .def_readonly("error_bounds",&FourierConstructionCertificate::error_bounds);
-    m.def("plan_auxiliary_fourier_construction",&plan_auxiliary_fourier_construction,
-        py::arg("auxiliary"),py::arg("n_vectors"),py::arg("budget")=ResourceBudget{});
-    m.def("certify_auxiliary_fourier_panel",[](const vibeqc::BasisSet& auxiliary,const py::array& vectors,const ResourceBudget& budget) {
-        if(vectors.ndim()!=2)throw py::value_error("MANTA Fourier vectors must have shape (n,3)");
-        plan_auxiliary_fourier_construction(auxiliary,vectors.shape(0),budget);
-        const auto q=fourier_vectors(auxiliary,nullptr,vectors,budget);
-        return certify_auxiliary_fourier_panel(auxiliary,q,budget);
-    },py::arg("auxiliary"),py::arg("wave_vectors").noconvert(),py::arg("budget")=ResourceBudget{});
     m.def("plan_fourier",[](const vibeqc::BasisSet& bra,const vibeqc::BasisSet& ket,Count count,const ResourceBudget& budget) {
         return plan_fourier(bra,&ket,count,budget);
     },py::arg("bra"),py::arg("ket"),py::arg("n_vectors"),py::arg("budget")=ResourceBudget{});
@@ -567,12 +529,5 @@ void bind_manta(py::module_& parent) {
         if(!std::isfinite(rho) || rho<=0) throw py::value_error("MANTA Boys rho must be finite and positive");
         return md::radial_boys(n,t,rho,radial_kernel(request),omega);
     },py::arg("maximum_n"),py::arg("argument"),py::arg("rho"),py::arg("kernel"),py::arg("omega"));
-    py::class_<RepresentationCertificate>(m,"RepresentationCertificate")
-        .def_readonly("evaluated",&RepresentationCertificate::evaluated)
-        .def_readonly("lower",&RepresentationCertificate::lower)
-        .def_readonly("upper",&RepresentationCertificate::upper)
-        .def_readonly("error_bounds",&RepresentationCertificate::error_bounds);
-    m.def("plan_representation",&plan_representation,py::arg("angular_momentum"),py::arg("pure")=true,py::arg("budget")=ResourceBudget{});
-    m.def("certify_representation",&certify_representation,py::arg("angular_momentum"),py::arg("pure")=true,py::arg("budget")=ResourceBudget{});
     m.def("cartesian_to_spherical",[](int l){return md::representation(l,true);},py::arg("angular_momentum"));
 }

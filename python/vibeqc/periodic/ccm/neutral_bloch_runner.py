@@ -217,12 +217,6 @@ class CCMNeutralBlochConvention:
     #: and its identity; the real-Gamma arm records the same (#519, RG-2).
     neutral_source: Optional[dict] = None
     neutral_source_identity: str = ""
-    #: The spin sector the producer executed (#519 RG-14), read off the
-    #: producer's ``spin_state`` record, and the requested policy.
-    spin_state: Optional[dict] = None
-    spin_policy: str = "legacy"
-    #: The producer's occupation record (#519 RG-15).
-    occupation: Optional[dict] = None
 
 
 def run_neutral_bloch_scf(
@@ -236,7 +230,6 @@ def run_neutral_bloch_scf(
     symmetry: bool = False,
     return_lattice_density: bool = False,
     allow_vacuum_padding: bool = False,
-    spin_state: object = "legacy",
     **driver_kwargs,
 ):
     """Run the neutral Γ-CCM Bloch producer on the BvK torus ``mesh``.
@@ -279,13 +272,6 @@ def run_neutral_bloch_scf(
         The IID 291 opt-in (ruling R6): run a cell measured as vacuum-padded
         as a warned, recorded vacuum-parameter study instead of refusing it.
         Recorded on the convention record either way.
-    spin_state
-        The torus spin sector (#519 RG-14): ``"legacy"`` (default, the
-        unit cell's counts at every k point, as always on this producer),
-        ``"per-cell"`` (the same sector, now shared with the real-Gamma
-        producer) or an integer total multiplicity, which this producer
-        runs only when it is uniform per cell. The executed counts are
-        recorded on the convention record as ``spin_state``.
     **driver_kwargs
         Forwarded verbatim to the producer and on into
         ``run_k{rhf,rks,uhf,uks}_periodic_gdf`` (``options``, ``progress``,
@@ -320,7 +306,7 @@ def run_neutral_bloch_scf(
             "functional=..."
         )
 
-    ccm = CCMSystem(system, nrep, basis_name, spin_state=spin_state)
+    ccm = CCMSystem(system, nrep, basis_name)
     _vac = bool(allow_vacuum_padding)
     if method_upper == "RHF":
         res = run_ccm_rhf_gdf(
@@ -379,11 +365,6 @@ def run_neutral_bloch_scf(
             getattr(res, "vacuum_padding_allowed", False)),
         vacuum_padded_axes=tuple(
             int(a) for a in (getattr(res, "vacuum_padded_axes", ()) or ())),
-        spin_state=(None if getattr(res, "spin_state", None) is None
-                    else res.spin_state.as_dict()),
-        spin_policy=str(ccm.spin_state.requested),
-        occupation=(None if getattr(res, "occupation", None) is None
-                    else res.occupation.as_dict()),
     )
     # The multi-k GDF results are plain (non-frozen) dataclasses, so the
     # record rides on the object the output stage already understands. The

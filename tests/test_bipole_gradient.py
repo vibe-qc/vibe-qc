@@ -79,8 +79,6 @@ def test_ks_gradient_nondefault_xc_radius_matches_fd(monkeypatch, method, functi
     )
     opts = PeriodicKSOptions()
     opts.lattice_opts.cutoff_bohr = 8.0
-    # Keep this established finite-domain force reference fixed.
-    opts.lattice_opts.becke_image_radius_bohr = 8.0
     # Keep the requested native nuclear default (25): the shared preparation
     # must still select the original effective 8-bohr cutoff on a private copy.
     requested_nuclear_cutoff = opts.lattice_opts.nuclear_cutoff_bohr
@@ -159,7 +157,7 @@ def test_ks_gradient_nondefault_xc_radius_matches_fd(monkeypatch, method, functi
                 system, basis, result, kmesh=mesh)
     assert abs(wrong[1, 0] - analytic[1, 0]) > 1e-6
     assert abs(wrong[1, 0] - finite_differences[1]) > tolerance
-    assert opts.lattice_opts.becke_image_radius_bohr == 8.0
+    assert opts.lattice_opts.becke_image_radius_bohr == 0.0
 
 
 @pytest.mark.parametrize("method", ["rks", "uks"])
@@ -4463,10 +4461,9 @@ def test_scf_ewald_precision_reaches_public_gradient(
         )
     reference = _crystal_ewald_options(
         opts.lattice_opts, alpha_bohr_inv=.4, tolerance=expected,
-        recip_cutoff_bohr_inv=bipole_ewald_reciprocal_cutoff(float(abs(np.linalg.det(system.lattice))), .4, tolerance=expected),
+        recip_cutoff_bohr_inv=bipole_ewald_reciprocal_cutoff(9.**3, .4),
     )
     assert captured[0].tolerance == expected
-    assert captured[0].recip_cutoff_bohr_inv == reference.recip_cutoff_bohr_inv
     assert captured[0].real_cutoff_bohr == reference.real_cutoff_bohr
     assert leaf_precisions["_v_ne_ewald_gradient"] == [expected]
     j_name = "_j_long_range_ewald_gradient" + ("_multi_k" if mesh_size > 1 else "")
@@ -4512,7 +4509,7 @@ def test_gradient_old_result_defaults_ewald_precision(monkeypatch, method):
 
 @pytest.mark.parametrize("method", ["rhf", "uhf"])
 @pytest.mark.parametrize("mesh_size", [1, 2])
-@pytest.mark.parametrize("precision", [1e-2, 1e-8, 1e-12])
+@pytest.mark.parametrize("precision", [1e-2, 1e-8])
 @pytest.mark.parametrize("historical", [False, True])
 def test_nondefault_ewald_precision_force_matches_displaced_scf(
     method, mesh_size, precision, historical, record_property,
@@ -4597,10 +4594,6 @@ def test_response_reconstruction_retains_ewald_precision(monkeypatch, precision,
         assert basis_arg is basis and system_arg is system
         assert lat_arg.pair_complete_1e == physical
         assert precision == expected and ew.tolerance == expected
-        from vibeqc.bipole_ext_el_pole import bipole_ewald_reciprocal_cutoff
-        assert ew.recip_cutoff_bohr_inv == bipole_ewald_reciprocal_cutoff(
-            float(abs(np.linalg.det(system.lattice))), .4, tolerance=expected,
-        )
         raise BoundaryReached
 
     expected = precision
@@ -4813,23 +4806,3 @@ def test_gamma_rks_hse06_analytic_gradient_fails_closed():
     assert result.converged
     with pytest.raises(NotImplementedError, match="compute_bipole_gradient_fd"):
         compute_bipole_gradient_rks(sysp, basis, result)
-
-
-def test_gradient_refuses_obsolete_reciprocal_domain():
-    """A receipt from the fixed-envelope policy must not be differentiated
-    using a newly enlarged reciprocal sum."""
-    from dataclasses import replace
-    from vibeqc.bipole_ext_el_pole import bipole_ewald_reciprocal_cutoff
-    from vibeqc.bipole_gradient import _gradient_domain_options
-    system = vq.PeriodicSystem(3, 9.*np.eye(3), [vq.Atom(2, [0.,0.,0.])])
-    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
-    opts = PeriodicRHFOptions()
-    opts.initial_guess = InitialGuess.HCORE
-    opts.lattice_opts.cutoff_bohr = 5.
-    result = run_pbc_bipole_rhf(system, basis, monkhorst_pack(system,[1,1,1]),opts,
-        ewald_precision=1e-12,ewald_omega=.4,progress=False)
-    domain = result.resolved_domain
-    result.resolved_domain = replace(domain, reciprocal_cutoff_bohr_inv=
-        bipole_ewald_reciprocal_cutoff(9.**3,.4))
-    with pytest.raises(ValueError, match="reciprocal reach differs"):
-        _gradient_domain_options(result, None, system=system, basis=basis)

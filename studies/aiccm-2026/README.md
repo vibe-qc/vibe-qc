@@ -397,47 +397,6 @@ them.
 
 ---
 
-## The per-cell spin sector against PySCF (RG-14)
-
-`CCMSystem(..., spin_state=)` names the spin sector of the torus (user guide,
-"The spin sector of the torus"). Under the default `"legacy"` the real-Gamma
-producer pairs a doublet cell by supercell parity while the Bloch producer
-replicates the cell's counts, so a doublet cell on `(2,1,1)` runs two sectors
-of one operator; `"per-cell"` makes both run the aligned uniform sector,
-which is also what PySCF's k-point UHF runs when `nelec` is pinned to
-`(N_k n_alpha, N_k n_beta)`.
-
-* `spin_state_pyscf.py` runs the Li doublet cube (STO-3G, 7 bohr) at
-  `(2,1,1)` in the per-cell sector on both producers and on PySCF KUHF and
-  KUKS/PBE with pinned `nelec`, `exxdiv='ewald'` and the transported shells,
-  SR fit against `rs_density_fit` and classic fit against `density_fit`.
-* `spin_state_vq_job.py` is the vq job for the same rows through
-  `run_periodic_job(method="aiccm", aiccm_spin_state="per-cell")`, UHF and
-  UKS on both variants, refusing a runtime that predates the contract.
-
-Measured on 2026-10-26 (source 12aed222 plus the RG-14 change, PySCF 2.14.0,
-both Madelung constants 0.2579774015; energies per primitive cell in Ha,
-differences in uHa/cell):
-
-| row | real-Gamma | neutral-Bloch | PySCF | real-Gamma minus PySCF | real-Gamma minus Bloch |
-|---|---|---|---|---|---|
-| UHF, SR fit / RSGDF | -7.4055425896 | -7.4055425896 | -7.4055425896 | 0.000 | 2.6e-13 Ha |
-| UKS PBE, SR fit / RSGDF | -7.4090022073 | -7.4090022073 | -7.4091926480 | 190.4 | 2.5e-13 Ha |
-| UHF, classic fit / GDF | -7.4058450937 | -7.4058450937 | -7.4055425896 | -302.5 | -4.1e-14 Ha |
-| UKS PBE, classic fit / GDF | -7.4087302147 | -7.4087302147 | -7.4091926480 | 462.4 | -1.1e-13 Ha |
-
-All four PySCF runs converged with integer occupations, 4 alpha and 2 beta
-electrons on the torus and `<S^2>` 2.000 for UHF. The UHF/SR row is the
-matched comparison: fit, exchange zero mode, basis, mesh and sector agree
-and the energies agree to below 1 nHa/cell. Unmatched approximations,
-reported separately: the classic fit is a different fitted operator
-(reciprocal support and tail; the ladder above measures its class), and the
-KUKS rows use each code's own XC quadrature (PySCF's uniform FFT grid against
-vibe-qc's periodic Becke grid), which the 190 uHa/cell of the SR row
-measures. For the record, the legacy pair on the same cell and mesh is 4.83
-mHa/cell apart (supercell singlet 3/3 against per-cell doublet 4/2, classic
-fit) and is refused by `assert_compatible_spin_state`.
-
 ## Molecular benchmark batch (methods × basis × RIJCOSX/GridX × convergers)
 
 A separate full-matrix molecular benchmark that stress-tests every combination of

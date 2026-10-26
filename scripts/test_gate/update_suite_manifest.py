@@ -40,11 +40,6 @@ FILE_OWNERS = {
 # here therefore widens or narrows the release gate on its own; pin one only as
 # the file's owning chat, and say why in the rationale.
 CURATED: dict[str, dict[str, str]] = {
-    "tests/test_parameter_opt.py": {
-        "maturity": "experimental", "tier": "T3", "owner": "semiempirical",
-        "disposition": "new",
-        "rationale": "Parameter-opt P0-P3 (#676): immutable protocols, balanced contrasts, grouped splits, conditional/nonlinear fits, restart identity and native DFTB/PM6 isolation; synthetic recovery is not external scientific acceptance.",
-    },
     "tests/test_bipole_relabelling_energy_316.py": {
         "maturity": "under-review", "tier": "T2", "owner": "BIPOLE chat", "disposition": "new",
         "rationale": "#316 operator-level relabelling invariance on a dense ionic cell: KI/STO-3G Gamma BIPOLE RHF first-iteration and exact final-density energies agree to 1e-9 Ha when iodine is moved by a lattice vector on the physical pair default; slow (two cold builds, about 150 s). Not a convergence or reference comparison.",
@@ -121,14 +116,6 @@ CURATED: dict[str, dict[str, str]] = {
             "STO-3G atoms with six ghosts plus an optional PySCF ghost-atom "
             "reference. Molecular SCFs of at most 59 functions; seconds."
         ),
-    },
-    "tests/basisset_dev/test_cohesive_reference_recipe.py": {
-        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals", "disposition": "new",
-        "rationale": "M2 rung 2b recipe (#224) against a stand-in engine: the bulk is a single point at the relaxed cell with the deck's SHRINK pair, each counterpoise atom carries its deck's ATOMBSSE label, element, NSTAR and RMAX, a keyword deck gets the bundled pob record, a run without a deck is reported, and the cohesive energy is assembled as the reference was. No SCF; seconds.",
-    },
-    "tests/basisset_dev/test_topology_scan_recipe.py": {
-        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals", "disposition": "new",
-        "rationale": "M3 topology-scan recipe (#225) against a model engine: pob records round-trip through a topology, each candidate is relaxed before scoring and seeds the next round, the plateau rule stops the scan, seeds move onto the 0.15 bound, failed points become finite penalties, a restart reads every point from the journal, the record carries per-candidate provenance. No SCF; seconds. The MgO/SiC scans run on CRYSTAL23 outside the suite.",
     },
     "tests/basisset_dev/test_m2_gate_published_pob.py": {
         "maturity": "under-review", "tier": "T2", "owner": "basis/integrals", "disposition": "new",
@@ -1182,21 +1169,6 @@ CURATED: dict[str, dict[str, str]] = {
             "relations are refused"
         ),
     },
-    "tests/test_ccm_spin_state.py": {
-        "maturity": "experimental", "tier": "T3", "owner": "implementing chat",
-        "disposition": "new",
-        "rationale": (
-            "Explicit spin-state contract of the neutral producers (#519, "
-            "RG-14): the legacy doublet mismatch on the Li cube (2,1,1) "
-            "reproduced with its counts and refused by sector, the per-cell "
-            "doublet equal on both producers at (2,1,1)/(3,1,1) (Li) and "
-            "(2,2,1)/(2,2,2) (H cube) to 1e-10 Ha/cell with folded Bloch "
-            "projectors, UKS PBE, impossible requests, restricted drivers on "
-            "an open sector, foreign-sector READ and the runner manifest; "
-            "RG-15: the occupation record, the Li (2,2,1) ensemble refused "
-            "before any fold"
-        ),
-    },
     "tests/test_ccm_block_cderi_open_shell.py": {
         "maturity": "experimental", "tier": "T3", "owner": "implementing chat",
         "disposition": "new",
@@ -1525,11 +1497,6 @@ CURATED: dict[str, dict[str, str]] = {
         "maturity": "experimental", "tier": "T3", "owner": "periodic-SCF",
         "disposition": "new",
         "rationale": "Independent array operator diagnostics and deliberately wrong operator controls; no production qualification",
-    },
-    "tests/test_chi_metric_precision.py": {
-        "maturity": "experimental", "tier": "T3", "owner": "periodic-SCF",
-        "disposition": "new",
-        "rationale": "Optional precision-controlled classic spectral construction, complete matrix functions and rank-boundary refusal; no production qualification",
     },
     "tests/test_rsgdf_physical_support.py": {
         "maturity": "experimental", "tier": "T3", "owner": "periodic-SCF",
@@ -3966,106 +3933,6 @@ CURATED: dict[str, dict[str, str]] = {
             'and the pair term demonstrably inflates the surface past the '
             'union of spheres, which is the entire purpose of the '
             'construction'
-        ),
-    },
-    'tests/test_solvation_ecp.py': {
-        "disposition": 'new',
-        "rationale": (
-            'ECP molecules in solvent. The solvated gradient refused every '
-            'pseudopotential, and with it the optimizer and the finite-'
-            'difference Hessian, so no heavy-element solute could be relaxed or '
-            'have its frequencies computed in solution. The reaction field never '
-            'touches the ECP (effective charges in the nuclear ESP, a plain '
-            'point-charge integral for the electronic one), so the gradient is '
-            'the ECP-aware gas-phase one plus the usual terms. Pins analytic '
-            'against finite differences of the reported solvated energy on the '
-            'XML-library route ([ZnH]+, 9e-9), the inline-primitive route (vDZP '
-            'methane, 1e-8) and iodine (HI, 2e-8), the guards that the cavity '
-            'and the SCF agree on the ECP, a stationary optimized HI in water, '
-            'the solvated Hessian against the energy curvature, and run_job '
-            'frequencies through the extended mass table'
-        ),
-    },
-    'tests/test_atomic_masses.py': {
-        "disposition": 'new',
-        "rationale": (
-            'The atomic mass table used to stop at krypton, so frequencies, '
-            'thermochemistry and molecular dynamics refused every job with a '
-            'heavy atom ("no built-in mass") before computing anything, which '
-            'is exactly the set of elements an ECP basis exists for. Pins that '
-            'the table reaches plutonium, anchors masses across the new range, '
-            'that the periodic-order inversions (Ar/K, Co/Ni, Te/I, Th/Pa, '
-            'U/Np) are kept, and that an element beyond the table still asks '
-            'for an explicit mass'
-        ),
-    },
-    'tests/test_solvation_output.py': {
-        "disposition": 'new',
-        "rationale": (
-            'The solvation block of the .out names the model that produced the '
-            'energy: solvent and epsilon, screening family and f, cavity '
-            'construction and segment count and area, segment-charge kernel and '
-            'the reaction-field cycles. The kernel and the cavity move a solvated '
-            'energy by percent (#681), so a file that printed only the energy '
-            'hid the choice that matters most. Each line is checked against the '
-            'result object it was read from, for the default point-charge model, '
-            'the Gaussian kernel, COSMO and the fine cavity; a gas-phase job '
-            'prints no block'
-        ),
-    },
-    'tests/test_solvation_scaling.py': {
-        "disposition": 'new',
-        "rationale": (
-            'Memory scaling of the solvated SCF and gradient. A 74-atom alkane '
-            'in STO-3G (15 500 cavity segments) peaked at 9.9 GB in the SCF and '
-            'more in the gradient: an (n_segments, n_basis, n_basis) stack of '
-            'Coulomb operators, a second copy of the cavity matrix for its LU, '
-            'and (n, n, 3) pair tensors in the A-matrix adjoints. Pins that the '
-            'in-place factorization solves the same system, that the row-blocked '
-            'adjoints equal the unblocked ones (point, switched-Gaussian and '
-            'area-following-Gaussian branches), that the streamed provider, '
-            'SCF energy and gradient equal the cached ones, that the cache '
-            'budget is honoured, and, by tracemalloc against a cached control, '
-            'that a streamed run does not hold the stack'
-        ),
-    },
-    'tests/test_solvation_gaussian_kernel.py': {
-        "disposition": 'new',
-        "rationale": (
-            '#681: the opt-in Gaussian segment-charge kernel on the Lebedev '
-            'cavity. The default point-charge cavity matrix is indefinite (its '
-            'smallest eigenvalue runs -6 to -28 on distorted methanol), so the '
-            'solvated energy has poles and the analytic gradient spikes near '
-            'them. Pins that the Gaussian matrix is positive definite on the '
-            'same geometries (smallest eigenvalue 3.39), that its analytic '
-            'gradient matches central differences of the reported energy '
-            '(water and methanol at equilibrium and three distorted methanol '
-            'geometries, no outliers), that at the default switching width it '
-            'sits within 3 % of the sharp-cavity answer while the point kernel '
-            'is more than 10 % off, that a plain SolventModel is unchanged, '
-            'the model validation, and that the citation route names the '
-            'kernel that ran'
-        ),
-    },
-    'tests/test_solvation_hessian.py': {
-        "disposition": 'new',
-        "rationale": (
-            'Frequencies in solvent: compute_hessian_fd(solvent=...) '
-            'finite-differences the in-solvent analytic gradient, with the '
-            'apparent charges re-converged at every displacement. Before it, '
-            'run_job(hessian=True, solvent=...) printed the gas-phase Hessian '
-            'under a solvated SCF, smooth and plausible and on the wrong '
-            'surface (#359 was the same defect for optimizations). Pins the '
-            'one oracle that needs no second implementation: along the two '
-            'directions where the solvent changes the curvature most, v^T H v '
-            'equals the second derivative of the energy the job reports '
-            '(measured 1.1e-05 and 5.0e-05 Ha/bohr^2 against solvent effects '
-            'of 7.5e-03 and 3.9e-03, so a Hessian that ignored the solvent '
-            'fails). Also pins the refusals (ROHF, a selected integral engine, '
-            'Direct COSMO-RS, whose energy has a cusp at a symmetric geometry '
-            'that gradient differences straddle), that a vacuum solvent is '
-            'the gas-phase Hessian to roundoff, and the printed medium, the '
-            'manifest field and the printed frequencies of a run_job'
         ),
     },
     'tests/test_solvation_point_group.py': {

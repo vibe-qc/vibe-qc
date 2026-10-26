@@ -6,20 +6,6 @@ with diffuse and polarization). This tutorial shows how to run a
 family of calculations, tabulate the trend, and decide when you've
 hit the point of diminishing returns.
 
-## Before you start
-
-Complete [Molecular Hartree-Fock](molecular_hf.md) first. Save the blocks below
-in one script and run them in order with the installed engine's Python, from
-a directory outside the checkout. The first block defines `mol` and retains
-converged results for reuse by the property and plotting blocks. Coordinates
-are in bohr; energies are in hartree. Plotting is optional and needs Matplotlib.
-
-Start with the small basis before attempting the larger points. The sweep
-uses the low-level RHF driver, so it does not automatically write the complete
-`run_job` output family. For resource planning, see
-[direct SCF and memory](direct_scf_memory_tradeoff.md); for archived studies,
-use distinct `run_job` output stems and retain the matching settings.
-
 ## A Dunning-family sweep on water
 
 The correlation-consistent series ``cc-pVXZ (X = D, T, Q)``
@@ -39,15 +25,10 @@ mol = Molecule([
 print(f"{'basis':12s}  {'nbasis':>6s}  {'E (Ha)':>16s}  {'ΔE (mHa)':>10s}  {'iters':>5s}")
 print("-" * 60)
 
-basis_names = ("sto-3g", "cc-pvdz", "cc-pvtz", "cc-pvqz")
-results = {}
 previous = None
-for name in basis_names:
+for name in ("sto-3g", "cc-pvdz", "cc-pvtz", "cc-pvqz"):
     basis = BasisSet(mol, name)
     r = run_rhf(mol, basis)
-    if not r.converged:
-        raise RuntimeError(f"RHF did not converge for {name}; inspect its SCF trace")
-    results[name] = (basis, r)
     delta = ""
     if previous is not None:
         delta = f"{(r.energy - previous) * 1000:+10.3f}"
@@ -56,7 +37,7 @@ for name in basis_names:
     previous = r.energy
 ```
 
-Illustrative output from the original example (not regenerated here):
+Output:
 
 ```
 basis         nbasis           E (Ha)   ΔE (mHa)  iters
@@ -81,15 +62,12 @@ Reading across:
 
 ## A polarized Pople sweep
 
-A continuation using `mol` and the imports from the first block:
+A quick "what does polarization do?" experiment:
 
 ```python
-# doc-audit: skip - continues with mol and imports from the first block
 for name in ("6-31g", "6-31g*", "6-31g**", "6-311g**"):
     basis = BasisSet(mol, name)
     r = run_rhf(mol, basis)
-    if not r.converged:
-        raise RuntimeError(f"RHF did not converge for {name}")
     print(f"{name:14s}  nbasis={basis.nbasis:3d}  E = {r.energy:.6f}")
 ```
 
@@ -108,9 +86,8 @@ Diffuse-augmented bases (``6-311++g**``, ``aug-cc-pvtz``) are
 essential for anions, weak-interaction energies, and excited-state
 calculations. vibe-qc's basis library ships them, but their small
 exponents can trigger linear-dependency issues in certain tight
-geometries. Inspect the overlap diagnostics and follow the
-[linear-dependence guide](../user_guide/linear_dependence.md). Increasing
-`max_iter` does not repair an ill-conditioned basis.
+geometries; tighten ``conv_tol_grad`` and bump ``max_iter`` when you
+need them.
 
 ## Properties that converge differently
 
@@ -119,16 +96,12 @@ energies (reaction energies, barriers) and properties (dipoles,
 bond orders, frequencies) converge faster because error cancellation
 helps, but not always monotonically.
 
-The following block reuses the converged Dunning-family results; it does not
-repeat their SCF calculations. Keep each result paired with its original basis
-and geometry.
-
 ```python
-# doc-audit: skip - reuses mol and results from the first block
 from vibeqc import mulliken_charges, dipole_moment
 
 for name in ("cc-pvdz", "cc-pvtz", "cc-pvqz"):
-    basis, r = results[name]
+    basis = BasisSet(mol, name)
+    r = run_rhf(mol, basis)
     q = mulliken_charges(r, basis, mol)
     mu = dipole_moment(r, basis, mol)
     print(f"{name:14s}  E = {r.energy:.5f}   "
@@ -156,15 +129,21 @@ Observe:
 
 ## Tabulating the trend in a figure
 
-Plot the retained energies against basis-function count without rerunning
-the sweep. This block continues from the first calculation block:
+Re-running the cc-pVXZ sweep and plotting the total energy against the
+basis-function count (log scale) makes the diminishing returns visible at
+a glance:
 
 ```python
-# doc-audit: skip - reuses basis_names and results from the first block
+import numpy as np
 import matplotlib.pyplot as plt
 
-nbasis = [results[name][0].nbasis for name in basis_names]
-energies = [results[name][1].energy for name in basis_names]
+basis_names = ["sto-3g", "cc-pvdz", "cc-pvtz", "cc-pvqz"]
+nbasis, energies = [], []
+for name in basis_names:
+    basis = BasisSet(mol, name)
+    r = run_rhf(mol, basis)
+    nbasis.append(basis.nbasis)
+    energies.append(r.energy)
 
 fig, ax = plt.subplots()
 ax.plot(nbasis, energies, "o-")
@@ -185,19 +164,25 @@ Lett.* **302**, 437 (1999) serves two-point extrapolations.
 
 ![H₂O HF basis-set convergence to CBS](../_static/plots/water-basis-convergence.png)
 
-The linked figure illustrates a fit to the recorded cc-pVXZ values. The
-short plotting block above produces only the energy-versus-basis-count plot;
-it does not produce the fitted two-panel figure shown here.
-
-A three-point exponential with three free parameters has no remaining data
-points to test the fit. A smooth curve through those points does not establish
-the accuracy of the extrapolated limit. Report which cardinal numbers and fit
-form were used, exclude STO-3G from the cc-pVXZ fit, and distinguish a fitted
-estimate from a calculated energy. The example's fitted limit is not an
-independent numerical reference.
+The top panel shows the three cc-pVXZ data points (blue dots) and
+the fitted Helgaker exponential (grey dashed). The fit's CBS
+asymptote sits at $E_\mathrm{CBS} = -76.067$ Ha (red dotted line), 
+about 2.6 mHa below cc-pVQZ's $-76.064$ Ha. Each level is left with
+roughly $1/4$ of the gap its predecessor left, so cc-pVQZ has already
+captured ~99 % of the gap to CBS. The bottom panel makes the
+**rate** of convergence explicit: $|E - E_\mathrm{CBS}|$ falls
+along an essentially straight line on a semi-log axis, the
+signature of true exponential convergence. That straightness is the
+formal justification for trusting the three-point extrapolation:
+the geometric ratio is constant, so a fit on three consecutive points
+can read out the asymptote reliably. A correlation-energy plot would
+look very different, the inverse-cubic $X^{-3}$ falloff curves
+gently on semi-log instead of going straight, requiring a different
+fit form. (See the references for the inverse-cubic correlation
+extrapolation.)
 
 The figure is regenerated by
-[`examples/plots/water-basis-convergence.py`](https://github.com/vibe-qc/vibe-qc/blob/main/examples/plots/water-basis-convergence.py).
+`[`examples/plots/water-basis-convergence.py`](https://github.com/vibe-qc/vibe-qc/blob/main/examples/plots/water-basis-convergence.py)`.
 
 ## Notes
 
@@ -208,9 +193,8 @@ The figure is regenerated by
   subtracting.
 - **Basis linear dependencies.** At very large bases (``aug-cc-pVQZ``
   and bigger, or diffuse functions in close-packed geometries) the
-  overlap matrix can become nearly singular. Inspect removed directions and
-  conditioning warnings; convergence is not guaranteed. Follow the
-  [linear-dependence guide](../user_guide/linear_dependence.md). For periodic calculations
+  overlap matrix becomes nearly singular. vibe-qc will still converge,
+  but the MO coefficients become noisy. For periodic calculations
   this is why the ``pob-*`` solid-state basis family exists, 
   small-exponent primitives trimmed deliberately.
 

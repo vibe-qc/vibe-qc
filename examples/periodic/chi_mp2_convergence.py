@@ -12,7 +12,6 @@ import json
 from pathlib import Path
 import time
 import traceback
-from dataclasses import asdict
 
 
 def main():
@@ -70,7 +69,7 @@ def main():
         try:
             changes=case.get('changes',{})
             if len(changes)>1:raise ValueError('only one changed approximation per case')
-            controls=asdict(ChiCoulombControls(**base_controls));mesh=tuple(physical['mesh']);b=basis
+            controls=dict(base_controls);mesh=tuple(physical['mesh']);b=basis
             aux=physical['controls']['aux_basis']
             for key,value in changes.items():
                 if key=='mesh':mesh=tuple(value)

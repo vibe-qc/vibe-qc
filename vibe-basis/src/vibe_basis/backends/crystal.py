@@ -162,19 +162,6 @@ def _deck(text: str) -> str:
     return "\n".join(line for line in text.splitlines() if line.strip()) + "\n"
 
 
-def _shrink_line(shrink) -> str:
-    """``SHRINK`` values: ``IS IS`` for an int, ``IS ISP`` for a pair.
-
-    ISP is the Gilat net that the Fermi energy and density matrix are
-    evaluated on; the pob reference decks use ``8 24`` for some
-    semiconductors, which a single number cannot express.
-    """
-    if isinstance(shrink, int):
-        return f"{shrink} {shrink}"
-    is_, isp = shrink
-    return f"{int(is_)} {int(isp)}"
-
-
 def _tolinteg_block(tolinteg) -> str:
     """``TOLINTEG`` block, or empty for CRYSTAL's own defaults."""
     if not tolinteg:
@@ -536,7 +523,7 @@ def emit_input(
     basis: str,
     method: str = "rhf",
     *,
-    shrink: int | tuple[int, int] = 8,
+    shrink: int = 8,
     toldee: int = 8,
     tolinteg: Optional[tuple[int, ...]] = REFERENCE_TOLINTEG,
     hugegrid: bool = False,
@@ -561,8 +548,7 @@ def emit_input(
         END`` block. Anything else → returns ``None`` (skip rather
         than emit a deck CRYSTAL would reject).
     shrink
-        Pack-Monkhorst grid: ``SHRINK <shrink> <shrink>``, or ``SHRINK IS ISP``
-        for a pair. Default 8.
+        Pack-Monkhorst grid (``SHRINK <shrink> <shrink>``). Default 8.
     toldee
         SCF energy-convergence exponent (``TOLDEE <toldee>`` = 10⁻ⁿ
         Hartree). Default 8.
@@ -651,7 +637,7 @@ def emit_input(
         f"{method_block}\n"
         f"{tolinteg_block}"
         "SHRINK\n"
-        f"{_shrink_line(shrink)}\n"
+        f"{shrink} {shrink}\n"
         "TOLDEE\n"
         f"{toldee}\n"
         "END\n"
@@ -663,9 +649,8 @@ def emit_input_inline(
     inline_basis: str,
     method: str = "rhf",
     *,
-    shrink: int | tuple[int, int] = 8,
+    shrink: int = 8,
     toldee: int = 8,
-    optgeom: bool = False,
     toldeg: Optional[int] = None,
     tolinteg: Optional[tuple[int, ...]] = REFERENCE_TOLINTEG,
     hugegrid: bool = False,
@@ -690,14 +675,12 @@ def emit_input_inline(
         LATTICE_PARAMS
         NATOMS_ASYM
         Z f_x f_y f_z
-        [OPTGEOM     ← optgeom=True: relax cell and atoms
-        [TOLDEG T]
-        ENDOPT]
-        END          ← geometry block end
+        ENDGEOM      ← geometry block end
         <inline_basis>
         [DFT / <functional> / END]
         SHRINK S S
         TOLDEE T
+        [TOLDEG T]   ← optional gradient threshold for OPTGEOM
         END
 
     Parameters
@@ -711,17 +694,14 @@ def emit_input_inline(
         ``"rhf"`` / ``"hf"`` (no DFT block) or a CRYSTAL functional
         keyword like ``"pw1pw"``, ``"pbe"``, …
     shrink
-        Pack-Monkhorst grid, an int or an ``(IS, ISP)`` pair.
+        Pack-Monkhorst grid.
     toldee
         SCF energy-convergence exponent (10⁻ⁿ Ha).
-    optgeom
-        Relax the structure: an ``OPTGEOM ... ENDOPT`` block closes the
-        geometry input, as in the pob reference decks. CRYSTAL's default
-        is a full optimisation of cell and atoms; the reported energy is
-        that of the final geometry.
     toldeg
-        ``TOLDEG`` (RMS gradient threshold) inside the ``OPTGEOM`` block;
-        CRYSTAL's default when ``None``. Needs ``optgeom``.
+        Geometry-optimization gradient threshold.  When set (non-None),
+        an ``OPTGEOM / ENDOPT / ENDGEOM`` block is emitted around the
+        geometry for a single-point-structure validation.  Omit for
+        pure single-point SCF.
 
     Returns
     -------
@@ -760,12 +740,9 @@ def emit_input_inline(
 
     title = f"{struct.formula} — {method.upper()} with inline basis (CRYSTAL23 parity)"
 
-    if toldeg is not None and not optgeom:
-        raise ValueError("toldeg is an OPTGEOM keyword: pass optgeom=True with it")
-    optgeom_block = ""
-    if optgeom:
-        tol = f"TOLDEG\n{toldeg}\n" if toldeg is not None else ""
-        optgeom_block = f"OPTGEOM\n{tol}ENDOPT\n"
+    toldeg_block = ""
+    if toldeg is not None:
+        toldeg_block = f"\nTOLDEG\n{toldeg}"
 
     return (_deck(
         f"{title}\n"
@@ -775,15 +752,15 @@ def emit_input_inline(
         f"{lattice_line}\n"
         f"{len(struct.crystal_asymm_unit)}\n"
         f"{atom_lines}\n"
-        f"{optgeom_block}"
         "END\n"
         f"{inline_basis.strip()}\n"
         "ENDBS\n"
         f"{method_block}\n"
         f"{tolinteg_block}"
         "SHRINK\n"
-        f"{_shrink_line(shrink)}\n"
+        f"{shrink} {shrink}\n"
         "TOLDEE\n"
-        f"{toldee}\n"
+        f"{toldee}"
+        f"{toldeg_block}\n"
         "END\n"
     ))

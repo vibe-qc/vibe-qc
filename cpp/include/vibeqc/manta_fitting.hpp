@@ -9,14 +9,6 @@ struct FittingPlan {
     Count shell_calls=0, primitive_products=0, kernel_terms=0;
     Count integral_elements=0, tile_elements=0, modeled_peak_bytes=0;
 };
-struct MetricConstructionPlan {
-    Count modeled_peak_bytes=0,scalar_terms=0,kernel_terms=0,shell_calls=0,primitive_products=0;
-};
-struct MetricConstructionCertificate {
-    md::Matrix evaluated,lower,upper,error_bounds;
-};
-MetricConstructionPlan plan_metric_construction(const BasisSet&,const BasisSet&,const KernelRequest&,const ResourceBudget&);
-MetricConstructionCertificate certify_metric_construction(const BasisSet&,const BasisSet&,const KernelRequest&,const ResourceBudget&);
 struct FittingTile {
     md::Matrix values;
     std::vector<Count> shape;

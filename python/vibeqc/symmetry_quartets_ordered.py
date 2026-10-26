@@ -33,7 +33,6 @@ class MolecularSourceQualification:
     qualification_scope: str
     evidence: str = 'native-P0-constructor-and-numerical-audit'
     equivariance_qualified: bool = True
-    support_certificate_identity: str | None = None
 
 
 def qualified_molecular_source(screening):
@@ -44,9 +43,6 @@ def qualified_molecular_source(screening):
     screening._validate(plan)
     provider = plan.source._provider
     kind = _molecular_provider_kind(provider)
-    support = plan.source.support_certificate
-    if support is not None:
-        support.validate(provider)
     if (provider.plan.n_basis != int(plan.offsets[-1])
             or provider.plan.n_shells != len(plan.offsets)-1):
         raise ValueError('producer and qualified molecular source disagree')
@@ -59,7 +55,7 @@ def qualified_molecular_source(screening):
     return MolecularSourceQualification(screening.producer_identity,
         screening.audit_identity, screening.source_identity,
         screening.policy_identity, screening.receipt['qualification_scope'],
-        evidence, equivariance, None if support is None else support.identity)
+        evidence, equivariance)
 
 
 def ordered_quartet_requirements(screening, density_count, *, targets, budget):

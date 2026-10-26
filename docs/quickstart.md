@@ -1,8 +1,7 @@
 # Quickstart, your first 30 minutes
 
-This page takes you from a working installation through four small example
-calculations. Installation time is separate; calculation timings depend on
-your machine, native build and thread count. Open
+This page gets you from a working install to four working
+calculations in under a minute of wall time. Open
 [`examples/quickstart.py`](https://github.com/vibe-qc/vibe-qc/blob/main/examples/quickstart.py)
 in another window and follow along, it's the runnable script for
 exactly what's on this page. For a wider tour of the API surface
@@ -108,15 +107,13 @@ E(SCF)  = -76.006678 Ha
 gap     = 19.67 eV
 ```
 
-The displayed values are example output, not a timing or iteration-count
-guarantee. Check `result.converged` before interpreting orbital energies.
-Atomic positions are in **bohr** (vibe-qc's internal unit); use `from_xyz()`
-for an XYZ geometry expressed in angstroms. Do not paste angstrom coordinates
-unchanged into the low-level `Atom` constructor.
+10 SCF iterations, ~6 ms. Atomic positions are in **bohr** (vibe-qc's
+internal unit), pass Ångström values via `from_xyz()` if you'd
+rather work in those.
 
 ### What a full vibe-qc output looks like
 
-The explicit `print` calls above report the energy and orbital summary.
+The bare-API call above just prints the four lines you asked for.
 If you'd rather have vibe-qc's full **banner + SCF trace + orbital
 table + properties block** written to a file (the format you'd paste
 into a paper's SI), use [`run_job`](tour.md).
@@ -128,9 +125,10 @@ result = vq.run_job(mol, basis="6-31g*", method="rhf")
 
 # For large basis sets, pick an iterative solver:
 result = vq.run_job(mol, basis="def2-svp", method="rhf", solver="davidson")
-# run_job accepts solver="dense" or "davidson". It rejects "lobpcg";
-# explicit LOBPCG eigenproblems use the separate vibeqc.solvers API.
-# See the solver framework guide for supported problems and controls.
+# solver="lobpcg" is the fastest iterative option for periodic
+# drivers and ROHF; for molecular RHF/UHF/RKS/UKS it falls back
+# to the Davidson path. See the solver framework guide for the
+# full matrix.
 ```
 
 That's what the

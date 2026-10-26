@@ -121,18 +121,6 @@ class CavityTessellation:
     atom_positions: np.ndarray
     n_points_per_sphere: int = 302
     switching_sigma_bohr: float = 0.5
-    kernel: str = "point"
-
-    @property
-    def exponent_follows_area(self) -> bool:
-        """Whether a Gaussian segment's exponent moves with its area.
-
-        It does not here: ``a_i = a_raw_i F_i`` with ``a_raw_i`` the fixed
-        Lebedev element of the sphere, so ``zeta sqrt(F_i / a_i)`` is
-        ``zeta / sqrt(a_raw_i)`` whatever the geometry. See
-        :func:`vibeqc.solvation.cavity_derivative.cavity_A_adjoints`.
-        """
-        return False
 
     @property
     def n_points(self) -> int:
@@ -158,21 +146,10 @@ class CavityTessellation:
 
         Every shipped Lebedev result was computed this way, so this is also
         the compatibility anchor: changing it would move every reference.
-
-        **That soundness is conditional, and measured to fail (#681).** The
-        point-charge matrix is indefinite for this cavity at every grid size
-        (four to twelve negative eigenvalues, 110 to 590 points per sphere).
-        An eigenvalue can cross zero as the geometry moves, and the charge
-        equations then resonate: the solvation energy and the analytic gradient
-        are wrong in a narrow window around the crossing, at roughly one random
-        geometry in ten to twenty. A cavity built with
-        ``charge_representation="gaussian"`` (``kernel="gaussian"``) uses the
-        York-Karplus Gaussian segment charges instead, whose matrix is positive
-        definite for any geometry; it is opt-in because it moves energies.
         """
-        from .cpcm import GAUSSIAN_CHARGE, POINT_CHARGE
+        from .cpcm import POINT_CHARGE
 
-        return GAUSSIAN_CHARGE if self.kernel == GAUSSIAN_CHARGE else POINT_CHARGE
+        return POINT_CHARGE
 
 
 # Lebedev-Laikov point-count -> algebraic-order table. ``scipy.integrate.
@@ -291,7 +268,6 @@ def build_cavity(
     n_points_per_sphere: int = 302,
     switching_sigma_bohr: float = 0.5,
     drop_threshold: float = 1e-8,
-    charge_representation: str = "point",
 ) -> CavityTessellation:
     """Build a CPCM/COSMO cavity tessellation around a molecule.
 
@@ -331,12 +307,6 @@ def build_cavity(
         switching function continues smoothly across the cutoff but
         the discrete representation does not -- set to 0.0 to keep
         every point at the cost of more zeros in the A matrix).
-    charge_representation : {"point", "gaussian"}, default "point"
-        The segment-charge kernel of the cavity matrix ``A``. ``"point"`` is the
-        historical Scalmani-Frisch / FIXPVA form, whose matrix is indefinite
-        and can resonate (#681). ``"gaussian"`` is the York-Karplus Gaussian
-        blob, positive definite for any geometry. See
-        :attr:`CavityTessellation.charge_representation`.
 
     Returns
     -------
@@ -408,11 +378,6 @@ def build_cavity(
         all_switch.append(sw[keep])
         all_parent.append(np.full(int(keep.sum()), ia, dtype=int))
 
-    if charge_representation not in ("point", "gaussian"):
-        raise ValueError(
-            f"build_cavity: charge_representation must be 'point' or "
-            f"'gaussian' (got {charge_representation!r})."
-        )
     if not all_points:
         raise ValueError(
             "build_cavity produced zero surface points -- every atomic "
@@ -429,7 +394,6 @@ def build_cavity(
         atom_positions=atom_positions_bohr.copy(),
         n_points_per_sphere=int(n_points_per_sphere),
         switching_sigma_bohr=sigma,
-        kernel=charge_representation,
     )
 
 

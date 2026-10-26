@@ -1166,37 +1166,15 @@ def test_xtb_oracle_h2o_reference_uses_water_fixture_geometry():
 class TestGFN2SizeConsistency:
     @requires_gfn2
     def test_two_h2_far_apart_is_additive(self, params):
-        """Two H₂ 40 bohr apart must equal 2·E(H₂) up to the physical AES tail.
+        """Two H₂ 40 bohr apart must equal 2·E(H₂) to ~machine precision.
 
         Homonuclear → all Δq = 0 by symmetry, so the only inter-fragment
-        couplings are the (now correctly decaying) repulsion and, on the
-        default atom-resolved AES, the quadrupole-quadrupole interaction of
-        the two H₂ molecules. Pre-fix this was +0.32 Ha because the
-        repulsion did not decay with distance.
-
-        The legacy shell AES gives H₂ no multipole, so that path is additive
-        to machine precision at 40 bohr. The faithful path carries the real
-        Θ·Θ/R⁵ tail (#675: +3.6e-8 Ha at 40 bohr, 32.0x smaller per
-        doubling of the separation), so there the test pins the decay law
-        and the size-consistent limit instead of a tolerance that would only
-        pass by hiding the quadrupoles.
+        coupling is the (now correctly decaying) repulsion. Pre-fix this was
+        +0.32 Ha because the repulsion did not decay with distance.
         """
-        e1_shell = _energy(_mol(_h2()), params, aes_faithful=False).energy
-        e2_shell = _energy(_mol(_h2(0.0) + _h2(40.0)), params, aes_faithful=False).energy
-        assert abs(e2_shell - 2 * e1_shell) < 1e-9, (
-            f"size-inconsistency {e2_shell - 2 * e1_shell:.2e}"
-        )
-
         e1 = _energy(_mol(_h2()), params).energy
-        residuals = [
-            _energy(_mol(_h2(0.0) + _h2(sep)), params).energy - 2 * e1
-            for sep in (40.0, 80.0, 160.0)
-        ]
-        # The channel is AES alone: a 1/R^5 multipole tail, 32x per doubling.
-        for near, far in zip(residuals, residuals[1:]):
-            assert near > 0.0 and far > 0.0
-            assert 28.0 < near / far < 36.0, f"not a 1/R^5 tail: {residuals}"
-        assert abs(residuals[-1]) < 1e-9, f"size-inconsistency {residuals[-1]:.2e}"
+        e2 = _energy(_mol(_h2(0.0) + _h2(40.0)), params).energy
+        assert abs(e2 - 2 * e1) < 1e-9, f"size-inconsistency {e2 - 2 * e1:.2e}"
 
     @requires_gfn2
     def test_water_dimer_residual_is_the_physical_1_over_r3_tail(self, params):
@@ -1358,16 +1336,10 @@ class TestGFN2SCCStabilization:
             # element beyond Br and are unchanged at the 1e-10 pin; the
             # same change's Z > 10 multipole tables reach only the
             # faithful-AES path, not this default ad-hoc route.
-            # 2026-10-26 (#675): s_li_1 and pheavy_rn_1 re-pinned after the
-            # charge-DIIS mapped-output extrapolation (e9d8d16a) moved the
-            # stopping point inside the tolerance ball: +5.2e-10 and
-            # -1.1e-9 Ha, both within 1.2e-9 Ha of the 1e-11-tolerance run
-            # (same basin; 38 and 39 iterations). s_k_1 and pheavy_br_1
-            # are unchanged at the 1e-10 pin.
-            ("s_li_1", -11.894496876580398, 11),
+            ("s_li_1", -11.894496877097069, 11),
             ("s_k_1", -1.4143706414474126, 2),
             ("pheavy_br_1", -17.948575987174884, 16),
-            ("pheavy_rn_1", -17.271267037092755, 17),
+            ("pheavy_rn_1", -17.271267035950363, 17),
         ],
     )
     def test_tae_ptcomp_legacy_numeric_pins(
@@ -1411,11 +1383,7 @@ class TestGFN2SCCStabilization:
         # Cl both carry d-polarization shells.
         # 2026-08-28 (issue #433): re-pinned after the full Pauling EN
         # table (Z <= 86, tblite parity) reached the As-Cl pairs.
-        # 2026-10-26 (#675): -1.65e-8 Ha from the charge-DIIS mapped-output
-        # extrapolation (e9d8d16a); the 1e-11-tolerance run sits 1.0e-10 Ha
-        # from the new value and 1.6e-8 from the old one (same basin, 38
-        # iterations).
-        assert result.energy == pytest.approx(-29.823540901438303, abs=1e-10)
+        assert result.energy == pytest.approx(-29.823540884921673, abs=1e-10)
 
     @requires_gfn2
     @pytest.mark.parametrize(
@@ -1502,14 +1470,9 @@ class TestGFN2SCCStabilization:
 
     @requires_gfn2
     @pytest.mark.parametrize(
-        "name,atoms,expected_energy",
+        "name,atoms,expected_energy,min_iter",
         [
-            # 2026-10-26 (#675): the charge-DIIS mapped-output extrapolation
-            # (e9d8d16a) converges pyridine in 40 iterations, so the
-            # 100-iteration floor that marked it as a hard solve is gone and
-            # only the 3000-step budget cap remains the gate.  Energy pin
-            # +4.6e-11 Ha, within 4.7e-11 Ha of the 1e-11-tolerance run.
-            ("pyridine", _bug45_pyridine, -16.154593899369853),
+            ("pyridine", _bug45_pyridine, -16.154593899415765, 100),
             # 2026-08-14 (IID 101): cyclopropene's historical 1000-iteration
             # outlier floor is obsolete -- the simple+DIIS polyalgorithm
             # default converges it in ~470 iterations; the floor is kept at
@@ -1522,14 +1485,11 @@ class TestGFN2SCCStabilization:
             # now evaluated at the accepted density's own multipole moments.
             # Same 470 iterations; main with only that native diff reversed
             # gives the old value bit for bit. Bitwise equal at OMP 1/2/4/8.
-            # 2026-10-26 (#675): -7.1e-12 Ha from e9d8d16a (471 iterations);
-            # the 1e-11-tolerance run is 8.2e-11 from the new value and
-            # 8.9e-11 from the old one.
-            ("cyclopropene", _bug45_cyclopropene, -7.9550601197544255),
+            ("cyclopropene", _bug45_cyclopropene, -7.955060119747334, 100),
         ],
     )
     def test_bug45_legacy_validation_outliers_converge_within_budget(
-        self, params, name, atoms, expected_energy
+        self, params, name, atoms, expected_energy, min_iter
     ):
         """The two BUG 45 retry classes must finish without the 10k--21k ladder."""
         options = _xtb.XTBSccOptions()
@@ -1537,24 +1497,17 @@ class TestGFN2SCCStabilization:
         result = _xtb.run_gfn2_xtb(_mol(atoms()), params, options)
 
         assert result.converged, f"{name} did not converge"
-        assert 0 < result.n_iter <= 3000
+        assert min_iter < result.n_iter <= 3000
         assert result.energy == pytest.approx(expected_energy, abs=1e-12)
 
     @requires_gfn2
     def test_bug45_public_model_uses_single_native_retry_budget(self, params):
-        """The public model finishes pyridine inside one native budget.
-
-        The shell-AES receipt above needs more than ``min_iter`` iterations;
-        the public default (faithful AES, coupled D4) converges pyridine in
-        under fifty, so only the upper bound -- no 10k--21k ladder -- is the
-        contract here (#675).
-        """
         model = GFN2Model(_mol(_bug45_pyridine()), params, warn=False)
 
         energy = model.energy()
 
         assert model.converged
-        assert 0 < model.n_iter <= 3000
+        assert 100 < model.n_iter <= 3000
         assert np.isfinite(energy)
 
     @requires_gfn2
@@ -1714,7 +1667,7 @@ class TestGFN2ExperimentalGate:
             fake_d4_gradient,
         )
 
-        gradient = GFN2Model(_mol(_water()), params, warn=False, d4_model="legacy_eeq").gradient()
+        gradient = GFN2Model(_mol(_water()), params, warn=False).gradient()
 
         assert calls == {"scc": 1, "scc_gradient": 1, "d4_gradient": 1}
         assert gradient == pytest.approx(np.full((3, 3), 0.20))
@@ -1774,7 +1727,7 @@ class TestGFN2ExperimentalGate:
             fake_d4_gradient,
         )
 
-        model = GFN2Model(_mol(_water()), params, warn=False, d4_model="legacy_eeq")
+        model = GFN2Model(_mol(_water()), params, warn=False)
 
         assert model.energy() == pytest.approx(-5.10)
         gradient = model.gradient()
@@ -1856,7 +1809,7 @@ class TestGFN2ExperimentalGate:
         )
         monkeypatch.setattr(_gfn2_method, "_compute_gfn2_d4", fail_d4)
 
-        model = GFN2Model(_mol(_water()), params, warn=False, max_iter=7, d4_model="legacy_eeq")
+        model = GFN2Model(_mol(_water()), params, warn=False, max_iter=7)
         with pytest.raises(
             RuntimeError,
             match="GFN2-xTB SCC did not converge after 7 iterations",
@@ -2033,23 +1986,7 @@ class TestGFN2QuantitativeAccuracy:
             r = _xtb.run_ugfn2_xtb(mol, params)
             n_used = r.n_alpha + r.n_beta
         else:
-            # Shell AES for the closed-shell atoms: the valence count is the
-            # contract here, and the atom-resolved AES cannot converge the
-            # open-d singlet atoms W and Os on the default ladder (#675).
-            # Their spherical Aufbau state is an unstable SCC fixed point:
-            # round-off anisotropy grows ~1e3 per iteration through the
-            # on-site multipole feedback until E_AES is +8 Ha, at T = 0 and
-            # on every rung. xtb 6.7.0 fails them too (Os at 300 K, W at
-            # 1578 K; W converges only at 300 K, where Broyden stops before
-            # the anisotropy grows, at A = -2.215078 Ha). With smearing and
-            # aes_damping <= 0.02 both converge to that spherical state in
-            # ~46 iterations, which the ladder's stiff-AES rung now does on
-            # the default route (#684, test_stiff_aes_rung_converges_open_d_
-            # singlet_atoms); the valence count stays on the shell model so
-            # it does not depend on that rung.
-            options = _xtb.XTBSccOptions()
-            options.aes_faithful = False
-            r = _xtb.run_gfn2_xtb(mol, params, options)
+            r = _xtb.run_gfn2_xtb(mol, params)
             n_used = 2 * r.n_occ
         assert r.converged, f"{name}: SCC did not converge"
         assert r.energy < 0.0, f"{name}: not bound, E={r.energy:.3f} Ha"
@@ -2203,7 +2140,7 @@ class TestGFN2D4Dispersion:
             correction = _gfn2_method._compute_gfn2_d4(molecule, params)
         assert not any(issubclass(w.category, GFN2D4UnsupportedWarning) for w in caught)
         assert correction == pytest.approx(reference, abs=1e-4, rel=0)
-        model = GFN2Model(molecule, params, warn=False, d4_model="legacy_eeq")
+        model = GFN2Model(molecule, params, warn=False)
         total = model.energy()
         assert total == pytest.approx(model._last_result.free_energy + correction, abs=1e-12)
         from vibeqc.dispersion_d4_model import compute_d4_gradient
@@ -2318,20 +2255,27 @@ class TestGFN2PublicEnergyIsDispersionCorrected:
     @requires_gfn2
     @pytest.mark.parametrize("name,atoms", [("CH4", _ch4()), ("H2O", _water())])
     def test_public_energy_is_exactly_scc_plus_d4(self, params, name, atoms):
-        """The public total includes coupled D4 once; legacy stays explicit."""
+        """Every public entry point returns native SCC + post-SCF D4."""
         from vibeqc.semiempirical import run_semiempirical
         from vibeqc.semiempirical.methods.gfn2 import _compute_gfn2_d4
+
         mol = _mol(atoms)
-        model = GFN2Model(mol, params, warn=False)
-        model_total = model.energy()
-        assert model._last_result.dispersion_sha256
-        assert model_total == model._last_result.free_energy
+        e_scc = float(_energy(mol, params).energy)
+        e_d4 = float(_compute_gfn2_d4(mol, params))
+
+        model_total = float(GFN2Model(mol, params, warn=False).energy())
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", GFN2ExperimentalWarning)
             runner_total = float(run_semiempirical("gfn2_xtb", mol).energy)
-        assert runner_total == model_total
-        legacy = GFN2Model(mol, params, warn=False, d4_model="legacy_eeq")
-        assert legacy.energy() == float(_energy(mol, params).energy) + _compute_gfn2_d4(mol, params)
+
+        assert model_total == e_scc + e_d4, (
+            f"{name}: GFN2Model.energy() {model_total!r} is not "
+            f"SCC {e_scc!r} + D4 {e_d4!r}"
+        )
+        assert runner_total == model_total, (
+            f"{name}: run_semiempirical {runner_total!r} disagrees with "
+            f"GFN2Model.energy() {model_total!r}"
+        )
 
     @requires_gfn2
     @pytest.mark.parametrize("name,atoms", [("CH4", _ch4()), ("H2O", _water())])
@@ -3858,28 +3802,15 @@ def test_faithful_aes_closes_the_molecular_xtb_residual(
     assert abs(errors["faithful"]) < abs(errors["ad_hoc"])
 
 
-# Retain the original Li4 state-selection diagnostic independently of the
-# Na4 fixture that exercises the current automatic smearing ladder.
+# A square Li4 cluster at 3.0 A has a near-degenerate frontier and its T = 0
+# SCC genuinely stalls, so it reaches the auto-stabilisation ladder's
+# finite-temperature rung.  Adenine no longer does (see #3), which is why the
+# explicit-temperature contract below needs a different system to exercise it.
 _LI4_SQUARE_ANGSTROM = (
     (3, 0.0, 0.0, 0.0),
     (3, 3.0, 0.0, 0.0),
     (3, 3.0, 3.0, 0.0),
     (3, 0.0, 3.0, 0.0),
-)
-
-# A square Na4 cluster at 3.0 A has a near-degenerate frontier and its T = 0
-# SCC genuinely stalls, so it reaches the auto-stabilisation ladder's
-# finite-temperature rung.  Adenine no longer does (see #3), and the square
-# Li4 cluster that replaced it converges on the primary rung since the
-# faithful-AES default (#675: attempts [0.0], 117 iterations), which is why
-# the explicit-temperature contract below needs this system to exercise it.
-# Measured 2026-10-26 on the default route: attempts [0.0, 0.0, 0.005],
-# S = 2.89 k_B on the accepted rung; the explicit T = 0 request stalls.
-_NA4_SQUARE_ANGSTROM = (
-    (11, 0.0, 0.0, 0.0),
-    (11, 3.0, 0.0, 0.0),
-    (11, 3.0, 3.0, 0.0),
-    (11, 0.0, 3.0, 0.0),
 )
 
 
@@ -3896,11 +3827,10 @@ def test_auto_stabilize_honours_an_explicitly_requested_temperature():
     smeared energy whenever the primary attempt stalled.  That is five times
     the codebase's own periodic smearing default of 0.001.
 
-    Na4 is used rather than adenine or Li4 because neither stalls any more:
-    the advisory-checkpoint fix converges adenine on the primary rung, and the
-    faithful-AES default converges Li4 there too (#675).  This cluster still
-    stalls, so it reaches the finite-temperature rung and can distinguish the
-    two paths.
+    Li4 is used rather than adenine because adenine no longer stalls: the
+    advisory-checkpoint fix converges it on the primary rung.  This cluster
+    still does, so it reaches the finite-temperature rung and can distinguish
+    the two paths.
 
     Both halves matter.  Without an explicit request the BUG 45 rescue is
     unchanged and the finite-T rung still converges the system.  With one, the
@@ -3911,7 +3841,7 @@ def test_auto_stabilize_honours_an_explicitly_requested_temperature():
     molecule = Molecule(
         [
             Atom(z, [x * bohr, y * bohr, w * bohr])
-            for z, x, y, w in _NA4_SQUARE_ANGSTROM
+            for z, x, y, w in _LI4_SQUARE_ANGSTROM
         ],
         0,
         1,
@@ -3956,8 +3886,7 @@ def test_run_job_records_the_temperature_a_ladder_rung_executed(tmp_path):
     """vibe-qc#247: the record states which ensemble the energy belongs to.
 
     With the temperature left at its default, the auto-stabilisation ladder
-    converges Na4 on its T = 0.005 Ha rung (Li4 did until the faithful-AES
-    default, #675).  The native result recorded that,
+    converges Li4 on its T = 0.005 Ha rung.  The native result recorded that,
     but the runner reported the internal energy under a plain total-energy
     label and wrote the requested 0.0 Ha into provenance.  The route now
     reports the Mermin free energy, labels it, and records both temperatures.
@@ -3968,12 +3897,12 @@ def test_run_job_records_the_temperature_a_ladder_rung_executed(tmp_path):
     molecule = Molecule(
         [
             Atom(z, [x * bohr, y * bohr, w * bohr])
-            for z, x, y, w in _NA4_SQUARE_ANGSTROM
+            for z, x, y, w in _LI4_SQUARE_ANGSTROM
         ],
         0,
         1,
     )
-    stem = tmp_path / "na4"
+    stem = tmp_path / "li4"
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         result = run_job(
@@ -3994,9 +3923,8 @@ def test_run_job_records_the_temperature_a_ladder_rung_executed(tmp_path):
     assert result.energy == pytest.approx(
         result.e_internal - 0.005 * result.entropy, abs=1.0e-12
     )
-    # Na4 on the default route (faithful AES, coupled D4), 2026-10-26.
-    assert result.e_internal == pytest.approx(-0.7936899882, abs=1.0e-8)
-    assert result.energy == pytest.approx(-0.8081450634, abs=1.0e-8)
+    assert result.e_internal == pytest.approx(-0.9594699161, abs=1.0e-8)
+    assert result.energy == pytest.approx(-0.9733618556, abs=1.0e-8)
 
     text = stem.with_suffix(".out").read_text("utf-8")
     assert "Mermin free energy (finite electronic temperature)" in text
@@ -4007,59 +3935,6 @@ def test_run_job_records_the_temperature_a_ladder_rung_executed(tmp_path):
     assert run["gfn2_electronic_temperature"] == 0.0
     assert run["gfn2_electronic_temperature_explicit"] is False
     assert run["gfn2_executed_electronic_temperature"] == pytest.approx(0.005)
-
-
-@requires_gfn2
-@pytest.mark.parametrize("z,name,free_energy", [
-    (74, "W", -2.242342),
-    (76, "Os", -3.090850),
-    (42, "Mo", -1.811978),
-])
-def test_stiff_aes_rung_converges_open_d_singlet_atoms(z, name, free_energy):
-    """vibe-qc#684: the default route converges W, Os and Mo singlet atoms.
-
-    Under the atom-resolved AES their spherical Aufbau state is an unstable
-    SCC fixed point: round-off anisotropy grows ~1e3 per iteration through
-    the on-site dipole/quadrupole feedback (W at T = 0.005 Ha: E_AES 1e-29
-    at iteration 1, 7e-21 at 4, 6.7e-3 at 10) until the d manifold splits by
-    0.6 Ha and the energy sits at +7.6 Ha, on every rung the ladder had and
-    in xtb 6.7.0 as well (Os fails at 300 K, W at 1578 K).  charge_mixing
-    has no effect on that channel; the stiff-AES rung (T = 0.005 Ha,
-    aes_damping 0.02, charge mixing 0.02, 100 iterations, extended-period
-    molecules on the faithful path, before the high-T rung) converges all
-    three to the spherical state in about 50 iterations.  W at 300 K on the
-    same settings gives A = -2.215078 Ha against xtb's -2.215078.
-    """
-    params = load_gfn2_params()
-    mol = Molecule([Atom(z, [0.0, 0.0, 0.0])], 0, 1)
-    result = _xtb.run_gfn2_xtb(mol, params, _xtb.XTBSccOptions())
-    assert result.converged, f"{name}: the stiff-AES rung did not converge"
-    assert result.aes_functional == "faithful"
-    winner = result.attempts[result.selected_attempt_index]
-    assert winner is result.attempts[-1]
-    assert [round(a.electronic_temperature, 6) for a in result.attempts] == [
-        0.0, 0.0, 0.005, 0.005,
-    ]
-    assert [a.ladder_aes_damping for a in result.attempts[:-1]] == [0.5, 0.5, 0.5]
-    assert winner.ladder_aes_damping == pytest.approx(0.02)
-    assert winner.ladder_charge_mixing == pytest.approx(0.02)
-    assert winner.allocated_max_iter == 100
-    assert winner.n_iter < 100
-    assert result.n_iter <= _xtb.XTBSccOptions().max_iter
-    # The accepted state is the spherical one: no residual anisotropy, the
-    # d shell smeared evenly, and a bound energy.
-    assert abs(result.e_aes) < 1e-12
-    assert result.entropy > 1.0
-    assert result.energy < -1.0
-    assert result.free_energy == pytest.approx(free_energy, abs=2e-6)
-    # The shell AES, which has no on-site multipole feedback, converges the
-    # same atom on the primary attempt; its internal energy is the same
-    # spherical SCC solution to the smearing difference.
-    shell = _xtb.XTBSccOptions()
-    shell.aes_faithful = False
-    control = _xtb.run_gfn2_xtb(mol, params, shell)
-    assert control.converged and len(control.attempts) == 1
-    assert result.energy == pytest.approx(control.energy, abs=1e-3)
 
 
 @requires_gfn2
@@ -4222,11 +4097,8 @@ _QC306_FRAMES = {
 }
 
 # gfn2_driver.cpp: the light-element ladder is {0.01, 1800, T=0} then
-# {0.05, 500, T=0.005}; extended-period molecules add {0.05, 600, T=0.05},
-# which on the faithful-AES path is the stiff-AES rung {0.02, 100, T=0.005,
-# aes_damping 0.02} (#684) followed by {0.05, 500, T=0.05}.  Both frames
-# here are light-element, so exactly two rungs apply and the reserve is
-# the same on every path.
+# {0.05, 500, T=0.005}; extended-period molecules add {0.05, 600, T=0.05}.
+# Both frames here are light-element, so exactly two rungs apply.
 _QC306_LADDER_RUNG_BUDGETS = (1800, 500)
 # (charge_mixing, electronic_temperature) -> that rung's own nominal budget.
 # This identifies a rung by what it IS rather than by where it ran, which is
@@ -4234,8 +4106,7 @@ _QC306_LADDER_RUNG_BUDGETS = (1800, 500)
 _QC306_RUNG_BUDGET_BY_SIGNATURE = {
     (0.01, 0.0): 1800,
     (0.05, 0.005): 500,
-    (0.02, 0.005): 100,  # stiff-AES rung, faithful path only (#684)
-    (0.05, 0.05): 500,   # extended-period only; not reached by these frames
+    (0.05, 0.05): 600,   # extended-period only; not reached by these frames
 }
 _QC306_FINITE_T = 0.005
 # Budgets at or above the >= 2500 auto_stabilize threshold.  The point of
@@ -4394,18 +4265,6 @@ def _li4_molecule():
     )
 
 
-def _na4_molecule():
-    bohr = 1.0 / 0.529177210903
-    return Molecule(
-        [
-            Atom(z, [x * bohr, y * bohr, w * bohr])
-            for z, x, y, w in _NA4_SQUARE_ANGSTROM
-        ],
-        0,
-        1,
-    )
-
-
 def _displaced(mol, atom_idx, coord_idx, delta):
     atoms = list(mol.atoms)
     xyz = list(atoms[atom_idx].xyz)
@@ -4449,42 +4308,6 @@ class TestGFN2FiniteTemperatureEnsemble:
                     values.append(float(getattr(r, attribute)))
                 fd[a, d] = (values[0] - values[1]) / (2.0 * h)
         return fd
-
-    @requires_gfn2
-    @pytest.mark.parametrize("temperature, max_iter", [(0., 20000), (0.05, 20000), (0.05, 1)])
-    def test_result_exposes_detached_last_evaluated_state(self, params, temperature, max_iter):
-        """State audits inspect this solve, including honest SCC exhaustion."""
-        mol = _mol(_water())
-        result = _xtb.run_gfn2_xtb(
-            mol, params, self._opts(temperature, max_iter=max_iter),
-        )
-        assert result.converged == (max_iter != 1)
-        C, P, S, H = (getattr(result, name) for name in
-                      ("mo_coeffs", "density", "overlap", "hamiltonian"))
-        eps, occ = np.asarray(result.mo_energies), np.asarray(result.occupations)
-        assert all(a.shape == (result.n_basis, result.n_basis) for a in (C, P, S, H))
-        np.testing.assert_allclose(C.T @ S @ C, np.eye(result.n_basis), atol=1e-12, rtol=0)
-        np.testing.assert_allclose(H @ C, (S @ C) * eps, atol=1e-12, rtol=0)
-        np.testing.assert_allclose(P, (C * occ) @ C.T, atol=1e-12, rtol=0)
-        assert np.trace(P @ S) == pytest.approx(result.n_alpha + result.n_beta, abs=1e-9)
-        # Mutating any exported matrix must not alter the retained state or
-        # the gradient which consumes that native state.
-        gradient = (np.asarray(_semi.compute_gfn2_gradient(mol, result, params))
-                    if result.converged else None)
-        for name in ("mo_coeffs", "density", "overlap", "hamiltonian"):
-            exported = getattr(result, name)
-            original = exported.copy()
-            if exported.flags.writeable:
-                exported[:] = 123.
-            else:
-                with pytest.raises(ValueError):
-                    exported[:] = 123.
-            np.testing.assert_array_equal(getattr(result, name), original)
-        if result.converged:
-            np.testing.assert_allclose(
-                _semi.compute_gfn2_gradient(mol, result, params), gradient,
-                atol=1e-14, rtol=0,
-            )
 
     @requires_gfn2
     def test_result_carries_hard_aufbau_occupations_at_zero_temperature(self, params):
@@ -4534,9 +4357,8 @@ class TestGFN2FiniteTemperatureEnsemble:
     @requires_gfn2
     @pytest.mark.parametrize(
         "make_mol, temperature",
-        [(lambda: _mol(_water()), 0.05), (_li4_molecule, 0.005),
-         (_na4_molecule, 0.005)],
-        ids=["h2o_T0.05", "li4_T0.005", "na4_T0.005"],
+        [(lambda: _mol(_water()), 0.05), (_li4_molecule, 0.005)],
+        ids=["h2o_T0.05", "li4_T0.005"],
     )
     def test_gradient_matches_fd_of_the_free_energy(self, params, make_mol, temperature):
         """At T > 0 the analytic gradient is dA/dR to FD precision.
@@ -4544,12 +4366,6 @@ class TestGFN2FiniteTemperatureEnsemble:
         Measured on the pre-fix core (2026-09-18): water at T = 0.05 Ha
         (T*S = 6.8 mHa) missed dA/dR by 5.7e-4 and dE/dR by 2.4e-2 Ha/bohr;
         Li4 at T = 0.005 Ha missed dA/dR by 9.2e-3, half its own gradient.
-        The original Li4 case remains a state-selection regression: on faithful
-        AES its central quotient can mix symmetry-related SCC branches even
-        when both endpoints converge. Retained branch-continuous midpoint
-        checks agree within 1.1e-10 Ha/bohr; this does not resolve selection at
-        the square or justify dropping its unchanged 1e-5 guard. Na4 separately
-        exercises the current smearing ladder (#675).
         """
         mol = make_mol()
         make_opts = lambda: self._opts(temperature)  # noqa: E731
@@ -4569,13 +4385,11 @@ class TestGFN2FiniteTemperatureEnsemble:
     def test_default_ladder_rung_gradient_matches_fd_of_the_free_energy(self, params):
         """The path a user hits without asking for smearing (#343, last row).
 
-        Na4 stalls at T = 0 and the ladder accepts its T = 0.005 Ha rung
-        (Li4 did until the faithful-AES default converged it on the primary
-        rung, #675).  The gradient handed back beside that result must be
-        dA/dR of the smeared solution; it was 1.0e-2 Ha/bohr off both
-        ensembles.
+        Li4 stalls at T = 0 and the ladder accepts its T = 0.005 Ha rung.
+        The gradient handed back beside that result must be dA/dR of the
+        smeared solution; it was 1.0e-2 Ha/bohr off both ensembles.
         """
-        mol = _na4_molecule()
+        mol = _li4_molecule()
         make_opts = lambda: self._opts(  # noqa: E731
             None, max_iter=6000, conv_tol=1e-10, auto_stabilize=True,
             charge_mixing=0.1,
@@ -4584,7 +4398,7 @@ class TestGFN2FiniteTemperatureEnsemble:
         assert result.converged
         assert result.smearing_temperature == pytest.approx(0.005)
         assert result.entropy > 1.0
-        assert result.aes_functional == "faithful"
+        assert result.aes_functional == "shell"
         occ = np.asarray(result.occupations, dtype=float)
         assert np.any((occ > 1e-3) & (occ < 2.0 - 1e-3))
         grad = np.asarray(_semi.compute_gfn2_gradient(mol, result, params))
@@ -4596,8 +4410,8 @@ class TestGFN2FiniteTemperatureEnsemble:
 
     @requires_gfn2
     def test_model_reports_the_free_energy_it_differentiates_on_a_smeared_rung(self, params):
-        """GFN2Model.energy() pairs A = E - T*S (D4 coupled) with the gradient."""
-        mol = _na4_molecule()
+        """GFN2Model.energy() pairs A = E - T*S (+D4) with the gradient."""
+        mol = _li4_molecule()
         model = GFN2Model(mol, params, warn=False, max_iter=6000)
         energy = model.energy()
         native = model._last_result
@@ -4605,11 +4419,9 @@ class TestGFN2FiniteTemperatureEnsemble:
         assert native.smearing_temperature == pytest.approx(0.005)
         assert model.electronic_temperature == pytest.approx(0.005)
         assert model.entropy == pytest.approx(native.entropy)
-        # The default route couples D4 inside the SCC: the reported energy is
-        # the native Mermin free energy itself, nothing is added after.
-        assert native.dispersion_sha256
-        assert energy == native.free_energy
-        assert energy < native.energy - 1e-3
+        e_d4 = _gfn2_method._compute_gfn2_d4(mol, params)
+        assert energy == pytest.approx(native.free_energy + e_d4, abs=1e-12)
+        assert energy < native.energy + e_d4 - 1e-3
 
         # The reported energy is what run_job reports too (#247 labelled it).
         from vibeqc.semiempirical.runner import run_semiempirical
@@ -4619,14 +4431,14 @@ class TestGFN2FiniteTemperatureEnsemble:
             route = run_semiempirical("gfn2_xtb", mol)
         assert route.energy == pytest.approx(energy, abs=1e-12)
         assert route.electronic_temperature == pytest.approx(0.005)
-        assert route.e_internal == pytest.approx(native.energy, abs=1e-12)
+        assert route.e_internal == pytest.approx(native.energy + e_d4, abs=1e-12)
         assert route.entropy == pytest.approx(native.entropy)
 
     @requires_gfn2
     def test_model_gradient_matches_fd_of_the_model_energy_on_a_smeared_rung(self, params):
         """The public gradient differentiates the public energy on the
         default ladder path, D4 included."""
-        mol = _na4_molecule()
+        mol = _li4_molecule()
 
         def model_at(candidate):
             return GFN2Model(candidate, params, warn=False, max_iter=6000)
@@ -4876,7 +4688,7 @@ class TestGFN2AESGradientContract:
         self, params, monkeypatch, case, warm_cache
     ):
         mol = _mol([Atom(z, xyz) for z, xyz in _AES_GRADIENT_CASES[case]])
-        model = GFN2Model(mol, params, warn=False, d4_model="legacy_eeq")
+        model = GFN2Model(mol, params, warn=False)
         opts = _aes_gradient_options(True)
         monkeypatch.setattr(model, "_make_scc_options", lambda: opts)
         calls = []
@@ -4914,7 +4726,7 @@ class TestGFN2AESGradientContract:
         monkeypatch.setattr(_semi, "compute_gfn2_gradient", forbidden_gradient)
         monkeypatch.setattr(_gfn2_method, "_compute_gfn2_d4_gradient_fd", forbidden_gradient)
         with pytest.raises(ValueError, match="known executed AES functional"):
-            GFN2Model(_mol(_water()), params, warn=False, d4_model="legacy_eeq").gradient()
+            GFN2Model(_mol(_water()), params, warn=False).gradient()
 
     @pytest.mark.parametrize("faithful", [False, True])
     def test_direct_native_options_are_frozen_during_execution(self, params, faithful):
@@ -5402,7 +5214,7 @@ def test_gfn2_d4_ion_gradient_matches_analytic_response(params, d4_ion, record_p
 def test_gfn2_model_ion_includes_charged_d4(params, d4_ion):
     from vibeqc.dispersion_d4_model import compute_d4_energy_total
 
-    model = GFN2Model(d4_ion, params=params, warn=False, d4_model="legacy_eeq")
+    model = GFN2Model(d4_ion, params=params, warn=False)
     total = model.energy()
     assert model.converged
     execution = model._last_d4_execution
@@ -5519,23 +5331,14 @@ def test_faithful_default_high_temperature_as_pin(params):
     result = _xtb.run_gfn2_xtb(_tae_ptcomp_mol("pheavy_as_1"), params, options)
     assert result.converged and result.n_iter < 600 and result.n_occ == 24
     assert result.aes_functional == "faithful"
-    # 2026-10-26 (#675): the internal energy moved -3.4e-8 Ha with the
-    # charge-DIIS mapped-output extrapolation (e9d8d16a); the 1e-11-tolerance
-    # run sits 1.7e-8 Ha from either value and the free energy, the surface
-    # the smeared SCC is stationary on, moved 5e-14 Ha (219 iterations).
-    assert result.energy == pytest.approx(-29.829941690872932, abs=1e-10, rel=0)
+    assert result.energy == pytest.approx(-29.8299416566129, abs=1e-10, rel=0)
     assert result.free_energy == pytest.approx(-30.305577866377945, abs=1e-10, rel=0)
 
 
 @requires_gfn2
 @pytest.mark.parametrize("atoms, internal, free", [
     (_bug45_pyridine, -16.132333462937964, -16.132333462937964),
-    # 2026-10-26 (#675): cyclopropene's internal energy moved +6.9e-9 Ha with
-    # the charge-DIIS mapped-output extrapolation (e9d8d16a) on the ladder's
-    # T = 0.005 rung (2553 iterations); the free energy it is stationary on
-    # moved 3.6e-13 Ha, and the 1e-11-tolerance run is 7.5e-9 from the new
-    # internal value (same basin).
-    (_bug45_cyclopropene, -7.944509112012331, -7.955840661821),
+    (_bug45_cyclopropene, -7.9445091189554295, -7.955840661821),
 ])
 def test_faithful_default_solver_outlier_pins(params, atoms, internal, free):
     result = _xtb.run_gfn2_xtb(_mol(atoms()), params)

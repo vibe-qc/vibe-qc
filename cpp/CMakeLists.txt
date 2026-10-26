@@ -60,9 +60,7 @@ add_library(vibeqc_core STATIC
     src/manta_md.cpp
     src/manta_shells.cpp
     src/manta_provider.cpp
-    src/manta_molecular_source.cpp
     src/manta_one_electron.cpp
-    src/manta_metric_enclosure.cpp
     src/manta_fitting.cpp
     src/manta_fourier.cpp
     src/manta_bloch_fourier.cpp
@@ -172,7 +170,6 @@ add_library(vibeqc_core STATIC
     src/kmesh_address.cpp
     src/symmetry_shared.cpp
     src/symmetry_quartets.cpp
-    src/symmetry_quartets_source.cpp
     src/symmetry_ri.cpp
     src/periodic_ao_bloch_transport.cpp
     src/periodic_orbital_sewing.cpp
@@ -696,7 +693,6 @@ set_target_properties(vibeqc_core PROPERTIES
 pybind11_add_module(_vibeqc_core MODULE
     src/opentrustregion_bindings.cpp
     src/manta_bindings.cpp
-    src/manta_molecular_source_bindings.cpp
     src/symmetry_quartets_bindings.cpp
     src/symmetry_ri_bindings.cpp
     src/manta_bloch_fourier_bindings.cpp

@@ -218,20 +218,16 @@ def validate_bipole_kmesh(
     *,
     driver: str,
     require_complete: bool = False,
-    system: Optional[PeriodicSystem] = None,
 ) -> Tuple[int, int, bool, bool]:
     """Validate MP/IBZ metadata and weights shared by BIPOLE workflows.
 
     Returns ``(stored_n, full_n, true_multik, is_ibz)``. Direct SCF drivers
     retain ad-hoc multi-k lists for diagnostics, while geometry/NEB callers
     set ``require_complete=True`` so only a full MP mesh or a valid IBZ
-    reduction can define a production objective. With ``system``, a declared
-    full multi-k grid must also carry that cell's actual MP coordinates.
+    reduction can define a production objective.
     """
     points = np.asarray(getattr(kmesh, "kpoints", []), dtype=float).reshape(-1, 3)
     stored_n = int(points.shape[0])
-    if not np.isfinite(points).all():
-        raise ValueError(f"{driver}: kmesh points must be finite")
     if stored_n < 1:
         raise ValueError(f"{driver}: kmesh has no k-points")
 
@@ -300,9 +296,6 @@ def validate_bipole_kmesh(
                 f"{driver}: a full Monkhorst-Pack mesh requires uniform weights"
             )
 
-    if system is not None and stored_n == full_n and stored_n > 1:
-        _validate_bipole_full_mesh_points(system, kmesh, points, mesh, driver=driver)
-
     true_multik = stored_n > 1 or full_n > 1 or ir_mapping.size > 1
     complete = stored_n == full_n or is_ibz
     if require_complete and true_multik and not complete:
@@ -314,39 +307,7 @@ def validate_bipole_kmesh(
     return stored_n, full_n, true_multik, is_ibz
 
 
-def _validate_bipole_full_mesh_points(system, kmesh, points, mesh, *, driver):
-    """Bind the declared finite Fourier grid without replacing caller data.
-
-    Monkhorst-Pack, Phys. Rev. B 13, 5188 (1976), Eq. (4): in fractional
-    reciprocal coordinates each component is (integer + shift/2)/mesh.
-    Unique residues then prove complete coverage in linear work/storage,
-    independent of point order and reciprocal-lattice wraps. Cardinality
-    alone does not justify the BvK inverse used by density and exchange.
-    """
-    shift = np.asarray(getattr(kmesh, "is_shift", (0, 0, 0)))
-    if shift.shape != (3,) or not np.all(np.isin(shift, [0, 1])):
-        raise ValueError(f"{driver}: kmesh.is_shift must contain three 0/1 integers")
-    scaled = (points @ np.asarray(system.lattice, dtype=float)) / (2.0 * np.pi)
-    scaled = scaled * mesh - 0.5 * shift
-    nearest = np.rint(scaled)
-    if not np.isfinite(scaled).all() or not np.allclose(
-        scaled, nearest, atol=1e-8, rtol=0.0,
-    ):
-        raise ValueError(
-            f"{driver}: full kmesh points do not match the current cell, mesh "
-            "and shift; rebuild the kmesh for this system"
-        )
-    addresses = np.remainder(nearest, mesh).astype(np.int64)
-    if len({tuple(row) for row in addresses}) != len(points):
-        raise ValueError(
-            f"{driver}: full kmesh contains duplicate reciprocal points "
-            "and omits grid addresses"
-        )
-
-
-def reject_bipole_lone_non_gamma_kpoint(
-    kmesh: object, *, driver: str, system: Optional[PeriodicSystem] = None,
-) -> None:
+def reject_bipole_lone_non_gamma_kpoint(kmesh: object, *, driver: str) -> None:
     """Reject a single twisted k point that the BIPOLE loops treat as Gamma.
 
     The current one-point fast paths use the home-cell density/Fock folds and
@@ -358,7 +319,6 @@ def reject_bipole_lone_non_gamma_kpoint(
         kmesh,
         driver=driver,
         require_complete=False,
-        system=system,
     )
     if (
         stored_n == 1
@@ -3156,9 +3116,7 @@ def resolve_bipole_ewald_state(
         volume, ewald_omega, lat_opts_2e, float(ewald_precision),
         erfc_exchange_arm_active=erfc_exchange_arm_active, plog=plog,
     )
-    reciprocal = bipole_ewald_reciprocal_cutoff(
-        volume, alpha, tolerance=ewald_precision,
-    )
+    reciprocal = bipole_ewald_reciprocal_cutoff(volume, alpha)
     raise_bipole_ewald_real_cutoff(
         system, lat_opts_1e, alpha, float(ewald_precision), plog,
     )
@@ -3237,55 +3195,10 @@ def _expand_ibz_kmesh_for_ewald_j(
     if ir_mapping.size == 0:
         return kmesh
 
-    # Monkhorst-Pack, Phys. Rev. B 13, 5188 (1976), Eqs. (4), (13):
-    # reciprocal-grid coordinates and symmetry multiplicities define one rule.
-    # Bind the original wedge before expansion discards its coordinates and
-    # star mapping. Counts alone admit a mesh from a different cell/system.
-    # Use the same native reduction authority as the public mesh constructor;
-    # its mapping order is not the order of the expanded full native grid.
-    current_n, full_n, _, _ = validate_bipole_kmesh(
-        kmesh, driver="BIPOLE IBZ expansion", require_complete=True,
-    )
-    mesh = tuple(int(x) for x in kmesh.mesh)
-    raw_shift = np.asarray(getattr(kmesh, "is_shift", (0, 0, 0)))
-    if raw_shift.shape != (3,) or not np.all(np.isin(raw_shift, [0, 1])):
-        raise ValueError("BIPOLE IBZ expansion: is_shift must contain three 0/1 integers")
-    shift = tuple(int(x) for x in raw_shift)
-    raw_mapping = np.asarray(kmesh.ir_mapping)
-    if raw_mapping.shape != (full_n,) or not np.array_equal(raw_mapping, ir_mapping):
-        raise ValueError("BIPOLE IBZ expansion: ir_mapping must contain integer indices")
-
-    expected = _native_monkhorst_pack(system, list(mesh), list(shift), True)
-    expected_points = np.asarray(expected.kpoints, dtype=float)
-    if len(expected_points) != current_n:
-        raise ValueError(
-            "BIPOLE IBZ expansion: reduction does not match the current system; "
-            "rebuild the kmesh or supply the full mesh"
-        )
-    # Allow consistent representative permutations and reciprocal-lattice
-    # wraps, without constructing an all-points correspondence matrix.
-    lattice = np.asarray(system.lattice, dtype=float)
-    labels = np.empty(current_n, dtype=int)
-    for i, point in enumerate(kmesh.kpoints):
-        delta = (np.asarray(point) - expected_points) @ lattice / (2.0 * np.pi)
-        matches = np.flatnonzero(
-            np.max(np.abs(delta - np.rint(delta)), axis=1) < 1e-8
-        )
-        if len(matches) != 1:
-            raise ValueError(
-                "BIPOLE IBZ expansion: representative does not match the current "
-                "system's mesh and shift; rebuild the kmesh or supply the full mesh"
-            )
-        labels[i] = matches[0]
-    if np.unique(labels).size != current_n:
-        raise ValueError("BIPOLE IBZ expansion: duplicate representatives")
-    if not np.array_equal(labels[ir_mapping], np.asarray(expected.ir_mapping)):
-        raise ValueError(
-            "BIPOLE IBZ expansion: ir_mapping contradicts the representatives"
-        )
-    if not np.allclose(np.asarray(kmesh.weights), np.asarray(expected.weights)[labels],
-                       atol=1e-12, rtol=0.0):
-        raise ValueError("BIPOLE IBZ expansion: weights contradict the representatives")
+    mesh = tuple(int(x) for x in getattr(kmesh, "mesh", (1, 1, 1)))
+    shift = tuple(int(x) for x in getattr(kmesh, "is_shift", (0, 0, 0)))
+    full_n = int(np.prod(mesh))
+    current_n = len(list(kmesh.kpoints))
     if full_n <= current_n:
         return kmesh
 

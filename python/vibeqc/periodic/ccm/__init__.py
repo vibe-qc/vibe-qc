@@ -203,16 +203,6 @@ from .direct import (
 )
 from .bloch_reference import BlochFoldReport, ccm_reference_from_bloch
 from .source import assert_matched_neutral_source, neutral_torus_source
-from .spin_state import (
-    CCMSpinState,
-    OccupationRecord,
-    assert_integer_occupations,
-    occupation_record_of,
-    assert_comparable_neutral_results,
-    assert_compatible_spin_state,
-    resolve_ccm_spin_state,
-    spin_state_of,
-)
 from .stability import CCMRHFStability, ccm_rhf_stability
 from .experimental import AICCM2026DevAExperimentalWarning
 from .route import CCM_ROUTES, resolve_ccm_route, run_ccm_scf

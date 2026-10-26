@@ -54,8 +54,6 @@ public:
     // Binding-level descriptor failures occur before accumulate is entered.
     void invalidate() noexcept { valid_ = false; }
     const SymmetryPlan& memory() const { return memory_; }
-    const std::vector<std::uint64_t>& shell_offsets() const { return offsets_; }
-    std::uint64_t operations() const { return operations_; }
 private:
     SymmetryPlan memory_;
     std::uint64_t n_, shells_, operations_, matrix_elements_, maximum_shell_;

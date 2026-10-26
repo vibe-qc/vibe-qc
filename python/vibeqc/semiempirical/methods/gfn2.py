@@ -2,18 +2,22 @@
 
 .. warning::
 
-   **Experimental.** This GFN2-xTB implementation is still gated. The
-   molecular default includes faithful AES and self-consistent D4 with
-   pinned published reference data in an external LGPL cache. Explicit legacy
-   shell AES retains post-SCF native EEQ D4. The SCC potential and gradient
-   include pairwise D4 and neutral-charge ATM; no reference QC engine is
-   called. On that default route the public total energy is at xtb 6.7.0
-   parity on the 45 closed-shell rows of ``tests/test_gfn2_xtb_parity_matrix.py``
-   (total within 2e-5 Ha, dispersion channel within 1e-6 Ha). Remaining
-   production gates: external gradient parity, periodic AES image-cell
-   multipole terms, periodic molecular-limit parity, and the unrestricted
-   route.  See ``tests/test_gfn2_xtb.py`` for validated invariants and
-   strict reference targets.
+   **Experimental -- not quantitative.** This GFN2-xTB implementation is
+   still gated and does *not* yet claim reference ``xtb`` parity. The
+   molecular path includes shell-resolved SCC, AES dipole/quadrupole,
+   GAM3 third-order on-site, pairwise repulsion, and native D4 dispersion
+   (post-SCF). This is a native D4-style approximation, not the
+   self-consistent D4 functional of Bannwarth, Ehlert & Grimme (JCTC
+   2019). It uses EEQ charges and independently generated reference
+   data for H-Ar (Z = 1-18) and Cu, and explicitly warns/returns
+   zero outside that set. Upstream GFN2 uses SCC charges and their
+   dispersion potential, distinct reference/CN conventions, and
+   neutral-charge C6 for ATM. Selecting faithful AES does not change
+   this D4 policy or establish total-energy parity. Remaining
+   production gates: periodic AES image-cell multipole terms, periodic
+   molecular-limit parity, and the full external-parity matrix.  See
+   ``tests/test_gfn2_xtb.py`` for validated invariants and strict
+   reference targets.
 """
 
 from __future__ import annotations
@@ -47,11 +51,15 @@ class GFN2D4UnsupportedWarning(UserWarning):
 
 
 _GFN2_EXPERIMENTAL_MESSAGE = (
-    "GFN2-xTB is EXPERIMENTAL: molecular faithful AES uses self-consistent "
-    "D4 with separately cached published references; explicit legacy controls "
-    "retain native post-SCF EEQ D4. The molecular total is at xtb parity on "
-    "the closed-shell matrix; external gradient parity, periodic acceptance "
-    "and the open-shell route remain open. Construct with warn=False to silence."
+    "GFN2-xTB is EXPERIMENTAL and not quantitative: reference xtb parity "
+    "is not closed yet (all-electron vs valence-only convention, periodic "
+    "faithful AES electrostatics, and external parity matrix remain production "
+    "gates), and "
+    "the post-SCF D4-style term uses EEQ charges and independently "
+    "generated CPKS/PBE38 reference data for H-Ar and Cu; "
+    "it is not upstream GFN2 self-consistent dispersion. "
+    "Results are size-consistent but must not be used for production. "
+    "Construct the model with warn=False to silence this warning."
 )
 _GFN2_SCC_MIXERS = {
     "broyden": _se.SCCMixer.Broyden,
@@ -98,11 +106,7 @@ def _sha256_bytes(data: bytes) -> str:
 
 
 def _gfn2_d4_reference_content_sha256(ref_data: object) -> str:
-    """Hash exact runtime records, including platform-dependent conversion bits.
-
-    This identifies the executed operands, not a portable upstream dataset.
-    Keep it exact; the separately captured source manifest identifies inputs.
-    """
+    """Hash the exact in-memory D4 reference records used by a calculation."""
     payload = json.dumps(
         ref_data.to_dict(),
         allow_nan=False,
@@ -122,8 +126,6 @@ class _GFN2D4Execution:
     refdata_path: str
     refdata_sha256: str
     refdata_source_sha256: str
-    refdata_revision: str = "unavailable"
-    refdata_sources_sha256: str = "unavailable"
 
 
 @dataclass(frozen=True)
@@ -229,15 +231,11 @@ class _FrozenD4ReferenceDataset:
         return {"elements": elements, "c6_cross": c6_cross}
 
 
-def _gfn2_d4_execution_snapshot(*, published=False) -> _GFN2D4Execution:
+def _gfn2_d4_execution_snapshot() -> _GFN2D4Execution:
     """Freeze the D4 table row and reference data before native execution."""
     from vibeqc.dispersion_d4_parameters import get_d4_params
 
-    if published:
-        from .gfn2_d4_params import load_gfn2_d4_reference_data
-        source = load_gfn2_d4_reference_data()
-    else:
-        source = _load_gfn2_d4_reference_data()
+    source = _load_gfn2_d4_reference_data()
     ref_data = _FrozenD4ReferenceDataset.from_dataset(source)
     source_sha256 = str(
         getattr(source, "_vibeqc_source_sha256", "unavailable")
@@ -246,12 +244,9 @@ def _gfn2_d4_execution_snapshot(*, published=False) -> _GFN2D4Execution:
         reference_data=ref_data,
         functional="gfn2xtb",
         parameters=get_d4_params("gfn2xtb"),
-        refdata_path=("<gfn2-d4-cache>/param_ref.fh" if published else
-                      "vibeqc/semiempirical/methods/d4_reference_data.json"),
+        refdata_path="vibeqc/semiempirical/methods/d4_reference_data.json",
         refdata_sha256=_gfn2_d4_reference_content_sha256(ref_data),
         refdata_source_sha256=source_sha256,
-        refdata_revision=str(getattr(source, "_vibeqc_source_revision", "unavailable")),
-        refdata_sources_sha256=str(getattr(source, "_vibeqc_sources_sha256", "unavailable")),
     )
 
 
@@ -593,10 +588,7 @@ class GFN2Model(SemiempiricalModel):
         DIIS damping or Broyden step damping.
     aes_faithful : bool (default True)
         Use the published atom-resolved AES model. Explicit False preserves
-        the legacy shell-resolved model and its post-SCF EEQ D4 control.
-    d4_model : str or None
-        Default self_consistent with faithful AES; legacy_eeq explicitly
-        retains the independent native reference table and post-SCF term.
+        the legacy shell-resolved model; post-SCF D4 is unchanged.
     warn : bool (default True)
         Emit a :class:`GFN2ExperimentalWarning` on each energy evaluation.
     solver : str (default ``"dense"``)
@@ -621,7 +613,6 @@ class GFN2Model(SemiempiricalModel):
         mixer_memory: int = 6,
         mixer_damping: float = 0.0,
         aes_faithful: bool = True,
-        d4_model: str | None = None,
         warn: bool = True,
         solver: str = "dense",
     ):
@@ -650,11 +641,6 @@ class GFN2Model(SemiempiricalModel):
         self._mixer_memory = mixer_memory
         self._mixer_damping = mixer_damping
         self._aes_faithful = bool(aes_faithful)
-        self._d4_model = d4_model or ("self_consistent" if aes_faithful else "legacy_eeq")
-        if self._d4_model not in ("self_consistent", "legacy_eeq"):
-            raise ValueError("d4_model must be self_consistent or legacy_eeq")
-        if self._d4_model == "self_consistent" and not aes_faithful:
-            raise ValueError("Self-consistent D4 requires faithful AES")
         self._warn = warn
         self._n_iter = 0
         self._converged = False
@@ -690,11 +676,6 @@ class GFN2Model(SemiempiricalModel):
         if result_sha256 is not None:
             result_sha256 = str(result_sha256)
             result_identity = str(result_identity)
-
-        if parameter_snapshot is not None:
-            expected_dispersion = parameter_snapshot.get("d4_dispersion_sha256", "")
-            if expected_dispersion != str(getattr(result, "dispersion_sha256", "")):
-                raise RuntimeError("GFN2 D4 result disagrees with captured dispersion operands")
 
         frozen_snapshot = None
         if (
@@ -749,16 +730,7 @@ class GFN2Model(SemiempiricalModel):
     def _run_scc_at(self, mol: Molecule):
         opts = _freeze_gfn2_scc_options(self._make_scc_options())
         option_snapshot = _gfn2_scc_options_snapshot(opts)
-        coupled = self._d4_model == "self_consistent"
-        d4_execution = _gfn2_d4_execution_snapshot(published=coupled)
-        dispersion = None
-        if coupled:
-            from .gfn2_dispersion import build_d4_charge_functional
-            from .gfn2_d4_params import coordination_numbers_and_jacobian
-            dispersion = build_d4_charge_functional(
-                mol, d4_execution.reference_data, d4_execution.parameters,
-                coordination=coordination_numbers_and_jacobian(mol),
-            ).to_native()
+        d4_execution = _gfn2_d4_execution_snapshot()
         cache_lineage = _gfn2_cache_lineage_snapshot(self._params)
         metadata = self._params.metadata()
         d4_parameters = d4_execution.parameters
@@ -770,8 +742,6 @@ class GFN2Model(SemiempiricalModel):
             "doi": str(metadata.doi_or_url),
             "n_elements": int(metadata.n_elements),
             "d4_functional": d4_execution.functional,
-            "d4_model": self._d4_model,
-            "d4_dispersion_sha256": "" if dispersion is None else dispersion.sha256,
             "d4_s6": float(d4_parameters.s6),
             "d4_s8": float(d4_parameters.s8),
             "d4_s9": float(d4_parameters.s9),
@@ -781,15 +751,12 @@ class GFN2Model(SemiempiricalModel):
             "d4_refdata_path": d4_execution.refdata_path,
             "d4_refdata_sha256": d4_execution.refdata_sha256,
             "d4_refdata_source_sha256": d4_execution.refdata_source_sha256,
-            "d4_refdata_revision": d4_execution.refdata_revision,
-            "d4_refdata_sources_sha256": d4_execution.refdata_sources_sha256,
             **cache_lineage,
             **option_snapshot,
         }
         return self._record_scc_result(
             mol,
-            (_xtb.run_gfn2_xtb(mol, self._params, opts, dispersion) if coupled
-             else _xtb.run_gfn2_xtb(mol, self._params, opts)),
+            _xtb.run_gfn2_xtb(mol, self._params, opts),
             parameter_snapshot,
             d4_execution,
         )
@@ -836,10 +803,6 @@ class GFN2Model(SemiempiricalModel):
 
         if not self._converged:
             raise RuntimeError(_gfn2_nonconvergence_message(mol, result))
-
-        if getattr(result, "dispersion_sha256", ""):
-            # Native free energy already contains the variational D4 term.
-            return float(_reported_scc_energy(result))
 
         # GFN2-D4 dispersion: post-SCF correction (Bannwarth, Ehlert &
         # Grimme, JCTC 2019).  D4 is charge-dependent via EEQ charges
@@ -910,8 +873,6 @@ class GFN2Model(SemiempiricalModel):
             _se.compute_gfn2_gradient(self._mol, result, self._params),
             dtype=float,
         )
-        if getattr(result, "dispersion_sha256", ""):
-            return scc_gradient
         return scc_gradient + _compute_gfn2_d4_gradient_fd(
             self._mol,
             self._params,

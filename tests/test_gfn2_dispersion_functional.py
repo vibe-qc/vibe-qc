@@ -145,8 +145,8 @@ def test_invalid_reference_coefficients_are_rejected(operands, value):
 
 def test_missing_element_is_not_silently_omitted(operands):
     _, execution, _ = operands
-    mol = Molecule([Atom(54, [0., 0., 0.])], 0, 1)
-    with pytest.raises(ValueError, match="unavailable for Z=54"):
+    mol = Molecule([Atom(11, [0., 0., 0.])], 1, 1)
+    with pytest.raises(ValueError, match="unavailable for Z=11"):
         build_d4_charge_functional(mol, execution.reference_data, execution.parameters)
 
 
@@ -387,7 +387,6 @@ def test_failed_retry_ladder_retains_coupled_functional_identity():
     opts.auto_stabilize = False
     opts.max_iter = last.allocated_max_iter
     opts.charge_mixing = last.ladder_charge_mixing
-    opts.aes_damping = last.ladder_aes_damping
     opts.electronic_temperature = last.electronic_temperature
     opts.scc_mixer = last.scc_mixer
     direct = xtb.run_gfn2_xtb(mol, params, opts, data)
@@ -396,87 +395,3 @@ def test_failed_retry_ladder_retains_coupled_functional_identity():
     np.testing.assert_allclose(result.charges, direct.charges, atol=1e-12, rtol=0)
     with pytest.raises(ValueError, match="converged full SCC Fock"):
         semi.compute_gfn2_gradient(mol, result, params)
-
-
-def test_published_cn_derivative_matches_displacements():
-    from vibeqc.semiempirical.methods.gfn2_d4_params import coordination_numbers_and_jacobian
-    from vibeqc.semiempirical.methods.gfn2 import _displaced_molecule
-    mol, _ = _coupled_case("water")
-    _, jac = coordination_numbers_and_jacobian(mol)
-    h = 1e-5
-    numeric = np.array([
-        (coordination_numbers_and_jacobian(_displaced_molecule(mol, a, k, h))[0]
-         - coordination_numbers_and_jacobian(_displaced_molecule(mol, a, k, -h))[0])/(2*h)
-        for a in range(len(mol.atoms)) for k in range(3)
-    ])
-    np.testing.assert_allclose(jac, numeric, atol=1e-9, rtol=0)
-
-
-def test_public_coupled_total_and_gradient_are_not_double_counted(monkeypatch):
-    monkeypatch.setenv("VIBEQC_GFN2_OFFLINE", "1")
-    from vibeqc.semiempirical.methods.gfn2 import GFN2Model, _displaced_molecule
-    from vibeqc._vibeqc_core import semiempirical as semi
-    mol, temperature = _coupled_case("water")
-    class Model(GFN2Model):
-        def _make_scc_options(self):
-            return _coupled_options(temperature)
-    model = Model(mol, warn=False)
-    energy, gradient = model.energy(), model.gradient()
-    result = model._last_result
-    assert result.dispersion_sha256
-    assert energy == result.free_energy
-    # The two evaluations differ by one ULP (1.4e-17 Ha/bohr in one element)
-    # when other tests ran first in the same process, so the gradient's
-    # assembly order is not bitwise pinned; this is a tolerance check.
-    np.testing.assert_allclose(
-        gradient, semi.compute_gfn2_gradient(mol, result, model.params),
-        rtol=0, atol=1e-14,
-    )
-    h = 2e-4
-    numeric = np.array([
-        (Model(_displaced_molecule(mol, a, k, h), warn=False).energy()
-         - Model(_displaced_molecule(mol, a, k, -h), warn=False).energy())/(2*h)
-        for a in range(len(mol.atoms)) for k in range(3)
-    ]).reshape(-1, 3)
-    np.testing.assert_allclose(gradient, numeric, atol=2e-6, rtol=0)
-    legacy = GFN2Model(mol, aes_faithful=False, warn=False)
-    legacy.energy()
-    assert legacy._last_result.dispersion_sha256 == ""
-    assert legacy._last_parameter_snapshot["d4_model"] == "legacy_eeq"
-
-
-def test_published_cache_offline_integrity_and_failed_refresh(tmp_path, monkeypatch):
-    import hashlib
-    import urllib.request
-    from vibeqc.semiempirical.methods import gfn2_d4_params as data
-    monkeypatch.setenv("VIBEQC_GFN2_D4_CACHE_DIR", str(tmp_path))
-    monkeypatch.delenv("VIBEQC_GFN2_OFFLINE", raising=False)
-    raw = b"synthetic pinned source"
-    monkeypatch.setattr(data, "SOURCES", {"include/example": hashlib.sha256(raw).hexdigest()})
-    with pytest.raises(RuntimeError, match="missing or invalid"):
-        data._source_bytes(False)
-    cache = tmp_path / "example"
-    cache.write_bytes(b"obsolete")
-    def unavailable(*args, **kwargs):
-        raise OSError("offline")
-    monkeypatch.setattr(urllib.request, "urlopen", unavailable)
-    with pytest.raises(RuntimeError, match="refresh failed"):
-        data._source_bytes(True)
-    assert cache.read_bytes() == b"obsolete"
-    cache.write_bytes(raw)
-    assert data._source_bytes(False) == {"include/example": raw}
-    cache.write_bytes(b"tampered")
-    monkeypatch.setenv("VIBEQC_GFN2_OFFLINE", "1")
-    with pytest.raises(RuntimeError, match="missing or invalid"):
-        data._source_bytes(True)
-
-
-def test_published_cache_conversion_is_detached_from_callers():
-    from vibeqc.semiempirical.methods.gfn2_d4_params import load_gfn2_d4_reference_data
-    first = load_gfn2_d4_reference_data(allow_fetch=False)
-    original = first.elements[6].qs[0]
-    first.elements[6].qs[0] += 1.
-    first.elements[6].c6_self[:] = 0.
-    second = load_gfn2_d4_reference_data(allow_fetch=False)
-    assert second.elements[6].qs[0] == original
-    assert np.any(second.elements[6].c6_self > 0.)

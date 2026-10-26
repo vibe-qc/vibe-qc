@@ -26,24 +26,16 @@ canonical CCSD kernel (`CCSDOptions.cc_variant`), CC3 and CCSDT run in an
 exact determinant-space representation, and all of them are production
 within the envelopes stated in the [CCSD user guide](../user_guide/ccsd.md)
 (see [Methods: theory and status](../methods.md#how-to-read-the-status-labels)).
-This page starts with a three-method pilot on water in 6-31G, provides a
-twelve-method extension, and offers CC3/CCSDT in a smaller STO-3G space.
-A frozen-core CISD comparison illustrates size extensivity. Timings below
-are historical measurements, not resource guarantees.
+This page runs twelve of them on water in 6-31G, adds CC3 and CCSDT in a
+minimal basis where their combinatorial cost stays under a minute, and
+uses a frozen-core CISD to show what size extensivity buys.
 
 ## Setup
 
-Run this page's blocks in order with the installed engine's Python, outside
-the source checkout. Later sections reuse `h2o`, `vq` and `time`. Start with
-the three-method pilot below; the complete ladder and determinant-space
-variations are optional. Keep each method's output family for its own
-convergence, resolved core count and runtime record.
-
 The 6-31G basis has no registered RI auxiliary basis, so the run passes
 `density_fit=False` and every method works on the same exact four-index
-integrals. The separate STO-3G variation also uses conventional integrals,
-but changes the orbital basis: compare its CC3/CCSDT values with its own
-STO-3G CCSD(T) row, not with the 6-31G table. `run_job` freezes the oxygen
+integrals; that also makes the CCSD(T) number directly comparable with
+the determinant-space CC3 and CCSDT below. `run_job` freezes the oxygen
 1s core by default for all of these methods.
 
 ```python
@@ -57,20 +49,15 @@ h2o = vq.Molecule([
     vq.Atom(1, [0.0, -0.7572 * ANG, 0.5865 * ANG]),
 ], 0, 1)
 
-full_ladder = ["mp2", "cc2", "cepa(1)", "ccd", "lccd", "ccsd", "qcisd", "cepa(0)",
+ladder = ["mp2", "cc2", "cepa(1)", "ccd", "lccd", "ccsd", "qcisd", "cepa(0)",
           "ccsd(t)", "qcisd(t)", "bccd", "bccd(t)"]
-ladder = ["mp2", "ccsd", "ccsd(t)"]  # use full_ladder after the pilot succeeds
 rows = []
 for method in ladder:
     t0 = time.perf_counter()
     res = vq.run_job(h2o, basis="6-31g", method=method, density_fit=False,
-                     output="h2o_" + method.replace("(", "_").replace(")", ""), verbose=0)
+                     output="h2o_" + method.replace("(", "").replace(")", ""), verbose=0)
     wall = time.perf_counter() - t0
-    if not res.converged:
-        raise RuntimeError(f"SCF reference did not converge for {method}")
     post = res.mp2 if method == "mp2" else res.ccsd      # MP2Result or CCSDResult
-    if method != "mp2" and not post.converged:
-        raise RuntimeError(f"Correlated solver did not converge for {method}")
     rows.append((method, post.e_hf, post.e_total - post.e_hf, post.e_total, wall))
 
 print(f"{'method':9s} {'E_ref / Ha':>12s} {'E_corr / Ha':>12s} {'E_total / Ha':>14s} {'wall / s':>9s}")
@@ -78,7 +65,6 @@ for method, e_ref, e_corr, e_tot, wall in rows:
     print(f"{method:9s} {e_ref:12.6f} {e_corr:12.6f} {e_tot:14.6f} {wall:9.1f}")
 ```
 
-The following table records the full ladder, not just the three pilot rows.
 On a vibe-qc 0.17.10 development build (Apple M5 Max) each method takes
 two to five seconds, RHF included:
 
@@ -103,9 +89,9 @@ factor of two between runs; the energies do not.
 
 ## What just happened
 
-The methods start from the same RHF calculation and 12 active orbitals
-(13 minus the frozen core). The BCCD rows subsequently rotate the orbitals,
-so their reported reference energy differs, as discussed below. The post-SCF result
+Every row is the same RHF reference ($E_\text{ref} = -75.983974$ Ha)
+followed by a different treatment of the correlation problem in the
+same 12 active orbitals (13 minus the frozen core). The post-SCF result
 is attached as `res.mp2` (an `MP2Result`: `e_hf`, `e_correlation`,
 `e_total`) or `res.ccsd` (a `CCSDResult`: `e_hf`, `e_ccsd_correlation`,
 `e_t`, `e_total`, `n_iter`, `cc_trace`), and `res.energy_total` is the
@@ -171,16 +157,11 @@ for minutes; in STO-3G, with two virtual orbitals, the whole hierarchy
 takes seconds and shows the ordering exactly.
 
 ```python
-# doc-audit: skip - continues with h2o, vq and time from Setup
 for method in ("ccsd", "ccsd(t)", "cc3", "ccsdt"):
     t0 = time.perf_counter()
     res = vq.run_job(h2o, basis="sto-3g", method=method, density_fit=False,
-                     output="h2o_sto3g_" + method.replace("(", "_").replace(")", ""), verbose=0)
-    if not res.converged:
-        raise RuntimeError(f"Calculation did not converge for {method}")
+                     output="h2o_sto3g_" + method.replace("(", "").replace(")", ""), verbose=0)
     if hasattr(res, "ccsd"):
-        if not res.ccsd.converged:
-            raise RuntimeError(f"Coupled-cluster amplitudes did not converge for {method}")
         e_corr, e_tot, extra = res.ccsd.e_total - res.ccsd.e_hf, res.ccsd.e_total, ""
     else:                                        # CC3Result / CCSDTResult
         e_corr, e_tot = res.e_correlation, res.energy
@@ -216,12 +197,9 @@ in the same frozen-core space (`active_space=(12, 8)`: 12 orbitals, 8
 electrons, which freezes the lowest orbital):
 
 ```python
-# doc-audit: skip - continues with h2o, vq and time from Setup
 cisd = vq.run_job(h2o, basis="6-31g", method="cisd", active_space=(12, 8),
                   output="h2o_cisd", verbose=0)
 rhf = vq.run_job(h2o, basis="6-31g", method="rhf", output="h2o_rhf", verbose=0)
-if not cisd.converged or not rhf.converged:
-    raise RuntimeError("CISD or its RHF comparison did not converge")
 print(f"{cisd.method}: E_corr = {cisd.energy - rhf.energy:.6f} Ha")
 ```
 

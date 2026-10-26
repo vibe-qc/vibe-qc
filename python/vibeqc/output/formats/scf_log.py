@@ -699,7 +699,6 @@ def _format_bipole_domain(result) -> str:
         lines.append("  Historical index-ball support is not atom-image invariant.")
     for label, snapshot in (("One-electron", domain.lattice_1e),
                             ("Two-electron", domain.lattice_2e),
-                            ("XC images", getattr(domain, "xc_lattice", None)),
                             ("Nuclear erfc", domain.nuclear_erfc),
                             ("XC grid", domain.xc_grid), ("V_ne grid", domain.v_ne_grid)):
         if snapshot is not None:

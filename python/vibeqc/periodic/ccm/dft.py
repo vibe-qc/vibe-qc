@@ -354,10 +354,16 @@ def _external_uks_loop(
         _require_retained_occ,
     )
 
-    from .spin_state import supercell_spin_counts
-
-    # The torus spin sector resolved on the cluster (#519 RG-14).
-    n_alpha, n_beta, spin_state = supercell_spin_counts(ccm, who="run_ccm_uks")
+    n_elec = int(ccm.supercell.n_electrons())
+    multiplicity = int(ccm.supercell.multiplicity)
+    n_unpaired = multiplicity - 1
+    if (n_elec - n_unpaired) % 2 != 0 or n_unpaired > n_elec:
+        raise ValueError(
+            f"cluster electron count {n_elec} and multiplicity "
+            f"{multiplicity} are incompatible."
+        )
+    n_alpha = (n_elec + n_unpaired) // 2
+    n_beta = n_elec - n_alpha
     X = _orthonormaliser(S, lindep_tol)
     _require_retained_occ(
         X, max(n_alpha, n_beta), who="run_ccm_uks", lindep_tol=lindep_tol

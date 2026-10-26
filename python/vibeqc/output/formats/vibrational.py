@@ -118,7 +118,6 @@ def hessian_surface_lines(
     basis: Optional[str] = None,
     dispersion: Optional[str] = None,
     indent: str = "  ",
-    solvent: Optional[str] = None,
 ) -> str:
     """Return the surface provenance lines for the frequency block.
 
@@ -131,10 +130,6 @@ def hessian_surface_lines(
         resolved_method, functional=functional, basis=basis, dispersion=dispersion
     )
     reference = hessian_surface_label(resolved_method)
-    if solvent:
-        # The medium is part of the surface: a solvated job's frequencies that
-        # said nothing about it would read as gas-phase ones.
-        surface = f"{surface} in {solvent}"
     if str(resolved_method).lower() in {"om2", "om3"}:
         return (
             f"{indent}Surface: {surface}\n"
@@ -145,23 +140,8 @@ def hessian_surface_lines(
             f"{indent}Implemented OMx surface; external parity and electronic "
             "stability are not established by this Hessian.\n"
         )
-    solvent_note = ""
-    if solvent:
-        solvent_note = (
-            f"{indent}Medium: {solvent}. The Hessian finite-differences the "
-            f"in-solvent analytic\n"
-            f"{indent}gradient, with the apparent charges re-converged at every "
-            f"displacement: the\n"
-            f"{indent}equilibrium-solvation surface, with no dynamic solvent "
-            f"response. IR intensities are\n"
-            f"{indent}the solute's dipole derivatives at the in-solvent density, "
-            f"without a local-field\n"
-            f"{indent}correction. The thermochemistry block applies the ideal-gas "
-            f"RRHO formulas to these\n"
-            f"{indent}frequencies; it adds no standard-state or cavity terms.\n"
-        )
     if not _is_substituted(requested_method, resolved_method):
-        return f"{indent}Surface: {surface}\n" + solvent_note
+        return f"{indent}Surface: {surface}\n"
 
     requested = str(requested_method).upper()
     return (
@@ -173,7 +153,7 @@ def hessian_surface_lines(
         f"{indent}thermochemistry below describe the {reference} "
         f"reference surface;\n"
         f"{indent}no {requested} second derivatives were computed.\n"
-    ) + solvent_note
+    )
 
 
 def thermochemistry_energy_labels(
@@ -252,7 +232,6 @@ def hessian_surface_manifest_fields(
     basis: Optional[str] = None,
     dispersion: Optional[str] = None,
     available: bool = True,
-    solvent: Optional[str] = None,
 ) -> dict[str, object]:
     """Return the ``[hessian]`` manifest section as flat scalars.
 
@@ -272,8 +251,6 @@ def hessian_surface_manifest_fields(
         ),
         "available": bool(available),
     }
-    if solvent:
-        fields["solvent"] = str(solvent)
     if str(resolved_method).lower() in {"om2", "om3"}:
         fields.update(
             gradient_route="native central energy differences",

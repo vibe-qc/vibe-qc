@@ -43,7 +43,6 @@ from ..backends.crystal_atom import (
     GROUND_STATE_MULTIPLICITY,
     emit_input_atom,
     emit_input_atom_counterpoise,
-    primitive_cell_labels,
 )
 from ..engine import EnergyEngine, EngineEnergy
 from ..transports.base import Transport, TransportError
@@ -73,28 +72,11 @@ class Crystal23Engine(EnergyEngine):
         on standard input and writes its output on standard output -- the
         contract of the ``crystal`` / ``crystal23`` binaries CRYSTAL ships.
         The engine then stages a two-line runner into the job's directory,
-        so no host needs a wrapper installed. ``"mpi"``:
-        ``crystal_wrapper`` is the parallel binary (``Pcrystal``), which
-        reads its deck from a file named ``INPUT`` in the working directory
-        and writes its output on standard output; the staged runner copies
-        the deck to ``INPUT`` and starts ``cpus`` ranks with
-        :attr:`mpi_command`.
-    mpi_command
-        Launcher for ``invocation="mpi"``, formatted with ``cpus``. The
-        default is Open MPI's spelling. ``--bind-to none`` matters: Open MPI
-        otherwise pins ranks to the first cores, and two concurrent jobs on
-        one host would then share those cores while the rest sit idle.
+        so no host needs a wrapper installed.
     cpus, wall_time_s, timeout_s
         Passed through to ``transport.run``.
     workdir_prefix
         Prefix for the per-evaluation staging directory.
-    shrink
-        ``SHRINK`` of a crystal deck: an int, or an ``(IS, ISP)`` pair.
-    optgeom
-        Relax a crystal with ``OPTGEOM`` before reporting its energy, which
-        is then the final geometry's.
-    bsse_nstar, bsse_rmax
-        ``ATOMBSSE`` star count and radius (Angstrom) of a counterpoise atom.
     expected_version
         CRYSTAL major version this engine claims to be driving. Parsed
         outputs are checked against it and a mismatch is reported (see
@@ -112,14 +94,11 @@ class Crystal23Engine(EnergyEngine):
 
     transport: Transport
     crystal_wrapper: str = "crystal"
-    invocation: Literal["wrapper", "stdin", "mpi"] = "wrapper"
-    mpi_command: str = "mpirun --bind-to none -np {cpus}"
+    invocation: Literal["wrapper", "stdin"] = "wrapper"
     cpus: int = 4
     wall_time_s: int = 7200
     timeout_s: float = 86_400.0
     workdir_prefix: str = "calc"
-    shrink: int | tuple[int, int] = 8
-    optgeom: bool = False
     bsse_nstar: int = 30
     bsse_rmax: float = 10.0
     expected_version: int = DEFAULT_CRYSTAL_VERSION
@@ -136,10 +115,9 @@ class Crystal23Engine(EnergyEngine):
     _observed_version: Optional[int] = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        if self.invocation not in ("wrapper", "stdin", "mpi"):
+        if self.invocation not in ("wrapper", "stdin"):
             raise ValueError(
-                "invocation must be 'wrapper', 'stdin' or 'mpi', got "
-                f"{self.invocation!r}"
+                f"invocation must be 'wrapper' or 'stdin', got {self.invocation!r}"
             )
         self.name = f"crystal{self.expected_version}"
 
@@ -154,18 +132,11 @@ class Crystal23Engine(EnergyEngine):
         if self.invocation == "wrapper":
             return [self.crystal_wrapper, d12_name]
         runner = wd / _STDIN_RUNNER
-        binary, deck, out = (
-            shlex.quote(s) for s in (self.crystal_wrapper, d12_name, name + ".out")
+        runner.write_text(
+            "#!/bin/sh\n"
+            f"exec {shlex.quote(self.crystal_wrapper)} "
+            f"< {shlex.quote(d12_name)} > {shlex.quote(name + '.out')} 2>&1\n"
         )
-        if self.invocation == "mpi":
-            launcher = self.mpi_command.format(cpus=int(self.cpus))
-            runner.write_text(
-                "#!/bin/sh\n"
-                f"cp {deck} INPUT\n"
-                f"exec {launcher} {binary} > {out} 2>&1\n"
-            )
-        else:
-            runner.write_text(f"#!/bin/sh\nexec {binary} < {deck} > {out} 2>&1\n")
         return ["sh", _STDIN_RUNNER]
 
     def version(self) -> Optional[str]:
@@ -184,9 +155,7 @@ class Crystal23Engine(EnergyEngine):
         structure: Any,
         method: str = "rhf",
     ) -> EngineEnergy:
-        deck = emit_input_inline(
-            structure, basis_text, method=method, shrink=self.shrink, optgeom=self.optgeom
-        )
+        deck = emit_input_inline(structure, basis_text, method=method)
         if deck is None:
             # emit_input_inline returns None for an unsupported method or
             # a structure it cannot express -- a bad *request*, caught
@@ -198,8 +167,6 @@ class Crystal23Engine(EnergyEngine):
                 method=method,
                 structure=getattr(structure, "name", None),
             )
-        if self.optgeom:
-            return self._run_deck(deck, structure.name, method=method, optgeom=True)
         return self._run_deck(deck, structure.name, method=method)
 
     def atom_cache_settings(self, *, host: Any = None) -> dict[str, Any]:
@@ -214,11 +181,7 @@ class Crystal23Engine(EnergyEngine):
         method: str = "rhf",
         *,
         host: Any = None,
-        atom_label: Optional[int] = None,
     ) -> EngineEnergy:
-        # ``atom_label`` is CRYSTAL's ATOMBSSE IAT in ``host``'s primitive
-        # cell, for a host whose ``unit_cell`` is not an expanded cell.
-        #
         # CRYSTAL's bare atom reference is a non-periodic C1 molecule
         # (see backends.crystal_atom), aspherical and spin-polarised
         # for an open shell (SYMMREMO + UHF/SPIN + SPINLOCK). The
@@ -238,13 +201,12 @@ class Crystal23Engine(EnergyEngine):
             # Counterpoise: the atom in the ghost basis of its own
             # crystal, which is how the published pob values were
             # computed. Its energy is therefore host-specific.
-            index = atom_label if atom_label is not None else self._atom_index(host, Z)
+            index = self._atom_index(host, Z)
             deck = emit_input_atom_counterpoise(
                 host,
                 index,
                 basis_text,
                 method=method,
-                Z=Z,
                 nstar=self.bsse_nstar,
                 rmax=self.bsse_rmax,
             )
@@ -279,17 +241,12 @@ class Crystal23Engine(EnergyEngine):
     def _atom_index(host: Any, Z: int) -> int:
         """1-based label of the first atom of element *Z* in the cell.
 
-        CRYSTAL's ``IAT`` labels the primitive cell it generates, one
-        asymmetric-unit orbit after another (:func:`primitive_cell_labels`).
-        Without an expanded cell to count orbits in, the asymmetric-unit
-        index is used, which is the label only while every earlier site has
-        multiplicity 1; pass ``atom_label`` otherwise. A structure with
-        inequivalent sites of the same element needs the caller to choose.
+        CRYSTAL's ``IAT`` indexes the reference cell as written. Picking
+        the first match is right for the ordered binaries in the pob
+        test sets, where every atom of an element is symmetry
+        equivalent; a structure with inequivalent sites of the same
+        element would need the caller to choose.
         """
-        labels = primitive_cell_labels(host)
-        if labels is not None:
-            if Z in labels:
-                return labels.index(Z) + 1
         for i, atom in enumerate(host.crystal_asymm_unit, start=1):
             if atom.Z == Z:
                 return i
@@ -336,9 +293,8 @@ class Crystal23Engine(EnergyEngine):
                 self.name, "transport_error", error=str(exc), label=label, **detail
             )
 
-        out_path = job.output_dir / f"{name}.out"
         try:
-            parsed = parse_output_file(out_path)
+            parsed = parse_output_file(job.output_dir / f"{name}.out")
         except (FileNotFoundError, OSError) as exc:
             # The job "finished" but produced no readable output: a
             # fetch failure or a crash before CRYSTAL opened the file.
@@ -363,19 +319,6 @@ class Crystal23Engine(EnergyEngine):
                 parsed.failure_mode or "unknown",
                 engine_version=seen,
                 energy=parsed.energy,  # diagnostic only; energy_if_ok() hides it
-                **detail,
-            )
-
-        if detail.get("optgeom") and "OPT END - CONVERGED" not in out_path.read_text(
-            errors="replace"
-        ):
-            # The last SCF of a relaxation that did not converge is not the
-            # energy of any relaxed structure.
-            return EngineEnergy.failed(
-                self.name,
-                "optgeom_not_converged",
-                engine_version=seen,
-                energy=parsed.energy,
                 **detail,
             )
 

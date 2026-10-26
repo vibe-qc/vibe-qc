@@ -327,16 +327,12 @@ automatically. The gradient applies Z_eff nuclear pieces plus dV_ECP/dR via
 libecpint first derivatives, with analytic-vs-FD agreement pinned to
 <= 1e-5 Ha/bohr. Gas-phase molecular ECP geometry optimization and
 finite-difference Hessians preserve the same operator while centers follow
-their atoms. Analytic ECP Hessians and top-level ECP NEB currently fail closed rather
-than differentiating the wrong energy. In solvent (CPCM/COSMO) the ECP gradient,
-geometry optimization and finite-difference Hessian are supported: the reaction
-field never touches the ECP.
-Note that `run_job(hessian=True)` builds a dispersion-free Hessian even when
-`dispersion=` is set, and says nothing about it in the `.out`, so the
-frequencies and the thermochemistry rows do not include that term. With
-`solvent=` the Hessian is the in-solvent one, and the `.out` names the medium
-(see [`user_guide/solvation.md`](user_guide/solvation.md), "Frequencies and
-thermochemistry in solvent").
+their atoms. Analytic ECP Hessians, CPCM forces, and top-level
+ECP NEB currently fail closed rather than differentiating the wrong energy.
+Note that `run_job(hessian=True)` builds a gas-phase, dispersion-free Hessian
+even when `solvent=` or `dispersion=` is set, and says nothing about it in
+the `.out`, so the frequencies and the thermochemistry rows do not include
+those terms.
 See
 [`user_guide/ecp.md`](user_guide/ecp.md) § Gradients.
 
@@ -522,9 +518,6 @@ See [`user_guide/solvation.md`](user_guide/solvation.md).
 |------------|-----|---------|--------|-------|
 | CPCM / COSMO implicit solvation | `run_job(..., solvent=...)` via `vibeqc.solvation.run_cpcm_scf` | RHF / UHF / RKS / UKS; MSINDO through its own COSMO driver | production | macro-iteration on a union-of-spheres cavity; presets in `vibeqc.solvation.presets` (`SOLVENT_PRESETS`) or a custom `SolventModel`; `epsilon=inf` is the exact conductor limit (#548) |
 | Solvent analytic gradient / geometry optimisation in solvent | `vibeqc.solvation.cpcm_gradient` (finite-difference check: `vibeqc.solvation.cpcm_gradient_fd`) | RHF / UHF / RKS / UKS | production | the screening factor is carried from the run's own variant (#546, #548, #549) |
-| Solvated SCF and gradient memory | `SolventModel(operator_cache_mb=...)` | RHF / UHF / RKS / UKS, CPCM and COSMO | production | peak memory is the dense cavity matrix (8 N^2 bytes) plus a bounded operator cache: a 74-atom alkane (15 500 segments) went from 9.9 GB to 2.2 GB in the SCF; above the cache budget the per-segment Coulomb operators are streamed (same energy and gradient to 2e-13) |
-| Gaussian segment-charge kernel on the Lebedev cavity | `SolventModel(charge_representation="gaussian")` | RHF / UHF / RKS / UKS, CPCM and COSMO | opt-in (default stays the point-charge kernel, #681) | York-Karplus Gaussian charges give a positive-definite cavity matrix, where the point-charge matrix is indefinite and its energy and gradient spike near an eigenvalue crossing; analytic gradient within 1.6e-8 Ha/bohr of finite differences on 60 distorted methanols (point kernel: error above 1e-5 at 20%); at the default switching width it is 2-4% from the sharp-cavity limit where the point kernel is 17-27% away; moves every solvated energy, so making it the default is a maintainer decision |
-| Frequencies and thermochemistry in solvent | `run_job(hessian=True, solvent=...)`, `vibeqc.hessian.compute_hessian_fd(..., solvent=...)` | RHF / UHF / RKS / UKS, CPCM and COSMO | production | the in-solvent analytic gradient finite-differenced with the apparent charges re-converged at every displacement (the equilibrium-solvation surface); validated against the curvature of the reported in-solvent energy, ECP solutes included; refuses ROHF and Direct COSMO-RS; warns on the fine cavity in the molecule-fixed frame at a symmetric geometry |
 | COSMO-RS / COSMOSPACE thermodynamics | `run_job(..., cosmors=CosmoRSOptions(solvent="water"))` or `CosmoRSOptions(sigma_potential=...)`; `vibeqc.solvation.cosmors` on a `vibeqc.solvation.surface.ConductorSurface` | rhf / uhf / rks / uks solutes as ideal conductors on the COSMO FINE cavity | **experimental** (v0.15.158; job route v0.17.14) | sigma profiles and potentials, chemical potentials, activity and partition coefficients, solvation free energies (Klamt 1995; Klamt, Jonas, Bürger, Lohrenz 1998; `klamt1998` set); solvents by name from a library of gas-phase BPW91/def2-SVP geometries, computed at the solute's protocol and cached per user; ring atoms perceived on request (`n_ring_atoms="auto"`); the shipped cavity differs from the one the 1998 constants were fitted on, validated on pure-liquid vapour pressures only, FreeSolv validation pending |
 | Direct COSMO-RS | `SolventModel(variant="dcosmo-rs", sigma_potential=...)` | RHF / UHF / RKS / UKS | **experimental** | the solvent's sigma potential fed back into the SCF (Sinnecker et al. 2006) on the COSMO FINE cavity at `epsilon=inf`; analytic nuclear gradient and geometry optimization with a smoothed hydrogen-bond term (`Parameterization.hb_smoothing > 0`), refused with the published corner |
 | Solvent with correlated, CAS, semiempirical (except MSINDO) or MLIP methods | `solvent=` | mp2 / cc / dlpno / cas / gfn2_xtb / pm6 / mace, … | **gated** (refuses with `ValueError`) | no validated post-SCF-in-solvent composition yet; ROHF / ROKS raise `NotImplementedError` |

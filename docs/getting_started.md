@@ -62,11 +62,9 @@ The example above selects development `main`. The flag-free installer targets
 has its own releases; a core tag does not update the viewer or queue. Check the selected host for the
 release ref you want; public snapshots can lag GitLab.
 
-The first native build can take hours: the default Libint kernel build alone
-is estimated at 1.5 to 2 hours in the installer help. Later runs reuse current
-dependency trees. See [installation requirements](installation.md#requirements)
-and the build options before starting on a small machine. Choose a different
-source line explicitly when needed:
+The first native build normally takes 15 to 40 minutes. Later runs reuse the
+finished dependency trees. Choose a different source line explicitly when
+needed:
 
 ```sh
 ./scripts/install.sh --current       # retain this checkout revision
@@ -107,10 +105,9 @@ required.
 ### Release downloads
 
 Get viewer artifacts from the [vibe-view releases](https://github.com/vibe-qc/vibe-view/releases).
-Choose an artifact published by that companion for your platform and Python
-version, following its installation guide. This core documentation does not
-host current viewer wheels. If the selected release has no suitable artifact,
-use the source route below.
+The wheel retained under this documentation site's downloads is a legacy
+monorepo artifact, not a verified current companion release. Use the source
+route below until the companion release provides a suitable artifact.
 
 ### From a source checkout
 

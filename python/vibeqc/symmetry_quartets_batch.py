@@ -43,8 +43,11 @@ def quartet_batch_requirements(plan, density_count, *, budget: Budget, executor=
     from .symmetry_quartets_screening import _screening_overhead
     screen_bytes, screen_work = _screening_overhead(plan, screening)
     if executor == 'native':
-        from .symmetry_quartets_native import _requirements
-        return _requirements(plan, budget, count, targets, (screen_bytes, screen_work))[0]
+        from .symmetry_quartets_native import native_quartet_requirements
+        native = native_quartet_requirements(plan, budget=budget, density_count=count, targets=targets)
+        size, work = native.maximum_bytes+screen_bytes, native.maximum_work+screen_work
+        budget.admit(size, work)
+        return Budget(size, work)
     if executor != 'numpy':
         raise ValueError('unknown quartet executor')
     n = int(plan.offsets[-1])
@@ -80,14 +83,9 @@ def quartet_jk_batch(plan, densities, *, budget: Budget, executor='numpy', targe
             raise ValueError('nonrepresentable quartet contraction error bound')
         bounds[channel] = bound
     native = executor == 'native'
-    source_memory = None
     if native:
-        from .symmetry_quartets_native import core, _requirements, _source_requirements
-        from .symmetry_quartets_screening import _screening_overhead
-        overhead = _screening_overhead(plan, screening)
-        _, memory, maximum = _requirements(plan, budget, count, targets, overhead)
-        source_memory = _source_requirements(plan, budget,
-            plan.required_bytes+memory.bytes+overhead[0], plan.required_work+memory.work+overhead[1])
+        from .symmetry_quartets_native import core, _requirements
+        _, memory, maximum = _requirements(plan, budget, count, targets)
         packed = np.stack([np.concatenate([m.ravel() for m in row]) for row in plan.inverse_blocks])
         flags = None if targets is None else np.array([{'j':1, 'k':2, 'jk':3}[t] for t in targets], np.uint8)
         accumulator = core._SymmetryQuartetAccumulator(plan.offsets, packed, densities,
@@ -104,12 +102,6 @@ def quartet_jk_batch(plan, densities, *, budget: Budget, executor='numpy', targe
     # the accumulator. Older runtimes retain the checked Python-image path.
     expand_native = (getattr(accumulator, 'accumulate_orbit', None)
         if native and streaming else None)
-    source_accumulator = None
-    if source_memory is not None:
-        expected = plan.representative_digest if screening is None else screening.retained_digest
-        retained = len(plan.orbits)-(0 if screening is None else screening.omitted_representatives)
-        source_accumulator = core._SymmetryQuartetSourceAccumulator(accumulator, plan.source._provider,
-            plan.source_identity, expected, retained, Budget(source_memory.bytes, source_memory.work).native())
     # Streaming selection precedes expansion: discarded orbits need no
     # image objects. The requirements call already validates the exact mask.
     if expand_native is not None:
@@ -120,22 +112,8 @@ def quartet_jk_batch(plan, densities, *, budget: Budget, executor='numpy', targe
     else:
         orbits = (orbit for index, orbit in enumerate(plan.orbits)
             if screening is None or screening.keep[index])
-    consume_key = None
-    if source_accumulator is not None:
-        support = plan.source.support_certificate
-        bind = getattr(source_accumulator, 'bind_support', None)
-        if support is not None and bind is not None:
-            bind(support, plan.orbits.destinations, plan.group.identity, mode_code)
-            consume_key = source_accumulator.consume_key
     for orbit in orbits:
         representative = orbit if expand_native is not None else orbit.representative
-        if source_accumulator is not None:
-            if consume_key is not None:
-                consume_key(np.array(representative, np.int64))
-            else:
-                source_accumulator.consume_orbit(np.array(representative, np.int64),
-                    np.ascontiguousarray(plan.orbits.destinations[:, representative]), plan.group.identity, mode_code)
-            continue
         original = _read(plan.source, representative, plan.offsets, plan.source_identity, counters)
         if streaming:
             _digest_tile(digest, representative, original)
@@ -175,15 +153,12 @@ def quartet_jk_batch(plan, densities, *, budget: Budget, executor='numpy', targe
     expected_digest = plan.representative_digest if streaming else None
     if streaming and screening is not None:
         expected_digest = screening.retained_digest
-    if streaming and source_accumulator is None and digest.hexdigest() != expected_digest:
+    if streaming and digest.hexdigest() != expected_digest:
         raise ValueError('quartet representative changed; requalify the finite source')
     if plan.source.source_identity != plan.source_identity:
         raise ValueError('quartet source identity changed during build')
     if native:
-        if source_accumulator is None:
-            j, k, counts = accumulator.finish()
-        else:
-            j, k, counts, counters = source_accumulator.finish()
+        j, k, counts = accumulator.finish()
         j, k = j.reshape(nj, n, n), k.reshape(nk, n, n)
         representatives, terms, blocks, transport = (counts[key] for key in
             ('representatives', 'scalar_products', 'block_contractions', 'transport_scalar_products'))

@@ -29,10 +29,8 @@ manual build steps, BLAS selection, clusters, updates, and failure recovery.
 
 ```{note}
 **vibe-qc is not on PyPI yet.** There is no `pip install vibe-qc`. The
-supported source-install path is: clone the repo, install your platform's
-build prerequisites, then run the managed installer. Use `--dev` for `main`,
-omit it for the selected origin's release branch or newest stable tag, or use
-`--branch <tag>` for a specific release. It builds or verifies the
+supported install path is: clone the repo, install your platform's build
+prerequisites, then run `./scripts/install.sh --dev`. It builds or verifies the
 vendored libraries, creates the managed virtualenv, installs the package, and
 checks the live extension. The advanced manual recipe remains below for custom
 provisioning.
@@ -130,12 +128,9 @@ It performs these steps in order:
 6. builds the editable Python/C++ package;
 7. imports vibe-qc and prints the linked-library banner.
 
-Allow several gigabytes of build space and enough time for the selected
-Libint kernels. The default `5_4_4` Libint build alone is estimated at 1.5 to
-2 hours in the installer help; hardware, parallelism and cached dependencies
-change the total substantially. Re-running the installer reuses current
-native dependencies. See [Libint angular-momentum limits](#libint-max-am)
-before choosing a smaller kernel build for speed.
+The first clean build normally takes 15 to 40 minutes and uses several
+gigabytes of build space. Re-running the installer is much faster when the
+native dependency stamps are current.
 
 After it finishes, verify the exact interpreter and package path:
 
@@ -266,16 +261,7 @@ Python runtime dependencies such as NumPy, SciPy, spglib, seekpath,
 jsonschema, joblib, and ASE come from `pyproject.toml` through pip.
 `scikit-build-core` and pybind11 are isolated build requirements. pytest,
 PySCF, and the other validation tools belong to the optional `test` and `dev`
-extras; a calculation-only installation does not need them. The managed
-installer defaults to the `test` extra, so explicitly select `--extras none`
-when you want only runtime dependencies:
-
-```sh
-./scripts/install.sh --dev --extras none --dry-run
-```
-
-Review the target ref, environment and dependency plan, then remove `--dry-run`
-to install. Add optional extras only for the workflow you intend to use.
+extras; a calculation-only installation does not need them.
 
 ## One-shot bootstrap
 
@@ -354,7 +340,7 @@ machine, or to integrate with your own provisioning):
 ```sh
 git clone https://github.com/vibe-qc/vibe-qc.git
 cd vibe-qc
-./scripts/setup_native_deps.sh       # preflight and cached native dependency builds
+./scripts/setup_native_deps.sh       # preflight → 15-40 min build, idempotent
 python3 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip
 .venv/bin/python -m pip install ./vibeqc-naming
@@ -971,8 +957,6 @@ PEP 668 blocks this; always use a virtualenv:
 ```sh
 python3 -m venv .venv && .venv/bin/pip install -e '.[test]'
 ```
-
-(libint-max-am)=
 
 **libint build is slow**
 The libint code generator produces a large amount of source for

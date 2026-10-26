@@ -91,13 +91,11 @@ void bind_manta_periodic_fitting(py::module_& m) {
     m.def("plan_periodic_gdf_weight",&plan_periodic_gdf_weight,py::arg("budget")=ResourceBudget{});
     m.def("certify_periodic_gdf_weight",&certify_periodic_gdf_weight,py::arg("momentum"),py::arg("omega"),
         py::arg("reciprocal_prefactor"),py::arg("physical_kernel"),py::arg("zero"),py::arg("evaluated_weight"),py::arg("budget")=ResourceBudget{});
-    m.def("certify_periodic_gdf_lattice_weight",&certify_periodic_gdf_lattice_weight,py::arg("lattice"),py::arg("momentum"),
-        py::arg("omega"),py::arg("physical_kernel"),py::arg("zero"),py::arg("evaluated_weight"),py::arg("budget")=ResourceBudget{});
     auto gr=py::class_<PeriodicGDFReceipt>(m,"PeriodicGDFReceipt");
 #define R(name) gr.def_readonly(#name,&PeriodicGDFReceipt::name)
     R(provider);R(provider_version);R(normalization);R(algorithm);R(kernel);R(convention);
     R(metric_source_identity);R(three_center_source_identity);R(source_identity);R(short_range);
-    R(metric_representation_included);R(metric_integrals_included);R(metric_fourier_included);R(metric_prefactor_included);R(metric_weight_included);R(maximum_metric_weight_error);R(metric_phase_included);R(maximum_metric_phase_error);R(metric_assembly_evaluated);R(maximum_metric_assembly_error);R(metric_assembly_certificate_identity);
+    R(metric_weight_included);R(maximum_metric_weight_error);R(metric_phase_included);R(maximum_metric_phase_error);R(metric_assembly_evaluated);R(maximum_metric_assembly_error);R(metric_assembly_certificate_identity);
     R(reference_three_center_source_identity);R(coupling_error_bound);R(evaluated_coupling_error_bound);R(coupling_error_evaluated);
     R(zero_transfer);R(physical_zero_included);R(real_short_range);R(physical_omega);R(finite_zero_removed);R(reciprocal_vectors);R(auxiliary_fourier_shell_calls);R(pair_fourier_shell_calls);
     R(shell_calls);R(primitive_products);R(vector_primitive_products);R(phase_products);R(phase_accumulations);

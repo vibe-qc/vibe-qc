@@ -26,14 +26,7 @@ def fetch_params(force: bool = False, *, check: bool = False) -> dict:
         raise GFN2ParameterUnavailableError("Deployment requires all 86 elements and cache lineage")
     if lineage["cache_source_sha256"] == "unavailable":
         raise GFN2ParameterUnavailableError("Deployment requires the published source SHA256")
-    from vibeqc.semiempirical.methods.gfn2_d4_params import (
-        load_gfn2_d4_reference_data, REVISION, SOURCES,
-    )
-    from vibeqc.semiempirical.methods.gfn2 import _gfn2_d4_reference_content_sha256
-    d4 = load_gfn2_d4_reference_data(allow_fetch=not check)
-    return {**lineage, "elements": 86, "license": "LGPL-3.0-or-later",
-            "d4_revision": REVISION, "d4_sources": SOURCES,
-            "d4_content_sha256": _gfn2_d4_reference_content_sha256(d4)}
+    return {**lineage, "elements": 86, "license": "LGPL-3.0-or-later"}
 
 
 def main() -> int:

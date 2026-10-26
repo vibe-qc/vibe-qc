@@ -80,25 +80,6 @@ def function(name, file="bipole_gradient.py", **namespace):
 
 
 class DomainContractTests(unittest.TestCase):
-    def test_expanded_xc_snapshot_and_derivative_refusal(self):
-        xc = lattice()
-        xc.cutoff_bohr = xc.becke_image_radius_bohr = 30.
-        record = capture(xc_lattice=xc)
-        digest = record.settings_sha256
-        xc.cutoff_bohr = 40.
-        self.assertEqual(record.xc_lattice.restore(lattice).cutoff_bohr, 30.)
-        self.assertEqual(record.lattice_2e.restore(lattice).cutoff_bohr, 15.)
-        self.assertEqual(record.settings_sha256, digest)
-        self.assertIn("xc_lattice", record.as_dict())
-        self.assertNotIn("xc_lattice", capture().as_dict())
-        render = function("_format_bipole_domain", file="output/formats/scf_log.py")
-        self.assertIn("XC images:\n    cutoff_bohr: 30.0", render(SimpleNamespace(resolved_domain=record)))
-        refuse = function("_reject_expanded_xc_analytic_gradient")
-        with self.assertRaisesRegex(NotImplementedError, "independently expanded XC"):
-            refuse(SimpleNamespace(resolved_domain=record))
-        refuse(SimpleNamespace(resolved_domain=capture()))
-        refuse(SimpleNamespace())
-
     def test_named_policy_overrides_native_flag_without_mutating_it(self):
         clone = function("copy_bipole_lattice_options", file="pbc_bipole_common.py",
             OptionSnapshot=domain.OptionSnapshot, LATTICE_FIELDS=domain.LATTICE_FIELDS,
@@ -447,21 +428,14 @@ class DomainContractTests(unittest.TestCase):
             for spin in ("rks", "uks"):
                 entry = function(
                     "compute_bipole_gradient_" + spin,
-                    __package__="_domain_test_package",
-                    _reject_expanded_xc_analytic_gradient=function("_reject_expanded_xc_analytic_gradient"),
-                    _reject_range_separated_analytic_gradient=lambda *args: None,
                     _gradient_domain_grid=lambda *args: (None, True, 18.0),
                     _reject_m5_domain_analytic_gradient=lambda *args: None,
                     _warn_research_preview=lambda *args: None,
                     _gradient_domain_options=restore,
                 )
                 with self.subTest(selected=selected, spin=spin):
-                    ecp = ModuleType("_domain_test_package.bipole_ecp")
-                    ecp.reject_bipole_ecp_derivative = function(
-                        "reject_bipole_ecp_derivative", file="bipole_ecp.py")
-                    with patch.dict(sys.modules, {ecp.__name__: ecp}):
-                        with self.assertRaisesRegex(NotImplementedError, "non-AUTO XC density domain"):
-                            entry(object(), object(), result)
+                    with self.assertRaisesRegex(NotImplementedError, "non-AUTO XC density domain"):
+                        entry(object(), object(), result)
 
     def test_nonauto_density_domain_cannot_restore_as_auto(self):
         restore = function("_gradient_domain_options", LatticeSumOptions=lattice)
@@ -514,7 +488,7 @@ class DomainContractTests(unittest.TestCase):
         self.assertEqual(result[1:], (.4, 125.0, 3.404))
         alpha.assert_called_once_with(125.0, .4, two, 1e-12,
                                       erfc_exchange_arm_active=False, plog=log)
-        native.bipole_ewald_reciprocal_cutoff.assert_called_once_with(125.0, .4, tolerance=1e-12)
+        native.bipole_ewald_reciprocal_cutoff.assert_called_once_with(125.0, .4)
         options.assert_called_once_with(one, alpha_bohr_inv=.4,
             tolerance=1e-12, recip_cutoff_bohr_inv=3.404)
         self.assertEqual(one.nuclear_cutoff_bohr, 19.0)
@@ -608,22 +582,15 @@ class XCDensityReachContractTests(unittest.TestCase):
         source = lattice()
         source.cutoff_bohr = cutoff
         source.becke_image_radius_bohr = reach
-        xc_module = ModuleType("_domain_test_package.periodic_xc_domain")
-        # This source-only contract isolates radius/partition routing. The
-        # native basis-growth policy has separate numerical coverage.
-        xc_module.bipole_xc_lattice_opts = lambda system, basis, opts, **kw: opts
-        ns = dict(__package__="_domain_test_package", system=object(), basis=object(),
-                  plog=None, lat_opts_2e=source, _chi_xc=None,
-                  opts=SimpleNamespace(lattice_opts=SimpleNamespace(becke_image_radius_bohr=reach),
-                                       use_periodic_becke=True,
+        ns = dict(lat_opts_2e=source, _chi_xc=None,
+                  opts=SimpleNamespace(use_periodic_becke=True,
                                        becke_image_radius_bohr=partition),
                   xc_density_domain=selection,
                   PeriodicXCDensityDomain=PeriodicXCDensityDomain,
                   resolve_bipole_xc_density_reach=getattr(
                       domain, "resolve_bipole_xc_density_reach", None))
         module = ast.Module(body=driver.body[start:stop], type_ignores=[])
-        with patch.dict(sys.modules, {xc_module.__name__: xc_module}):
-            exec(compile(module, "driver-xc-resolution", "exec"), ns)
+        exec(compile(module, "driver-xc-resolution", "exec"), ns)
         return ns
 
     def test_driver_density_radius_is_independent_of_partition(self):
@@ -865,7 +832,7 @@ class XCDensityReachContractTests(unittest.TestCase):
             self.assertEqual(len(calls), 1)
             got = Mock(return_value=())
             ns = dict(periodic_xc_difference_closed_cells=got, system="cell",
-                      _xc_lattice_opts=SimpleNamespace(cutoff_bohr=24.0),
+                      lat_opts_2e=SimpleNamespace(cutoff_bohr=24.0),
                       _xc_image_radius=24.0)
             eval(compile(ast.Expression(calls[0]), "xc-differences", "eval"), ns)
             got.assert_called_once_with("cell", 24.0, 24.0)
@@ -893,7 +860,7 @@ class XCDensityReachContractTests(unittest.TestCase):
                 ns = dict(_fb=SimpleNamespace(n_electrons_grid=final,
                           periodic_density_bras=periodic), n_elec=2,
                           opts=SimpleNamespace(becke_image_radius_bohr=7.0),
-                          _xc_lattice_opts=SimpleNamespace(cutoff_bohr=24., becke_image_radius_bohr=12.),
+                          lat_opts_2e=SimpleNamespace(cutoff_bohr=24., becke_image_radius_bohr=12.),
                           check_xc_grid_electron_count=diagnostic.check_xc_grid_electron_count,
                           trial_count=99.0, patom_count=-1.0)
                 with warnings.catch_warnings(record=True) as caught:

@@ -1,1 +1,0 @@
-- Clarify contributor checks and scientific acceptance, replace manual update recipes with lifecycle commands, explain safe updates around running calculations, and add a reproducible bug-report checklist.

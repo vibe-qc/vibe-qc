@@ -289,11 +289,6 @@ Each is covered separately.
 
 ### PM6 / PM7 / OMx, NDDO semiempirical parameters
 
-Parameter-opt PM6 fit artifacts retain the MOPAC Apache-2.0 attribution, source
-link and parameter-source DOI alongside the baseline digest. Fitting does not
-remove the source parameter attribution. External reference datasets are supplied
-by the user and are not bundled by parameter-opt.
-
 vibe-qc includes an in-house implementation of the PM6, PM7 and
 OM1/OM2/OM3 NDDO-family executable paths. These methods are **not yet
 production-parity validated** against MOPAC or the original OMx
@@ -989,16 +984,6 @@ are recorded beside the frozen dataset in
 `d4_reference_copper_protocol.json`. Reference geometries are scientific
 facts, with their sources recorded in the catalogue and protocols.
 
-The molecular GFN2 default separately caches the published xTB 6.7.1 D4
-reference dataset from revision `26b28010e805f7d1aeeef39813feb473e69cc4be`.
-`gfn2_d4_params.py` pins source checksums, retains `COPYING` and
-`COPYING.LESSER`, and converts the numeric records using the published
-partner-subtraction and Casimir-Polder equations. These external files retain
-LGPL-3.0-or-later terms and upstream attribution. They are not bundled into
-the MPL source or wheel, and no upstream implementation is executed by the
-native calculation. The bundled independently generated table remains
-available for explicit legacy controls.
-
 ### 3d. gCP parameter tables, Kruse-Grimme 2012
 
 The geometric counterpoise correction (gCP) is a semiempirical
@@ -1184,14 +1169,6 @@ incompatibility we missed, please email
 seriously, vibe-qc is an open-source project run by one
 person, and getting any of this wrong has real consequences for
 the project's ability to be used.
-
-## Optional mpmath
-
-The optional `chi-precision` extra uses mpmath, copyright Fredrik Johansson and
-contributors, under the BSD 3-Clause license. It is a lazily imported numerical
-library; its source is not vendored here. Redistributors must preserve its
-copyright, license conditions and disclaimer. This is compatible with MPL-2.0
-and does not introduce a dependency on another quantum-chemistry program.
 
 ## Optional OpenTrustRegion
 

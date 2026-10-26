@@ -1,7 +1,6 @@
 // Private, bounded diagnostics for recovery-state causality; not a method API.
 #pragma once
 #include "vibeqc/uks.hpp"
-#include "vibeqc/diis.hpp"
 #include <map>
 #include <string>
 #include <vector>
@@ -28,17 +27,6 @@ struct UKSRecoveryDiagnostic {
 };
 // Opt-in latest-iteration observer. Never changes solver options or arithmetic.
 // An exception still propagates; callers may inspect the record while unwinding.
-struct UKSDIISFrame {
-    UKSRecoveryFrame state;
-    DIISCapture diis;
-};
-struct UKSDIISCapture {
-    int first = 0, last = 0;
-    Eigen::MatrixXd overlap, orthogonalizer;
-    std::vector<UKSDIISFrame> frames;
-};
-UKSResult run_uks_with_diis_capture(const Molecule&, const BasisSet&,
-    const UKSOptions&, UKSDIISCapture&);
 struct UKSOperatorCapture {
     int iteration = 0;
     bool failing_solve_captured = false;

@@ -6,9 +6,9 @@ and the [DLPNO local approximation](dlpno_local_correlation.md)) is
 measured against. vibe-qc ships it as a **production** route at
 benchmark scale (label defined in
 [Methods: theory and status](../methods.md#how-to-read-the-status-labels)):
-dense $O(N^6)$ CCSD kernels with closed-shell, open-shell, and spin-pure
-references reachable from one call. Feasibility depends on occupied and
-virtual dimensions and the available memory, not a universal atom-count limit. Density fitting is on by default;
+dense $O(N^6)$ kernels for molecules of up to a few dozen atoms in a
+triple-zeta basis, with closed-shell, open-shell, and spin-pure references
+all reachable from one call. Density fitting is on by default;
 `density_fit=False` switches to exact four-index integrals. Very large
 jobs are stopped by a dense memory gate instead of being attempted (see
 [What is and is not available](#what-is-and-is-not-available)). This page
@@ -20,19 +20,6 @@ ladder of coupled-pair and approximate-triples methods (CC2, CCD, CEPA,
 QCISD, CC3, CCSDT) is run on one molecule in
 [The coupled-cluster family](coupled_cluster_family.md).
 
-## Before running
-
-Use the installed engine's Python in a run directory outside the checkout.
-Coordinates in the examples are in bohr and energies are in hartree. Run the
-first block before the continuations; it defines `vq`, the water molecule,
-and a helper that checks both the SCF and coupled-cluster stages. The radical
-examples define a different molecule and use distinct output stems.
-
-Start with the cc-pVDZ water calculation. Atom count alone does not establish
-that a correlated calculation fits: inspect the occupied/virtual dimensions,
-frozen-core choice and memory estimate before increasing the basis. The
-historical numbers below are not new measurements from your installation.
-
 ## Closed-shell CCSD(T) in one call
 
 For a closed-shell molecule, `method="ccsd(t)"` runs RHF and then the
@@ -41,13 +28,6 @@ spin-adapted CCSD(T) kernel automatically:
 ```python
 import vibeqc as vq
 
-def require_cc_convergence(result):
-    if not result.converged:
-        raise RuntimeError("SCF reference did not converge")
-    if not result.ccsd.converged:
-        raise RuntimeError("Coupled-cluster amplitudes did not converge; inspect cc_trace")
-    return result.ccsd
-
 mol = vq.Molecule([
     vq.Atom(8, [0.000,  0.000,  0.000]),
     vq.Atom(1, [0.000,  1.499, -1.160]),
@@ -55,21 +35,16 @@ mol = vq.Molecule([
 ])
 
 result = vq.run_job(mol, basis="cc-pvdz", method="ccsd(t)", output="h2o_ccsd_t")
-cc = require_cc_convergence(result)
-water_ccsd_t = result
+cc = result.ccsd
 print(f"E(CCSD correlation) = {cc.e_ccsd_correlation:.6f} Ha")
 print(f"E((T) increment)    = {cc.e_t:.6f} Ha")
 print(f"E(CCSD(T) total)    = {result.energy_total:.6f} Ha")
 ```
 
 The post-SCF result is attached as `result.ccsd`, a `CCSDResult`
-carrying `converged`, `e_hf`, `e_ccsd_correlation`, `e_ccsd`, `e_t`, `e_ccsd_t`
+carrying `e_hf`, `e_ccsd_correlation`, `e_ccsd`, `e_t`, `e_ccsd_t`
 (= `e_total`), and the per-iteration `cc_trace`. The RI auxiliary basis
-is resolved automatically from the orbital basis name. The wrapper's
-`result.converged` describes the SCF reference; check `result.ccsd.converged`
-for the correlated stage. Use `energy_total` for the correlated total rather
-than the forwarded SCF `energy`. Neither convergence flag establishes that
-the reference is suitable for the scientific question.
+is resolved automatically from the orbital basis name.
 
 A run with the defaults (frozen oxygen 1s core, density fitting) printed:
 
@@ -94,11 +69,8 @@ few nanohartree (see the
 [user guide](../user_guide/ccsd.md#conventional-non-df-integrals)).
 
 ```python
-# doc-audit: skip - continuation of the setup and preceding examples
 conv = vq.run_job(mol, basis="cc-pvdz", method="ccsd(t)", frozen_core=False,
-                  ccsd_options=vq.CCSDOptions(density_fit=False),
-                  output="h2o_ccsd_t_conventional_all_electron")
-require_cc_convergence(conv)
+                  ccsd_options=vq.CCSDOptions(density_fit=False))
 print(f"E(CCSD(T), conventional, all electron) = {conv.energy_total:.6f} Ha")
 # E(CCSD(T), conventional, all electron) = -76.240615 Ha
 ```
@@ -114,7 +86,6 @@ result, and their size is the standard warning light (the
 [Theory](#theory) section says why):
 
 ```python
-# doc-audit: skip - continuation of the setup and preceding examples
 import numpy as np
 
 t1 = np.asarray(result.ccsd.t1_amplitudes)        # (n_occ_corr, n_virtual)
@@ -136,12 +107,8 @@ Raghavachari perturbative triples. You can also set the triples mode
 explicitly, which is handy for comparing the two:
 
 ```python
-# doc-audit: skip - continuation of the setup and preceding examples
-for label, triples in (("none", "none"), ("perturbative", "(t)"),
-                       ("lambda", "A-CCSD(T)")):
-    res = vq.run_job(mol, basis="cc-pvdz", method="ccsd", triples=triples,
-                     output=f"h2o_triples_{label}")
-    require_cc_convergence(res)
+for triples in ("none", "(t)", "A-CCSD(T)"):
+    res = vq.run_job(mol, basis="cc-pvdz", method="ccsd", triples=triples)
     print(triples, res.energy_total)
 ```
 
@@ -159,7 +126,6 @@ For an open-shell molecule (`multiplicity > 1`), the same
 kernel, with no extra flags:
 
 ```python
-# doc-audit: skip - continuation of the setup and preceding examples
 ch3 = vq.Molecule([
     vq.Atom(6, [ 0.000,  0.000, 0.0]),
     vq.Atom(1, [ 2.039,  0.000, 0.0]),
@@ -167,8 +133,7 @@ ch3 = vq.Molecule([
     vq.Atom(1, [-1.019, -1.766, 0.0]),
 ], multiplicity=2)
 
-result = vq.run_job(ch3, basis="cc-pvdz", method="ccsd(t)", output="ch3_uccsd_t")
-require_cc_convergence(result)
+result = vq.run_job(ch3, basis="cc-pvdz", method="ccsd(t)")
 print(f"E(UCCSD(T)) = {result.ccsd.e_ccsd_t:.6f} Ha")
 ```
 
@@ -194,11 +159,8 @@ orbitals (identical alpha and beta spatial orbitals, per-spin Fock
 matrices):
 
 ```python
-# doc-audit: skip - continuation of the setup and preceding examples
-rohf_result = vq.run_job(ch3, basis="cc-pvdz", method="ccsd(t)",
-                         ccsd_reference="rohf", output="ch3_rohf_ccsd_t")
-require_cc_convergence(rohf_result)
-print(f"ROHF-based CCSD(T) total = {rohf_result.energy_total:.6f} Ha")
+result = vq.run_job(oh_radical, basis="cc-pvdz",
+                    method="ccsd(t)", ccsd_reference="rohf")
 ```
 
 ## Cheaper triples: frozen natural orbitals
@@ -206,19 +168,13 @@ print(f"ROHF-based CCSD(T) total = {rohf_result.energy_total:.6f} Ha")
 The (T) cost is dominated by the virtual-space size. Frozen natural
 orbitals (FNO) keep the dominant virtual natural orbitals of the MP2
 density and discard the rest, recovering almost all the correlation at a
-fraction of the cost. This continuation returns to the water molecule and
-compares with `water_ccsd_t` retained from the first block. Turn it on through
-`CCSDOptions`:
+fraction of the cost. Turn it on through `CCSDOptions`:
 
 ```python
-# doc-audit: skip - continuation of the setup and preceding examples
 result = vq.run_job(
     mol, basis="cc-pvdz", method="ccsd(t)",
     ccsd_options=vq.CCSDOptions(fno=True, fno_keep_fraction=0.6),
-    output="h2o_fno_ccsd_t_60pct",
 )
-require_cc_convergence(result)
-print(f"FNO change = {(result.energy_total - water_ccsd_t.energy_total) * 1000:+.3f} mHa")
 print(result.ccsd.n_virtual_kept, "of", result.ccsd.n_virtual_total, "virtuals kept")
 print(f"E(FNO-CCSD(T)) = {result.energy_total:.6f} Ha")
 # 11 of 19 virtuals kept
@@ -251,18 +207,14 @@ converted to closed-shell spatial orbitals and summed over the atoms. The
 uniform all-electron escape is:
 
 ```python
-# doc-audit: skip - continuation of the setup and preceding examples
 all_electron = vq.run_job(
-    mol, basis="cc-pvdz", method="ccsd(t)", frozen_core=False,
-    output="h2o_ccsd_t_all_electron",
+    mol, basis="cc-pvdz", method="ccsd(t)", frozen_core=False
 )
-require_cc_convergence(all_electron)
 ```
 
 The low-level API takes an explicit spatial-orbital count:
 
 ```python
-# doc-audit: skip - continuation of the setup and preceding examples
 opts = vq.CCSDOptions(triples="(t)",
                       n_frozen_core=vq.chemical_core_orbital_count(mol))
 ```

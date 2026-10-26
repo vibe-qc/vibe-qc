@@ -69,40 +69,14 @@ def run(strategy, cutoff):
     r = run_krks_periodic_gdf(cell, basis, (1, 1, 1), opts, functional="pbe",
                               aux_basis="def2-svp-jk", rcut_strategy=strategy,
                               progress=False)
-    if not r.converged:
-        raise RuntimeError(f"PBE did not converge for {strategy}, cutoff={cutoff} bohr")
     return r, time.perf_counter() - t0
 
-measurements = {}
 for strategy, cutoff in [("pyscf_auto", 15.0), ("flat", 15.0), ("flat", 20.0),
                          ("flat", 25.0), ("flat", 30.0)]:
     r, dt = run(strategy, cutoff)
-    measurements[strategy, cutoff] = r
     print(f"{strategy:10s} {cutoff:5.1f}  E = {r.energy:.8f}  "
           f"E_xc = {r.e_xc:.8f}  it = {r.n_iter}  {dt:.0f} s")
 ```
-
-## Compare your measured points
-
-The script is a five-calculation study, not a single smoke test. Inspect the
-first run's resources before continuing on a constrained machine. Reuse the
-stored results to calculate differences against the largest flat cutoff:
-
-```python
-# doc-audit: skip - continues with measurements from the calculation block
-reference = measurements["flat", 30.0]
-for (strategy, cutoff), result in measurements.items():
-    delta_mha = (result.energy - reference.energy) * 1000
-    delta_xc_mha = (result.e_xc - reference.e_xc) * 1000
-    print(strategy, cutoff, f"dE={delta_mha:+.6f} mHa/cell",
-          f"dExc={delta_xc_mha:+.6f} mHa/cell")
-```
-
-This reference is one finite-cutoff result, not an independently validated
-answer. Keep geometry, smearing, k mesh, basis and grid unchanged across rows.
-If the largest two cutoffs still differ materially, the table has not yet
-established convergence at your target accuracy. Preserve failed points and
-their traces rather than silently dropping them from the trend.
 
 ## The measurement
 

@@ -8,15 +8,11 @@ GFN2-xTB electronic model: on every closed-shell row vibe-qc's SCC electronic
 energy plus repulsion must agree with xtb's ``SCC energy - dispersion +
 repulsion`` to the tolerance below, and the repulsion channel to 1e-6 Ha.
 
-The D4 channel is pinned on both molecular paths. The public default route
-(``GFN2Model``: faithful AES, self-consistent D4 built from the pinned
-published reference data with SCC charges and covalent CN) must reproduce
-xtb's dispersion channel to 1e-6 Ha and xtb's total to the electronic
-tolerance on every closed-shell row, transition metals included. The
-explicit ``legacy_eeq`` control's post-SCF native D4 must land within
-0.6 mHa on rows made only of elements its own reference data covers (H-Ar
-and Cu at the time of writing) and must warn and return zero D4 on rows
-with other elements (the documented scope of that control, issue #132).
+The post-SCF D4 channel is pinned separately: rows made only of elements the
+native D4 reference data covers (H-Ar and Cu at the time of writing) must
+land within 0.6 mHa of xtb's self-consistent GFN2-D4 total, and rows with
+other elements must warn and return zero D4 (the documented scope gap, issue
+#132).
 
 This complements ``tests/test_gfn2_xtb.py::test_faithful_energy8_with_native_d4_reference_data``,
 the 0.1 mHa total-energy gate on the eight archived #184 geometries at
@@ -72,19 +68,11 @@ _SYMBOL_TO_Z = {
 # heaviest closed-shell rows (TiCl4 -12 uHa, C6H6 -10 uHa) set the bound.
 _ELECTRONIC_TOL = 2.0e-5
 _REPULSION_TOL = 1.0e-6
-# Legacy control: native D4 (vibe-qc's own reference data, EEQ charges)
-# against xtb's self-consistent GFN2-D4 with the SCC charges: BeH2 is the
-# largest of the H-Ne rows at 0.51 mHa. The supported element set is read
-# from the loader, so a reference-data extension widens the gate instead of
-# failing it.
+# Native D4 (vibe-qc's own reference data, EEQ charges) against xtb's
+# self-consistent GFN2-D4 with the SCC charges: BeH2 is the largest of the
+# H-Ne rows at 0.51 mHa. The supported element set is read from the loader,
+# so a reference-data extension widens the gate instead of failing it.
 _D4_TOL = 6.0e-4
-# Default route: the coupled D4 term built from the pinned published
-# reference data. Measured 2026-10-26 on all 45 closed-shell rows: the
-# dispersion channel agrees with xtb to 0.05 uHa or better and the total to
-# 12 uHa (TiCl4 -11.6, AlCl3 -7.1, C6H6 -6.4), i.e. the residual is the
-# electronic channel bounded by _ELECTRONIC_TOL.
-_COUPLED_D4_TOL = 1.0e-6
-_TOTAL_TOL = _ELECTRONIC_TOL
 
 
 def _rows():
@@ -170,38 +158,6 @@ def test_closed_shell_d4_channel_is_pinned_to_its_reference_scope(name, params):
     else:
         assert unsupported, f"{name}: D4 outside the reference-data scope must warn"
         assert e_d4 == 0.0
-
-
-@requires_gfn2
-@pytest.mark.parametrize("name", _CLOSED)
-def test_closed_shell_public_total_matches_xtb(name, params):
-    """The public molecular route's total energy is at parity with xtb 6.7.0.
-
-    ``GFN2Model.energy()`` runs the default model: faithful AES with the
-    self-consistent D4 term built from the pinned published reference data
-    (SCC charges in the zeta scaling, electronegativity-weighted covalent CN,
-    neutral-reference ATM). Its ``e_dispersion`` is compared with xtb's
-    dispersion channel and the total with xtb's total, so a regression in
-    the SCC coupling or in the reference conversion shows up as such rather
-    than as a cancelling pair. No element-scope warning is allowed on this
-    route: the published table covers every row.
-    """
-    row = _ROWS[name]
-    model = _gfn2_method.GFN2Model(_molecule(row), params, warn=False)
-    with warnings.catch_warnings():
-        warnings.simplefilter("error", GFN2D4UnsupportedWarning)
-        total = float(model.energy())
-    result = model._last_result
-    assert result.converged, f"{name}: public route did not converge"
-    assert result.dispersion_sha256, f"{name}: the default route must run coupled D4"
-    assert abs(result.e_dispersion - row["disp"]) < _COUPLED_D4_TOL, (
-        f"{name}: coupled D4 {result.e_dispersion * 1e6:.2f} uHa "
-        f"vs xtb {row['disp'] * 1e6:.2f} uHa"
-    )
-    assert abs(total - row["total"]) < _TOTAL_TOL, (
-        f"{name}: total {total:.8f} vs xtb {row['total']:.8f} "
-        f"({(total - row['total']) * 1e6:+.1f} uHa)"
-    )
 
 
 @requires_gfn2

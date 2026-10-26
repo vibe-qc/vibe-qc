@@ -3,61 +3,44 @@
 See also the [user-guide reference](../user_guide/geometry_optimization.md)
 for the native (ASE-free) optimizer's full API.
 
-Relax a molecular structure toward a stationary geometry with
-`run_job(..., optimize=True)`. The examples below select ASE's
-({vibeqc-cite}`ase_2017`) BFGS line-search backend explicitly so that the
-`.traj` inspection steps use a known file format. `optimizer_backend="auto"`
-chooses ASE when available and the native backend otherwise; supported
-methods and constraints depend on that choice.
-
-Run the scripts in a calculation directory outside the checkout. Native
-`Atom` positions are in bohr, while ASE trajectories use angstrom and eV.
-An optimized geometry still needs characterization, usually by vibrational
-analysis, before calling it a local minimum; it is not a search over all
-conformers.
+Relax a molecular structure to its energy minimum. vibe-qc uses ASE's
+({vibeqc-cite}`ase_2017`) BFGS-line-search optimizer under the hood, driven by analytic HF/DFT
+forces from the C++ core. ``run_job(..., optimize=True)`` is the
+one-liner; the standard `.out` / `.molden` / `.traj` files all get
+written as usual, plus the trajectory animation.
 
 ## Water at HF/6-31G\*
 
 Starting from an approximate geometry:
 
 ```python
+from pathlib import Path
 from vibeqc import Atom, Molecule, run_job
 
-water = Molecule([
+mol = Molecule([
     Atom(8, [0.0,   0.0,   0.0  ]),
     Atom(1, [0.0,   1.60, -1.10]),   # slightly off-equilibrium
     Atom(1, [0.0,  -1.60, -1.10]),
 ])
 
-result = run_job(
-    water,
+run_job(
+    mol,
     basis="6-31g*",
     method="rhf",
     output="water_opt",
     optimize=True,
-    optimizer_backend="ase",
-    write_molden_file=True,
-    fmax=0.05,            # eV/Å; ASE checks the largest per-atom force norm
+    fmax=0.05,            # eV/Å — converged when |F|_max drops below this
     max_opt_steps=50,
 )
-if not result.converged:
-    raise RuntimeError("The final electronic calculation did not converge")
 ```
 
-The geometry optimizer must reach its own force target before the final
-single point. `result.converged` then describes the electronic result, not
-an independent geometry or vibrational-stability verdict. A capped geometry
-run raises instead of silently proceeding; see [handling a stopped run](#when-a-run-stops-before-convergence).
-
-Files produced on a successful run:
+Files produced:
 
 - ``water_opt.out``, initial geometry, optimizer parameters, final
   optimized geometry, then the full SCF trace at the minimum
 - ``water_opt.molden``, MOs at the minimum, for Avogadro / Jmol
-- ``water_opt.traj``, initial structure and accepted optimization frames
-  (ASE binary); view with ``ase gui water_opt.traj``
-- ``water_opt.xyz``, final coordinates in angstrom; `.system` and citation
-  files retain provenance, and `.qvf` is written by default
+- ``water_opt.traj``, one frame per BFGS step (ASE binary); view with
+  ``ase gui water_opt.traj``
 
 ## Reading the output
 
@@ -101,52 +84,46 @@ intermediate SCFs are run:
 
 ``rhf_options`` / ``rks_options`` forward through to every frame of the
 optimization, not just the final single point. This matters for
-H-bonded systems and floppy molecules where a trial geometry can be difficult
-for SCF. Inspect the electronic trace before changing controls. A larger
-`max_iter` helps only if SCF is progressing; neither it nor damping guarantees
-a stable trajectory or the intended electronic state.
+H-bonded systems and floppy molecules where one BFGS step sometimes
+lands on a particularly stubborn geometry, bump ``max_iter = 200`` or
+add ``damping = 0.3`` to the options struct and the whole trajectory
+stays stable.
 
 ## A harder case: the water dimer
 
 H-bonded clusters sit on a very flat potential-energy surface, plain
-BFGS Hessian extrapolation can take poor trial steps before the quadratic
-model is trustworthy. The ASE route uses `BFGSLineSearch`, but its line search
-still depends on consistent energies and forces from converged electronic
-calculations. Copy `examples/h2o_dimer.xyz` into your run directory before
-running this separate dimer example:
+BFGS Hessian extrapolation can push the waters apart before the
+quadratic model is trustworthy. ``run_job`` uses ``BFGSLineSearch``
+which rejects uphill steps by construction, and pair this with a
+realistic ``fmax``:
 
 ```python
-from vibeqc import InitialGuess, RHFOptions, from_xyz, run_job
+from vibeqc import Atom, InitialGuess, Molecule, RHFOptions, run_job
 
-dimer = from_xyz("h2o_dimer.xyz", charge=0, multiplicity=1)
+mol = Molecule.from_xyz("h2o_dimer.xyz")  # see examples/h2o_dimer.xyz
 
 rhf_opts = RHFOptions()
-rhf_opts.max_iter = 200                   # an iteration budget, not a guarantee
+rhf_opts.max_iter = 200                   # H-bonded intermediates need it
 rhf_opts.initial_guess = InitialGuess.SAD
 
 run_job(
-    dimer, basis="6-31g*", method="rhf",
+    mol, basis="6-31g*", method="rhf",
     output="water_dimer_opt",
     optimize=True,
-    optimizer_backend="ase",
     fmax=0.2,                             # loose target for a flat H-bond surface
     max_opt_steps=25,
     rhf_options=rhf_opts,
 )
 ```
 
-The deliberately loose `fmax=0.2` is for a workflow demonstration. It does
-not establish an accurate O-O distance or binding energy, and 25 steps may
-be insufficient. Keep the same physical model when testing tighter force
-and SCF thresholds, then compare the resulting geometry. For interaction
-energies, also assess basis convergence, basis-set superposition error and
-electron correlation; see [basis convergence](basis_convergence.md).
+You'll get ``R(OO) ≈ 2.98 Å`` (experimental: 2.976 Å), the well-known
+HF/6-31G\* result. For a real binding-energy number add a correlation
+method and dispersion; for a chemistry demonstration this is enough.
 
 ## Visualizing the trajectory
 
-The archived animation below records a water HF/6-31G\* example with four
-BFGS steps (five frames). Its step count is illustrative, not a guarantee for
-the current input, build or tolerances. The trajectory shows
+ASE's BFGS converges H₂O at HF/6-31G\* in just 4 steps (5 trajectory
+frames) from a mildly distorted starting geometry. The trajectory below shows
 the molecule sliding into its equilibrium geometry while the
 energy drops by ~156 meV:
 
@@ -174,44 +151,20 @@ import numpy as np
 from ase.io import read
 
 frames = read("water_opt.traj", index=":")
-if not frames:
-    raise RuntimeError("No saved optimization frames")
 energies = np.array([f.get_potential_energy() for f in frames])
-final_force = np.linalg.norm(frames[-1].get_forces(), axis=1).max()
 print(f"Energy dropped {energies[0] - energies[-1]:.4f} eV over "
-      f"{len(frames) - 1} saved intervals")
-print(f"Final maximum atom force = {final_force:.6f} eV/angstrom")
-print(f"Within this example's ASE target: {final_force < 0.05}")
+      f"{len(frames) - 1} steps")
 ```
-
-(when-a-run-stops-before-convergence)=
-
-## When a run stops before convergence
-
-Read the optimization verdict separately from the SCF verdict. The ASE
-route raises a `RuntimeError` subclass on a step-budget failure; native and
-Brent routes raise `GeomOptNotConvergedError`. Preserve the `.out`, `.xyz`
-and available trajectory. Restarting from the last geometry starts a new
-optimization; it does not restore the previous optimizer's Hessian history.
-
-Increase the step budget only when the trajectory is progressing toward the
-same target. Diagnose failed SCFs, inconsistent forces or an unsuitable model
-before retrying. Loosening the force target changes the acceptance criterion;
-record that choice instead of treating it as a repair. The
-[user guide](../user_guide/geometry_optimization.md) describes exception data
-and low-level return values.
 
 ## DFT geometries
 
-Reuse `water` from the first block, not the separate `dimer` object:
+Same call, different method:
 
 ```python
-# doc-audit: skip - continues with water from the first example
 run_job(
-    water, basis="def2-tzvp", method="rks", functional="PBE",
+    mol, basis="def2-tzvp", method="rks", functional="PBE",
     output="water_pbe_opt",
     optimize=True,
-    optimizer_backend="ase",
 )
 ```
 
@@ -223,10 +176,9 @@ angle back toward 104°, generally matching experiment more closely
 
 For systems where the Hessian approximation misbehaves (flat potential
 energy surfaces, dispersion-bound complexes, near-degenerate states),
-the Brent steepest-descent backend is an alternative based on a one-dimensional
-line search along the descent direction. It still requires consistent energies
-and forces and can stop without reaching the requested tolerance. Its line
-search uses Brent's method (R. P. Brent, *Algorithms for
+the Brent steepest-descent backend is a conservative alternative.  It
+never takes an uphill step because every line search is a rigorous 1-D
+minimisation using Brent's method (R. P. Brent, *Algorithms for
 Minimization without Derivatives*, Prentice-Hall (1973), chapter 5).
 
 ```python

@@ -7,14 +7,6 @@ exchange-correlation functional $v_\text{xc}[\rho]$. The theory
 section below explains the Kohn-Sham mapping, where the grid comes
 from, and what DFT can and cannot tell you.
 
-## Run the baseline
-
-Use the installed engine environment and a run directory outside the checkout.
-The first block is standalone. The grid block below continues in the same
-script and reuses its molecule and basis. Coordinates here are in bohr; the
-printed energy components are in hartree. This is a fixed-geometry example,
-not a geometry optimization.
-
 ```python
 from vibeqc import Atom, Molecule, BasisSet, RKSOptions, run_rks
 
@@ -29,8 +21,6 @@ opts = RKSOptions()
 opts.functional = "PBE"     # or "LDA", "BLYP", "B3LYP", "PBE0", etc.
 # Supplied low-level options keep their grid, here the legacy product grid.
 result = run_rks(mol, basis, opts)
-if not result.converged:
-    raise RuntimeError("PBE SCF did not converge; inspect result.scf_trace")
 
 print(f"E_KS        = {result.energy:.10f}")
 print(f"E_Coulomb   = {result.e_coulomb:.10f}")
@@ -75,21 +65,10 @@ and the XC functional at each one. Three knobs set how dense that
 cloud is:
 
 ```python
-# doc-audit: skip - continues with mol, basis, opts and result from the baseline
-baseline_energy = result.energy
 opts.grid.n_radial = 99   # radial shells per atom
 opts.grid.n_theta  = 29   # polar (θ) points per shell
 opts.grid.n_phi    = 58   # azimuthal (φ) points per shell
-refined = run_rks(mol, basis, opts)
-if not refined.converged:
-    raise RuntimeError("Refined-grid PBE SCF did not converge")
-print(f"Grid change = {(refined.energy - baseline_energy) * 1e6:+.3f} microhartree")
 ```
-
-Changing `opts` does not update the result already computed; the second
-`run_rks` call evaluates the modified grid. This comparison holds the geometry,
-basis and functional fixed but changes radial and angular resolution together.
-Use [DFT grid convergence](dft_grid_convergence.md) to vary them separately.
 
 These are controls for a custom product grid. Fresh options supplied to the
 low-level `run_rks(mol, basis, opts)` keep the legacy 75 x 17 x 36 grid,

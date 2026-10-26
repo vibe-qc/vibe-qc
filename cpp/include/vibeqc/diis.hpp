@@ -25,7 +25,6 @@
 #include <Eigen/Dense>
 #include <cstddef>
 #include <deque>
-#include <string>
 #include <utility>
 #include <vector>
 
@@ -64,21 +63,6 @@ enum class DIISDepthPolicy {
     ADAPTIVE,
 };
 
-// Opt-in records of the actual solve, suitable for offline rank/conditioning
-// analysis. Stacked spin blocks retain their original order and precision.
-struct DIISSolveCapture {
-    Eigen::MatrixXd gram;
-    Eigen::VectorXd solution;
-    int rank = 0;
-    bool usable = false;
-};
-struct DIISCapture {
-    std::vector<Eigen::MatrixXd> focks, errors;
-    Eigen::MatrixXd pushed_gram;
-    std::size_t after_policy = 0, after_capacity = 0;
-    std::vector<DIISSolveCapture> attempts;
-    std::string disposition = "not_called";
-};
 class DIIS {
 public:
     explicit DIIS(std::size_t max_subspace = 8,
@@ -131,8 +115,6 @@ public:
     std::size_t subspace_size() const noexcept { return fock_history_.size(); }
     DIISDepthPolicy policy() const noexcept { return policy_; }
     void clear();
-    // Caller owns storage; null disables all copying. Does not change history.
-    void set_capture(DIISCapture* capture) noexcept { capture_ = capture; }
 
     // Read-only access to the stored (Fock, error) histories.  Used by
     // CPCM macro-iteration warm-starting (BUG 100) — the caller saves
@@ -146,7 +128,6 @@ public:
     }
 
 private:
-    DIISCapture* capture_ = nullptr;
     // Apply the RESTART policy (Chupin et al. Algorithm 3) to the current
     // history, which already includes the newest pushed pair. Returns true
     // when a restart was triggered (all but the newest iterate dropped).

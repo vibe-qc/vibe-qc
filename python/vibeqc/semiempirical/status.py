@@ -550,15 +550,7 @@ def semiempirical_route_runtime_available(route: str) -> bool:
     if status.route in {"gfn2-xtb", "periodic-gfn2-gradient"}:
         from .methods.gfn2_params import gfn2_parameter_cache_available
 
-        if not gfn2_parameter_cache_available():
-            return False
-        if status.route == "gfn2-xtb":
-            from .methods.gfn2_d4_params import load_gfn2_d4_reference_data
-            try:
-                load_gfn2_d4_reference_data(allow_fetch=False)
-            except (RuntimeError, OSError, ValueError):
-                return False
-        return True
+        return gfn2_parameter_cache_available()
     return True
 
 

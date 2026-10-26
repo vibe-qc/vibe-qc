@@ -8,9 +8,6 @@
 #include "vibeqc/manta_moments.hpp"
 #include "manta_extent_pair.hpp"
 #include "manta_ri_interval.hpp"
-#include "manta_verified_math.hpp"
-#include "manta_fourier_enclosure.hpp"
-#include "manta_metric_enclosure.hpp"
 #include "manta_auxiliary_image_bubbles.hpp"
 #include "vibeqc/manta_shells.hpp"
 #include "vibeqc/detail/sha256.hpp"
@@ -2630,34 +2627,50 @@ void describe_coupling_reference(PeriodicGDFReceipt& r,const BasisSet& orbital,c
 
 namespace {
 namespace wi=spectral_interval;
-
-wi::Interval metric_prefactor(const Eigen::Matrix3d& lattice) {
-    if(!lattice.allFinite())throw std::invalid_argument("MANTA metric prefactor requires a finite lattice");
-    wi::Interval determinant;
-    for(int i=0;i<3;++i) {
-        const int j=(i+1)%3,k=(i+2)%3;
-        const auto minor=wi::sub(wi::product(lattice(1,j),lattice(2,k)),wi::product(lattice(1,k),lattice(2,j)));
-        determinant=wi::add(determinant,wi::product({lattice(0,i),lattice(0,i)},minor));
+wi::Interval weight_divide(wi::Interval a,wi::Interval b) {
+    if(!(b.lo>0.))throw std::runtime_error("MANTA weight denominator enclosure is not positive");
+    if(a.lo==0. && a.hi==0.)return {};
+    volatile double v0=a.lo/b.lo,v1=a.lo/b.hi,v2=a.hi/b.lo,v3=a.hi/b.hi;
+    return {wi::down(std::min({double(v0),double(v1),double(v2),double(v3)})),
+            wi::up(std::max({double(v0),double(v1),double(v2),double(v3)}))};
+}
+// Taylor/Lagrange for exp(-x): derivatives on x>=0 have magnitude <=1.
+// Interval scaling/squaring and [0,1] intersections need no libm premise.
+// Rump2010 verified arithmetic; scientific contract 5.60.
+wi::Interval weight_decay(wi::Interval x) {
+    if(x.lo<0. || !std::isfinite(x.hi))throw std::runtime_error("MANTA weight decay interval is invalid");
+    if(x.hi==0.)return {1.,1.};
+    int exponent=0;std::frexp(x.hi,&exponent);const int scaling=std::max(0,exponent+4);
+    const double factor=std::ldexp(1.,-scaling);
+    x=wi::product(x,{factor,factor});x.lo=std::max(0.,x.lo);
+    const wi::Interval negative{-x.hi,-x.lo};wi::Interval term{1.,1.},value=term;
+    for(int j=1;j<=24;++j) {
+        term=weight_divide(wi::product(term,negative),{double(j),double(j)});
+        value=wi::add(value,term);
     }
-    if(determinant.lo<=0. && determinant.hi>=0.)
-        throw std::runtime_error("MANTA metric cell-volume sign is unresolved");
-    const auto volume=determinant.hi<0.?wi::Interval{-determinant.hi,-determinant.lo}:determinant;
-    return verified_math::divide(wi::product({4.,4.},verified_math::pi()),volume);
+    const auto next=weight_divide(wi::product(term,x),{25.,25.});
+    const double remainder=std::max(std::abs(next.lo),std::abs(next.hi));
+    value=wi::add(value,{-remainder,remainder});
+    auto unit=[](wi::Interval a) {
+        a.lo=std::max(0.,a.lo);a.hi=std::min(1.,a.hi);
+        if(a.lo>a.hi)throw std::logic_error("MANTA weight enclosure lost positivity");return a;
+    };
+    value=unit(value);for(int j=0;j<scaling;++j)value=unit(wi::product(value,value));
+    return value;
 }
 }
 PeriodicGDFWeightPlan plan_periodic_gdf_weight(const ResourceBudget& b) {
     using namespace admission;margin(b);PeriodicGDFWeightPlan p;
-    p.modeled_peak_bytes=add(add(b.other_live_bytes,b.backend_margin_bytes),8192);
-    p.scalar_terms=278528;p.kernel_terms=2228224;
+    p.modeled_peak_bytes=add(add(b.other_live_bytes,b.backend_margin_bytes),4096);
+    p.scalar_terms=262144;p.kernel_terms=2097152;
     cap(p.modeled_peak_bytes,b.memory_bytes,"MANTA weight enclosure memory budget exceeded");
     cap(p.scalar_terms,b.scalar_terms,"MANTA weight enclosure scalar budget exceeded");
     cap(p.kernel_terms,b.kernel_terms,"MANTA weight enclosure work budget exceeded");return p;
 }
-namespace {
-PeriodicGDFWeightCertificate weight_certificate(const Eigen::Vector3d& momentum,
-    double omega,wi::Interval prefactor,const PeriodicGDFKernelOptions& physical,bool zero,double evaluated) {
-    if(!momentum.allFinite() || !std::isfinite(omega) || omega<=0. ||
-       !std::isfinite(prefactor.lo) || !std::isfinite(prefactor.hi) || prefactor.lo<=0. || prefactor.hi<prefactor.lo ||
+PeriodicGDFWeightCertificate certify_periodic_gdf_weight(const Eigen::Vector3d& momentum,
+    double omega,double prefactor,const PeriodicGDFKernelOptions& physical,bool zero,double evaluated,const ResourceBudget& b) {
+    plan_periodic_gdf_weight(b);wi::require_arithmetic();
+    if(!momentum.allFinite() || !std::isfinite(omega) || omega<=0. || !std::isfinite(prefactor) || prefactor<=0. ||
        !std::isfinite(evaluated) || (physical.kernel!="coulomb" && physical.kernel!="erf" && physical.kernel!="erfc") ||
        (physical.kernel!="coulomb" && (!std::isfinite(physical.omega) || physical.omega<=0.)))
         throw std::invalid_argument("MANTA weight enclosure requires finite valid kernel operands");
@@ -2666,9 +2679,9 @@ PeriodicGDFWeightCertificate weight_certificate(const Eigen::Vector3d& momentum,
     wi::Interval value;
     if(zero) {
         if(physical.kernel!="erf" && !(physical.kernel=="erfc" && physical.omega==omega)) {
-            const auto numerical=verified_math::divide(prefactor,denominator(omega));
+            const auto numerical=weight_divide({prefactor,prefactor},denominator(omega));
             value=physical.kernel=="coulomb"?wi::Interval{-numerical.hi,-numerical.lo}:
-                wi::sub(verified_math::divide(prefactor,denominator(physical.omega)),numerical);
+                wi::sub(weight_divide({prefactor,prefactor},denominator(physical.omega)),numerical);
         }
     } else {
         wi::Interval squared;for(int i=0;i<3;++i)squared=wi::add(squared,wi::product(momentum[i],momentum[i]));
@@ -2678,8 +2691,8 @@ PeriodicGDFWeightCertificate weight_certificate(const Eigen::Vector3d& momentum,
         if(squared.lo<=1e-24 && squared.hi>1e-24)
             throw std::runtime_error("MANTA weight singular boundary is unresolved");
         if(squared.hi>1e-24 && !(physical.kernel=="erfc" && physical.omega==omega)) {
-            const auto decay=[&](double range) {return verified_math::exp_negative(verified_math::divide(squared,denominator(range)));};
-            const auto bare=verified_math::divide(prefactor,squared);
+            const auto decay=[&](double range) {return weight_decay(weight_divide(squared,denominator(range)));};
+            const auto bare=weight_divide({prefactor,prefactor},squared);
             const auto factor=physical.kernel=="coulomb"?decay(omega):
                 (physical.kernel=="erf"?decay(physical.omega):wi::sub(decay(omega),decay(physical.omega)));
             value=wi::product(bare,factor);
@@ -2690,18 +2703,6 @@ PeriodicGDFWeightCertificate weight_certificate(const Eigen::Vector3d& momentum,
         const auto error=wi::sub({evaluated,evaluated},value);c.error_bound=std::max(std::abs(error.lo),std::abs(error.hi));
     }
     return c;
-}
-}
-PeriodicGDFWeightCertificate certify_periodic_gdf_weight(const Eigen::Vector3d& momentum,
-    double omega,double prefactor,const PeriodicGDFKernelOptions& physical,bool zero,double evaluated,const ResourceBudget& b) {
-    plan_periodic_gdf_weight(b);wi::require_arithmetic();
-    return weight_certificate(momentum,omega,{prefactor,prefactor},physical,zero,evaluated);
-}
-PeriodicGDFWeightCertificate certify_periodic_gdf_lattice_weight(const Eigen::Matrix3d& lattice,
-    const Eigen::Vector3d& momentum,double omega,const PeriodicGDFKernelOptions& physical,
-    bool zero,double evaluated,const ResourceBudget& b) {
-    plan_periodic_gdf_weight(b);wi::require_arithmetic();
-    return weight_certificate(momentum,omega,metric_prefactor(lattice),physical,zero,evaluated);
 }
 
 PeriodicGDFPlan plan_periodic_gdf(const BasisSet& orbital,const BasisSet& aux,
@@ -3016,7 +3017,7 @@ PeriodicGDFTilesPlan plan_periodic_gdf_tiles(const BasisSet& orbital,const Basis
     if(o.compute_metric && o.metric_assembly_rank) {
         // Interval sums, per-entry radii, bound exports and lower-triangle
         // norm scratch coexist with the unchanged raw metric and panels.
-        p.metric_peak_bytes=add(p.metric_peak_bytes,add(add(plan_metric_construction(aux,aux,fitting_request(2),leaf).modeled_peak_bytes,plan_auxiliary_fourier_construction(aux,p.panel_vectors,leaf).modeled_peak_bytes),add(16384,add(mul(48,mul(p.n_aux,p.panel_vectors)),mul(96,square(p.n_aux))))));
+        p.metric_peak_bytes=add(p.metric_peak_bytes,add(12288,add(mul(16,p.panel_vectors),mul(96,square(p.n_aux)))));
     }
     p.modeled_peak_bytes=std::max(p.metric_peak_bytes,p.coupling_peak_bytes);
     if(o.compute_metric) {
@@ -3026,12 +3027,6 @@ PeriodicGDFTilesPlan plan_periodic_gdf_tiles(const BasisSet& orbital,const Basis
         p.metric_kernel_terms=add(mul(sr.metric_image_candidates,sr.metric.kernel_terms),add(mul(panels,af.kernel_terms),mul(8,p.metric_scalar_terms)));
         if(o.metric_assembly_rank) {
             const Count audit=mul(4096,add(p.metric_shell_calls,mul(square(p.n_aux),add(sr.metric_image_candidates,add(nv,1)))));
-            const auto integral_proof=plan_metric_construction(aux,aux,fitting_request(2),leaf);
-            p.metric_scalar_terms=add(p.metric_scalar_terms,mul(sr.metric_image_candidates,integral_proof.scalar_terms));
-            p.metric_kernel_terms=add(p.metric_kernel_terms,mul(sr.metric_image_candidates,integral_proof.kernel_terms));
-            const auto fourier_proof=plan_auxiliary_fourier_construction(aux,p.panel_vectors,leaf);
-            p.metric_scalar_terms=add(p.metric_scalar_terms,mul(panels,fourier_proof.scalar_terms));
-            p.metric_kernel_terms=add(p.metric_kernel_terms,mul(panels,fourier_proof.kernel_terms));
             const auto weight_plan=plan_periodic_gdf_weight(leaf);
             p.metric_scalar_terms=add(p.metric_scalar_terms,mul(add(nv,1),weight_plan.scalar_terms));
             p.metric_kernel_terms=add(p.metric_kernel_terms,mul(add(nv,1),weight_plan.kernel_terms));
@@ -4000,14 +3995,13 @@ PeriodicGDFTile PeriodicGDFTiles::metric() const {
     std::vector<si::ComplexInterval> ideal;
     if(options_.metric_assembly_rank) {
         si::require_arithmetic();ideal.resize(result.values.size());
-        result.metric_assembly_error_bounds.resize(result.values.size());r.metric_phase_included=true;r.metric_weight_included=true;r.metric_prefactor_included=true;r.metric_fourier_included=true;r.metric_integrals_included=true;r.metric_representation_included=true;
+        result.metric_assembly_error_bounds.resize(result.values.size());r.metric_phase_included=true;r.metric_weight_included=true;
     }
     const MetricImageDomain domain(system_,options_.auxiliary_cutoff_bohr,options_.omega,options_.image_candidate_cap,options_.integral_screen_error);
     if(source_.real_short_range) for(Count is=0;is<a.size();++is) for(Count js=0;js<a.size();++js)
         domain.each(a[is],a[js],[&](const Eigen::Vector3d& t) {
             const auto ket=shifted(a[js],t);const auto values=md::shell_coulomb({&a[is],nullptr,&ket,nullptr},md::RadialKernel::Erfc,options_.omega);
             const auto phase=fitting_phase(q_.dot(t),r.short_range);
-            const auto integrals=options_.metric_assembly_rank?metric_shell_enclosure(a[is],a[js],md::RadialKernel::Erfc,options_.omega,t):std::vector<si::Interval>{};
             auto phase_interval=si::point(phase);
             if(options_.metric_assembly_rank) {
                 const auto proof=certify_bloch_phase(q_,t,phase,ResourceBudget{});
@@ -4019,25 +4013,19 @@ PeriodicGDFTile PeriodicGDFTiles::metric() const {
                 const Count out=(offsets[is]+i)*n+offsets[js]+j;
                 fitting_add(phase*values(i,j),result.values[out],error[out]);++r.short_range.phase_accumulations;
                 if(options_.metric_assembly_rank)
-                    ideal[out]=si::add(ideal[out],si::product(phase_interval,si::ComplexInterval{integrals[i*a[js].size()+j],{}}));
+                    ideal[out]=si::add(ideal[out],si::product(phase_interval,si::point(Complex(values(i,j),0.))));
             }
         });
     // Match the raw-SR -> LR boundary of the dense reference: SR rounding
     // compensation is not carried into the independently accumulated LR sum.
     std::fill(error.begin(),error.end(),Complex{});
     const RangeSeparatedCoulombKernel kernel(system_,q_,options_.omega);
-    const auto exact_prefactor=options_.metric_assembly_rank?metric_prefactor(system_.lattice):si::Interval{};
     auto panel=[&](const md::Matrix& v,bool zero) {
         const Count ng=v.rows();md::ComplexMatrix aft(n,ng);
-        std::vector<si::ComplexInterval> exact_aft(options_.metric_assembly_rank?n*ng:0);
         for(Count is=0;is<a.size();++is) {
             const auto tile=md::shell_fourier_panel(&a[is],nullptr,v);
             if(!tile.allFinite()) throw std::overflow_error("MANTA GDF metric Fourier tile is nonfinite");
             aft.middleRows(offsets[is],a[is].size())=tile;
-            if(options_.metric_assembly_rank) {
-                const auto proof=auxiliary_fourier_enclosure(a[is],v);
-                for(Count i=0;i<a[is].size();++i)for(Count g=0;g<ng;++g)exact_aft[(offsets[is]+i)*ng+g]=proof[i*ng+g];
-            }
             ++r.auxiliary_fourier_shell_calls;++r.shell_calls;r.primitive_products+=a[is].nprim();r.vector_primitive_products+=ng*a[is].nprim();
         }
         std::vector<double> weights(ng);
@@ -4046,7 +4034,7 @@ PeriodicGDFTile PeriodicGDFTiles::metric() const {
             const double p2=v.row(g).squaredNorm();admission::require_finite(p2);
             weights[g]=physical_gdf_weight(kernel,physical_,p2,zero);admission::require_finite(weights[g]);
             if(options_.metric_assembly_rank) {
-                const auto c=weight_certificate(v.row(g),options_.omega,exact_prefactor,physical_,zero,weights[g]);
+                const auto c=certify_periodic_gdf_weight(v.row(g),options_.omega,kernel.reciprocal_prefactor,physical_,zero,weights[g],ResourceBudget{});
                 exact_weights[g]={c.lower,c.upper};r.maximum_metric_weight_error=std::max(r.maximum_metric_weight_error,c.error_bound);
             }
             if(!zero && !RangeSeparatedCoulombKernel::singular(p2)) ++r.reciprocal_vectors;
@@ -4054,9 +4042,8 @@ PeriodicGDFTile PeriodicGDFTiles::metric() const {
         for(Count i=0;i<n;++i) for(Count j=0;j<n;++j) for(Count g=0;g<ng;++g) {
             fitting_add(weights[g]*std::conj(aft(i,g))*aft(j,g),result.values[i*n+j],error[i*n+j]);++r.contraction_terms;
             if(options_.metric_assembly_rank) {
-                auto bra=exact_aft[i*ng+g];bra.imag={-bra.imag.hi,-bra.imag.lo};
-                const auto left=si::product(si::ComplexInterval{exact_weights[g],{}},bra);
-                ideal[i*n+j]=si::add(ideal[i*n+j],si::product(left,exact_aft[j*ng+g]));
+                const auto left=si::product(si::ComplexInterval{exact_weights[g],{}},si::point(std::conj(aft(i,g))));
+                ideal[i*n+j]=si::add(ideal[i*n+j],si::product(left,si::point(aft(j,g))));
             }
         }
     };
@@ -4066,9 +4053,9 @@ PeriodicGDFTile PeriodicGDFTiles::metric() const {
     if(options_.metric_assembly_rank) {
         // Rump2010 verified-arithmetic principles (Sec.10.8), as in the
         // shared spectral/assembly interval producers. Exact sums of stored
-        // SR integral/auxiliary Fourier/phase/reciprocal-weight construction;
-        // basis/representation/vector data generation, screening and domains remain excluded.
-        FittingDigest id;id.text("manta.periodic-gdf.metric-assembly.v8;positive-erfc-integrals-and-phase;lattice-weight;auxiliary-fourier;exact-pure-transform;stored-basis-data");
+        // SR integrals/Fourier panels, exact Bloch phases and reciprocal weights;
+        // integral/Fourier/prefactor evaluation, screening and domains remain excluded.
+        FittingDigest id;id.text("manta.periodic-gdf.metric-assembly.v3;sr-phase;reciprocal-weight;stored-integral-fourier-prefactor");
         id.text(r.metric_source_identity);id.real(r.maximum_metric_phase_error);id.real(r.maximum_metric_weight_error);
         for(Count i=0;i<result.values.size();++i) {
             const double bound=si::magnitude(si::sub(si::point(result.values[i]),ideal[i]));

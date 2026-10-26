@@ -241,38 +241,6 @@ The pair-density diagonalization, PNO cutoffs, empty-block policy and PNO
 correction keep their existing definitions. This does not qualify broader
 open-shell accuracy or scaling.
 
-On that compiled route, enabling `tcut_pno_singles > 0` also uses the shared
-checked solve within each retained singles space, with the occupied index
-and spin in its source/frozen coordinate label. Singles density selection,
-PAO projection and the largest-occupation fallback are unchanged. Each solve
-result is released before the next occupied orbital. The default zero cutoff
-still keeps the full spin-virtual singles space without this extra solve.
-
-When PAO domains are enabled on either the compiled or union route, each
-cached atom-domain and spin block uses the shared checked Fock solve after PAO redundancy
-removal. The overlap rank cutoff, full occupied-space projection and AO
-projection tails are unchanged. The cache still reuses PAO coefficients
-across pairs and singles; it retains no solver result or AO metric snapshot.
-The union route reuses the same per-spin cache, avoiding repeated PAO
-construction for identical atom domains while preserving its combined-spin
-column ordering and empty-domain refusals.
-
-Union pair PNOs and enabled singles PNOs also use the shared checked solve
-for their retained Fock blocks. The coordinate labels include the source,
-frozen count and pair or occupied index. Pair frames remain combined
-alpha/beta; singles frames reflect whether PAOs restrict them to one spin.
-Density selection, spin mixing in degenerate spaces and the singleton
-fallback are unchanged. A temporary retained-rotation copy preserves the
-previous lifting arithmetic; the solve result is released before lifting.
-Default full union singles use one checked Fock solve per calculation and
-reuse its full-space coefficients and energies for every occupied orbital.
-The identity-density ordering is preserved, and the singles amplitudes
-remain independent. The rotated-occupied `triples_mode="t1"` path also
-checks retained TNO Fock solves with source/frozen/triple/combined-spin
-coordinates. Its TNO density cutoff, singleton fallback, occupied rotation
-and refusal of screened triple lists are unchanged. Local T0, iterative T1
-and native TNO rotations keep their existing paths.
-
 **Where it helps and where it fails.** DLPNO is the right tool for
 large gapped molecules where canonical CCSD(T) is out of reach and a
 few tenths of a kcal/mol of controlled truncation error is acceptable;

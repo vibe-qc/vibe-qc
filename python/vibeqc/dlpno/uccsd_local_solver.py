@@ -240,17 +240,8 @@ def _domain_from_density(
     density: np.ndarray,
     f_vv: np.ndarray,
     threshold: float,
-    *,
-    fock_basis_id: str | None = None,
-    spin: str = "restricted",
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Build and quasi-canonicalise a virtual domain from a PSD density.
-
-    A named Fock frame opts the caller into the shared checked solve.
-    Unnamed callers retain their existing boundary pending acceptance.
-    Density selection and its largest-occupation fallback are independent
-    of the retained Fock solve.
-    """
+    """Build and quasi-canonicalise a virtual domain from a PSD density."""
     occ, vectors = np.linalg.eigh(0.5 * (density + density.T))
     order = np.argsort(-occ)
     occ = occ[order]
@@ -264,16 +255,7 @@ def _domain_from_density(
         keep[0] = True
     vectors = vectors[:, keep]
     f_domain = vectors.T @ f_vv @ vectors
-    f_domain = 0.5 * (f_domain + f_domain.T)
-    if fock_basis_id is None:
-        eps, rotation = np.linalg.eigh(f_domain)
-        return np.ascontiguousarray(vectors @ rotation), eps
-    solved = solve_dense_fock(f_domain, spin=spin, basis_id=fock_basis_id)
-    # Preserve the NumPy-owned rotation buffer when lifting the retained
-    # space; immutable solve buffers can change multiplication roundoff.
-    rotation = solved.eigenvectors.copy()
-    eps = solved.eigenvalues
-    del solved  # Release the snapshot before lifting the retained space.
+    eps, rotation = np.linalg.eigh(0.5 * (f_domain + f_domain.T))
     return np.ascontiguousarray(vectors @ rotation), eps
 
 
@@ -574,7 +556,7 @@ def run_local_dlpno_uccsd(
         if options.tcut_pno_singles > 0.0 and residual_route == "union"
         else None
     )
-    # Shared spin-blocked bookkeeping: occupied spin and
+    # Spin-blocked bookkeeping of the compiled route: occupied spin and
     # within-spin index, virtual row blocks, per-spin Fock and orbitals.
     occ_spin = [0] * noa + [1] * nob
     occ_local = list(range(noa)) + list(range(nob))
@@ -601,16 +583,12 @@ def run_local_dlpno_uccsd(
             ao_indices = np.concatenate(
                 [np.arange(atom_first[a], atom_first[a + 1]) for a in atoms]
             )
-            spin = ("alpha", "beta")[spn]
             v_pao, _ = semicanonical_pao_basis(
                 (fa_ao, fb_ao)[spn],
                 overlap,
                 (q_alpha, q_beta)[spn],
                 ao_indices,
                 options.lindep,
-                fock_basis_id=(f"dlpno-uccsd:{result.source_identity}:frozen={nf}:"
-                               f"pao-atoms={','.join(map(str, atoms))}:{spin}"),
-                spin=spin,
             )
             hit = np.ascontiguousarray((cav, cbv)[spn].T @ overlap @ v_pao)
             _spin_pao_cache[key] = hit
@@ -685,11 +663,29 @@ def run_local_dlpno_uccsd(
                 f"empty PAO atom domain for occupied pair {(p, q)} at "
                 f"tcut_mkn={options.tcut_mkn}"
             )
-        atoms = tuple(int(atom) for atom in atoms)
-        va, vb = spin_pao(atoms, 0), spin_pao(atoms, 1)
+        ao_indices = np.concatenate(
+            [
+                np.arange(atom_first[atom], atom_first[atom + 1])
+                for atom in atoms
+            ]
+        )
+        va, _ = semicanonical_pao_basis(
+            fa_ao,
+            overlap,
+            q_alpha,
+            ao_indices,
+            options.lindep,
+        )
+        vb, _ = semicanonical_pao_basis(
+            fb_ao,
+            overlap,
+            q_beta,
+            ao_indices,
+            options.lindep,
+        )
         domain = np.zeros((nv, va.shape[1] + vb.shape[1]))
-        domain[:nva, : va.shape[1]] = va
-        domain[nva:, va.shape[1] :] = vb
+        domain[:nva, : va.shape[1]] = cav.T @ overlap @ va
+        domain[nva:, va.shape[1] :] = cbv.T @ overlap @ vb
         if domain.shape[1] == 0:
             raise ValueError(
                 f"empty PAO virtual domain for occupied pair {(p, q)} at "
@@ -707,10 +703,32 @@ def run_local_dlpno_uccsd(
                 f"empty singles PAO atom domain for occupied {p} at "
                 f"tcut_mkn={options.tcut_mkn}"
             )
-        spn = occ_spin[p]
-        pao = spin_pao(tuple(int(atom) for atom in atoms), spn)
-        domain = np.zeros((nv, pao.shape[1]))
-        domain[vir_rows[spn]] = pao
+        ao_indices = np.concatenate(
+            [
+                np.arange(atom_first[atom], atom_first[atom + 1])
+                for atom in atoms
+            ]
+        )
+        if p < noa:
+            pao, _ = semicanonical_pao_basis(
+                fa_ao,
+                overlap,
+                q_alpha,
+                ao_indices,
+                options.lindep,
+            )
+            domain = np.zeros((nv, pao.shape[1]))
+            domain[:nva] = cav.T @ overlap @ pao
+        else:
+            pao, _ = semicanonical_pao_basis(
+                fb_ao,
+                overlap,
+                q_beta,
+                ao_indices,
+                options.lindep,
+            )
+            domain = np.zeros((nv, pao.shape[1]))
+            domain[nva:] = cbv.T @ overlap @ pao
         if domain.shape[1] == 0:
             raise ValueError(
                 f"empty singles PAO virtual domain for occupied {p} at "
@@ -793,12 +811,7 @@ def run_local_dlpno_uccsd(
                     d_bb = density[np.ix_(b_cols, b_cols)].copy()
                     density[np.ix_(a_cols, a_cols)] += m_ab @ d_bb @ m_ab.T
                     density[np.ix_(b_cols, b_cols)] += m_ab.T @ d_aa @ m_ab
-            d, ep = _domain_from_density(
-                density, f_pao, options.tcut_pno,
-                fock_basis_id=(f"dlpno-uccsd:{result.source_identity}:frozen={nf}:"
-                               f"union-pair={p},{q}:retained-virtual:alpha-beta"),
-                spin="alpha-beta",
-            )
+            d, ep = _domain_from_density(density, f_pao, options.tcut_pno)
             u = d if pao is None else np.ascontiguousarray(pao @ d)
             kp = u.T @ anti @ u
             pair_u[(p, q)] = u
@@ -999,17 +1012,9 @@ def run_local_dlpno_uccsd(
     spin_singles_u: list[np.ndarray | None] = [None] * no
     spin_singles_eps: list[np.ndarray | None] = [None] * no
     if residual_route == "union":
-        full_singles = None
         for p in range(no):
             if singles_density is None:
-                if full_singles is None:
-                    full_singles = _domain_from_density(
-                        np.eye(nv), f_vv, 0.0,
-                        fock_basis_id=(f"dlpno-uccsd:{result.source_identity}:frozen={nf}:"
-                                       "union-full-singles:alpha-beta"),
-                        spin="alpha-beta",
-                    )
-                u, ep = full_singles
+                u, ep = _domain_from_density(np.eye(nv), f_vv, 0.0)
             else:
                 pao = occupied_pao_basis(p)
                 if pao is None:
@@ -1018,12 +1023,10 @@ def run_local_dlpno_uccsd(
                 else:
                     density = pao.T @ singles_density[p] @ pao
                     f_singles = pao.T @ f_vv @ pao
-                spin = "alpha-beta" if pao is None else ("alpha", "beta")[occ_spin[p]]
                 d, ep = _domain_from_density(
-                    density, f_singles, options.tcut_pno_singles,
-                    fock_basis_id=(f"dlpno-uccsd:{result.source_identity}:frozen={nf}:"
-                                   f"union-occupied={p}:retained-singles:{spin}"),
-                    spin=spin,
+                    density,
+                    f_singles,
+                    options.tcut_pno_singles,
                 )
                 u = d if pao is None else np.ascontiguousarray(pao @ d)
             singles_u[p] = u
@@ -1053,10 +1056,7 @@ def run_local_dlpno_uccsd(
                 density = spin_singles_density[p]
                 f_singles = fvv_spin[spn]
             d, ep = _domain_from_density(
-                density, f_singles, options.tcut_pno_singles,
-                fock_basis_id=(f"dlpno-uccsd:{result.source_identity}:frozen={nf}:"
-                               f"occupied={p}:retained-singles:{('alpha', 'beta')[spn]}"),
-                spin=("alpha", "beta")[spn],
+                density, f_singles, options.tcut_pno_singles
             )
             spin_singles_u[p] = d if pao is None else np.ascontiguousarray(pao @ d)
             spin_singles_eps[p] = ep
@@ -1550,14 +1550,10 @@ def run_local_dlpno_uccsd(
                 for p, q in ((i, j), (i, k), (j, k)):
                     amplitude = t2_full[p, q]
                     density += amplitude @ amplitude.T + amplitude.T @ amplitude
-                # Retained TNO Fock recanonicalization: Riplinger et al.,
-                # doi:10.1063/1.4821834, p. 134101-4. Density selection and
-                # this rotated-occupied UHF compatibility path stay unchanged.
                 return _domain_from_density(
-                    density, f_vv, options.tcut_tno,
-                    fock_basis_id=(f"dlpno-uccsd:{result.source_identity}:frozen={nf}:"
-                                   f"rotated-t1-triple={i},{j},{k}:retained-tno:alpha-beta"),
-                    spin="alpha-beta",
+                    density,
+                    f_vv,
+                    options.tcut_tno,
                 )
 
             pairs = [(i, j), (i, k), (j, k)]

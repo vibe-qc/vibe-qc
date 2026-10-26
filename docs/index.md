@@ -68,9 +68,6 @@ Install each product independently and follow its own documentation.
 | Look up options, defaults, and limitations | [User guide task index](user_guide/index.md#find-the-page-from-the-task) |
 | Browse complete runnable inputs | [Examples catalog](https://github.com/vibe-qc/vibe-qc/blob/main/examples/README.md) |
 | Diagnose an installation or calculation | [Troubleshooting](troubleshooting.md) |
-| Update an existing installation safely | [Updating](updating.md) |
-| Report a reproducible failure | [Bug-report checklist](troubleshooting.md#prepare-a-reproducible-report) |
-| Develop or document a change | [Contributor setup](contributor_setup.md), then [contribution guide](contributing.md) |
 
 The [Start here](getting_started.md) page distinguishes the compiled vibe-qc
 engine from the standalone vibe-view package and gives a verification

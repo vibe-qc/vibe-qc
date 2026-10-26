@@ -136,12 +136,6 @@ from .ri import (
     psd_density_factor,
 )
 from .scf import _orthonormaliser, _validate_conv_tol_grad
-from .spin_state import (
-    require_closed_shell_state,
-    stamp_spin_state,
-    supercell_occupation_record,
-    supercell_spin_counts,
-)
 
 
 def _constructed_seed(ccm, selection, S, *, n_alpha=None, n_beta=None):
@@ -1249,7 +1243,6 @@ def run_ccm_rks_direct(
         ccm, initial_guess, driver='run_ccm_rks_direct',
         route="aiccm-real-gamma", initial_density=initial_density,
     )
-    closed_state = require_closed_shell_state(ccm, who="run_ccm_rks_direct")
     _warn_experimental()
     from vibeqc._vibeqc_core import Functional
     from vibeqc.periodic.exchange_convention import exchange_q0_label
@@ -1412,9 +1405,6 @@ def run_ccm_rks_direct(
         diis_dim=diis_dim, lindep_tol=lindep_tol, initial_density=initial_density,
         builder=builder, seed_density=_constructed_seed(ccm, guess_selection, S))
     res.backend = "ccm-neutral-direct-rks"  # result-backend identity (IID 344)
-    stamp_spin_state(res, closed_state, "real-gamma")
-    res.occupation = supercell_occupation_record(
-        res, int(ccm.supercell.n_electrons()) // 2, int(ccm.supercell.n_electrons()) // 2)
     res.cderi = L                      # one build per job (2026-09-24)
     res.cderi_info = cderi_info
     _stamp_exchange_wedge(res, _k_block)
@@ -2203,7 +2193,6 @@ def run_ccm_rhf_direct(
         ccm, initial_guess, driver='run_ccm_rhf_direct',
         route="aiccm-real-gamma", initial_density=initial_density,
     )
-    closed_state = require_closed_shell_state(ccm, who="run_ccm_rhf_direct")
     _warn_experimental()
     from vibeqc.periodic.exchange_convention import exchange_q0_label
 
@@ -2273,9 +2262,6 @@ def run_ccm_rhf_direct(
             tol=stability_tol, follow=bool(follow_instability),
             max_follow=int(max_instability_follow), lindep_tol=lindep_tol)
     res.backend = "ccm-neutral-direct-rhf"  # result-backend identity (IID 344)
-    stamp_spin_state(res, closed_state, "real-gamma")
-    res.occupation = supercell_occupation_record(
-        res, int(ccm.supercell.n_electrons()) // 2, int(ccm.supercell.n_electrons()) // 2)
     res.cderi = L                      # one build per job (2026-09-24)
     res.cderi_info = cderi_info
     _stamp_exchange_wedge(res, k_of_D)
@@ -2403,10 +2389,16 @@ def run_ccm_uhf_direct(
             # contraction (D_σ = C_σ C_σ^T is aufbau-PSD per spin).
             return _k_neutral_fast(L, D_sigma, S, xi)
 
-    # The torus spin sector, resolved on the cluster before dispatch (#519
-    # RG-14); the stand-in fallback derives it from the supercell as before.
-    n_alpha, n_beta, spin_state = supercell_spin_counts(
-        ccm, who="run_ccm_uhf_direct")
+    n_elec = ccm.supercell.n_electrons()
+    mult = int(ccm.supercell.multiplicity)
+    n_unpaired = mult - 1
+    if (n_elec - n_unpaired) % 2 != 0 or n_unpaired > n_elec:
+        raise ValueError(
+            f"run_ccm_uhf_direct: cluster electron count {n_elec} and "
+            f"multiplicity {mult} are incompatible (n_alpha/n_beta non-integer)."
+        )
+    n_alpha = (n_elec + n_unpaired) // 2
+    n_beta = n_elec - n_alpha
 
     # The operator identity and the evaluated-state builder (#519 RG-2, RG-4).
     source = _neutral_source_record(
@@ -2523,8 +2515,6 @@ def run_ccm_uhf_direct(
     res.fit_source = _fit_label(cderi, fit_source)  # #378, #519 RG-12
     res.exchange_q0 = exchange_q0_label(exxdiv)
     res.neutral_source = source
-    stamp_spin_state(res, spin_state, "real-gamma")
-    res.occupation = supercell_occupation_record(res, n_alpha, n_beta)
     return _with_ccm_guess(res, guess_selection)
 
 
@@ -2685,8 +2675,16 @@ def run_ccm_uks_direct(
     _k_block = None     # the block exchange closure, for its wedge counts
     j_of_D = L.coulomb if block else (lambda D: ccm_ri_j_neutral(L, D))
 
-    n_alpha, n_beta, spin_state = supercell_spin_counts(
-        ccm, who="run_ccm_uks_direct")
+    n_elec = ccm.supercell.n_electrons()
+    mult = int(ccm.supercell.multiplicity)
+    n_unpaired = mult - 1
+    if (n_elec - n_unpaired) % 2 != 0 or n_unpaired > n_elec:
+        raise ValueError(
+            f"run_ccm_uks_direct: cluster electron count {n_elec} and "
+            f"multiplicity {mult} are incompatible (n_alpha/n_beta non-integer)."
+        )
+    n_alpha = (n_elec + n_unpaired) // 2
+    n_beta = n_elec - n_alpha
 
     # Periodic spin-polarized XC on the unit cell, folded onto the torus --
     # identical grid/cells/density pairing to run_ccm_rks_direct, per spin.
@@ -2914,8 +2912,6 @@ def run_ccm_uks_direct(
         else "inactive")
     res.neutral_source = source
     res.fock_build = build
-    stamp_spin_state(res, spin_state, "real-gamma")
-    res.occupation = supercell_occupation_record(res, n_alpha, n_beta)
     return _with_ccm_guess(res, guess_selection)
 
 
@@ -3300,8 +3296,7 @@ def run_ccm_direct_optimize(
 
     def ccm_at(x):
         sys2 = _flat_to_system(unit0, x)
-        return CCMSystem(sys2, nrep, basis_name,
-                         spin_state=ccm.spin_state.requested), sys2
+        return CCMSystem(sys2, nrep, basis_name), sys2
 
     # Initial full parity verification (also enforces the fail-closed
     # surface: screened/DH/open-shell-KS raise here, before any step).
@@ -3360,8 +3355,7 @@ def run_ccm_direct_optimize(
 
     # Final full parity verification at the relaxed geometry -- this is
     # what makes the stationary point attributable to the direct energy.
-    ccm_opt = CCMSystem(sys_opt, nrep, basis_name,
-                        spin_state=ccm.spin_state.requested)
+    ccm_opt = CCMSystem(sys_opt, nrep, basis_name)
     parity_final = run_ccm_direct_gradient(
         ccm_opt, functional=functional, exxdiv=exxdiv,
         parity_tol=parity_tol, aux_basis=aux_basis, **gdf_kwargs, initial_guess=initial_guess)
