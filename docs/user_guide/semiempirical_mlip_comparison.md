@@ -12,6 +12,15 @@ vibe-qc for development and production planning: DFTB0/SCC-DFTB, GFN2-xTB,
 PM6/OM1/OM2/OM3, MSINDO, and MACE. It is intentionally conservative: a
 method can be executable and still not be production-validated.
 
+The status words used here follow the four labels defined in
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels)
+(aligned 2026-09-29): MSINDO is production within its documented scope,
+DFTB0/SCC-DFTB are a preview for screening and preoptimisation, GFN2-xTB and
+PM6 are experimental, OM1/OM2/OM3 are experimental and a maintainer
+retirement target (2026-09-02, still executable), PM7 is gated, and MACE is
+a production interface to an external pre-trained model that is not a
+vibe-qc method.
+
 ## Abstract
 
 vibe-qc now contains two different kinds of fast energy engines. The
@@ -27,22 +36,23 @@ The production conclusion is therefore not "which method is best" but
 "which method is valid for this question." Use MACE for fast structures,
 forces, stress, molecular dynamics, and relaxations inside a trained domain.
 Use MSINDO when the system lies inside its validated molecular scope and a
-semiempirical electronic model is needed. Use OM2/OM3 (and PM6, within its
-documented integral-model residuals) for molecular NDDO work. Use DFTB as
-a screening and preoptimization tool. Treat GFN2-xTB and OM1 as
-experimental until their gates lift.
+semiempirical electronic model is needed. PM6 and OM2/OM3 remain usable for
+molecular NDDO development and prescreening within their documented
+integral-model residuals, but both are experimental routes, and the OMx
+family is a retirement target. Use DFTB as a screening and preoptimization
+tool (preview). Treat GFN2-xTB as experimental until its gates lift.
 
 ## Feature matrix
 
 | Engine | Model type | Energy scale | Electronic outputs | Gradients / stress | Periodic support | Open shell | Current scope | Production recommendation |
 |---|---|---|---|---|---|---|---|---|
-| DFTB0 / UDFTB0 | non-self-consistent tight binding | vibe-qc in-house semiempirical total | density-like TB quantities, limited charges | analytic DFTB0 gradients; stress paths available | Gamma + k-point paths | yes | 91 in-house estimated elements | Screening and preoptimization only; parameters are not DFTB+ parity parameters |
-| SCC-DFTB / USCC | self-consistent-charge tight binding | vibe-qc in-house semiempirical total | charges, densities, SCC trace | fixed-charge approximate gradients; stress paths available | Gamma + k-point paths | yes | 91 in-house estimated elements | Screening/preoptimization; do not publish quantitative energies without external validation |
+| DFTB0 / UDFTB0 | non-self-consistent tight binding | vibe-qc in-house semiempirical total | density-like TB quantities, limited charges | analytic DFTB0 gradients; stress paths available | Gamma + k-point paths | yes | 91 in-house estimated elements | Preview: screening and preoptimization only; parameters are not DFTB+ parity parameters |
+| SCC-DFTB / USCC | self-consistent-charge tight binding | vibe-qc in-house semiempirical total | charges, densities, SCC trace | fixed-charge approximate gradients; stress paths available | Gamma + k-point paths | yes | 91 in-house estimated elements | Preview: screening/preoptimization; do not publish quantitative energies without external validation |
 | GFN2-xTB | self-consistent tight binding with multipole electrostatics | GFN2-style semiempirical total | charges and SCC state | analytic molecular gradient; gapped Gamma-periodic gradient and all-nine stress parity, still experimental | Gamma path experimental; general k-point paths fail closed | yes | 86 fetched GFN2 parameters | Keep experimental gate; remaining gates are faithful periodic AES electrostatics, periodic molecular-limit parity, broader difficult fixtures, and xTB parity |
-| PM6 / UPM6 | NDDO SCF | PM6-like total, not MOPAC heat of formation | density, SCF convergence, spin counts for UPM6 | finite difference | Gamma periodic path, experimental | molecular yes | 75 bundled chemical-element parameter records | Molecular development: H-only and H-heavy s/p interactions are source-correct; full heavy-heavy tensor parity remains open |
+| PM6 / UPM6 | NDDO SCF | PM6-like total, not MOPAC heat of formation | density, SCF convergence, spin counts for UPM6 | finite difference | Gamma periodic path, experimental | molecular yes | 75 bundled chemical-element parameter records | Experimental molecular development route: H-only and H-heavy s/p interactions are source-correct; full heavy-heavy tensor parity remains open |
 | PM7 / UPM7 | NDDO SCF | unavailable | none | unavailable | unavailable | no | 75 bundled chemical-element parameter records | Gated until Stewart's feathered electrostatics and all coupled NDDO terms are implemented |
-| OM2 / OM3 | orthogonalization-corrected NDDO SCF (Dral 2016 eqs 6-20) | OMx total; published-benchmark relative energetics (H3- 0.1 kcal/mol, ethane barrier ±0.6); minima ~0.1-0.2 A long | density, SCF convergence, PES wells, published matrix elements + barriers | finite difference | Bloch-periodic route gated; topology-bound OMx-SECCM experimental | yes (UHF) | H, C, N, O, F | Validated molecular development/prescreening; external implementation parity remains open |
-| OM1 | orthogonalization-corrected NDDO SCF | OMx total; X-H bonds ~0.3 A short, close contacts can collapse (analytic ECP missing) | density, SCF convergence, documented-limitation pins | finite difference | Bloch-periodic and topology-bound OM1-SECCM routes gated | yes (UHF) | H, C, N, O, F | Experimental (warns); unblocks when Kolb-Thiel 1993 ECP lands |
+| OM2 / OM3 | orthogonalization-corrected NDDO SCF (Dral 2016 eqs 6-20) | OMx total; published-benchmark relative energetics (H3- 0.1 kcal/mol, ethane barrier ±0.6); minima ~0.1-0.2 A long | density, SCF convergence, PES wells, published matrix elements + barriers | finite difference | Bloch-periodic route gated; topology-bound OMx-SECCM experimental | yes (UHF) | H, C, N, O, F | Experimental and a maintainer retirement target (2026-09-02): validated molecular development/prescreening fixtures, external implementation parity open |
+| OM1 | orthogonalization-corrected NDDO SCF | OMx total; X-H bonds ~0.3 A short, close contacts can collapse (analytic ECP missing) | density, SCF convergence, documented-limitation pins | finite difference | Bloch-periodic and topology-bound OM1-SECCM routes gated | yes (UHF) | H, C, N, O, F | Experimental (warns) and a retirement target; the Kolb-Thiel 1993 ECP is not implemented |
 | MSINDO | INDO SCF over Slater orbitals | reference-MSINDO total | charges, density, binding energy, spin UHF state | FD plus analytic INDO molecular/CCM; analytic closed-shell NDDO molecular | CCM 1D/2D/3D single-point; closed-shell through `run_job` | INDO UHF s/p/d within validated fixtures; NDDO closed-shell | H-Xe INDO; NDDO energy/gradient H, Li-F, Na-Cl, including Al-Cl SPDD | Production within documented INDO and closed-shell NDDO scope |
 | MACE-MPA / MACE-OFF | external pre-trained MLIP | model-specific reference-shifted DFT surface, not an electronic total | none | analytic forces; periodic stress and variable-cell relaxation | periodic direct drivers for materials models | spin not modeled as electronic state | model-dependent trained domain | Operational for fixed-model structures and forces; scientific accuracy claims require external observables; never compare absolute energies to SCF/semiempirical totals |
 
@@ -74,11 +84,13 @@ image-summed energy functional, including H0, overlap, AES, coordination, and
 response terms. A gapped polar cell pins every gradient and all nine stress
 components against central differences. This closes the derivative mismatch,
 not the method-wide production gate.
-The method remains gated because the defining GFN2 production surface still
-requires periodic AES image-cell multipole Ewald terms, stricter periodic
-molecular-limit parity, difficult periodic/polar SCC fixtures, and a closed
-parity matrix against external `xtb` over molecules, ions, radicals, and
-periodic test cells.
+The closed-shell molecular parity matrix against external `xtb` is closed
+since 2026-10-12 (49 systems, electronic energy plus repulsion within
+2e-5 Ha). The method remains gated because the defining GFN2 production
+surface still requires periodic AES image-cell multipole Ewald terms,
+stricter periodic molecular-limit parity, difficult periodic/polar SCC
+fixtures, a D4 reference set beyond Ar and Cu, and an unrestricted route for
+radicals.
 
 Production guidance: keep `GFN2ExperimentalWarning`. Use it for development
 and targeted comparisons, not production numbers. The next production
@@ -117,7 +129,11 @@ prescreening within the documented residuals, not as external-parity
 production engines. PM6 is likewise a development route outside H-only and
 H-heavy s/p systems until the full heavy-heavy tensor and out-of-process MOPAC
 parity are complete; quote its results as PM6-like totals, not MOPAC heats of
-formation. Method-paper citations are emitted on every run.
+formation. Method-paper citations are emitted on every run. In the label
+vocabulary both families are experimental. OM1, OM2 and OM3 are in addition a
+maintainer retirement target (2026-09-02): nothing has been removed yet, but
+no molecular, Bloch or CCM target remains for them and they are scheduled to
+leave the public portfolio.
 
 ### MSINDO
 
@@ -226,14 +242,14 @@ reference protocol.
    electron-electron, electron-core, and core-core channels, then validate
    molecular and periodic pairs against MOPAC before lifting the gate.
 
-4. **OMx:** add external reference fixtures for OM1/OM2/OM3. The corrected
-   `run_omx_v2` kernel is the only public molecular native path; retain that
-   single-path invariant while expanding parity fixtures.
+4. **OMx:** the family is a retirement target (2026-09-02). Keep the
+   corrected `run_omx_v2` kernel as the only public molecular native path
+   until the deprecation lands, and do not expand its scope.
 
 5. **MSINDO:** keep direct energy, gradient, CCM, and COSMO B-matrix/vector-op
    production calls on the existing C++ kernels, port remaining COSMO/GEPOL,
    post-SCF, and root-tracking hot loops, and keep the closed-shell/open-shell
    scope tied to oracle-backed fixtures.
 
-6. **MACE:** add a Python <=3.13 CI lane for the real MACE e2e tests and keep
+6. **MACE:** use a Python 3.14 release-candidate lane for the real MACE e2e tests and keep
    the model registry current as upstream weights and licenses evolve.

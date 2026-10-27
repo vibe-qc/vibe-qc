@@ -13,6 +13,7 @@ from CRYSTAL23" a checked claim rather than an assumption.
 from __future__ import annotations
 
 import pytest
+from pathlib import Path
 
 from vibe_basis.backends.crystal import (
     DEFAULT_CRYSTAL_VERSION,
@@ -223,3 +224,76 @@ def test_gpaw_engine_is_constructible_but_loudly_unbuilt():
         eng.crystal_energy("basis", object())
     with pytest.raises(NotImplementedError, match="M5"):
         eng.atom_energy("basis", 12)
+
+
+# ---------------------------------------------------------------------------
+# How a job starts CRYSTAL (#225)
+# ---------------------------------------------------------------------------
+
+
+class _CapturingTransport:
+    """Records what the engine ships, then fails so nothing is parsed."""
+
+    def __init__(self):
+        self.calls = []
+
+    def run(self, work_dir, command, dest, **kwargs):
+        from vibe_basis.transports.base import TransportError
+
+        self.calls.append((Path(work_dir), list(command)))
+        raise TransportError("captured")
+
+
+def _rocksalt():
+    from vibe_basis.io.structures import STRUCTURES
+
+    return STRUCTURES["MgO"]
+
+
+def test_wrapper_invocation_is_unchanged(tmp_path, monkeypatch):
+    """The historical contract: a host script that takes the deck name."""
+    monkeypatch.chdir(tmp_path)
+    transport = _CapturingTransport()
+    eng = Crystal23Engine(transport=transport, crystal_wrapper="run-crystal.sh")
+    result = eng.crystal_energy("12 0\n99 0\nEND\n", _rocksalt(), method="pw1pw")
+    assert not result.ok and result.failure_mode == "transport_error"
+    (wd, command), = transport.calls
+    assert command == ["run-crystal.sh", "MgO.d12"]
+    assert not (wd / "run_crystal.sh").exists()
+
+
+def test_stdin_invocation_stages_a_runner(tmp_path, monkeypatch):
+    """A CRYSTAL binary reads stdin; given a file argument it reads nothing."""
+    monkeypatch.chdir(tmp_path)
+    transport = _CapturingTransport()
+    eng = Crystal23Engine(
+        transport=transport, crystal_wrapper="crystal23", invocation="stdin"
+    )
+    eng.crystal_energy("12 0\n99 0\nEND\n", _rocksalt(), method="pw1pw")
+    (wd, command), = transport.calls
+    assert command == ["sh", "run_crystal.sh"]
+    runner = (wd / "run_crystal.sh").read_text()
+    assert "exec crystal23 < MgO.d12 > MgO.out 2>&1" in runner
+    assert (wd / "MgO.d12").is_file()
+
+
+def test_mpi_invocation_stages_an_input_file_runner(tmp_path, monkeypatch):
+    """Pcrystal reads a file named INPUT; unbound ranks so jobs can share a host."""
+    monkeypatch.chdir(tmp_path)
+    transport = _CapturingTransport()
+    eng = Crystal23Engine(
+        transport=transport, crystal_wrapper="Pcrystal23", invocation="mpi", cpus=6
+    )
+    eng.crystal_energy("12 0\n99 0\nEND\n", _rocksalt(), method="pw1pw")
+    (wd, command), = transport.calls
+    assert command == ["sh", "run_crystal.sh"]
+    runner = (wd / "run_crystal.sh").read_text().splitlines()
+    assert runner[1:] == [
+        "cp MgO.d12 INPUT",
+        "exec mpirun --bind-to none -np 6 Pcrystal23 > MgO.out 2>&1",
+    ]
+
+
+def test_unknown_invocation_is_refused():
+    with pytest.raises(ValueError, match="invocation"):
+        Crystal23Engine(transport=_CapturingTransport(), invocation="srun")

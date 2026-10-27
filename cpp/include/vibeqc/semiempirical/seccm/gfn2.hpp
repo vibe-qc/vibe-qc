@@ -13,15 +13,15 @@
 //   * Shell gamma: the same-atom block is the molecular one (Klopman-Ohno at
 //     R = 0); every other atom contributes through its WS records at the
 //     record distances with their fractional weights.
-//   * AES: the molecular driver's shipped default path, the ad-hoc
-//     shell-resolved gamma^n multipole potential, accumulated over the WS
-//     records with their fractional weights (each record carries its weight
-//     through the potential sums; the pair-additive AES has no three-center
-//     terms, so the Peintinger-Bredow eq-13 union construction reduces to
-//     the plain two-center record weight). The experimental atom-resolved
-//     "faithful" AES (aes_potentials / aes_energy, gated behind
-//     XTBSccOptions::aes_faithful in the molecular driver) is not part of
-//     this adapter.
+//   * AES: by default the atom-resolved Bannwarth 2019 model (Eq. 25 energy,
+//     Eqs. 39-44 Fock) on cumulative atomic multipole moments built from the
+//     WS records, with the joint [dq; mu; theta] iterate
+//     (GFN2SECCMOptions::aes_faithful = true). It is the only
+//     representative-invariant AES model the route has (#140). The
+//     molecular driver's ad-hoc shell-resolved gamma^n multipole potential,
+//     accumulated over the WS records with their fractional weights, stays
+//     available as aes_faithful = false. Its moment integrals come from the
+//     home-cell molecule, so it depends on the typed torus representative.
 //   * GAM3 on-site third order and the WS-weighted pair repulsion complete
 //     the energy functional; the per-primitive-cell energy is the raw
 //     finite-cluster total divided by the finite-group order.
@@ -56,6 +56,8 @@ namespace semiempirical {
 namespace seccm {
 
 struct GFN2SECCMResult : ParameterIdentifiedResult {
+    // Observables describe the last evaluated state even on exhaustion;
+    // only converged=true identifies an accepted SCC fixed point.
     double energy = 0.0;  // Total energy per primitive cell (Mermin A at T > 0).
     double free_energy = 0.0;  // Mermin A = E - T*S, per primitive cell
     double entropy = 0.0;      // electronic entropy, per primitive cell
@@ -79,7 +81,7 @@ struct GFN2SECCMResult : ParameterIdentifiedResult {
     double cyclic_3rd_energy = 0.0;
     double cyclic_band0_energy = 0.0;
     double cyclic_madelung_energy = 0.0;
-    // Frontier gap of the converged finite torus.  Measured and recorded
+    // Frontier gap of the last evaluated finite torus. Measured and recorded
     // whenever a frontier exists (0 < n_occ < n_basis), at every
     // electronic temperature -- a smeared run records its real gap, not a
     // placeholder zero.  Left at 0.0 only when no frontier is defined.
@@ -129,6 +131,11 @@ struct GFN2SECCMResult : ParameterIdentifiedResult {
     bool requested_madelung_no_self = false;
     bool requested_ewald_gamma = false;
     bool requested_include_aes = true;
+    // Selects the AES Hamiltonian when requested_include_aes is true: the
+    // record-resolved Bannwarth CAMM model or the ad-hoc shell kernel
+    // (GFN2SECCMOptions::aes_faithful). Python records the executed model
+    // in the Hamiltonian identity from this echo (issue #380).
+    bool requested_aes_faithful = true;
     bool requested_ewald_gamma_molecular_onsite = false;
     // Requested solver/restart/compatibility controls echoed across the
     // native boundary.  Python canonicalizes these into immutable run
@@ -163,6 +170,12 @@ struct GFN2SECCMOptions {
     // smearing_temperature recorded). The insulating T=0 default is
     // unchanged.
     double electronic_temperature = 0.0;
+    // True when the caller asked for electronic_temperature explicitly
+    // (including 0.0). The stabilisation ladder's finite-T rungs then keep
+    // the requested temperature instead of overriding it, the molecular
+    // driver's vibe-qc#3 contract; the flag is forwarded on the zero-image
+    // delegation. False (the default) keeps the automatic finite-T rescue.
+    bool electronic_temperature_explicit = false;
     // Opt-in long-range embedding for neutral ionic cells: the
     // Madelung/Ewald potential of the supercell atomic Mulliken
     // fluctuations joins the H diagonal (MSINDO CCM convention
@@ -199,7 +212,7 @@ struct GFN2SECCMOptions {
     // Opt-in self-consistent periodic shell gamma for 1-D wires and 2-D
     // slabs: full bare-Coulomb Ewald plus WS-folded KO-minus-1/R and
     // on-site hardness. Non-molecular 3-D cyclic topologies fail closed
-    // (#444): the finite WS remainder has no thermodynamic limit there.
+    // (former-tracker issue 444): the finite WS remainder has no thermodynamic limit there.
     // Exact zero-image molecular delegation is unchanged; the internal
     // 3-D kernel remains diagnostic only. Mutually exclusive with madelung.
     // See docs/design_seccm_gfn2_long_range_gamma.md.
@@ -231,7 +244,7 @@ struct GFN2SECCMOptions {
     // KlopmanOhno (the default) is the GFN2 paper's own kernel and keeps the
     // shipped 1-D/2-D numbers bit-for-bit.  Its remainder gamma - 1/R decays
     // as -eta^2/2R^3, so the Wigner-Seitz-folded sum is finite but has no
-    // thermodynamic limit; 3-D cyclic topologies fail closed with it (#444).
+    // thermodynamic limit; 3-D cyclic topologies fail closed with it (former-tracker issue 444).
     //
     // Elstner is the Elstner et al. 1998 Eq. 17/18 form (tau = 16/5 U),
     // whose remainder decays exponentially.  Its image sum converges
@@ -245,7 +258,7 @@ struct GFN2SECCMOptions {
     ShellGammaForm gamma_form = ShellGammaForm::KlopmanOhno;
     // Faithful record-resolved anisotropic electrostatics (issue #348).
     //
-    // The shipped path (false) is the ad-hoc shell-resolved gamma^3/gamma^5
+    // The ad-hoc path (false) is the shell-resolved gamma^3/gamma^5
     // multipole kernel on moments built from the home-cell molecule.  Those
     // moments do not see the Wigner-Seitz image inventory, so retyping a
     // boundary site by a lattice vector moves the energy: measured on a
@@ -261,10 +274,15 @@ struct GFN2SECCMOptions {
     // produces atom-resolved ones -- which is why this is a flag and not a
     // repair of the existing kernel.
     //
-    // Default false while the molecular driver's own aes_faithful default is
-    // false, so that the molecular-limit bit parity between the two routes
-    // keeps meaning; the defaults move together.
-    bool aes_faithful = false;
+    // Default true (#140, maintainer decision 2026-09-24): the default route
+    // must not depend on the typed torus representative, and only this
+    // model satisfies that. Molecular XTBSccOptions shares this default.
+    // A zero-image topology forwards this flag to the delegated molecular
+    // solve, so a 1x1x1 default SECCM uses the same model. Explicit false
+    // selects the ad-hoc kernel, for compatibility with pre-#140 numbers and
+    // for scc_mixer = Newton, whose Jacobian is defined on the charge
+    // subspace alone.
+    bool aes_faithful = true;
     // AES potential damping of the *molecular* driver, forwarded on a
     // zero-image delegating topology so the delegated solve runs the model
     // the caller asked for.  The SECCM engine itself does not use it: since
@@ -309,7 +327,7 @@ struct GFN2SECCMOptions {
 //
 // `form` selects the short-range kernel.  ShellGammaForm::KlopmanOhno is the
 // GFN2 paper's own, whose remainder decays as -eta^2/2R^3 and so has no
-// three-dimensional thermodynamic limit (#444).  ShellGammaForm::Elstner is
+// three-dimensional thermodynamic limit (former-tracker issue 444).  ShellGammaForm::Elstner is
 // the Elstner 1998 form, whose remainder decays exponentially and does.
 //
 // `alpha <= 0` selects the validated per-dimension Ewald width (3-D

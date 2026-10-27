@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
+  "schema_version": "1.1.0",
+  "name": "def2-sv",
+  "description": " Def2-SV(P)  EMSL  Basis Set Exchange Library   2/01/15 6:37\nElements                             References\nH He Li Be B C N O F Ne Na Mg Al Si P S Cl Ar K Ca Sc Ti V Cr Mn Fe Co Ni Cu Zn Ga Ge As Se Br Kr Rb Sr Y Zr Nb Mo Tc Ru Rh Pd Ag Cd In Sn Sb Te I Xe Cs Ba La Hf Ta W Re Os Ir Pt Au Hg Tl Pb Bi Po At Rn : F. Weigend and R. Ahlrichs, Phys. Chem. Chem. Phys., Balanced basis sets of split valence, triple zeta valence and quadruple zeta valence\nquality for H to Rn: Design and assessment of accuracy 7, 3297 (2005).",
   "role": "orbital",
   "elements": {
     "H": {
@@ -1807,7 +1807,40 @@
       ]
     }
   },
+  "basis_family": "ahlrichs",
+  "references": [
+    {
+      "key": "schafer_horn_ahlrichs_1992",
+      "description": "A. Schäfer, H. Horn, R. Ahlrichs, Journal of Chemical Physics 97, 2571-2577 (1992)",
+      "doi": "10.1063/1.463096"
+    },
+    {
+      "key": "weigend_ahlrichs_def2_2005",
+      "description": "F. Weigend, R. Ahlrichs, Physical Chemistry Chemical Physics 7, 3297-3305 (2005)",
+      "doi": "10.1039/B508541A"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "vendor",
+    "upstream": [
+      {
+        "name": "libint",
+        "version": "2.13.1",
+        "identifier": "def2-sv",
+        "detail": "byte-identical to libint's bundled file"
+      }
+    ],
+    "retrieval_date": "2026-09-08",
+    "content_sha256": "b8cc6f9923139f586c81a112e55d0c24481300a1ece5843aa6a3afc0f7caa56f",
+    "citations": [
+      {
+        "keys": [
+          "schafer_horn_ahlrichs_1992",
+          "weigend_ahlrichs_def2_2005"
+        ]
+      }
+    ],
+    "notes": "The date is when the file entered this repository's history; the import date was not recorded."
   }
 }

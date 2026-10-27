@@ -36,6 +36,8 @@ class CodeRow:
     energy_per_atom_ha: Optional[float] = None
     n_atoms: Optional[int] = None
     n_electrons: Optional[int] = None
+    n_alpha: Optional[int] = None  # resolved per-cell spin counts (#647)
+    n_beta: Optional[int] = None
     n_basis_functions: Optional[int] = None
     n_basis_shells: Optional[int] = None
     wall_s: float = 0.0
@@ -51,6 +53,9 @@ class CodeRow:
     delta_mha_per_basis_function_vs_ref: Optional[float] = None
     abs_delta_mha_per_basis_function_vs_ref: Optional[float] = None
     ref_code: str = ""  # which CodeRow in this case is the reference
+    # Physical inputs against the reference (#648): qualified | unverified |
+    # mismatch | reference; empty where no qualification ran (molecules).
+    input_qualification: str = ""
     status: str = "pending"  # pass | marginal | fail | unavailable | error
     note: str = ""
 
@@ -73,6 +78,8 @@ CSV_COLUMNS: Tuple[str, ...] = (
     "energy_per_atom_ha",
     "n_atoms",
     "n_electrons",
+    "n_alpha",
+    "n_beta",
     "n_basis_functions",
     "n_basis_shells",
     "wall_s",
@@ -88,6 +95,7 @@ CSV_COLUMNS: Tuple[str, ...] = (
     "delta_mha_per_basis_function_vs_ref",
     "abs_delta_mha_per_basis_function_vs_ref",
     "ref_code",
+    "input_qualification",
     "status",
     "note",
 )
@@ -122,16 +130,20 @@ class CaseRecord:
     # references or when the molecule isn't in the CCCBDB canonical
     # set.
     experimental_reference: Optional["object"] = None
-    """When set, an :class:`examples.regression.core.spec.ExperimentalReference`
+    """When set, a :class:`vibeqc_spec.ExperimentalReference`
     pulled from NIST CCCBDB. Stored as ``object`` here to avoid a
     forward-import (the schema is defined in ``.spec`` and CaseRecord
     is consumed by ``.spec`` callers — keep the reverse direction
     type-erased at the boundary)."""
 
+    state_tag: str = ""
+    """Suffix for a matrix row that overrides the system's spin state."""
+
     @property
     def label(self) -> str:
         km = "x".join(str(k) for k in self.kmesh) if self.kmesh != (0, 0, 0) else "mol"
-        return f"{self.system_id}__{self.basis}__{self.method_id}__{km}"
+        label = f"{self.system_id}__{self.basis}__{self.method_id}__{km}"
+        return f"{label}__{self.state_tag}" if self.state_tag else label
 
 
 def _git_sha(repo_root: Path) -> str:

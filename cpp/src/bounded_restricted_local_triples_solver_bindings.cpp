@@ -1,6 +1,7 @@
 // Tiny ragged triples diagnostics. Supplied moments are not physical certificates.
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 #include <array>
 #include <limits>
 #include <stdexcept>

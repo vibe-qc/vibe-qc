@@ -1,0 +1,1 @@
+- Allow opt-in fresh FFTW collectors to receive the recipe-pinned source archive and exact build paths through an external spec; reject mismatches before configuration.

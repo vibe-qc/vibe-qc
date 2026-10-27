@@ -43,7 +43,9 @@ Quick start
 from __future__ import annotations
 
 from .bridge import from_libint_basis, to_libint_basis
-from .exporter_g94 import loss_report_g94, to_g94, to_g94_file
+from . import library
+from .exporter_crystal import loss_report_crystal, to_crystal, to_crystal_file
+from .exporter_g94 import loss_report_g94, render_header, to_ecp_sidecar, to_g94, to_g94_file
 from .exporter_nwchem import loss_report_nwchem, to_nwchem, to_nwchem_file
 from .exporter_orca import loss_report_orca, to_orca, to_orca_file
 from .importer_bse import from_bse_file, from_bse_json
@@ -58,8 +60,10 @@ from .library_writer import (
     write_to_library,
 )
 from .model import (
+    SCHEMA_VERSION,
     BasisRole,
     BasisSetData,
+    CitationRoute,
     ECPEntry,
     ECPPotential,
     ECPTerm,
@@ -68,8 +72,10 @@ from .model import (
     LossReport,
     Primitive,
     Provenance,
+    ProvenanceKind,
     Reference,
     Shell,
+    Upstream,
 )
 from .qvf_basis import (
     from_qvf_bytes,
@@ -97,8 +103,14 @@ __all__ = [
     "ECPTerm",
     "HarmonicType",
     "Provenance",
+    "ProvenanceKind",
+    "Upstream",
+    "CitationRoute",
     "Reference",
     "LossReport",
+    "SCHEMA_VERSION",
+    # The bundled library as a record store
+    "library",
     # BSE importer
     "from_bse_json",
     "from_bse_file",
@@ -125,6 +137,8 @@ __all__ = [
     # Legacy exporters
     "to_g94",
     "to_g94_file",
+    "to_ecp_sidecar",
+    "render_header",
     "loss_report_g94",
     "to_orca",
     "to_orca_file",
@@ -132,6 +146,9 @@ __all__ = [
     "to_nwchem",
     "to_nwchem_file",
     "loss_report_nwchem",
+    "to_crystal",
+    "to_crystal_file",
+    "loss_report_crystal",
     # QVF-Basis serializer
     "to_qvf_json",
     "from_qvf_json",

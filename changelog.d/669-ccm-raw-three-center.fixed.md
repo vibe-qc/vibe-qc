@@ -1,0 +1,1 @@
+- Reconstruct symmetry-reduced CCM three-center integrals before metric whitening to avoid amplifying numerical noncommutation in near-null auxiliary modes. Metric screening and factor-level tolerances are unchanged.

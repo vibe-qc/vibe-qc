@@ -28,10 +28,14 @@ from pathlib import Path
 from typing import Iterable
 
 __all__ = [
+    "BARE_IMAGE_SUM",
     "BVK_EWALD",
+    "MOLECULAR_LIMIT",
     "STRICT_ZERO",
     "WIRE_FREE_SEAM",
     "exchange_q0_label",
+    "executed_exchange_q0",
+    "executed_exchange_q0_or_none",
     "read_exchange_q0",
     "assert_matched_exchange_q0",
 ]
@@ -44,6 +48,24 @@ BVK_EWALD = "BvK-ewald"
 #: The legitimate alternative: the strict ``G+q=0`` zero-mode drop (the legacy
 #: ``exxdiv=None`` Γ-supercell helper). A distinct finite Hamiltonian.
 STRICT_ZERO = "strict-zero-mode"
+
+#: The molecule-in-a-box convention of the Γ-only Ewald and legacy Γ GDF
+#: drivers: exchange with the home-cell density and the bare kernel, image
+#: blocks zeroed (``build_jk_gamma_molecular_limit``). It converges
+#: exponentially to the isolated molecule as the box grows, where
+#: :data:`BVK_EWALD` converges as ``1/L^3``, and it is neither of the two
+#: bulk conventions above: on a condensed cell it differs from both. Results
+#: that ran it declare it (``result.exchange_q0``), so a manifest never
+#: records a bulk convention for a molecule-in-a-box run (GitLab #23).
+MOLECULAR_LIMIT = "molecular-limit"
+
+#: No ``q=0`` treatment at all: the bare full-range kernel summed over a
+#: radial image ball on a multi-k mesh. Only the gauges the corrected split
+#: does not exist for yet (2D slab, ``dim != 3``) still run it, and they are
+#: not lattice-cutoff converged: on a BvK-torus density the image sum does
+#: not decay. Recorded so such a run is never mistaken for a converged
+#: convention.
+BARE_IMAGE_SUM = "bare-image-sum"
 
 #: Wire (``d=1`` mixed-boundary) only. Subtract just the **infrared-divergent** part
 #: of the ``S⊗S`` monopole, keeping its free-space (molecular) content, which is
@@ -82,6 +104,33 @@ def exchange_q0_label(exxdiv: str | None) -> str:
     if key in _EXXDIV_TO_Q0:
         return _EXXDIV_TO_Q0[key]
     return f"exxdiv:{exxdiv}"
+
+
+def executed_exchange_q0(result, requested_exxdiv: str | None) -> str:
+    """The exchange-``q=0`` convention a finished SCF actually ran.
+
+    A route can run a different convention than the ``exxdiv`` knob
+    requested (a Γ-only driver runs :data:`MOLECULAR_LIMIT` whatever the knob
+    says), so the result is asked first: a non-empty ``result.exchange_q0``
+    label, else the ``result.exxdiv`` setting the GDF drivers record. Only a
+    result that says neither falls back to :func:`exchange_q0_label` of the
+    request.
+    """
+    declared = executed_exchange_q0_or_none(result)
+    if declared is not None:
+        return declared
+    return exchange_q0_label(requested_exxdiv)
+
+
+def executed_exchange_q0_or_none(result) -> str | None:
+    """The convention ``result`` declares (see :func:`executed_exchange_q0`), or ``None``."""
+    declared = getattr(result, "exchange_q0", None)
+    if isinstance(declared, str) and declared:
+        return declared
+    exxdiv = getattr(result, "exxdiv", None)
+    if isinstance(exxdiv, str):
+        return exchange_q0_label(exxdiv)
+    return None
 
 
 def read_exchange_q0(system_manifest: str | Path) -> str | None:

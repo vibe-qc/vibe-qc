@@ -26,6 +26,8 @@ subprocess call is injected (``runner=``) so tests run without
 
 from __future__ import annotations
 
+import functools
+import re
 import subprocess
 from pathlib import Path
 from typing import Callable, Optional, Sequence
@@ -43,13 +45,23 @@ from .base import (
 Runner = Callable[..., "subprocess.CompletedProcess[str]"]
 
 
-def _default_runner(argv: Sequence[str]) -> "subprocess.CompletedProcess[str]":
-    return subprocess.run(  # noqa: S603 — argv is built from known tokens
-        list(argv),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+def _default_runner(
+    argv: Sequence[str], *, timeout: Optional[float] = None
+) -> "subprocess.CompletedProcess[str]":
+    try:
+        return subprocess.run(  # noqa: S603 — argv is built from known tokens
+            list(argv),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        # A wedged daemon or link would otherwise hang the caller for good.
+        return subprocess.CompletedProcess(
+            list(argv), 124, stdout=exc.stdout or "",
+            stderr=f"timed out after {timeout:g} s",
+        )
 
 
 class VqTransport(Transport):
@@ -73,6 +85,10 @@ class VqTransport(Transport):
     runner
         Injected subprocess callable, for testing. Defaults to a
         thin wrapper over ``subprocess.run``.
+    command_timeout_s
+        Limit on one ``vq`` call; a call that runs over fails like a
+        non-zero exit. A timed-out ``submit`` may still have created its job.
+        ``None`` waits indefinitely.
     """
 
     def __init__(
@@ -83,12 +99,15 @@ class VqTransport(Transport):
         default_cpus: int = 14,
         default_wall_time_s: int = 7200,
         runner: Optional[Runner] = None,
+        command_timeout_s: Optional[float] = 600.0,
     ) -> None:
         self.vq_bin = vq_bin
         self.host = host  # None = use default_host from vq config
         self.default_cpus = default_cpus
         self.default_wall_time_s = default_wall_time_s
-        self._runner: Runner = runner or _default_runner
+        self._runner: Runner = runner or functools.partial(
+            _default_runner, timeout=command_timeout_s
+        )
 
     # ------------------------------------------------------------------
     # Internal: run a vq subcommand, raise on non-zero exit.
@@ -166,9 +185,11 @@ class VqTransport(Transport):
             str(cpus if cpus is not None else self.default_cpus),
             "--wall-time-seconds",
             str(wall_time_s if wall_time_s is not None else self.default_wall_time_s),
-            "--",
-            *command,
         ]
+        if label:
+            # So the job is recognisable in a shared queue listing.
+            argv += ["--job-name", re.sub(r"[^A-Za-z0-9._-]+", "-", label).strip("-")[:60]]
+        argv += ["--", *command]
         proc = self._run(argv)
         job_id = self._parse_job_id(proc.stdout)
         return JobHandle(
@@ -178,13 +199,24 @@ class VqTransport(Transport):
             label=label,
         )
 
+    def _job(self, handle: JobHandle) -> list[str]:
+        # The host the job was submitted to, when there is one. Without it vq
+        # searches every configured host, and a host that search cannot reach
+        # in time reports a live job as "not found on any reachable host".
+        return [self.host, handle.job_id] if self.host is not None else [handle.job_id]
+
     def poll(self, handle: JobHandle) -> str:
-        proc = self._run([self.vq_bin, "status", handle.job_id])
+        proc = self._run([self.vq_bin, "status", *self._job(handle)])
         return self._parse_state(proc.stdout)
 
     def fetch(self, handle: JobHandle, dest: Path | str) -> Path:
         dest = Path(dest)
         dest.mkdir(parents=True, exist_ok=True)
-        self._run([self.vq_bin, "fetch", handle.job_id, "-o", str(dest)])
-        # vq lands outputs under <dest>/<job_id>/.
-        return dest / handle.job_id
+        self._run([self.vq_bin, "fetch", *self._job(handle), "-o", str(dest)])
+        # vq lands outputs under <dest>/<job_id>/, or <dest>/<job-name>-<job_id>/
+        # for a named job.
+        plain = dest / handle.job_id
+        if plain.is_dir():
+            return plain
+        named = sorted(p for p in dest.glob(f"*-{handle.job_id}") if p.is_dir())
+        return named[0] if len(named) == 1 else plain

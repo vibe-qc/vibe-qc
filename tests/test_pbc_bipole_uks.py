@@ -60,6 +60,166 @@ def test_pbc_bipole_uks_is_exported():
     assert vq.run_pbc_bipole_uks is run_pbc_bipole_uks
 
 
+@pytest.mark.parametrize("method", ["rks", "uhf", "uks"])
+@pytest.mark.parametrize("seed,mesh_size", [
+    ("HCORE", (1, 1, 1)), ("HCORE", (2, 1, 1)),
+    ("SAD", (1, 1, 1)), ("read", (1, 1, 1)),
+    ("nonfermi-read", (1, 1, 1)),
+])
+def test_bipole_free_energy_uses_evaluated_density_entropy(
+    monkeypatch, method, seed, mesh_size,
+):
+    from vibeqc.periodic_scf_accelerators import (
+        MultiKPeriodicSCFAccelerator, MultiKPeriodicUHFAccelerator,
+    )
+
+    system, basis, _ = _h2_3d()
+    if seed == "nonfermi-read":
+        system = vq.PeriodicSystem(3, np.eye(3) * 8.0, [
+            vq.Atom(1, [x, 0.0, z]) for x in (0.0, 2.5) for z in (0.0, 1.4)
+        ])
+        basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    mesh = monkhorst_pack(system, mesh_size, use_symmetry=False)
+    opened = method != "rks"
+    opts = _rhf_opts(3) if method == "uhf" else _ks_opts(3)
+    opts.lattice_opts.cutoff_bohr = 12.0
+    opts.smearing_temperature = 0.2
+    opts.damping = 0.5
+    opts.use_diis = True
+    opts.diis_start_iter = 10
+    opts.initial_guess = InitialGuess.SAD if seed == "SAD" else InitialGuess.HCORE
+    driver = getattr(vq, f"run_pbc_bipole_{method}")
+    kwargs = {}
+    if "read" in seed:
+        reference = driver(system, basis, mesh, opts, progress=False)
+        val, vec = np.linalg.eigh(reference.overlap[0])
+        x = vec / np.sqrt(val)
+        # A PSD two-electron spin seed can still exceed unit occupation.
+        occ = [1.2, 0.5, 0.2, 0.1] if seed == "nonfermi-read" else [0.7, 0.3]
+        density = (x * occ) @ x.conj().T
+        kwargs["initial_density_k"] = ([density], [density]) if opened else [2 * density]
+        if seed == "nonfermi-read":
+            kwargs["dft_plus_u"] = [vq.HubbardSite(0, 0, U_ev=1.0)]
+
+    cls = MultiKPeriodicUHFAccelerator if opened else MultiKPeriodicSCFAccelerator
+    name = "extrapolate_uhf" if opened else "extrapolate_rhf"
+    original = getattr(cls, name)
+    calls = []
+
+    def capture(self, *focks, **kw):
+        calls.append((kw["energy"], [
+            np.array(kw[f"density_{spin}k_list"], copy=True)
+            for spin in (("alpha_", "beta_") if opened else ("",))
+        ]))
+        return original(self, *focks, **kw)
+
+    monkeypatch.setattr(cls, name, capture)
+    result = driver(system, basis, mesh, opts, progress=False, **kwargs)
+    roots = []
+    for overlap in result.overlap:
+        val, vec = np.linalg.eigh(overlap)
+        roots.append((vec * np.sqrt(val)) @ vec.conj().T)
+    assert len(calls) >= 2
+    # The final trace/component row is refreshed at the returned density.
+    for index, (free_energy, spin_densities) in enumerate(calls[:-1]):
+        entropy = 0.0
+        capacity = 1.0 if opened else 2.0
+        for densities in spin_densities:
+            for density, root, weight in zip(densities, roots, mesh.weights):
+                occ = np.linalg.eigvalsh(root @ density @ root) / capacity
+                assert occ.min() >= -1e-12 and occ.max() <= 1 + 1e-12
+                occ = np.clip(occ, 0.0, 1.0)
+                live = occ[(occ > 0.0) & (occ < 1.0)]
+                entropy -= weight * capacity * np.sum(
+                    live * np.log(live) + (1 - live) * np.log1p(-live))
+        expected = result.energy_components[index].e_total - 0.2 * entropy
+        assert free_energy == pytest.approx(expected, abs=1e-10, rel=0)
+
+
+@pytest.mark.parametrize("method", ["rhf", "rks", "uhf", "uks"])
+@pytest.mark.parametrize("mesh_size,damping", [((1, 1, 1), 0.5), ((2, 1, 1), 0.5), ((1, 1, 1), 0.0)])
+def test_damped_bipole_residual_matches_evaluated_density(
+    monkeypatch, method, mesh_size, damping,
+):
+    from vibeqc.periodic_scf_accelerators import (
+        MultiKPeriodicSCFAccelerator, MultiKPeriodicUHFAccelerator,
+    )
+
+    opened = method in ("uhf", "uks")
+    cls = MultiKPeriodicUHFAccelerator if opened else MultiKPeriodicSCFAccelerator
+    name = "extrapolate_uhf" if opened else "extrapolate_rhf"
+    original = getattr(cls, name)
+    calls = []
+
+    def capture(self, *focks, **kwargs):
+        for index, spin in enumerate(("alpha_", "beta_") if opened else ("",)):
+            calls.append(tuple(np.array(value, copy=True) for value in (
+                focks[index], kwargs[f"density_{spin}k_list"],
+                kwargs[f"error_{spin}k_list"],
+            )))
+        return original(self, *focks, **kwargs)
+
+    monkeypatch.setattr(cls, name, capture)
+    system = vq.PeriodicSystem(3, np.eye(3) * 10.0, [
+        vq.Atom(3, [5.0, 5.0, 4.0]), vq.Atom(1, [5.0, 5.0, 7.0]),
+    ])
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    mesh = monkhorst_pack(system, mesh_size, use_symmetry=False)
+    opts = _ks_opts(3) if method.endswith("ks") else _rhf_opts(3)
+    opts.lattice_opts.cutoff_bohr = 15.0
+    opts.damping = damping
+    opts.use_diis = True
+    opts.diis_start_iter = 10  # Record the mixed states before extrapolating.
+    result = getattr(vq, f"run_pbc_bipole_{method}")(
+        system, basis, mesh, opts, progress=False,
+    )
+
+    assert len(calls) == 3 * (2 if opened else 1)
+    assert np.max(np.abs(calls[-1][1] - calls[0][1])) > 1e-3
+    for fock, density, residual in calls:
+        fds = fock @ density @ np.asarray(result.overlap)
+        expected = fds - fds.conj().swapaxes(-1, -2)
+        np.testing.assert_allclose(residual, expected, rtol=0, atol=1e-11)
+
+
+@pytest.mark.parametrize("ks", [False, True], ids=["hf", "pbe"])
+@pytest.mark.parametrize(
+    "mesh_size,threshold,expected_ranks",
+    [((1, 1, 1), 0.5, [1]), ((1, 1, 3), 0.338, [1, 2, 2])],
+)
+def test_rank_reduced_unrestricted_matches_restricted(
+    ks, mesh_size, threshold, expected_ranks,
+):
+    """A closed-shell limit remains valid with different retained k ranks."""
+    from vibeqc.pbc_bipole_uhf import run_pbc_bipole_uhf
+
+    system = vq.PeriodicSystem(
+        3, np.eye(3) * 8.0,
+        [vq.Atom(1, [4.0, 4.0, 3.3]), vq.Atom(1, [4.0, 4.0, 4.7])],
+    )
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    mesh = monkhorst_pack(system, mesh_size, use_symmetry=False)
+    opts = _ks_opts(40) if ks else _rhf_opts(40)
+    opts.lattice_opts.cutoff_bohr = 12.0
+    restricted = run_pbc_bipole_rks if ks else run_pbc_bipole_rhf
+    unrestricted = run_pbc_bipole_uks if ks else run_pbc_bipole_uhf
+    kwargs = dict(linear_dep_threshold=threshold, progress=False)
+    ref = restricted(system, basis, mesh, opts, **kwargs)
+    result = unrestricted(system, basis, mesh, opts, **kwargs)
+
+    assert ref.converged and result.converged
+    assert [c.shape[1] for c in result.mo_coeffs_alpha] == expected_ranks
+    assert [c.shape[1] for c in result.mo_coeffs_beta] == expected_ranks
+    assert result.energy == pytest.approx(ref.energy, abs=1e-8, rel=0)
+    for ca, cb, overlap, oa, ob in zip(
+        result.mo_coeffs_alpha, result.mo_coeffs_beta, result.overlap,
+        result.occupations_alpha, result.occupations_beta,
+    ):
+        da, db = (ca * oa) @ ca.conj().T, (cb * ob) @ cb.conj().T
+        np.testing.assert_allclose(da, db, rtol=0, atol=1e-10)
+        assert np.trace(da @ overlap).real == pytest.approx(1.0, abs=1e-10)
+
+
 def test_default_odd_electron_uks_reports_executed_doublet():
     system = vq.PeriodicSystem(
         3,
@@ -120,6 +280,7 @@ def test_nonconverged_uks_reports_spheropole_3d():
         # corrected gauge (the Γ default since option (b) Phase 4b)
         # omits the term entirely (e_ext_el_spheropole is None).
         use_exchange_ewald_split=False,
+        historical_domain=True,
         ewald_precision=1e-6,
         progress=False,
     )
@@ -158,17 +319,19 @@ def test_nonconverged_uks_spheropole_matches_rhf():
 
     # Legacy gauge on the RHF side: under the Ewald exchange split (the
     # Γ RHF default) the spheropole is omitted from RHF results
-    # (e_ext_el_spheropole is None); UKS still reports it (option (b)
-    # Phase 4 propagation pending), so compare in the legacy gauge.
+    # (e_ext_el_spheropole is None). Compare both drivers in the
+    # historical legacy gauge, where the term remains present.
     rhf = run_pbc_bipole_rhf(
         system, basis, kmesh, _rhf_opts(),
         use_exchange_ewald_split=False,
+        historical_domain=True,
         ewald_precision=1e-6,
         progress=False,
     )
     uks = run_pbc_bipole_uks(
         system, basis, kmesh, _ks_opts(),
         use_exchange_ewald_split=False,  # legacy gauge, like the RHF side
+        historical_domain=True,
         ewald_precision=1e-6,
         progress=False,
     )
@@ -468,6 +631,9 @@ def test_multik_constructed_sad_reaches_hubbard_and_accelerator(monkeypatch, spi
         driver(
             system, basis, mesh, options, progress=False,
             use_exchange_ewald_split=False, ewald_precision=1e-6,
+            # The physical pair default (#316) refuses the legacy gauge;
+            # this pins the historical operator, so it replays it (#503).
+            historical_domain=True,
             dft_plus_u=[vq.HubbardSite(0, 0, U_ev=1.0)],
         )
     assert calls == {"builder": 1, "hubbard": 2 if spin else 1, "accelerator": 1}
@@ -527,6 +693,7 @@ def test_multik_patom_refinement_reaches_all_first_cycle_consumers(monkeypatch):
         module.run_pbc_bipole_uks(
             system, basis, mesh, options, progress=False,
             use_exchange_ewald_split=False, ewald_precision=1e-6,
+            historical_domain=True,
             dft_plus_u=[vq.HubbardSite(0, 0, U_ev=1.0)],
         )
     assert len(u_calls) == 2

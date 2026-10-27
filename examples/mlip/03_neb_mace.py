@@ -1,6 +1,6 @@
 """NH3 umbrella inversion via Nudged Elastic Band on a MACE potential.
 
-Requires the ``[mace]`` extra (PyTorch + e3nn; Python <= 3.13):
+Requires the ``[mace]`` extra (PyTorch + e3nn; Python 3.14 supported):
     pip install 'vibe-qc[mace]'
 Run:
     .venv/bin/python 03_neb_mace.py

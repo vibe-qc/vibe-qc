@@ -27,10 +27,15 @@ not depend on the QVF v3 schema landing first.
 Design contract
 ---------------
 
-A checkpoint write must **never** take down the calculation it is
+A live QVF checkpoint write must **never** take down the calculation it is
 observing. Every write is wrapped so a filesystem hiccup or a transient
 writer error is surfaced as a warning and swallowed -- the SCF keeps
 running and the authoritative end-of-run output QVF is unaffected.
+
+The numeric ``.vqr`` restart APIs below are separate authoritative solver
+state. They use the same atomic-publication convention but propagate I/O and
+integrity errors, so a failed requested restart save is never reported as valid.
+A numeric restart archive is not a QVF visualization document.
 """
 
 from __future__ import annotations
@@ -294,3 +299,212 @@ def normalize_partial_iterable(spec: Any) -> Optional[Union[bool, set]]:
     if isinstance(spec, Iterable):
         return {str(x) for x in spec}
     return None
+
+
+# Numeric restart archives share the QVF atomic-publication convention, but are
+# deliberately not QVF visualization documents. Unknown versions have no implicit
+# migration. Callers own and validate their method-specific metadata schema.
+_RESTART_SCHEMA = 'vibeqc.restart.archive/v1'
+_RESTART_SCHEMA_V2 = 'vibeqc.restart.archive/v2'
+_RESTART_CHUNK_BYTES = 1024 * 1024
+_RESTART_MANIFEST_LIMIT = 32 * 1024 * 1024
+_RESTART_METADATA_INLINE_LIMIT = 1024 * 1024
+
+
+def _restart_json(value):
+    import json
+    return json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode('utf-8')
+
+
+def _restart_chunks(array):
+    """At most one MiB of staging, including for noncontiguous inputs."""
+    import numpy as np
+    for panel in np.nditer(array, flags=['external_loop', 'buffered', 'zerosize_ok'],
+                           op_flags=['readonly'], order='C',
+                           buffersize=max(1, _RESTART_CHUNK_BYTES // array.dtype.itemsize)):
+        yield panel.tobytes(order='C')
+
+
+def write_restart_state(path, metadata: dict, arrays: dict):
+    """Atomically publish finite JSON and numeric arrays at the exact path.
+
+    The conventional suffix is ``.vqr``. No pickle, object arrays, executable
+    types or compression are used. A failed write preserves the last complete
+    archive. Numeric staging is bounded by one MiB; retained input arrays,
+    solver state, JSON metadata and archive bookkeeping are additional memory.
+    I/O errors propagate: a requested restart checkpoint is authoritative state,
+    unlike the best-effort live QVF visualization above.
+    """
+    import hashlib
+    import tempfile
+    import zipfile
+    import numpy as np
+    if not isinstance(metadata, dict) or not isinstance(arrays, dict):
+        raise TypeError('restart metadata and arrays must be dictionaries')
+    metadata_bytes = _restart_json(metadata)
+    prepared = {}
+    for name, value in arrays.items():
+        if not isinstance(name, str) or not name or any(c not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-' for c in name):
+            raise ValueError('restart array names must be nonempty portable identifiers')
+        a = np.asarray(value)
+        if a.dtype.kind not in 'biufc' or a.dtype.hasobject or a.dtype.fields or a.dtype.itemsize not in (1, 2, 4, 8, 16):
+            raise ValueError('restart arrays require plain numeric dtypes')
+        # Validation is panelled too; do not allocate an array-sized boolean mask.
+        for chunk in _restart_chunks(a):
+            if not np.isfinite(np.frombuffer(chunk, dtype=a.dtype)).all():
+                raise ValueError('restart arrays must be finite')
+        prepared[name] = a
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix='.' + target.name + '.', suffix='.tmp', dir=target.parent)
+    try:
+        with os.fdopen(descriptor, 'w+b') as raw:
+            with zipfile.ZipFile(raw, 'w', compression=zipfile.ZIP_STORED, allowZip64=True) as archive:
+                records = {}
+                for name, a in sorted(prepared.items()):
+                    checksum = hashlib.sha256()
+                    with archive.open('arrays/' + name, 'w', force_zip64=True) as stream:
+                        for chunk in _restart_chunks(a):
+                            checksum.update(chunk)
+                            stream.write(chunk)
+                    records[name] = dict(shape=list(a.shape), dtype=a.dtype.str,
+                                         nbytes=a.nbytes, sha256=checksum.hexdigest())
+                # Executed support can exceed the bounded manifest even for a
+                # small orbital basis. Keep its complete JSON as data, without
+                # truncating source identity or relaxing the manifest limit.
+                schema, stored_metadata = _RESTART_SCHEMA, metadata
+                if len(metadata_bytes) > _RESTART_METADATA_INLINE_LIMIT:
+                    schema = _RESTART_SCHEMA_V2
+                    with archive.open('metadata.json', 'w', force_zip64=True) as stream:
+                        view = memoryview(metadata_bytes)
+                        for start in range(0, len(view), _RESTART_CHUNK_BYTES):
+                            stream.write(view[start:start + _RESTART_CHUNK_BYTES])
+                    stored_metadata = dict(nbytes=len(metadata_bytes),
+                        sha256=hashlib.sha256(metadata_bytes).hexdigest())
+                payload = dict(schema=schema, metadata=stored_metadata, arrays=records)
+                payload['sha256'] = hashlib.sha256(_restart_json(payload)).hexdigest()
+                encoded = _restart_json(payload)
+                if len(encoded) > _RESTART_MANIFEST_LIMIT:
+                    raise ValueError('restart manifest exceeds 32 MiB limit')
+                archive.writestr('manifest.json', encoded)
+            raw.flush()
+            os.fsync(raw.fileno())
+        os.replace(temporary, target)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+    return target
+
+
+def read_restart_state(path):
+    """Read supported v1/v2 archives, without executable deserialization.
+
+    Arrays allocate their declared final storage once and stream into it in
+    one-MiB panels. Reading returns all retained arrays; this is not a claim of
+    constant total memory. Declared byte counts must match the actual archive
+    members before allocation. Unknown envelope versions are refused.
+    """
+    import hashlib
+    import json
+    import math
+    import zipfile
+    import numpy as np
+    def unique_pairs(items):
+        result = {}
+        for key, value in items:
+            if key in result:
+                raise ValueError('duplicate restart metadata key')
+            result[key] = value
+        return result
+    try:
+        archive_bytes = Path(path).stat().st_size
+        with zipfile.ZipFile(path, 'r') as archive:
+            names = archive.namelist()
+            if len(names) != len(set(names)):
+                raise ValueError('duplicate restart archive entry')
+            info = archive.getinfo('manifest.json')
+            if info.file_size > _RESTART_MANIFEST_LIMIT:
+                raise ValueError('restart manifest exceeds size limit')
+            if (info.compress_type != zipfile.ZIP_STORED or info.compress_size != info.file_size
+                    or info.file_size > archive_bytes):
+                raise ValueError('restart manifest must be stored uncompressed')
+            manifest = json.loads(archive.read(info), object_pairs_hook=unique_pairs,
+                parse_constant=lambda value: (_ for _ in ()).throw(ValueError('nonfinite restart metadata')))
+            if not isinstance(manifest, dict) or manifest.get('schema') not in (_RESTART_SCHEMA, _RESTART_SCHEMA_V2):
+                raise ValueError('unsupported restart archive schema; no implicit migration')
+            checksum = manifest.pop('sha256', None)
+            if set(manifest) != {'schema', 'metadata', 'arrays'} or hashlib.sha256(_restart_json(manifest)).hexdigest() != checksum:
+                raise ValueError('restart manifest checksum or structure mismatch')
+            if not isinstance(manifest['metadata'], dict) or not isinstance(manifest['arrays'], dict):
+                raise ValueError('invalid restart metadata or array table')
+            members = {'manifest.json', *('arrays/' + n for n in manifest['arrays'])}
+            if manifest['schema'] == _RESTART_SCHEMA_V2:
+                members.add('metadata.json')
+            if set(names) != members:
+                raise ValueError('restart archive array coverage mismatch')
+            metadata = manifest['metadata']
+            if manifest['schema'] == _RESTART_SCHEMA_V2:
+                if set(metadata) != {'nbytes', 'sha256'}:
+                    raise ValueError('invalid restart metadata descriptor')
+                item = archive.getinfo('metadata.json')
+                count = metadata['nbytes']
+                if (type(count) is not int or count < 0 or count > archive_bytes
+                        or item.file_size != count or item.compress_size != count
+                        or item.compress_type != zipfile.ZIP_STORED):
+                    raise ValueError('restart metadata byte count mismatch')
+                # Validate actual stored size before allocation, and integrity
+                # before parsing. JSON and decoded records remain resident;
+                # only I/O staging is bounded by the panel size.
+                data = bytearray(count)
+                digest = hashlib.sha256()
+                with archive.open(item) as stream:
+                    for start in range(0, count, _RESTART_CHUNK_BYTES):
+                        chunk = stream.read(min(_RESTART_CHUNK_BYTES, count - start))
+                        if len(chunk) != min(_RESTART_CHUNK_BYTES, count - start):
+                            raise ValueError('truncated restart metadata')
+                        digest.update(chunk)
+                        data[start:start + len(chunk)] = chunk
+                if digest.hexdigest() != metadata['sha256']:
+                    raise ValueError('restart metadata checksum mismatch')
+                metadata = json.loads(data, object_pairs_hook=unique_pairs,
+                    parse_constant=lambda value: (_ for _ in ()).throw(ValueError('nonfinite restart metadata')))
+                del data
+                if not isinstance(metadata, dict):
+                    raise ValueError('invalid restart metadata object')
+                # Also reject overflowed finite JSON numbers such as 1e999.
+                _restart_json(metadata)
+            arrays = {}
+            for name, record in manifest['arrays'].items():
+                if not isinstance(record, dict) or set(record) != {'shape', 'dtype', 'nbytes', 'sha256'}:
+                    raise ValueError('invalid restart array descriptor')
+                shape = record['shape']
+                if not isinstance(shape, list) or len(shape) > 32 or any(type(n) is not int or n < 0 for n in shape):
+                    raise ValueError('invalid restart array shape')
+                dtype = np.dtype(record['dtype'])
+                if dtype.kind not in 'biufc' or dtype.hasobject or dtype.fields or dtype.itemsize not in (1, 2, 4, 8, 16):
+                    raise ValueError('unsafe restart array dtype')
+                count = math.prod(shape) * dtype.itemsize
+                item = archive.getinfo('arrays/' + name)
+                if (type(record['nbytes']) is not int or record['nbytes'] != count or item.file_size != count or item.compress_size != count
+                        or count > archive_bytes or item.compress_type != zipfile.ZIP_STORED):
+                    raise ValueError('restart array shape/dtype/byte count mismatch')
+                a = np.empty(shape, dtype=dtype)
+                view = memoryview(a.reshape(-1)).cast('B')
+                digest = hashlib.sha256()
+                with archive.open(item) as stream:
+                    for start in range(0, count, _RESTART_CHUNK_BYTES):
+                        chunk = stream.read(min(_RESTART_CHUNK_BYTES, count - start))
+                        if len(chunk) != min(_RESTART_CHUNK_BYTES, count - start):
+                            raise ValueError('truncated restart array')
+                        digest.update(chunk)
+                        view[start:start + len(chunk)] = chunk
+                if digest.hexdigest() != record['sha256']:
+                    raise ValueError('restart array checksum mismatch')
+                for chunk in _restart_chunks(a):
+                    if not np.isfinite(np.frombuffer(chunk, dtype=dtype)).all():
+                        raise ValueError('nonfinite restart array')
+                a.setflags(write=False)
+                arrays[name] = a
+            return metadata, arrays
+    except (OSError, EOFError, KeyError, TypeError, OverflowError, UnicodeError, zipfile.BadZipFile, json.JSONDecodeError) as exc:
+        raise ValueError(f'invalid or truncated restart archive: {exc}') from exc

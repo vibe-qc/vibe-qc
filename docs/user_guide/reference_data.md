@@ -304,7 +304,7 @@ none of the data in CCCBDB carries a warranty of any kind.
 
 ## Architecture note: one URL, one parser
 
-The original handover doc proposed many table-code-specific
+The original historical design record doc proposed many table-code-specific
 parsers (`ea2x.asp`, `enthalpyx.asp`, `vibs2x.asp`, …). Live
 probing during the v0.8.0 implementation showed:
 
@@ -367,3 +367,45 @@ window.
   - full per-source licensing inventory.
 * [CCCBDB homepage](https://cccbdb.nist.gov/), browse
   records online.
+
+### Prepare and admit a GFN2 cache with the selected runtime
+
+Use the selected runtime's Python to run `scripts/fetch_gfn2_params.py`.
+The script now uses the same converter and semantic checks as calculations;
+it never writes a placeholder. On a connected preparation host, select a
+new cache directory and run:
+
+```sh
+python scripts/fetch_gfn2_params.py --cache-dir /path/to/new-cache --force
+```
+
+Keep the emitted cache and upstream-source SHA256 values with the deployment
+record. Parameters remain externally fetched LGPL-3.0-or-later data; preserve
+the file's attribution and source hash when copying it. Do not bundle them
+into the MPL source distribution. Preserve prior cache generations for
+already pinned jobs. New caches include a converter schema version. Legacy
+caches remain eligible only when their semantic content passes validation;
+a matching upstream hash alone cannot detect an obsolete converter table.
+
+After copying to storage visible from execution nodes, run the following
+with the actual target runtime, then repeat it at job startup before chemistry:
+
+```sh
+export VIBEQC_GFN2_CACHE_DIR=/path/to/new-cache
+export VIBEQC_GFN2_OFFLINE=1
+python scripts/fetch_gfn2_params.py --check \
+  --expected-cache-sha256 "$GFN2_CACHE_SHA256" \
+  --expected-source-sha256 "$GFN2_SOURCE_SHA256"
+```
+
+The offline check requires a usable 86-element cache and recorded source
+identity. It fails on missing, stale, malformed or mismatched data without
+writing or accessing the network. PBS and Slurm jobs default to offline loading, including the optional
+upstream freshness probe. Set `VIBEQC_GFN2_OFFLINE=0` only when explicitly
+authorizing network access in a batch job. The environment setting `1` also
+prohibits fetching by ordinary calculation callers. Keep it in the scheduler job's
+environment. Admission requires this runtime check as well as any external
+copy receipt: the copy utility's hash and projection checks alone do not
+validate multipole tables. Successful admission establishes data availability,
+not scientific qualification; record converged energies and matched reference
+comparisons separately.

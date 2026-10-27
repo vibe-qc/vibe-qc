@@ -138,7 +138,8 @@ class IncrementalJK:
     order -- callers bypass it (full build) for ODA's extra naive build
     and the post-convergence rebuild, and :meth:`seed` re-syncs it to such
     a full build when the terminal check finds the chain has drifted
-    (#116).
+    (#116). A rejected exact confirmation also calls
+    :meth:`require_full_density` to prevent renewed drift while finishing.
     """
 
     reset_every: int = 12
@@ -148,6 +149,23 @@ class IncrementalJK:
     _cells: object = field(default=None, repr=False)
     _nbf: int = field(default=0, repr=False)
     _since_reset: int = field(default=0, repr=False)
+    _full_density_only: bool = field(default=False, init=False, repr=False)
+
+    def require_full_density(self) -> bool:
+        """Disable differential builds for the rest of this SCF calculation.
+
+        Almlöf et al. (1982), Eqs. (18)-(20), telescope only for an exact
+        linear builder. Density screening introduces an accumulated error;
+        see Häser and Ahlrichs (1989), Sec. IV, Eqs. (30)-(35),
+        doi:10.1002/jcc.540100111. If exact confirmation rejects the loop's
+        fixed point, reseeding alone can start the same drift again. Use
+        full-density builds to finish on the operator used for acceptance.
+        This conservative fallback does not change any screening threshold.
+        Return whether this call changed the policy.
+        """
+        changed = not self._full_density_only
+        self._full_density_only = True
+        return changed
 
     def build(self, density, build_jk):
         """Return accumulated ``(J_SR_lat, K_SR_lat)`` for ``density``.
@@ -160,12 +178,43 @@ class IncrementalJK:
         Returned lattices are fresh copies -- safe for the caller to
         mutate without corrupting the accumulator.
         """
+        source, do_full = self._build_input(density)
+        return self._accumulate(density, build_jk(source), do_full)
+
+    def _build_input(self, density):
         from ._vibeqc_core import make_lattice_matrix_set
         from .pbc_bipole_common import _cell_key
 
-        do_full = self._D_prev is None or self._since_reset >= self.reset_every
+        do_full = (
+            self._full_density_only
+            or self._D_prev is None
+            or self._since_reset >= self.reset_every
+        )
+        source = density if do_full else self._delta(density, make_lattice_matrix_set, _cell_key)
+        return source, do_full
+
+    @staticmethod
+    def build_pair(first, second, density_first, density_second, build_jk_pair):
+        """Evaluate two independent full/delta inputs in one native traversal.
+
+        Each chain keeps its own reference and reset schedule. Preparing both
+        inputs does not change either accumulator; a failed kernel call leaves
+        both chains untouched. Almlöf et al. (1982), Eqs. (18)-(20), applies
+        separately to each density; sharing the ERIs does not merge histories.
+        """
+        if first is second:
+            raise ValueError("paired J/K builds require independent accumulators")
+        source_first, full_first = first._build_input(density_first)
+        source_second, full_second = second._build_input(density_second)
+        jk_first, jk_second = build_jk_pair(source_first, source_second)
+        return (first._accumulate(density_first, jk_first, full_first),
+                second._accumulate(density_second, jk_second, full_second))
+
+    def _accumulate(self, density, jk, do_full):
+        from ._vibeqc_core import make_lattice_matrix_set
+        from .pbc_bipole_common import _cell_key
+
         if do_full:
-            jk = build_jk(density)
             has_k = getattr(jk, "K", None) is not None
             self._cells = list(jk.J.cells)
             self._nbf = int(jk.J.nbf)
@@ -177,12 +226,13 @@ class IncrementalJK:
             )
             self._since_reset = 0
         else:
-            delta = self._delta(density, make_lattice_matrix_set, _cell_key)
-            jk = build_jk(delta)
+            # Each pybind .blocks access converts the complete native vector.
+            j_blocks = jk.J.blocks
+            k_blocks = jk.K.blocks if self._K_acc is not None else None
             for c in range(len(self._J_acc)):
-                self._J_acc[c] += np.asarray(jk.J.blocks[c], dtype=float)
+                self._J_acc[c] += np.asarray(j_blocks[c], dtype=float)
                 if self._K_acc is not None:
-                    self._K_acc[c] += np.asarray(jk.K.blocks[c], dtype=float)
+                    self._K_acc[c] += np.asarray(k_blocks[c], dtype=float)
             self._since_reset += 1
         self._D_prev = {
             _cell_key(cell): np.asarray(b, dtype=float).copy()
@@ -213,8 +263,9 @@ class IncrementalJK:
         confirmation rebuild when that rebuild disagrees with the
         incremental fixed point (GitLab #116): the loop then converges on
         the operator it is judged by, and the iteration that follows costs
-        a ``ΔD = 0`` build. Blocks are copied, so the caller may keep
-        mutating its own lattices.
+        a ``ΔD = 0`` build unless :meth:`require_full_density` was called.
+        Seeding does not undo that full-density policy. Blocks are copied,
+        so the caller may keep mutating its own lattices.
         """
         from .pbc_bipole_common import _cell_key
 
@@ -431,7 +482,9 @@ def _build_j_long_range_cache(
         R_g_arr,
     )
     correction = _libint_ylm_correction_per_ao(basis)
-    ft_per_cell = ft_per_cell * (
+    # Correct the freshly allocated FT stack in place to avoid a second
+    # full-size stack. The retained reciprocal cache is still resident.
+    ft_per_cell *= (
         correction[None, :, None, None] * correction[None, None, :, None]
     )
 
@@ -720,12 +773,16 @@ def compute_J_long_range_real_space_blocks(
             )
 
     weighted = cache.kernel * rho_hat
+    # Re[w conj(FT)] = Re[conj(w) FT]. Conjugate this private reciprocal
+    # vector once instead of copying each (nbf, nbf, n_K) complex tensor.
+    # The real projected operator and finite Fourier sum are unchanged.
+    np.conjugate(weighted, out=weighted)
     blocks: list[np.ndarray] = []
     for c in range(n_cells_out):
         block = np.einsum(
             "k,mnk->mn",
             weighted,
-            cache.ft_per_cell[c].conj(),
+            cache.ft_per_cell[c],
         )
         # The ±K reciprocal mesh makes each real-space block real up to
         # roundoff.  Keep the storage real so it behaves like the native
@@ -1037,12 +1094,18 @@ class KExchangeLongRangeCache:
     entry point :func:`compute_K_long_range_at_k` reproduces
     :func:`compute_K_long_range_gamma` to machine precision.
 
+    The method builders use :func:`compute_K_long_range_mesh` to batch
+    source phases and bound retained nonzero-q panel payload. The diagnostic
+    per-target entry point below retains individual panels without that cap.
+
     Memory note: each fold tensor is ``(nbf, nbf, n_K(q))`` complex and
     there are up to ``n_k^2`` of them (``n_k`` distinct ``q`` x ``n_k``
     ``k′`` folds). The per-cell FT stack for a ``q != 0`` channel is
     never materialised when the streaming C++ Bloch kernel is available
     (:func:`vibeqc._aopair_ft.ao_pair_fourier_transform_bloch`
-    dispatch); the pure-Python fallback builds it in cell batches.
+    dispatch). Physical AO-product support streams one supplied cell at a
+    time, including in the Python fallback; historical support retains the
+    dispatcher's original fallback.
     """
 
     basis: BasisSet
@@ -1118,18 +1181,8 @@ class KExchangeLongRangeCache:
             reciprocal @ mesh.fractional_at(source_index),
         )
 
-    def _channel_tables_canonical(
-        self, key: bytes, q_canonical: np.ndarray, is_q_zero: bool,
-        k_prime_cart: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        if is_q_zero:
-            # Diagonal channel: exactly the J^LR tables.
-            ft_bloch = _bloch_pair_ft_from_cache(
-                self.j_cache,
-                np.asarray(k_prime_cart, dtype=float).reshape(3),
-            )
-            return self.j_cache.kernel, ft_bloch
-
+    def _nonzero_channel(self, key: bytes, q_canonical: np.ndarray) -> _QExchangeChannel:
+        """Density-independent reciprocal vectors and kernel, without panels."""
         chan = self.q_channels.get(key)
         if chan is None:
             K_vectors = compute_shifted_reciprocal_lattice_vectors(
@@ -1153,6 +1206,22 @@ class KExchangeLongRangeCache:
             chan = _QExchangeChannel(K_vectors=K_vectors, kernel=kernel)
             self.q_channels[key] = chan
 
+        return chan
+
+    def _channel_tables_canonical(
+        self, key: bytes, q_canonical: np.ndarray, is_q_zero: bool,
+        k_prime_cart: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        if is_q_zero:
+            # Diagonal channel: exactly the J^LR tables.
+            ft_bloch = _bloch_pair_ft_from_cache(
+                self.j_cache,
+                np.asarray(k_prime_cart, dtype=float).reshape(3),
+            )
+            return self.j_cache.kernel, ft_bloch
+
+        chan = self._nonzero_channel(key, q_canonical)
+
         k_prime = np.asarray(k_prime_cart, dtype=float).reshape(3)
         k_key = _k_cache_key(k_prime)
         B = chan.b_per_k.get(k_key)
@@ -1166,21 +1235,49 @@ class KExchangeLongRangeCache:
                     self.basis, chan.K_vectors, self.cells_r_cart, -k_prime,
                 )
             else:
-                from .lattice_screening import ao_pair_support_mask
-
-                ft = ao_pair_fourier_transform_at_cells(
-                    self.basis, chan.K_vectors, self.cells_r_cart,
+                B = _masked_bloch_pair_fourier_transform(
+                    self.basis, chan.K_vectors, self.cells_r_cart, -k_prime,
+                    self.j_cache.pair_cutoff_bohr,
                 )
-                for cell, shift in enumerate(self.cells_r_cart):
-                    ft[cell] *= ao_pair_support_mask(
-                        self.basis, shift, self.j_cache.pair_cutoff_bohr,
-                    )[:, :, None]
-                B = np.einsum("g,gmnk->mnk", np.exp(-1j * (self.cells_r_cart @ k_prime)), ft)
 
             correction = _libint_ylm_correction_per_ao(self.basis)
             B = B * (correction[:, None, None] * correction[None, :, None])
             chan.b_per_k[k_key] = B
         return chan.kernel, B
+
+
+def _masked_bloch_pair_fourier_transform(
+    basis: BasisSet,
+    vectors: np.ndarray,
+    cells: np.ndarray,
+    k_cart: np.ndarray,
+    pair_cutoff_bohr: float,
+) -> np.ndarray:
+    """Stream the supplied cells with their physical AO-product masks.
+
+    Keep the Python support predicate and cell ordering unchanged. The
+    production Bloch FT supplies the positive-k phase and raw spherical
+    normalization; the exchange cache applies its Libint correction once.
+    A singleton-cell call bounds the temporary to one AO-pair tensor and
+    retains the dispatcher's reference fallback for unsupported shells.
+    """
+    from ._aopair_ft import ao_pair_fourier_transform_bloch
+    from .lattice_screening import ao_pair_support_mask
+
+    n = int(basis.nbasis)
+    result = np.zeros((n, n, len(vectors)), dtype=np.complex128)
+    for shift in cells:
+        keep = ao_pair_support_mask(basis, shift, pair_cutoff_bohr)
+        if not np.any(keep):
+            continue
+        cell_ft = ao_pair_fourier_transform_bloch(
+            basis, vectors, np.asarray(shift).reshape(1, 3), k_cart,
+            screen_tol=0.0,
+        )
+        cell_ft *= keep[:, :, None]
+        result += cell_ft
+        del cell_ft
+    return result
 
 
 def build_k_exchange_long_range_cache(
@@ -1283,6 +1380,171 @@ def compute_K_long_range_at_k(
     return K_LR
 
 
+def compute_K_long_range_mesh(
+    x_cache: KExchangeLongRangeCache,
+    k_points: Sequence[np.ndarray],
+    weights: Sequence[float],
+    density_channels: Sequence[Sequence[np.ndarray]],
+    *,
+    max_cached_bytes: int = 256 * 1024**2,
+    max_batch_bytes: int = 64 * 1024**2,
+) -> list[list[np.ndarray]]:
+    """Build LR exchange for all target k points, sharing source work.
+
+    Each density channel is a full source-mesh density (one restricted
+    channel, or separate alpha/beta channels). Group ordered pairs by the
+    existing canonical ``q = target - source`` and batch their source Bloch
+    phases. Panels feed every spin before release. Small calculations retain
+    their panels across iterations; larger ones recompute overflow panels.
+
+    ``max_cached_bytes`` bounds retained nonzero-q panel payload, and
+    ``max_batch_bytes`` bounds newly returned batch panel payload. These are
+    not process memory caps: native scratch, channel metadata, densities,
+    outputs and the pre-existing J cache are separate. The diagonal channel
+    reuses J exactly. Oversized panels stream reciprocal slices and are not
+    retained; a budget below one AO-pair reciprocal slice is refused.
+    No symmetry reduction or source admission is implied.
+    Method builders still own zero-mode terms, exchange fractions and energy.
+    """
+    import operator
+    from ._aopair_ft import ao_pair_fourier_transform_bloch_multi
+
+    caps = []
+    for name, value, minimum in (
+        ("max_cached_bytes", max_cached_bytes, 0),
+        ("max_batch_bytes", max_batch_bytes, 1),
+    ):
+        if isinstance(value, (bool, np.bool_)):
+            raise ValueError(f"{name} must be an integer >= {minimum}")
+        try:
+            cap = operator.index(value)
+        except TypeError as exc:
+            raise ValueError(f"{name} must be an integer >= {minimum}") from exc
+        if cap < minimum:
+            raise ValueError(f"{name} must be an integer >= {minimum}")
+        caps.append(cap)
+    cache_cap, batch_cap = caps
+    points = np.asarray(k_points, dtype=float)
+    w = np.asarray(weights, dtype=float)
+    nbf = int(x_cache.basis.nbasis)
+    if points.ndim != 2 or points.shape[1] != 3 or len(points) == 0:
+        raise ValueError("k_points must have nonempty shape (nk, 3)")
+    nk = len(points)
+    if w.shape != (nk,) or not np.isfinite(points).all() or not np.isfinite(w).all():
+        raise ValueError("finite points and one finite weight per source are required")
+    densities = np.asarray(density_channels, dtype=complex)
+    if (
+        densities.ndim != 4
+        or densities.shape[1:] != (nk, nbf, nbf)
+        or len(densities) == 0
+        or not np.isfinite(densities).all()
+    ):
+        raise ValueError(
+            "density_channels must have finite shape (nchannel, nk, nbf, nbf)"
+        )
+
+    # Admission precedes Fourier calls and clearing existing retained panels.
+    groups = {}
+    for target, k in enumerate(points):
+        for source, kp in enumerate(points):
+            key, q = x_cache._canonical_q(k - kp)
+            if key not in groups:
+                groups[key] = (q, {})
+            groups[key][1].setdefault(source, []).append(target)
+    for key, (q, sources) in groups.items():
+        if not np.any(np.frombuffer(key, dtype=float)):
+            continue
+        channel = x_cache._nonzero_channel(key, q)
+        if nbf * nbf * 16 > batch_cap:
+            raise MemoryError("One reciprocal slice exceeds max_batch_bytes")
+
+    retained = sum(
+        panel.nbytes
+        for channel in x_cache.q_channels.values()
+        for panel in channel.b_per_k.values()
+    )
+    if retained > cache_cap:
+        # This cache may have been filled by the legacy per-target API.
+        for channel in x_cache.q_channels.values():
+            channel.b_per_k.clear()
+        retained = 0
+    outputs = np.zeros((len(densities), nk, nbf, nbf), dtype=complex)
+    correction = _libint_ylm_correction_per_ao(x_cache.basis)
+    correction = correction[:, None, None] * correction[None, :, None]
+
+    def consume(kernel, panel, source, targets):
+        for spin, density in enumerate(densities):
+            contribution = w[source] * _contract_K_long_range_channel_linear(
+                kernel,
+                panel,
+                density[source],
+            )
+            for target in targets:
+                outputs[spin, target] += contribution
+
+    for key, (q, sources) in groups.items():
+        if not np.any(np.frombuffer(key, dtype=float)):
+            for source, targets in sources.items():
+                panel = _bloch_pair_ft_from_cache(x_cache.j_cache, points[source])
+                consume(x_cache.j_cache.kernel, panel, source, targets)
+            continue
+        channel = x_cache.q_channels[key]
+        pending = []
+        for source, targets in sources.items():
+            panel = channel.b_per_k.get(_k_cache_key(points[source]))
+            if panel is None:
+                pending.append(source)
+            else:
+                consume(channel.kernel, panel, source, targets)
+        panel_bytes = nbf * nbf * len(channel.kernel) * 16
+        batch_size = max(1, batch_cap // panel_bytes)
+        for begin in range(0, len(pending), batch_size):
+            selected = pending[begin : begin + batch_size]
+            reciprocal_chunk = max(1, batch_cap // (nbf * nbf * 16 * len(selected)))
+            for first_g in range(0, len(channel.kernel), reciprocal_chunk):
+                last_g = min(first_g + reciprocal_chunk, len(channel.kernel))
+                vectors = channel.K_vectors[first_g:last_g]
+                kernel = channel.kernel[first_g:last_g]
+                cutoff = x_cache.j_cache.pair_cutoff_bohr
+                try:
+                    panels = ao_pair_fourier_transform_bloch_multi(
+                        x_cache.basis,
+                        vectors,
+                        x_cache.cells_r_cart,
+                        -points[selected],
+                        pair_cutoff_bohr=cutoff,
+                    )
+                except NotImplementedError:
+                    # Preserve the historical single-cell fallback for bases
+                    # outside the native physical-support batch coverage.
+                    if cutoff is None:
+                        raise
+                    panels = [
+                        _masked_bloch_pair_fourier_transform(
+                            x_cache.basis,
+                            vectors,
+                            x_cache.cells_r_cart,
+                            -points[source],
+                            cutoff,
+                        )
+                        for source in selected
+                    ]
+                for source, panel in zip(selected, panels):
+                    panel *= correction
+                    consume(kernel, panel, source, sources[source])
+                    if (
+                        first_g == 0
+                        and last_g == len(channel.kernel)
+                        and retained + panel.nbytes <= cache_cap
+                    ):
+                        channel.b_per_k[_k_cache_key(points[source])] = panel
+                        retained += panel.nbytes
+                # Release the entire temporary batch before requesting the next.
+                del panel, panels
+    outputs = 0.5 * (outputs + outputs.conj().swapaxes(-1, -2))
+    return [list(channel) for channel in outputs]
+
+
 def _contract_K_long_range_channel_linear(
     kernel: np.ndarray, B: np.ndarray, density: np.ndarray,
 ) -> np.ndarray:
@@ -1328,7 +1590,9 @@ def probe_charge_madelung_supercell(
             "probe_charge_madelung_supercell requires dim=3; "
             f"got dim={system.dim}"
         )
-    n = [int(x) for x in mesh]
+    from .kpoints import _integer_counts
+
+    n = _integer_counts(mesh, name="Madelung supercell mesh")
     if len(n) != 3 or any(x < 1 for x in n):
         raise ValueError(
             f"mesh must be three positive integers; got {list(mesh)}"

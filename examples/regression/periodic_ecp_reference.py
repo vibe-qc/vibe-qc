@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 from pathlib import Path
 import time
 
@@ -25,7 +26,7 @@ def _sidecar_nwchem(path: Path, symbol: str) -> str:
     """Convert one already-bundled Gaussian ECP record without altering it."""
     lines = [line.split('!', 1)[0].strip() for line in path.read_text().splitlines()]
     lines = [line for line in lines if line]
-    first = next(i for i, line in enumerate(lines) if line.split() == [symbol.upper(), '0'])
+    first = next(i for i, line in enumerate(lines) if [word.upper() for word in line.split()] == [symbol.upper(), '0'])
     _, maximum, ncore = lines[first + 1].split()
     position = first + 2
     output = [f'{symbol} nelec {ncore}']
@@ -68,11 +69,15 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--mesh', nargs=3, type=int, default=[1, 1, 1])
+    parser.add_argument('--omega', type=float, default=.6,
+                        help='RSGDF omega and omega_j2c in inverse bohr (recorded)')
     parser.add_argument('--projector-components', action='store_true',
                         help='evaluate eight isolated image-projector matrices without SCF')
     parser.add_argument('--displacements', nargs='+', type=float, default=[0., .17],
                         help='Cl z displacements in bohr, including the reference zero')
     args = parser.parse_args()
+    if not math.isfinite(args.omega) or args.omega <= 0:
+        parser.error('omega must be finite and positive')
     if any(n < 1 for n in args.mesh):
         parser.error('mesh dimensions must be positive')
 
@@ -101,7 +106,7 @@ def main() -> int:
         'source_sha256': {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in paths},
         'script_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         'basis': basis, 'auxiliary': auxiliary, 'ecp': ecp, 'ecp_nwchem': ecp_text,
-        'n_threads': pyscf.lib.num_threads(), 'precision': 1e-11, 'omega': .6,
+        'n_threads': pyscf.lib.num_threads(), 'precision': 1e-11, 'omega': args.omega,
         'overlap_threshold': 1e-7, 'overlap_diagonal_normalization': True,
         'fit_threshold': 1e-9, 'exxdiv': 'ewald', 'unit': 'Bohr', 'mesh': args.mesh,
     }
@@ -164,7 +169,7 @@ def main() -> int:
         fit = RSGDF(cell, kpts)
         fit.auxbasis = auxiliary
         fit.exp_to_discard = 0.
-        fit.omega = fit.omega_j2c = .6
+        fit.omega = fit.omega_j2c = args.omega
         fit.precision_R = fit.precision_G = 1e-11
         fit.precision_j2c = 1e-13
         fit.j2c_eig_always = True

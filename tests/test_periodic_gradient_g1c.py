@@ -54,6 +54,7 @@ def _run_h2_box_rhf(
     cutoff_bohr=25.0,
     omega=0.0,
     auto_optimize_truncation=True,
+    exchange_exxdiv=None,
 ):
     R = 1.0 * ANGSTROM_TO_BOHR
     big_box = (
@@ -80,6 +81,7 @@ def _run_h2_box_rhf(
         opts,
         omega=float(omega),
         auto_optimize_truncation=bool(auto_optimize_truncation),
+        exchange_exxdiv=exchange_exxdiv,
     )
     assert result.converged, f"{mesh} did not converge"
     return sys, basis, kmesh, opts, result
@@ -107,10 +109,24 @@ def test_h2_box_each_kmesh_gradient_matches_own_energy_fd():
     image sits at ``erfc(2.8) = 7.5e-5``.  The derivative now sizes that
     image ball from alpha, and this assertion holds at 5.7e-8 (h = 1e-3).
     The 2e-6 tolerance is unchanged.
+
+    #23: [1,1,1] runs both exchange gauges. The default is the corrected
+    split, as on every other mesh; ``exchange_exxdiv='none'`` is the
+    molecular-limit kernel. The gradient reads the gauge the result
+    records. It used to infer it from the mesh, so once the default moved
+    the analytic [1,1,1] gradient differentiated the molecular limit
+    (-0.148483 Ha/bohr) against a corrected-split energy (FD -0.148505).
     """
     h = 1.0e-3
-    for mesh in ([1, 1, 1], [2, 2, 2]):
-        sys, basis, kmesh, opts, result = _run_h2_box_rhf(mesh)
+    for mesh, exxdiv in (
+        ([1, 1, 1], None), ([1, 1, 1], "none"), ([2, 2, 2], None),
+    ):
+        sys, basis, kmesh, opts, result = _run_h2_box_rhf(
+            mesh, exchange_exxdiv=exxdiv
+        )
+        assert result.exchange_q0 == (
+            "molecular-limit" if exxdiv == "none" else "BvK-ewald"
+        )
         analytic = np.asarray(
             vq.compute_gradient_periodic_rhf_multi_k(
                 sys,
@@ -136,7 +152,7 @@ def test_h2_box_each_kmesh_gradient_matches_own_energy_fd():
             )
         )
         np.testing.assert_allclose(inferred, analytic, atol=0.0)
-        if mesh == [1, 1, 1]:
+        if mesh == [1, 1, 1] and exxdiv is None:
             explicit_twist = vq.KPoints.from_list(
                 sys, [[0.125, 0.0, 0.0]]
             ).to_bloch_kmesh()
@@ -147,15 +163,18 @@ def test_h2_box_each_kmesh_gradient_matches_own_energy_fd():
                 vq.compute_gradient_periodic_rhf_multi_k(
                     sys, basis, result, explicit_twist
                 )
-        plus = _run_h2_box_rhf(mesh, +h)[-1].energy
-        minus = _run_h2_box_rhf(mesh, -h)[-1].energy
+        plus = _run_h2_box_rhf(mesh, +h, exchange_exxdiv=exxdiv)[-1].energy
+        minus = _run_h2_box_rhf(mesh, -h, exchange_exxdiv=exxdiv)[-1].energy
         fd_atom0_z = (plus - minus) / (2.0 * h)
 
         np.testing.assert_allclose(
             analytic[0, 2],
             fd_atom0_z,
             atol=2.0e-6,
-            err_msg=f"{mesh} analytic gradient does not differentiate its SCF energy",
+            err_msg=(
+                f"{mesh} (exchange_exxdiv={exxdiv!r}) analytic gradient "
+                "does not differentiate its SCF energy"
+            ),
         )
         np.testing.assert_allclose(analytic[1, 2], -fd_atom0_z, atol=2.0e-6)
         np.testing.assert_allclose(analytic[:, :2], 0.0, atol=1.0e-9)
@@ -164,7 +183,9 @@ def test_h2_box_each_kmesh_gradient_matches_own_energy_fd():
 def test_h2_box_gradient_is_box_converged_like_its_energy():
     """The Ewald analytic gradient carries no 1/L term its energy lacks (#575).
 
-    H2/STO-3G at kmesh [1,1,1] in a 30 bohr and a 37.8 bohr box: the SCF
+    H2/STO-3G at kmesh [1,1,1] in the molecular-limit exchange gauge
+    (``exchange_exxdiv='none'``; the corrected-split default converges with
+    the box only as 1/L^3, #23) in a 30 bohr and a 37.8 bohr box: the SCF
     energies differ by 6e-8 Ha and their central-FD derivatives by 8e-8
     Ha/bohr (both box-converged), so the analytic gradients must agree to the
     same order.  Before the fix they differed by 2.85e-6 Ha/bohr: the
@@ -177,7 +198,7 @@ def test_h2_box_gradient_is_box_converged_like_its_energy():
     grads = []
     for box in (30.0, 20.0 * ANGSTROM_TO_BOHR):
         sys, basis, kmesh, opts, result = _run_h2_box_rhf(
-            [1, 1, 1], box_bohr=box
+            [1, 1, 1], box_bohr=box, exchange_exxdiv="none"
         )
         grads.append(
             np.asarray(

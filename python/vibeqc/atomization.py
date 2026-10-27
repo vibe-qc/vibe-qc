@@ -6,6 +6,11 @@ molecule.  This is method-agnostic infrastructure: any mean-field reference
 (RHF / UHF / RKS / UKS) gets atomization for free once the free-atom ground
 states are known.  Free-atom energies are cached per ``(Z, method, basis,
 functional, grid)`` so a job pays at most one SCF per distinct element.
+References requested with explicit ``integral_engine`` / ``coulomb`` /
+``exchange`` options run through the selected molecular route with the same
+provider and J/K algorithms as the molecule; they are cached only within one
+``atomization_energy`` call, never through the module cache, because the
+engine options carry native objects without a value identity.
 
 Free-atom ground-state spin multiplicities (2S+1, neutral atoms, Hund's rules)
 are tabulated for the main-group elements H-Kr where the ground state is
@@ -51,6 +56,7 @@ class AtomizationResult:
     method: str
     basis: str
     functional: Optional[str] = None
+    integral_engine: Optional[str] = None   # selected provider backend, None on the legacy route
 
     @property
     def atomization_kcal(self) -> float:
@@ -66,9 +72,33 @@ def supported_elements() -> frozenset:
     return frozenset(_GROUND_STATE_MULTIPLICITY)
 
 
+def _selected_engine_kwargs(integral_engine, coulomb, exchange, method):
+    """Validate selected-route engine options for a free-atom reference.
+
+    Returns the keyword dict for the ``vibeqc.run_*`` front doors, or an
+    empty dict when no option was given (legacy route). The auxiliary basis
+    must be a name: a caller-built ``BasisSet`` belongs to the molecule's
+    atoms and cannot be rebuilt on a free atom without substituting content.
+    """
+    if integral_engine is None and coulomb is None and exchange is None:
+        return {}
+    if method not in ("rhf", "uhf", "rks", "uks"):
+        raise NotImplementedError(
+            "Selected integral engines admit RHF/UHF/RKS/UKS atomization "
+            f"references; {method!r} references remain on the legacy route.")
+    auxiliary = getattr(coulomb, "auxiliary_basis", None)
+    if auxiliary is not None and not isinstance(auxiliary, str):
+        raise NotImplementedError(
+            "Selected atomization references need coulomb.auxiliary_basis as a "
+            "basis name so each free atom gets its own auxiliary set; a "
+            "caller-supplied auxiliary BasisSet is not rebuilt on free atoms.")
+    return dict(integral_engine=integral_engine, coulomb=coulomb, exchange=exchange)
+
+
 def atomic_ground_state_energy(
     Z: int, method: str, basis: str, *, functional: Optional[str] = None,
     grid_level: str = "orca-defgrid3", grid_options=None,
+    integral_engine=None, coulomb=None, exchange=None, _cache=None,
 ) -> float:
     """Free-atom ground-state energy (Hartree) at the given level of theory.
 
@@ -77,12 +107,19 @@ def atomic_ground_state_energy(
     one.  ``rohf`` / ``roks`` use the spin-restricted open-shell solver for
     *both* (it reduces to RHF/RKS at a closed shell), giving spin-pure
     atomic references.  Cached per ``(Z, method, basis, functional, grid)``.
+
+    ``integral_engine``, ``coulomb`` and ``exchange`` run the reference
+    through the selected molecular route (RHF/UHF/RKS/UKS only, auxiliary
+    basis by name) with the same default options as the legacy reference.
+    Such references bypass the module cache; ``_cache`` is the per-call
+    dictionary :func:`atomization_energy` shares between its atoms.
     """
     method = method.lower()
     if method not in ("rhf", "uhf", "rks", "uks", "rohf", "roks"):
         raise NotImplementedError(
             f"atomization references are defined for mean-field methods "
             f"(rhf/uhf/rks/uks/rohf/roks); got {method!r}.")
+    selected = _selected_engine_kwargs(integral_engine, coulomb, exchange, method)
     if Z not in _GROUND_STATE_MULTIPLICITY:
         raise NotImplementedError(
             f"no tabulated free-atom ground state for Z={Z} "
@@ -100,13 +137,19 @@ def atomic_ground_state_energy(
         values = (getattr(grid_options, f) for f in _GRID_OPTION_FIELDS)
         grid_key = tuple(tuple(v) if isinstance(v, list) else v for v in values)
     key = (Z, method, basis.lower(), (functional or "").lower(), grid_key)
-    cached = _ATOM_ENERGY_CACHE.get(key)
+    cache = _ATOM_ENERGY_CACHE if not selected else ({} if _cache is None else _cache)
+    cached = cache.get(key)
     if cached is not None:
         return cached
 
     from ._vibeqc_core import (Atom, BasisSet, Molecule, RHFOptions, RKSOptions,
-                               UHFOptions, UKSOptions, run_rhf, run_rks,
-                               run_uhf, run_uks)
+                               UHFOptions, UKSOptions)
+    if selected:
+        # The front doors dispatch to the selected native drivers; the same
+        # default options as below keep the reference's guess and thresholds.
+        from . import run_rhf, run_rks, run_uhf, run_uks
+    else:
+        from ._vibeqc_core import run_rhf, run_rks, run_uhf, run_uks
 
     mult = _GROUND_STATE_MULTIPLICITY[Z]
     atom = Molecule([Atom(Z, [0.0, 0.0, 0.0])], 0, mult)
@@ -127,26 +170,26 @@ def atomic_ground_state_energy(
         )
     elif method in ("rhf", "uhf"):
         if restricted:
-            res = run_rhf(atom, bas, RHFOptions())
+            res = run_rhf(atom, bas, RHFOptions(), **selected)
         else:
-            res = run_uhf(atom, bas, UHFOptions())
+            res = run_uhf(atom, bas, UHFOptions(), **selected)
     else:  # rks / uks
         if restricted:
             opts = RKSOptions()
             opts.functional = functional or "lda"
             opts.grid = grid_options
-            res = run_rks(atom, bas, opts)
+            res = run_rks(atom, bas, opts, **selected)
         else:
             opts = UKSOptions()
             opts.functional = functional or "lda"
             opts.grid = grid_options
-            res = run_uks(atom, bas, opts)
+            res = run_uks(atom, bas, opts, **selected)
     if not bool(getattr(res, "converged", False)):
         raise RuntimeError(
             f"free-atom SCF did not converge for Z={Z} (mult={mult}, "
             f"{method}/{basis}); atomization reference unavailable.")
     e = float(res.energy)
-    _ATOM_ENERGY_CACHE[key] = e
+    cache[key] = e
     return e
 
 
@@ -154,6 +197,7 @@ def atomization_energy(
     molecule, e_molecule: float, method: str, basis: str, *,
     functional: Optional[str] = None,
     grid_level: str = "orca-defgrid3", grid_options=None,
+    integral_engine=None, coulomb=None, exchange=None,
 ) -> AtomizationResult:
     """Atomization energy ``S E(atom) - E(molecule)`` at the molecule's level.
 
@@ -162,7 +206,12 @@ def atomization_energy(
     reference).  Free-atom SCFs are cached across calls. For DFT, pass the
     molecule's ``grid_options`` or ``grid_level`` (default ``orca-defgrid3``)
     so the molecule and its atomic references use the same numerical grid.
+    With ``integral_engine`` / ``coulomb`` / ``exchange`` the references run
+    on the selected route with the molecule's provider and J/K algorithms
+    (one SCF per element within this call; nothing enters the module cache).
     """
+    selected = _selected_engine_kwargs(integral_engine, coulomb, exchange, method.lower())
+    cache = {} if selected else None
     zs = [int(a.Z) for a in molecule.atoms]
     unsupported = sorted({z for z in zs if z not in _GROUND_STATE_MULTIPLICITY})
     if unsupported:
@@ -174,7 +223,8 @@ def atomization_energy(
     for z in set(zs):
         atomic_energies[z] = atomic_ground_state_energy(
             z, method, basis, functional=functional,
-            grid_level=grid_level, grid_options=grid_options)
+            grid_level=grid_level, grid_options=grid_options,
+            _cache=cache, **selected)
     e_atoms_sum = sum(atomic_energies[z] for z in zs)
     atomization = e_atoms_sum - e_molecule
     n = len(zs)
@@ -188,6 +238,7 @@ def atomization_energy(
         method=method.lower(),
         basis=basis,
         functional=functional,
+        integral_engine=(getattr(integral_engine, "backend", "libint") if selected else None),
     )
 
 

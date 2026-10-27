@@ -31,6 +31,12 @@
 #
 # Opt-in environment flags:
 #
+#   WITH_OPENTRUSTREGION=1
+#                       Check the optional optimizer's Fortran/Git toolchain.
+#                       install.sh --with-opentrustregion sets this and enables
+#                       the pinned fetch/build during the Python package build.
+#                       This script alone does not enable that CMake option.
+#
 #   VIBEQC_PRUNE_BUILD_TREES=1
 #                       Drop each third_party/<dep>/build tree once its
 #                       install/ is verified to contain a library. The
@@ -486,6 +492,9 @@ EOF
 
 if [ "${VIBEQC_SKIP_PREFLIGHT:-0}" != "1" ] && [ "${VIBEQC_FETCH_ONLY:-0}" != "1" ]; then
     echo "==> Preflight: checking build prerequisites..."
+    # shellcheck source=_opentrustregion.sh
+    . "$SCRIPT_DIR/_opentrustregion.sh"
+    vibeqc_otr_preflight
     # Robustness backstop (the 2026-06-05 Eigen silent-abort). The _check_*
     # helpers report missing deps by appending to MISSING[] and must each
     # return 0 so the loop reaches the consolidated report below. If one ever
@@ -529,6 +538,14 @@ VIBEQC_STAMP_WRITE_SAFE=1
 if [ "${VIBEQC_FETCH_ONLY:-0}" != "1" ]; then
     # shellcheck source=_native_stamp.sh
     . "$SCRIPT_DIR/_native_stamp.sh"
+    vibeqc_verify_cached_libint || exit 3
+    vibeqc_verify_cached_fftw || exit 3
+    vibeqc_verify_cached_libxc || exit 3
+    vibeqc_verify_cached_spglib || exit 3
+    # REBUILD is explicit for OpenBLAS only when that optional build is selected.
+    if [ "${REBUILD:-0}" != "1" ] || [ "${WITH_OPENBLAS:-0}" != "1" ]; then
+        vibeqc_verify_cached_openblas || exit 3
+    fi
     _vibeqc_any_install=0
     for _vibeqc_existing_dep in libint libxc spglib fftw libecpint openblas; do
         if [ -d "third_party/$_vibeqc_existing_dep/install" ]; then
@@ -546,7 +563,20 @@ if [ "${VIBEQC_FETCH_ONLY:-0}" != "1" ]; then
         if [ ${#_vibeqc_drifted[@]} -gt 0 ]; then
             echo "==> Native recipe/artifact drift detected: ${_vibeqc_drifted[*]}"
             echo "    Rebuilding those dependencies before refreshing provenance..."
-            "$SCRIPT_DIR/update_native_deps.sh"
+            if [ "${REBUILD:-0}" = "1" ] && [ "${WITH_OPENBLAS:-0}" = "1" ]; then
+                # Preserve the explicit OpenBLAS rebuild while reconciling
+                # other drift. Its old cache must not block that request.
+                _vibeqc_rebuild_args=(--dep openblas)
+                for _vibeqc_drifted_dep in "${_vibeqc_drifted[@]}"; do
+                    if [ "$_vibeqc_drifted_dep" != "openblas" ]; then
+                        _vibeqc_rebuild_args+=(--dep "$_vibeqc_drifted_dep")
+                    fi
+                done
+                "$SCRIPT_DIR/update_native_deps.sh" "${_vibeqc_rebuild_args[@]}"
+                unset _vibeqc_rebuild_args
+            else
+                "$SCRIPT_DIR/update_native_deps.sh"
+            fi
         fi
     elif [ "$_vibeqc_any_install" = "1" ]; then
         VIBEQC_STAMP_WRITE_SAFE=0

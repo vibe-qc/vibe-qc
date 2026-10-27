@@ -1,9 +1,18 @@
 """Semiempirical route implementation status.
 
 This module is a compact, queryable companion to the user-guide status table
-and the semiempirical handover.  It deliberately labels Python-heavy
+and the semiempirical historical design record.  It deliberately labels Python-heavy
 performance routes as reference-only until they have native kernels or a
 maintainer decision that Python orchestration is the intended final shape.
+
+``backend`` names **where a route's kernel lives**; it is not a maturity
+claim, and it is not a second maturity vocabulary.  Route maturity has exactly
+one source, :data:`vibeqc.semiempirical.routes.SEMIEMPIRICAL_MATURITIES`,
+reached through a plan's ``maturity`` (#150).  The one place the two tables
+overlap is :attr:`SemiempiricalRouteStatus.production`, which must equal
+``plan.maturity == MATURITY_PRODUCTION`` for every reachable plan;
+``tests/test_semiempirical_route_plan.py`` pins that invariant so the tables
+cannot drift apart again.
 """
 
 from __future__ import annotations
@@ -22,7 +31,13 @@ BACKEND_GATED_EXPERIMENTAL = "gated-experimental"
 
 @dataclass(frozen=True)
 class SemiempiricalRouteStatus:
-    """Implementation status for one public semiempirical route."""
+    """Implementation status for one public semiempirical route.
+
+    ``backend`` is the implementation axis (where the kernel lives), not a
+    maturity label.  ``production`` is the single field shared with the
+    canonical maturity vocabulary and tracks
+    ``plan.maturity == MATURITY_PRODUCTION``; see the module docstring.
+    """
 
     route: str
     backend: str
@@ -105,7 +120,7 @@ _ROUTES = (
         True,
         "SCC-DFTB-SECCM analytic gradients differentiate the converged "
         "fixed-charge energy on the frozen record set (M = -W + "
-        "D . 1/2 (kappa hbar - V_A - V_B) overlap contraction, WS-weighted "
+        "D . (kappa hbar - (V_A + V_B)/2) overlap contraction, WS-weighted "
         "repulsive and gamma derivatives). Embedded cells add the analytic "
         "fixed-charge Madelung derivative; the charge interaction is "
         "variational, so no coupled-perturbed SCC charge term remains.",
@@ -320,7 +335,7 @@ _ROUTES = (
     SemiempiricalRouteStatus(
         "msindo-nddo-gradient-analytic",
         BACKEND_MIXED_NATIVE,
-        True,
+        False,
         True,
         "Closed-shell MSINDO-NDDO results for H, Li-F, and Na-Cl use the native "
         "energy kernel and a Python analytic multipole-derivative contraction, "
@@ -330,34 +345,37 @@ _ROUTES = (
     SemiempiricalRouteStatus(
         "msindo-ccm-energy",
         BACKEND_MIXED_NATIVE,
+        False,
         True,
-        True,
-        "MSINDO CCM closed-shell energy calls use native C++ for H-Kr and the "
-        "deterministic Python reference for Rb-Xe or when the binding is absent. "
+        "Experimental MSINDO SECCM closed-shell energy calls use native C++ "
+        "for H-Kr and the deterministic Python reference for Rb-Xe or when "
+        "the binding is absent. "
         "A selected native calculation never falls back after failure.",
     ),
     SemiempiricalRouteStatus(
         "msindo-ccm-gradient-fd",
         BACKEND_MIXED_NATIVE,
+        False,
         True,
-        True,
-        "MSINDO CCM finite-difference gradients use native C++ for valid H-Kr "
-        "closed-shell cells and the Python reference for Rb-Xe or a missing "
-        "binding. A selected native calculation never falls back after failure.",
+        "Experimental MSINDO SECCM finite-difference gradients use native C++ "
+        "for valid H-Kr closed-shell cells and the Python reference for Rb-Xe "
+        "or a missing binding. A selected native calculation never falls "
+        "back after failure.",
     ),
     SemiempiricalRouteStatus(
         "msindo-ccm-gradient-analytic",
         BACKEND_MIXED_NATIVE,
+        False,
         True,
-        True,
-        "MSINDO CCM analytic gradients use native C++ for valid H-Kr "
-        "closed-shell cells and the Python reference for Rb-Xe or a missing "
-        "binding. A selected native calculation never falls back after failure.",
+        "Experimental MSINDO SECCM analytic gradients use native C++ for valid "
+        "H-Kr closed-shell cells and the Python reference for Rb-Xe or a "
+        "missing binding. A selected native calculation never falls back "
+        "after failure.",
     ),
     SemiempiricalRouteStatus(
         "msindo-cosmo",
         BACKEND_MIXED_NATIVE,
-        True,
+        False,
         True,
         "COSMO/GEPOL matrix construction, ASC solves, and reaction-field steps "
         "use native helpers; the outer COSMO SCF loop remains Python "
@@ -532,7 +550,15 @@ def semiempirical_route_runtime_available(route: str) -> bool:
     if status.route in {"gfn2-xtb", "periodic-gfn2-gradient"}:
         from .methods.gfn2_params import gfn2_parameter_cache_available
 
-        return gfn2_parameter_cache_available()
+        if not gfn2_parameter_cache_available():
+            return False
+        if status.route == "gfn2-xtb":
+            from .methods.gfn2_d4_params import load_gfn2_d4_reference_data
+            try:
+                load_gfn2_d4_reference_data(allow_fetch=False)
+            except (RuntimeError, OSError, ValueError):
+                return False
+        return True
     return True
 
 

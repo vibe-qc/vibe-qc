@@ -571,3 +571,99 @@ def test_hessian_displacement_projects_preloaded_read_from_reference_basis(displ
     assert np.all(np.isfinite(gradient))
     assert np.linalg.norm(_to_current_basis(prior.density, source_basis, basis) - prior.density) > 1e-3
     np.testing.assert_array_equal(options.read_density, prior.density)
+
+
+def test_hessian_fd_resolves_default_jk_aux():
+    """``compute_hessian_fd(scf_options=RHFOptions(density_fit=True))``
+    without an ``aux_basis`` must pick the default JK fit before the
+    displaced SCFs call the bare driver, and the mirrored gradient options
+    must carry the same name (#362)."""
+    opts = vq.RHFOptions()
+    opts.density_fit = True
+    mol = vq.Molecule(
+        [
+            vq.Atom(8, [0.0, 0.0, 0.0]),
+            vq.Atom(1, [0.0, 1.43, -0.98]),
+            vq.Atom(1, [0.0, -1.43, -0.98]),
+        ]
+    )
+    res = vq.compute_hessian_fd(mol, "def2-svp", method="RHF", scf_options=opts)
+    assert opts.aux_basis == "def2-svp-jk"
+    assert np.asarray(res.hessian).shape == (9, 9)
+
+    explicit = vq.RHFOptions()
+    explicit.density_fit = True
+    explicit.aux_basis = "def2-svp-jk"
+    ref = vq.compute_hessian_fd(mol, "def2-svp", method="RHF", scf_options=explicit)
+    np.testing.assert_allclose(
+        np.asarray(res.hessian), np.asarray(ref.hessian), atol=1e-10
+    )
+
+
+# ---------------------------------------------------------------------------
+# Functionals whose analytic gradient omits terms (#665)
+# ---------------------------------------------------------------------------
+
+def _tight_rks(functional: str) -> vq.RKSOptions:
+    opts = vq.RKSOptions()
+    opts.functional = functional
+    opts.conv_tol_energy = 1e-12
+    opts.conv_tol_grad = 1e-9
+    return opts
+
+
+@pytest.mark.parametrize(
+    ("method", "functional"),
+    [("RKS", "wb97x"), ("RKS", "cam-b3lyp"), ("UKS", "wb97x"), ("RKS", "vv10")],
+)
+def test_fd_hessian_uses_complete_energy_gradient(method, functional, monkeypatch):
+    """Missing RSH/VV10 terms use full energies, never the incomplete kernel."""
+    import vibeqc.hessian as module
+    def forbidden(*args, **kwargs):
+        raise AssertionError("incomplete analytic gradient was called")
+    monkeypatch.setattr(module, "compute_gradient_rks", forbidden)
+    monkeypatch.setattr(module, "compute_gradient_uks", forbidden)
+    mol = _h2_mol()
+    opts = _tight_rks(functional) if method == "RKS" else vq.UKSOptions()
+    opts.functional = functional
+    opts.conv_tol_energy = 1e-12
+    opts.conv_tol_grad = 1e-9
+    result = vq.compute_hessian_fd(mol, "sto-3g", method=method, scf_options=opts)
+    assert np.asarray(result.hessian).shape == (6, 6)
+    assert np.isfinite(result.hessian).all()
+
+
+def test_fd_hessian_keeps_a_global_hybrid():
+    """pbe0's analytic gradient is complete, so its FD Hessian still runs and
+    its bond-stretch element is the energy's three-point curvature."""
+    mol = _h2_mol()
+    opts = _tight_rks("pbe0")
+    res = vq.compute_hessian_fd(mol, "sto-3g", method="RKS", scf_options=opts)
+    step = 5e-3
+    energies = []
+    for dz in (step, 0.0, -step):
+        moved = _h2_mol(1.346 + dz)
+        energies.append(vq.run_rks(moved, vq.BasisSet(moved, "sto-3g"), opts).energy)
+    curvature = (energies[0] - 2.0 * energies[1] + energies[2]) / step**2
+    assert np.asarray(res.hessian)[5, 5] == pytest.approx(curvature, abs=2e-4)
+
+
+@pytest.mark.parametrize(
+    ("route", "functional"),
+    [("compute_hessian_rks_analytic", "wb97x"),
+     ("compute_hessian_rks_analytic", "lc-wpbe"),
+     ("compute_hessian_uks_analytic", "wb97x")],
+)
+def test_analytic_ks_hessian_refuses_an_incomplete_gradient(route, functional):
+    """#665: the analytic KS Hessian's skeleton is built from the analytic
+    gradient, so it refuses the functionals that gradient cannot carry."""
+    mol = _h2_mol()
+    basis = vq.BasisSet(mol, "sto-3g")
+    if route == "compute_hessian_rks_analytic":
+        result = vq.run_rks(mol, basis, _tight_rks(functional))
+    else:
+        opts = vq.UKSOptions()
+        opts.functional = functional
+        result = vq.run_uks(mol, basis, opts)
+    with pytest.raises(NotImplementedError, match=f"'{functional}'.*incomplete"):
+        getattr(vq, route)(mol, basis, result, basis_name="sto-3g")

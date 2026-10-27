@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Experimental LiF rocksalt SKALA-1.1 2x2x2 GDF calculation.
+"""Experimental LiF rocksalt SKALA-1.1 2x2x2 GDF or BIPOLE calculation.
 
 Run only after ``lif_gamma.py`` converges to a finite, plausible result. The
 mesh is vibe-qc's Gamma-centred convention, not the shifted even Monkhorst-Pack
@@ -33,7 +33,22 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="explicit output stem; parent directory must already exist",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--jk-method", choices=("gdf", "bipole"), default="gdf",
+        help="periodic Coulomb builder (default: gdf)",
+    )
+    parser.add_argument(
+        "--bipole-cutoff-bohr", type=float,
+        help="required positive finite lattice cutoff for BIPOLE; converge explicitly",
+    )
+    args = parser.parse_args()
+    if args.jk_method == "bipole":
+        cutoff = args.bipole_cutoff_bohr
+        if cutoff is None or not math.isfinite(cutoff) or cutoff <= 0:
+            parser.error("BIPOLE requires a positive finite --bipole-cutoff-bohr")
+    elif args.bipole_cutoff_bohr is not None:
+        parser.error("--bipole-cutoff-bohr requires --jk-method bipole")
+    return args
 
 
 def require_supported_runtime() -> None:
@@ -48,7 +63,7 @@ def require_supported_runtime() -> None:
         )
 
 
-def reserve_output_stem(requested: Path | None) -> Path:
+def reserve_output_stem(requested: Path | None, jk_method: str) -> Path:
     if requested is not None:
         stem = requested.expanduser().resolve()
         if not stem.parent.is_dir():
@@ -56,7 +71,8 @@ def reserve_output_stem(requested: Path | None) -> Path:
         return stem
 
     root = Path(os.environ.get("VQ_WORKDIR", ".")).resolve()
-    output_dir = root / "lif-k222-results"
+    suffix = "-bipole" if jk_method == "bipole" else ""
+    output_dir = root / f"lif-k222{suffix}-results"
     output_dir.mkdir(exist_ok=False)
     probe = output_dir / ".write-probe"
     probe.write_text("ok\n", encoding="utf-8")
@@ -82,7 +98,13 @@ def main() -> None:
     args = parse_args()
     if not args.dry_run:
         require_supported_runtime()
-    output = reserve_output_stem(args.output)
+    output = reserve_output_stem(args.output, args.jk_method)
+    route_options = {}
+    if args.jk_method == "bipole":
+        route_options = {
+            "bipole_cutoff_bohr": args.bipole_cutoff_bohr,
+            "bipole_nuclear_cutoff_bohr": args.bipole_cutoff_bohr,
+        }
     system = build_lif()
     basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
 
@@ -91,7 +113,7 @@ def main() -> None:
         basis,
         method="RKS",
         functional="skala-1.1",
-        jk_method="gdf",
+        jk_method=args.jk_method,
         kpoints=[2, 2, 2],
         output=output,
         dry_run=args.dry_run,
@@ -106,8 +128,10 @@ def main() -> None:
         output_qvf=True,
         progress=False,
         record_hostname=False,
+        **route_options,
     )
 
+    print(f"periodic route: {args.jk_method.upper()}")
     if result is None:
         print(f"dry-run complete: {output}.system")
         return

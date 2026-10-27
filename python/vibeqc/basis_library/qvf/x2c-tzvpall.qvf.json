@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
+  "schema_version": "1.1.0",
+  "name": "x2c-tzvpall",
+  "description": "vibeqc-fetched from Basis Set Exchange on 2026-05-08.\nBSE name: x2c-TZVPall\nCanonical name in vibe-qc: x2c-tzvpall\nOriginating publication: Pollak, Weigend, J. Chem. Theory Comput. 13, 3696 (2017); DOI: 10.1021/acs.jctc.7b00365\nNote: blocked on X2C Hamiltonian for use\nBasis Set Exchange\nVersion 0.12\nhttps://www.basissetexchange.org\n  Basis set: x2c-TZVPall\nDescription: x2c-TZVPall\n       Role: orbital\n    Version: 0  (Data from the original Basis Set Exchange)",
   "role": "orbital",
   "elements": {
     "H": {
@@ -31183,7 +31183,38 @@
       ]
     }
   },
+  "basis_family": "ahlrichs",
+  "references": [
+    {
+      "key": "pollak_weigend_x2c_2017",
+      "description": "P. Pollak, F. Weigend, Journal of Chemical Theory and Computation 13, 3696-3705 (2017)",
+      "doi": "10.1021/acs.jctc.7b00593"
+    },
+    {
+      "key": "doi:10.1021/acs.jctc.7b00365",
+      "description": "Pollak, Weigend, J. Chem. Theory Comput. 13, 3696 (2017)",
+      "doi": "10.1021/acs.jctc.7b00365"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "bse",
+    "upstream": [
+      {
+        "name": "basis-set-exchange",
+        "version": "0.12",
+        "url": "https://www.basissetexchange.org",
+        "identifier": "x2c-TZVPall"
+      }
+    ],
+    "retrieval_date": "2026-05-08",
+    "content_sha256": "4ff3b8ebdab040309063a5a935bc269b8b7fed4e7bff46403443e3ba043a4ad2",
+    "citations": [
+      {
+        "keys": [
+          "pollak_weigend_x2c_2017"
+        ]
+      }
+    ]
   }
 }

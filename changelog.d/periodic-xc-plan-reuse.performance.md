@@ -1,0 +1,1 @@
+- Reuse the immutable periodic XC torus grouping plan when density and potential retain identical pair indices, avoiding duplicate plan construction in restricted and unrestricted built-in XC. Different screening lists retain independent plans.

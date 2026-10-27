@@ -2,7 +2,8 @@
 
 The classical Madelung sum for an ionic crystal converges only
 conditionally in 3D, different truncation shapes give different
-answers. vibe-qc's 3D Ewald implementation computes the infinite sum
+answers. vibe-qc's 3D Ewald implementation
+({vibeqc-cite}`ewald_lattice_sum_1921`) computes the infinite sum
 unconditionally.
 
 ## NaCl rocksalt
@@ -94,8 +95,9 @@ A system periodic in two dimensions and finite in the third (a slab or
 layer) needs a *different* Ewald sum. The 3D reciprocal series assumes
 periodicity in all three directions; applied to a slab-in-a-box it leaks a
 spurious electrostatic field between the periodic images stacked along the
-surface normal. vibe-qc ships the rigorous 2D Ewald of Parry (1975) and
-de Leeuw & Perram (1979): the *true* 2D lattice sum, with no vacuum-gap
+surface normal. vibe-qc ships the rigorous 2D Ewald of Parry (1975,
+{vibeqc-cite}`parry_2d_ewald_1975`) and de Leeuw & Perram (1979,
+{vibeqc-cite}`de_leeuw_perram_2d_ewald_1979`): the *true* 2D lattice sum, with no vacuum-gap
 parameter and no inter-image artefact. It adds a reciprocal term with an
 $\operatorname{erfc}(\alpha z)$ structure and a special $g = 0$ term that
 has no 3D analogue.
@@ -193,7 +195,7 @@ finite-cutoff artefacts linger as $1/R$.
 
 ### The Ewald trick
 
-Ewald (1921) decomposed the $1/r$ kernel into two absolutely
+Ewald (1921, {vibeqc-cite}`ewald_lattice_sum_1921`) decomposed the $1/r$ kernel into two absolutely
 convergent pieces by adding and subtracting a Gaussian-charge
 distribution of width $1/\alpha$ at each site:
 
@@ -267,7 +269,9 @@ The last row is computed with the rigorous **2D** Ewald sum
 the others are 3D bulk crystals.
 
 These are textbook values with a long history of high-precision
-calculation (Sherman 1932, Nijboer-De Wette 1957). The vibe-qc Ewald
+calculation (Sherman 1932, Nijboer-De Wette 1957; the charge-neutral
+shell weighting of Evjen, {vibeqc-cite}`evjen_1932`, is the classic
+direct-space alternative). The vibe-qc Ewald
 summer reproduces all of them to $\leq 10^{-8}$ relative precision
 at a 40-bohr real-space cutoff.
 

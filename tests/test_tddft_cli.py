@@ -99,3 +99,74 @@ def test_cli_pbe_native_smoke(tmp_path, capsys, mult, casida):
     output = capsys.readouterr().out
     assert "SCF converged" in output
     assert "n_states=1" in output
+
+
+@pytest.mark.parametrize("unrestricted", [False, True])
+def test_nto_cli_reads_canonical_state_links(tmp_path, capsys, unrestricted):
+    """NTO identity comes from metadata even when the section id is arbitrary."""
+    import json
+    import zipfile
+    from vibeqc._cli import _cmd_nto
+
+    path = tmp_path / "states.qvf"
+    meta = {
+        "orbital_kind": "nto", "nto_role": "hole",
+        "state_ref": "response", "state_index": 2,
+        "excitation_index": 99, "excitation_energy_ev": 999.0,
+    }
+    if unrestricted:
+        meta.update(spin="unrestricted",
+                    alpha={"n_mo": 2, "occupations": [0.6, 0.1]},
+                    beta={"n_mo": 1, "occupations": [0.3]})
+    else:
+        meta.update(spin="restricted", n_mo=2, occupations=[0.9, 0.1])
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("manifest.json", json.dumps({"qvf_version": 1, "sections": [
+            {"id": "arbitrary", "kind": "wavefunction.gto",
+             "members": {"mo_metadata": {"path": "orbitals.json"}}},
+            {"id": "response", "kind": "excited_states",
+             "members": {"states": {"path": "states.json"}}},
+        ]}))
+        zf.writestr("orbitals.json", json.dumps(meta))
+        zf.writestr("states.json", json.dumps({"states": [{
+            "index": 2, "excitation_energy": {"value": 0.25, "units": "hartree"},
+        }]}))
+    assert _cmd_nto(SimpleNamespace(path=path, json=True)) == 0
+    rows = json.loads(capsys.readouterr().out)
+    assert len(rows) == (2 if unrestricted else 1)
+    for row in rows:
+        assert row["id"] == "arbitrary"
+        assert row["state_index"] == 2
+        assert row["role"] == "hole"
+        assert row["excitation_energy_ev"] == pytest.approx(0.25 * 27.211386245988)
+    if unrestricted:
+        assert [row["spin"] for row in rows] == ["alpha", "beta"]
+        assert rows[0]["nto_weights"] == [0.6, 0.1]
+        assert rows[1]["nto_weights"] == [0.3]
+    else:
+        assert rows[0]["nto_weights"] == [0.9, 0.1]
+
+
+def test_nto_cli_preserves_legacy_occupations(tmp_path, capsys):
+    import json
+    import zipfile
+    from vibeqc._cli import _cmd_nto
+
+    path = tmp_path / "legacy.qvf"
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("manifest.json", json.dumps({"qvf_version": 1, "sections": [{
+            "id": "wf_nto_S3_beta_electron", "kind": "wavefunction.gto",
+            "members": {"mo_metadata": {"path": "legacy.json"}},
+        }]}))
+        zf.writestr("legacy.json", json.dumps({
+            "spin": "restricted", "orbital_kind": "natural",
+            "excitation_index": 3, "excitation_energy_ev": 4.5,
+            "n_mo": 2, "occupations": [0.8, 0.6],
+        }))
+    assert _cmd_nto(SimpleNamespace(path=path, json=True)) == 0
+    row, = json.loads(capsys.readouterr().out)
+    assert row["state_index"] == "3"
+    assert row["spin"] == "beta"
+    assert row["role"] == "electron"
+    assert row["excitation_energy_ev"] == 4.5
+    assert row["nto_weights"] == [0.8, 0.6]

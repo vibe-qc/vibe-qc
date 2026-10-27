@@ -10,11 +10,14 @@ import pytest
 
 import vibeqc as vq
 from vibeqc import _vibeqc_core as core
+from vibeqc import periodic_external_xc as external_xc
 from vibeqc.periodic_external_xc import (
     PeriodicExternalXC,
     _reject_reduced_kmesh,
 )
 from vibeqc.periodic_gapw_grid import PlaneWaveGrid
+
+from tests.refusal_receipt import assert_preflight_refusal
 
 
 _NAMES = itertools.count()
@@ -47,12 +50,13 @@ class _QuadraticDensityProvider:
         }
 
 
-def _functional(provider, *, required_grid_profile: str = ""):
+def _functional(provider, *, required_grid_profile: str = "", hf_exchange_fraction=0.0):
     name = f"test-gpw-full-grid-xc-{next(_NAMES)}"
     vq.define_external_functional(
         name,
         provider,
         required_grid_profile=required_grid_profile,
+        hf_exchange_fraction=hf_exchange_fraction,
     )
     return name, vq.Functional(name, 1)
 
@@ -107,7 +111,111 @@ def _assert_generalized_eigenpairs(fock, overlap, coeffs, energies):
     assert float(np.max(np.abs(residual), initial=0.0)) < 5.0e-10
 
 
-def test_external_xc_adapter_domain_is_difference_closed_and_variational():
+@pytest.mark.parametrize("bitmap_budget", [0, 1 << 20])
+@pytest.mark.parametrize("dimension", [0, 1, 2, 3])
+def test_lattice_difference_support_matches_explicit_pairs(
+    monkeypatch, bitmap_budget, dimension,
+):
+    monkeypatch.setattr(external_xc, "_DIFFERENCE_BITMAP_MAX_BYTES", bitmap_budget)
+    rng = np.random.default_rng(120 + dimension)
+    ket = rng.integers(-3, 4, size=(29, 3))
+    bra = rng.integers(-2, 3, size=(17, 3))
+    ket[:, dimension:] = 0
+    bra[:, dimension:] = 0
+    # Unequal, gapped supports, duplicates and independent large translations.
+    ket = [tuple(map(int, row)) for row in ket + [101, -31, 7]]
+    bra = [tuple(map(int, row)) for row in bra + [-23, 13, 91]]
+    expected = {
+        tuple(s[i] - a[i] for i in range(3)) for s in ket for a in bra
+    }
+    actual = external_xc._lattice_difference_set(ket, bra)
+    assert len(actual) == len(expected)
+    assert isinstance(actual, external_xc._LatticeDifferenceBitmap) == bool(
+        bitmap_budget
+    )
+    # Probe the whole box, holes and invalid coordinates that would alias if
+    # flattened without per-axis range checks.
+    axes = [
+        range(min(g[i] for g in expected) - 2, max(g[i] for g in expected) + 3)
+        for i in range(3)
+    ]
+    for index in itertools.product(*axes):
+        assert (index in actual) == (index in expected)
+
+
+@pytest.mark.parametrize(
+    "ket,bra", [([], []), ([], [(0, 0, 0)]), ([(0, 0, 0)], [])],
+)
+def test_lattice_difference_support_empty(ket, bra):
+    assert external_xc._lattice_difference_set(ket, bra) == frozenset()
+
+
+@pytest.mark.parametrize("spacing", [20, 10**30])
+def test_lattice_difference_support_sparse_fallback(spacing):
+    ket = [(0, 0, 0), (spacing, spacing, spacing)]
+    bra = [(0, 0, 0), (1, -2, 3)]
+    actual = external_xc._lattice_difference_set(ket, bra)
+    assert isinstance(actual, frozenset)
+    assert actual == {
+        (0, 0, 0), (-1, 2, -3),
+        (spacing, spacing, spacing), (spacing - 1, spacing + 2, spacing - 3),
+    }
+
+
+@pytest.mark.parametrize("dimension", [1, 2, 3])
+def test_external_xc_difference_domain_matches_explicit_order(dimension):
+    from vibeqc.pair_resolved_truncation import (
+        atom_pair_span, pair_resolved_domain,
+    )
+
+    lattice = np.array([[4.0, 0.0, 0.0], [1.2, 3.9, 0.0], [-0.6, 0.8, 4.1]])
+    system = vq.PeriodicSystem(dimension, lattice, [
+        vq.Atom(1, [0.1, 0.2, 0.3]), vq.Atom(1, [4.3, 0.4, 0.2]),
+    ])
+    cutoff, radius = 4.2, 2.3
+    ket = pair_resolved_domain(system, cutoff).cells
+    bra = pair_resolved_domain(system, radius).cells
+    required = {
+        tuple((np.asarray(s.index) - np.asarray(a.index)).tolist())
+        for s in ket for a in bra
+    }
+    candidates = core.direct_lattice_cells(
+        system, cutoff + radius + 2.0 * atom_pair_span(system) + 1.0e-9,
+    )
+    expected = [
+        tuple(cell.index) for cell in candidates if tuple(cell.index) in required
+    ]
+    actual = external_xc.periodic_xc_difference_closed_cells(system, cutoff, radius)
+    assert [tuple(cell.index) for cell in actual] == expected
+    assert set(expected) == required
+
+
+@pytest.mark.parametrize("bitmap_budget", [0, 1 << 20])
+def test_external_xc_difference_domain_counts_missing_unique_cells(
+    monkeypatch, bitmap_budget,
+):
+    from vibeqc import pair_resolved_truncation as domains
+
+    cells = [SimpleNamespace(index=(i, 0, 0)) for i in (0, 1)]
+    monkeypatch.setattr(external_xc, "_DIFFERENCE_BITMAP_MAX_BYTES", bitmap_budget)
+    monkeypatch.setattr(
+        domains, "pair_resolved_domain", lambda *args: SimpleNamespace(cells=cells),
+    )
+    monkeypatch.setattr(domains, "atom_pair_span", lambda *args: 0.0)
+    # Duplicate available candidates must not hide the two missing cells.
+    monkeypatch.setattr(
+        core, "direct_lattice_cells", lambda *args: [cells[0], cells[0]],
+    )
+    with pytest.raises(RuntimeError, match=r"2 lattice cells missing"):
+        external_xc.periodic_xc_difference_closed_cells(object(), 1.0, 1.0)
+    ordered = [cells[1], cells[0], cells[0], SimpleNamespace(index=(-1, 0, 0))]
+    monkeypatch.setattr(core, "direct_lattice_cells", lambda *args: ordered)
+    actual = external_xc.periodic_xc_difference_closed_cells(object(), 1.0, 1.0)
+    assert actual == tuple(ordered)
+
+
+@pytest.mark.parametrize("partition_radius", [2.0, 4.1, 6.0])
+def test_external_xc_adapter_domain_is_difference_closed_and_variational(partition_radius):
     from vibeqc.pair_resolved_truncation import pair_resolved_domain
 
     provider = _QuadraticDensityProvider()
@@ -120,7 +228,7 @@ def test_external_xc_adapter_domain_is_difference_closed_and_variational():
         system,
         functional,
         grid_options=_coarse_atom_grid_options(),
-        image_radius_bohr=4.1,
+        image_radius_bohr=partition_radius,
         lattice_options=lattice_options,
     )
 
@@ -290,7 +398,8 @@ def test_explicit_weighted_kpoint_list_is_not_a_finite_torus():
         _reject_reduced_kmesh(explicit, system)
 
 
-def test_external_xc_multik_weighted_complex_directional_derivative():
+@pytest.mark.parametrize("partition_radius", [2.0, 4.1, 6.0])
+def test_external_xc_multik_weighted_complex_directional_derivative(partition_radius):
     provider = _QuadraticDensityProvider()
     _, functional = _functional(provider)
     system, basis = _system_and_basis(length=4.0)
@@ -300,7 +409,7 @@ def test_external_xc_multik_weighted_complex_directional_derivative():
         system,
         functional,
         grid_options=_coarse_atom_grid_options(),
-        image_radius_bohr=4.1,
+        image_radius_bohr=partition_radius,
         lattice_options=lattice_options,
     )
     kmesh = core.monkhorst_pack(system, [2, 1, 1])
@@ -367,12 +476,79 @@ def test_gpw_gamma_external_xc_bypasses_fft_xc(monkeypatch):
     assert np.isfinite(result.energy)
     assert np.isfinite(result.breakdown.e_xc)
     assert provider.calls
-    _assert_generalized_eigenpairs(
-        result.fock,
-        result.overlap,
-        result.mo_coeffs,
-        result.mo_energies,
-    )
+    build = result.fock_build
+    assert build is not None
+    assert build.source.provider == "gpw-grid+libint2+external-xc"
+    assert result.energy == build.energy.total
+    np.testing.assert_array_equal(result.density, build.channels[0].density)
+    np.testing.assert_array_equal(result.fock, build.channels[0].operator.matrix)
+    np.testing.assert_allclose(
+        (result.mo_coeffs * result.occupations) @ result.mo_coeffs.T,
+        result.density, atol=1e-10)
+    assert dict(build.energy.components)["xc"] == result.breakdown.e_xc
+
+
+@pytest.mark.parametrize("hf_fraction", [0.0, 0.25])
+@pytest.mark.parametrize("max_iter", [0, 1, 30])
+def test_gpw_external_evaluated_state(monkeypatch, max_iter, hf_fraction, record_property):
+    import vibeqc.periodic_gapw_j as gpw_module
+    from vibeqc.periodic_gpw_fock import _GpwRKSBuilder
+    provider = _QuadraticDensityProvider()
+    provider.provenance = {"model": "analytic-quadratic-density", "revision": 1}
+    name, _ = _functional(provider, hf_exchange_fraction=hf_fraction)
+    system, basis = _system_and_basis()
+    builders = []
+    original = _GpwRKSBuilder.__call__
+
+    def capture(self, density):
+        if not builders:
+            builders.append(self)
+        return original(self, density)
+
+    monkeypatch.setattr(_GpwRKSBuilder, "__call__", capture)
+    result = gpw_module.run_periodic_rks_gpw(
+        system, basis, functional=name,
+        grid=PlaneWaveGrid(np.eye(3) * 8.0, 12, 12, 12),
+        max_iter=max_iter, quiet=True, use_diis=False,
+        external_xc_grid_options=_coarse_atom_grid_options(),
+        external_xc_image_radius_bohr=2.0,
+        external_xc_lattice_options=_short_lattice_options())
+    builder = builders[0]
+    d = result.density.copy()
+    direction = np.array([[.13, -.07], [-.07, .04]])
+    step = 1e-5
+    plus, minus = builder(d + step*direction), builder(d - step*direction)
+    derivative = (plus.energy.total-minus.energy.total)/(2*step)
+    assert derivative == pytest.approx(np.sum(result.fock*direction), abs=2e-7)
+    record_property("energy_Eh", result.energy)
+    record_property("derivative_error", abs(derivative-np.sum(result.fock*direction)))
+    from vibeqc.periodic_gapw_runner_adapter import gpw_result_to_runner_shape
+    from vibeqc.output.formats.qvf import qvf_wf_data
+    adapted = gpw_result_to_runner_shape(result, system, basis)
+    assert adapted.fock_build is result.fock_build
+    assert adapted.run_fields == result.run_fields
+    wf = qvf_wf_data(adapted, basis, system.unit_cell_molecule())
+    assert wf["mo_metadata"]["orbital_kind"] == "natural"
+    np.testing.assert_allclose(
+        (adapted.mo_coeffs*adapted.occupations) @ adapted.mo_coeffs.T, d, atol=1e-10)
+    source = result.fock_build.source.as_dict()["details"]["xc"]["details"]
+    assert source["checkpoint"] == provider.provenance
+    assert source["hf_exchange_fraction"] == hf_fraction
+    provider.provenance["revision"] = 2
+    with pytest.raises(ValueError, match="source changed"):
+        builder(d)
+    provider.provenance["revision"] = 1
+    assert result.fock_build.energy.total == result.energy
+    np.testing.assert_allclose((result.mo_coeffs*result.occupations) @ result.mo_coeffs.T,
+                               d, atol=1e-10)
+    if max_iter == 30:
+        assert result.converged
+    # Neither a writable result copy nor later builds alter the captured state.
+    result.density[:] = 0
+    np.testing.assert_array_equal(result.fock_build.channels[0].density, d)
+    builder.external_xc.lattice_options.cutoff_bohr += .1
+    with pytest.raises(ValueError, match="source changed"):
+        builder(d)
 
 
 def test_gpw_multik_external_xc_bypasses_all_fft_xc(monkeypatch):
@@ -859,7 +1035,7 @@ def test_high_level_external_gpw_gapw_reject_charged_cell_before_dry_run(
             progress=False,
         )
 
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 @pytest.mark.parametrize("route", ("gpw-gamma", "gpw-multik", "gapw-gamma"))
@@ -934,3 +1110,111 @@ def test_low_level_external_gpw_gapw_reject_ecp_paired_basis(route):
                 functional=name,
                 quiet=True,
             )
+
+
+@pytest.mark.parametrize("mode", ["gamma", "uks", "multik"])
+@pytest.mark.parametrize("requested_reach", [0.0, -1.0, 2.0, 7.0])
+def test_external_xc_partition_does_not_change_density_support(
+    monkeypatch, mode, requested_reach,
+):
+    """Hold quadrature fixed to isolate the AO support from partition error."""
+    provider = _QuadraticDensityProvider()
+    _, functional = _functional(provider)
+    system, basis = _system_and_basis(length=4.0)
+    options = _short_lattice_options(cutoff=4.1)
+    options.becke_image_radius_bohr = requested_reach
+    grid = external_xc.build_periodic_becke_grid(
+        system, grid_options=_coarse_atom_grid_options(), image_radius_bohr=4.1,
+    )
+    radii = []
+
+    def fixed_grid(*args, **kwargs):
+        radii.append(kwargs["image_radius_bohr"])
+        return grid
+
+    monkeypatch.setattr(external_xc, "build_periodic_becke_grid", fixed_grid)
+    expected_reach = min(requested_reach, 4.1) if requested_reach > 0 else 4.1
+    density = np.array([[0.7, 0.1], [0.1, 0.5]])
+    mesh = core.monkhorst_pack(system, [2, 1, 1])
+    outputs, inputs, domains = [], [], []
+    for partition in (2.0, 4.1, 6.0):
+        context = PeriodicExternalXC.prepare(
+            basis, system, functional, image_radius_bohr=partition,
+            lattice_options=options,
+        )
+        assert context.lattice_options.becke_image_radius_bohr == expected_reach
+        domains.append([tuple(c.index) for c in context.cells])
+        if mode == "gamma":
+            outputs.append(context.build_gamma(density))
+        elif mode == "uks":
+            outputs.append(context.build_gamma_uks(0.6 * density, 0.4 * density))
+        else:
+            outputs.append(context.build_kpoints([density, density], mesh))
+        inputs.append({key: np.asarray(provider.calls[-1][key]).copy()
+                       for key in ("rho_alpha", "rho_beta", "tau_alpha", "tau_beta")})
+    assert radii == [2.0, 4.1, 6.0]
+    assert options.becke_image_radius_bohr == requested_reach
+    assert domains[0] == domains[1] == domains[2]
+    for actual, features in zip(outputs[1:], inputs[1:]):
+        for reference, value in zip(outputs[0], actual):
+            np.testing.assert_array_equal(value, reference)
+        for key in features:
+            np.testing.assert_array_equal(features[key], inputs[0][key])
+
+
+@pytest.mark.parametrize("field,value", [
+    ("cutoff_bohr", 0.0), ("cutoff_bohr", -1.0),
+    ("cutoff_bohr", np.nan), ("cutoff_bohr", np.inf),
+    ("becke_image_radius_bohr", np.nan), ("becke_image_radius_bohr", np.inf),
+])
+def test_external_xc_rejects_invalid_density_support_before_grid(monkeypatch, field, value):
+    _, functional = _functional(_QuadraticDensityProvider())
+    system, basis = _system_and_basis()
+    options = _short_lattice_options()
+    setattr(options, field, value)
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("invalid density support reached grid construction")
+
+    monkeypatch.setattr(external_xc, "build_periodic_becke_grid", unexpected)
+    with pytest.raises(ValueError, match="must be finite"):
+        PeriodicExternalXC.prepare(basis, system, functional, lattice_options=options)
+
+
+@pytest.mark.parametrize("hf_fraction", [0.0, 0.25])
+def test_gpw_external_scf_preserves_density_reach(monkeypatch, hf_fraction, record_property):
+    """Converged analytic-provider regression, not a SKALA checkpoint test."""
+    from vibeqc.periodic_gapw_j import run_periodic_rks_gpw
+
+    provider = _QuadraticDensityProvider()
+    name, _ = _functional(provider, hf_exchange_fraction=hf_fraction)
+    system, basis = _system_and_basis(length=4.0)
+    grid_options = _coarse_atom_grid_options()
+    atom_grid = external_xc.build_periodic_becke_grid(
+        system, grid_options=grid_options, image_radius_bohr=4.1,
+    )
+    monkeypatch.setattr(external_xc, "build_periodic_becke_grid", lambda *a, **kw: atom_grid)
+    energies = []
+    for partition, density_reach in ((2.0, 0.0), (4.1, 0.0), (2.0, 2.0)):
+        options = _short_lattice_options(cutoff=4.1)
+        options.becke_image_radius_bohr = density_reach
+        result = run_periodic_rks_gpw(
+            system, basis, functional=name,
+            grid=PlaneWaveGrid(np.eye(3) * 4.0, 12, 12, 12),
+            max_iter=60, quiet=True, use_diis=False,
+            external_xc_grid_options=grid_options,
+            external_xc_image_radius_bohr=partition,
+            external_xc_lattice_options=options,
+        )
+        assert result.converged
+        energies.append(result.energy)
+    # The first two runs have the same density operator and fixed quadrature.
+    # Independent SCFs can differ by a rounding step in parallel reductions.
+    # Keep the comparison at machine roundoff, far below SCF convergence.
+    assert energies[0] == pytest.approx(energies[1], rel=0., abs=32*np.finfo(float).eps)
+    # Explicitly requesting the old truncated support remains possible and
+    # actually changes this cell: it must not be selected by partition alone.
+    assert abs(energies[2] - energies[0]) > 1.0e-4
+    record_property("full_reach_energy_Eh", energies[0])
+    record_property("narrow_reach_energy_Eh", energies[2])
+    record_property("partition_only_energy_difference_Eh", energies[1] - energies[0])

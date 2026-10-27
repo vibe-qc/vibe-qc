@@ -359,6 +359,7 @@ def energy_gradient_analytic_rks(
 
     x = np.asarray(x, dtype=float)
     atoms = parametrisation.unpack(x)            # current basis at x (NOT the reference)
+    _refuse_ecp_atoms(atoms)
     mol = molecule_factory()
     name = library.write_g94(atoms, basis_name=f"{basis_name_prefix}")
     basis = vq.BasisSet(mol, name)
@@ -462,6 +463,7 @@ def energy_gradient_analytic_uks(
 
     x = np.asarray(x, dtype=float)
     atoms = parametrisation.unpack(x)
+    _refuse_ecp_atoms(atoms)
     mol = molecule_factory()
     name = library.write_g94(atoms, basis_name=f"{basis_name_prefix}")
     basis = vq.BasisSet(mol, name)
@@ -532,11 +534,34 @@ def energy_gradient_analytic_uks(
 # ---- shared assembly helpers (RHF + UHF) -----------------------------------
 
 
+def _refuse_ecp_atoms(atoms) -> None:
+    """Fail closed on a basis whose atoms carry an ECP.
+
+    The SCF attaches the ECP from the candidate's ``.ecp`` sidecar, but
+    the integrals assembled here are T and V with the full nuclear charge
+    and have no ECP term: no dV_ECP/d(eta), and the wrong Z. The gradient
+    would be the derivative of a different energy. Use the
+    finite-difference energy gradient for such an element.
+    """
+    with_ecp = sorted(
+        getattr(a, "element_symbol", "?")
+        for a in (atoms.values() if isinstance(atoms, dict) else atoms)
+        if getattr(a, "has_ecp", False)
+    )
+    if with_ecp:
+        raise NotImplementedError(
+            f"analytic basis gradient: {', '.join(with_ecp)} carry an ECP and "
+            f"the exponent-derivative integrals have no ECP term; use the "
+            f"finite-difference energy gradient"
+        )
+
+
 def _setup_scf(vq, parametrisation, molecule_factory, library, scf_runner, x,
                basis_name_prefix):
     """Unpack x -> write basis -> build molecule/basis -> run SCF. Returns
     ``(mol, basis, scf_result)``."""
     atoms = parametrisation.unpack(np.asarray(x, dtype=float))
+    _refuse_ecp_atoms(atoms)
     name = library.write_g94(atoms, basis_name=f"{basis_name_prefix}")
     mol = molecule_factory()
     basis = vq.BasisSet(mol, name)
@@ -888,6 +913,7 @@ class VibeqcIntegralProvider:
         import vibeqc as vq  # local: vibeqc not importable without a build
 
         atoms = self.parametrisation.unpack(np.asarray(x, dtype=float))
+        _refuse_ecp_atoms(atoms)
         self._calls += 1
         name = self.library.write_g94(
             atoms, basis_name=f"{self.basis_name_prefix}-{self._calls:06d}"

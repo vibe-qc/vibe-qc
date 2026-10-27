@@ -28,41 +28,37 @@ All contributors and maintainers are expected to follow the
 
 ## How a fix gets verified
 
-Every fix to a wrong answer, a numerical result, or anything
-release-blocking is checked by **someone other than its author** before the
-issue closes. That is a project rule, not a formality: the author of a fix
-is the person least able to see what it missed.
+Development and scientific acceptance have different completion points. A
+source change is ready to land after its focused check passes. A scientific
+issue closes after a complete calculation exercises the affected method and
+its numerical result is compared with a suitable reference. The same runner
+may do both; a second author or separate review chat is not required.
 
-**The request and the verdict are comments on the issue.** When your fix
-lands, comment on the issue it fixes with what a second person needs in
-order to attack it:
+Record evidence once on the corresponding issue or merge request:
 
-* the claim, in one paragraph — what was wrong and why the fix is correct;
-* the commit it landed as;
-* the exact commands to run, copy-pasteable;
-* the numbers you measured **before** the fix, so a verifier can reproduce
-  the broken behaviour on the parent commit and confirm the diagnosis;
-* any test failure that is present but unrelated, named, with why you
-  believe it is unrelated;
-* what you would attack if you were checking someone else's version of
-  this — the assumption you are least sure of.
+- the defect or feature, the landed commit, and the focused check and result;
+- the input and command needed to reproduce the calculation;
+- the actual Python/native runtime identity, not just the checkout SHA;
+- measured values, reference values, units, tolerances, and the verdict;
+- any missing comparison, unrelated failure, or remaining uncertainty.
 
-To check someone else's fix, say so in a comment on the issue, do the work,
-and comment the verdict with the evidence you measured. Disagreeing with
-the fix is a useful outcome, not a failed one.
+For quantum-chemistry changes, the validator submits complete calculations
+through `vq` and compares with ORCA or CRYSTAL when available. Match geometry
+or cell, method, basis/ECP, charge/spin, approximations and convergence settings.
+If an external reference is unavailable, document justified literature values,
+limits or other numerical evidence and the remaining uncertainty. Reuse valid
+prior self-validation. Compilation and unit tests alone are not scientific
+acceptance, and a pending calculation is not a PASS.
 
-**Do not put any of this in a file in the repository.** Contributors work
-from different machines and not all of them can push, so a request written
-as a file reaches its reader but their answer cannot come back. A comment
-needs only an account. Maintainers retain private verification and coordination
-records outside product repositories. Until automatic issue routing is active,
-maintainers explicitly link a public report to its GitLab issue. Public comments
-do not imply that the private agent queue has already received the report.
+Development workers finish after the checked source lands on main and their
+own cleanup is complete. Runtime builds, scientific acceptance and releases
+continue under their respective owners. Non-scientific changes need one
+focused functional check; documentation changes need a text/link check.
 
-Human contributors may add verification comments after landing. An automated
-contributor posts the verification brief after its push succeeds and before
-completing the landing step, because that step closes the editing claim used
-to attach the brief.
+Keep operational logs, machine details and private coordination records
+outside product repositories. Public reports and patches follow the
+[publication guide](https://vibe-qc.com/docs/github_publication.html);
+maintainers link them to canonical GitLab work when routing is needed.
 
 ### Tests for optional dependencies must run in every environment
 
@@ -139,38 +135,63 @@ Submit patches as pull requests, with the evidence described below; maintainers
 route accepted changes into canonical GitLab development. Automatic routing is
 not yet active; see [publication status](https://vibe-qc.com/docs/github_publication.html).
 
-Maintainers working in an authorized upstream clone land changes on `main`
-with local checks for the affected area. Rebase before pushing:
+Maintainers working in an authorized upstream checkout land ready changes on
+`main` after a focused local check. Reuse the appropriate existing checkout
+and environment. Inspect the working tree and fetch before editing, after a
+coherent change, and before pushing:
 
 ```sh
-git pull --rebase origin main
-git push origin main
+git status --short
+git fetch origin
+# Only when main is clean and can fast-forward:
+git merge --ff-only origin/main
+# After committing your own checked changes with [skip ci]:
+git push -o ci.skip origin HEAD:main
 ```
 
-Never force-push `main`, `release`, or release tags, and never amend a commit
-that has already been pushed. When a rebase conflicts in a shared changelog
-or handover, preserve both contributors' facts and review the merged result.
-The agentic loop alone cuts tags and fast-forwards `release` from a tagged
-commit on `main`; the vibe-qc release chat prepares and proves each release.
-Website changes publish from `main` after their CI gate; core docs publish
-from `release`. See [release process](https://github.com/vibe-qc/vibe-qc/blob/main/docs/release_process.md)
-and [site publishing](https://github.com/vibe-qc/vibe-qc/blob/main/docs/site_publishing.md).
+Stage only your own named files or hunks. Do not auto-stash, reset, delete or
+commit another session's work. Rebase only your own unpublished commits;
+merge incoming changes into shared or published history. If a fast-forward
+would overwrite local work, preserve it and resolve the integration without
+rewriting another contributor's commits. Never force-push main or release
+refs, or move an existing release tag.
 
-Use one clone per agent task so its branch, index, environment and generated
-files are isolated. Do not reset or delete another task's changes. If an
-existing worktree must be used, check its hook configuration as described
-[below](#worktrees-need-the-setting-applied-per-worktree).
+Ordinary development pushes and merges skip CI. Use `[skip ci]` in the
+commit message and `git push -o ci.skip` where supported. Full CI belongs to
+release candidates, not routine development refs. The authorized release
+owner prepares, qualifies and cuts releases; see the
+[release process](https://github.com/vibe-qc/vibe-qc/blob/main/docs/release_process.md).
+Website publication is described in
+[site publishing](https://github.com/vibe-qc/vibe-qc/blob/main/docs/site_publishing.md).
+
+## Release notes
+
+For each user-visible change, add one Markdown file under `changelog.d/`,
+named after the issue or a short descriptive slug. Start it with a `### `
+heading or a `- ` bullet. Tests-only and internal changes may omit a fragment.
+Do not edit `CHANGELOG.md` directly for ordinary contributions. Separate
+fragments let concurrent changes land without conflicting at `[Unreleased]`.
+
+Validate the fragments before committing:
+
+```sh
+python scripts/assemble_changelog.py --check
+```
+
+The release owner assembles them into `[Unreleased]` with
+`scripts/assemble_changelog.py` when preparing a release; the command and
+cleanup workflow are in `changelog.d/README.md`. Released sections remain
+pinned. Deliberate amendments follow the pre-push guard procedure below.
 
 ## Personal information
 
 Do not commit personal home-directory paths or unrelated employer
 information. Use `~/`, `/home/USER/`, or `<vibe-qc-checkout>` placeholders in
-examples. The pre-commit hook checks staged additions for concrete macOS
-and Linux home paths and the project's employer marker. Its narrow
+examples. The pre-commit hook checks full staged files for private emails,
+internal host suffixes, private IPs, personal paths and external private terms. Its narrow
 `runner`, `root`, and `user` allowlist exists for CI accounts and generic
 fixtures; it is not permission to add personal data under another name.
-The hook's pattern and allowlist are mirrored by
-`tests/test_basis_no_maintainer_paths.py`.
+The hook and CI use the shared `.githooks/source_privacy.py` implementation.
 
 ## Documentation prose
 
@@ -184,21 +205,27 @@ re-vendor and update the pin.
 
 These public policies are the source of truth for the hooks. Do not bypass
 hooks unless the maintainer explicitly authorizes the particular exception;
-record that authorization and the reason in the commit message.
+record that authorization and the reason in the commit message. Privacy failures
+must be fixed in source or resolved with an exact public-content review; never
+bypass them with `--no-verify`.
 
 ## Before you open a merge request
 
 1. Confirm no existing issue already covers the change — if there is
    one, comment on it so we can coordinate.
-2. Run every test lane affected by the change and confirm it passes:
+2. Run a bounded reproduction or focused tests for the change. A whole area lane
+   is optional broad validation, not a default pre-push requirement:
    ```sh
    .venv/bin/python scripts/test_gate/run_full_suite.py \
        --wt "$PWD" --py .venv/bin/python --lane <affected-lane>
    ```
-3. If your change touches documentation, build the Sphinx docs
-   locally and skim the affected pages:
+3. For documentation prose, check changed text, local links and section
+   anchors. A native rebuild or runtime suite is not required. If changing
+   Sphinx configuration, directives or page layout, build and inspect the
+   affected pages using an existing docs environment. Keep temporary build
+   output outside the product checkout:
    ```sh
-   sphinx-build -b html docs/ docs/_build/html
+   .venv/bin/python -m sphinx -b html docs/ /tmp/vibeqc-doc-preview
    ```
 4. For anything that adds a dependency or changes public API, open
    an issue first to check scope fit.
@@ -231,38 +258,21 @@ See [installation](https://vibe-qc.com/docs/installation.html) for what
 
 ### Recommended pre-merge verification
 
-Affected lanes are the merge-request gate. Use
-`scripts/test_gate/run_full_suite.py --list-lanes` and
-`docs/developer_test_lanes.md` to select them. The recommended layering is:
+Choose the smallest check that exercises the changed behavior. For example:
 
 ```sh
-# 1) Non-mean-field solver tests — fast, no native rebuild needed.
-.venv/bin/python -m pytest \
-    tests/test_solvers_active_space_api.py \
-    tests/test_solvers_dmrg_fixed_n.py \
-    tests/test_solvers_v2rdm_constraints.py \
-    tests/test_solvers_v2rdm_tc.py \
-    tests/test_solvers_integration.py \
-    tests/test_solvers_fci_parity.py
-
-# 2) QVF writer + writer-to-viewer integration. The viewer leg is
-#    skipped automatically if vibe-view isn't installed; the strict
-#    writer-side schema asserts always run.
-.venv/bin/python -m pytest \
-    tests/test_qvf_writer.py \
-    tests/test_qvf_writer_to_viewer.py
-
-# 3) Packaging / extras metadata coherence — pure metadata, no install.
-.venv/bin/python -m pytest tests/test_packaging_extras.py
-
-# 4) Every affected lane. Add full-fast only for shared infrastructure.
-.venv/bin/python scripts/test_gate/run_full_suite.py \
-    --wt "$PWD" --py .venv/bin/python --lane <affected-lane>
+.venv/bin/python -m pytest tests/test_<area>.py -q
 ```
 
-List the exact lanes and SHA tested in the merge-request description.
-Do not claim full-inventory success unless `full-fast` and `slow-nightly`
-actually ran on that SHA.
+Use [testing policy](https://vibe-qc.com/docs/testing.html) and
+[developer test lanes](https://vibe-qc.com/docs/developer_test_lanes.html)
+when a broader lane is justified. Confirm that the Python package and native
+module belong to the intended build before reporting a numerical result.
+Rebuild changed native code when needed; unrelated edits do not require one.
+
+List the exact check, result and source/runtime identity in the issue or MR.
+Reuse passing evidence unless behavior changed or a concrete failure warrants
+repeating it. Do not claim full-inventory success from a focused test or T1.
 
 ## Pre-commit hook (one-time setup)
 
@@ -276,25 +286,31 @@ git config --local core.hooksPath .githooks
 This single setting activates every hook in `.githooks/` (git resolves
 one hooks directory for all hook types):
 
-- **`pre-commit`** — refuses commits whose staged additions contain
+- **`pre-commit`** — first refuses a commit whose author or committer
+  email is not a public address (`mpei@vibe-qc.com`, `project@vibe-qc.com`,
+  or one you add with `git config --local --add privacy.commitEmail
+  you@example.org`); set the clone's identity with
+  `git config --local user.email`. It then refuses commits whose staged file content contains
   absolute paths into the author's home directories or other
   personal-info patterns ([personal information](#personal-information)). It then runs
   `.githooks/check_no_em_dashes.py`, which refuses staged `docs/*.md`
   carrying em or en dashes in prose (code fences, inline code, and
-  inline math are exempt).
+  inline math are exempt). Last, `.githooks/check_changelog_fragments.py`
+  runs `scripts/assemble_changelog.py --check` on the staged version of
+  each `changelog.d/` fragment the commit adds or changes and refuses one
+  that does not open with a `### ` heading or a `- ` bullet.
 - **`commit-msg`** — refuses a `release: vX.Y.Z` commit unless
   `pyproject.toml` `[project] version` == `X.Y.Z` and a `## [vX.Y.Z]`
   CHANGELOG header exists. This is the backstop against tagging a
   release from a tree whose version bump was skipped — the defect that
   shipped v0.11.2 / v0.11.3 self-reporting `0.11.1`. See
-  [docs/release_process.md](https://vibe-qc.com/docs/release_process.html) § "Cutting a
-  release".
+  [maintainer publication](https://vibe-qc.com/docs/release_process.html#maintainer-publication).
 - **`pre-push`** — refuses a push to `main` or `release-candidate/*`
   whose `CHANGELOG.md` changes an already released section without
   re-pinning it in `scripts/test_gate/changelog_pins.toml` (#229).
   It runs at push time because misfiled entries arrive through
-  rebases, which never run `pre-commit`. An entry for unreleased work
-  belongs under `[Unreleased]`; a deliberate amendment to a released
+  rebases, which never run `pre-commit`. Ordinary unreleased notes belong in
+  `changelog.d/` until release assembly; a deliberate amendment to a released
   section is re-pinned with
   `python scripts/test_gate/changelog_guard.py pin vX.Y.Z --amended "why"`.
   The committed guard, pins and changelog must all be readable regular files;
@@ -311,11 +327,10 @@ the [documentation and hook policy](#documentation-prose) above.
 
 ### Worktrees need the setting applied per worktree
 
-Parallel agent tasks get **one clone each**, following the
-[branch and checkout policy](#branch-and-checkout-policy). Worktrees still turn up in practice
-(agent harnesses create them under `.claude/worktrees/`), and a worktree
-does not necessarily inherit the setting above, so check before trusting
-it.
+Reuse existing checkouts under the
+[branch and checkout policy](#branch-and-checkout-policy). If working in an
+existing linked worktree, check its effective hook configuration before
+trusting it; a worktree can override the shared setting.
 
 `--local` writes the shared `.git/config`, but once a repo has
 `extensions.worktreeConfig = true` — git enables it the first time
@@ -359,12 +374,12 @@ For numerical changes, provide the relevant before/after values, reference
 settings, tolerances and validation comparisons. Identify the exact commit and
 build that were tested, and state missing checks or unrelated failures.
 
-GitHub contributions are admitted only through a GitLab merge request when
-public contribution intake is enabled. A maintainer must not merge an imported
-patch without green GitLab CI for its current head. A changed head requires new
-validation; skipped or stale pipelines do not qualify. The independent review
-rules above still apply to numerical and release-blocking changes. The Licensing
-section below governs these contributions without changes to its terms.
+Public contributions follow the
+[publication guide](https://vibe-qc.com/docs/github_publication.html).
+Maintainers route accepted patches into canonical GitLab development with
+the focused checks described above. Routine development work skips CI;
+release candidates receive full CI. AI assistance does not change scientific
+acceptance, attribution or the licensing terms below.
 
 ## Code style
 
@@ -389,8 +404,7 @@ section below governs these contributions without changes to its terms.
   `v0.8.x`, `v0.8.0`, or comma-separated combinations. The release
   chat scans these when preparing patches. Do not tag `vX.Y.Z`,
   push to `release`, or open MRs against `release` directly —
-  the agentic loop performs those, and (since 2026-05-15) GitLab
-  branch / tag protection blocks them. See
+  the authorized release owner performs those under the release process. See
   [branch and checkout policy](#branch-and-checkout-policy) and
   [`docs/release_process.md`](https://vibe-qc.com/docs/release_process.html) for the
   full convention.
@@ -431,7 +445,7 @@ MPL-compatible.
 
 ### Private privacy policy
 
-The portable guard checks home paths without storing real user names. Operators
+The portable guard checks privacy patterns without storing real private names. Operators
 can add private literal terms through `VIBE_PRIVACY_TERMS_FILE` or the clone-local
 `privacy.termsFile` Git setting. Use an absolute path to a UTF-8 file outside the
 source checkout, with one literal term per line. Matching is case-insensitive;
@@ -442,3 +456,26 @@ privacy tests load the same external policy when configured.
 Site wrappers and deployment configuration are maintained separately in private
 operations storage. Product changes must use portable examples and preserve the
 existing generic installation and configuration APIs.
+
+
+### Fast source privacy preflight
+
+Enable `git config --local core.hooksPath .githooks` once in each clone.
+Run `python3 .githooks/source_privacy.py --staged` before committing and
+`python3 .githooks/source_privacy.py --tree HEAD` before requesting a release
+candidate build. Candidate qualification runs the current-tree check before the numerical
+build. Ordinary development pushes skip CI and rely on the local guards.
+
+All tracked text is covered, including instructions and hooks. Keep
+operator logs, machine details and private configuration outside product checkouts.
+Use `VIBE_PRIVACY_TERMS_FILE` or local Git `privacy.termsFile` for an external
+UTF-8 file with one private literal per line. A configured empty, missing or
+in-tree file blocks the check. Canonical CI supplies this file from private CI
+configuration; the public repository contains no private term list.
+
+The two public maintainer addresses and reserved documentation domains are
+allowed. Public upstream attribution or syntax that resembles a private value
+requires independent, exact-context review in `.githooks/public_content_review.json`.
+Do not approve private values or generate a blanket baseline. Changing the text
+invalidates its exception. Binary assets and historical public objects remain
+covered by the automatic publication gate; this fast check does not replace it.

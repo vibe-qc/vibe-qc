@@ -37,10 +37,11 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from ..solvers._scf import solve_dense_fock
 from .pao import (
     build_atom_basis_map,
     build_projection_matrix,
-    select_domain_atoms_mulliken,
+    orbital_domain_atom_mask,
     semicanonical_pao_basis,
 )
 from .pno_density import pair_density, resolve_pno_norm
@@ -93,8 +94,7 @@ class DLPNOMP2Options:
         (``vibeqc.periodic_toroidal_mp2.toroidal_pair_distance_fn``) so
         wrap-around pairs are not falsely screened by their open-cluster
         Euclidean separation (which overestimates the true toroidal
-        distance by up to the half-super-period; see
-        handovers/HANDOVER_PERIODIC_LOCAL_CORRELATION.md Stage 5c).
+        distance by up to the half-super-period).
     lindep : float
         PAO redundancy threshold (overlap eigenvalues).
     local_df : bool
@@ -140,6 +140,20 @@ class DLPNOMP2Options:
     tcut_pno: float = 3.33e-7
     tcut_pno_weak: float = 3.33e-6
     tcut_mkn: float = 1e-3
+    #: PAO atom-domain criterion, as for ``LocalCCSDOptions``: ``"doi"``
+    #: (default; differential overlap above ``tcut_do``, Pinski, Riplinger,
+    #: Valeev and Neese, J. Chem. Phys. 143, 034108 (2015), the criterion
+    #: ORCA uses) or ``"mulliken"`` (Mulliken population above ``tcut_mkn``,
+    #: the convention of every result recorded before the DOI default). A
+    #: pair's domain is the union of its two orbitals' domains, and
+    #: ``tcut_mkn=0`` keeps every atom under either criterion. On NH3 /
+    #: cc-pVDZ the Mulliken criterion drops the hydrogens from the Boys lone
+    #: pair's domain and the NormalPNO DLPNO-MP2 energy is 0.35 kcal/mol above
+    #: the exact limit, against 0.03 with DOI domains.
+    domain_criterion: str = "doi"
+    #: Differential-overlap cut for ``domain_criterion="doi"`` (ORCA 6.1.1
+    #: NormalPNO ``TCutDO``; the Loose and Tight presets set 2e-2 and 5e-3).
+    tcut_do: float = 1e-2
     tcut_pairs: float = 1e-4
     tcut_pairs_weak: float = 1e-4
     #: Pair density whose eigenvalues are compared against ``tcut_pno``.
@@ -203,6 +217,8 @@ class DLPNOMP2Result:
     pno_per_pair: dict = field(default_factory=dict)
     fit_dim_per_pair: dict = field(default_factory=dict)
     trace: list = field(default_factory=list)
+    source_kind: str = ""
+    source_identity: str = ""
 
 
 def _pair_energy(K: np.ndarray, T: np.ndarray, i: int, j: int) -> float:
@@ -282,6 +298,8 @@ def run_dlpno_mp2(
     rhf,
     df,
     options: DLPNOMP2Options | None = None,
+    *,
+    source=None,
 ) -> DLPNOMP2Result:
     """Run DLPNO-MP2 on a converged closed-shell RHF reference.
 
@@ -293,20 +311,39 @@ def run_dlpno_mp2(
     df : vibeqc.density_fitting.DensityFitting
         DF object for the orbital basis with a *real* RI fitting basis.
     options : DLPNOMP2Options
+    source : CorrelationSource, optional
+        Calculation-local reference, factors and AO overlap. When provided,
+        these replace the positional molecule, basis, reference and factors.
+        Without it the positional molecular interface is unchanged.
 
     Returns
     -------
     DLPNOMP2Result
     """
-    from vibeqc._vibeqc_core import compute_overlap
     from vibeqc.correlation_conventions import effective_electron_count
+    from .source import CorrelationSource, molecular_source
 
     if options is None:
         options = DLPNOMP2Options()
+    if source is None:
+        source = molecular_source(molecule, basis, rhf, df)
+    elif not isinstance(source, CorrelationSource):
+        raise TypeError(
+            "source must be a vibeqc.dlpno.source.CorrelationSource, got "
+            f"{type(source).__name__}"
+        )
+    source.validate_reference()
+    molecule, basis = source.molecule, source.basis
+    rhf, df = source.reference, source.factors
     pno_norm = resolve_pno_norm(getattr(options, "pno_norm", "mp2"))
+    pair_distance_fn = (
+        options.pair_distance_fn
+        if options.pair_distance_fn is not None
+        else source.pair_distance_fn
+    )
 
     F_ao = np.asarray(rhf.fock).copy()
-    S_ao = np.asarray(compute_overlap(basis)).copy()
+    S_ao = np.asarray(source.overlap_matrix()).copy()
     C = np.asarray(rhf.mo_coeffs).copy()
     n_occ = effective_electron_count(molecule, rhf) // 2
     nbf = C.shape[0]
@@ -350,6 +387,21 @@ def run_dlpno_mp2(
     atom_first, _ = build_atom_basis_map(molecule, basis)
     natom = len(atom_first) - 1
     Q_vir = build_projection_matrix(C_occ_full, S_ao)
+    _criterion = str(getattr(options, "domain_criterion", "doi")).strip().lower()
+    if float(options.tcut_mkn) <= 0.0:
+        # tcut_mkn=0 keeps its full-domain meaning under either criterion.
+        _criterion = "mulliken"
+    orb_atom_mask = orbital_domain_atom_mask(
+        molecule,
+        basis,
+        C_loc,
+        S_ao,
+        Q_vir,
+        atom_first,
+        criterion=_criterion,
+        tcut_mkn=float(options.tcut_mkn),
+        tcut_do=float(getattr(options, "tcut_do", 1e-2)),
+    )
 
     # ----- DF integral source: global B-tensor, or local-fit primitives --
     # Global path (default): one batched half-transform with the global RI
@@ -373,7 +425,10 @@ def run_dlpno_mp2(
         B_half = df.mo_transform(C_loc, np.eye(nbf))  # (naux, n_act, nbf)
         local_fit_cache = {}
 
-    result = DLPNOMP2Result(e_hf=float(rhf.energy), n_frozen=nf)
+    result = DLPNOMP2Result(
+        e_hf=float(rhf.energy), n_frozen=nf,
+        source_kind=str(source.kind), source_identity=str(source.identity),
+    )
 
     # ----- distant-pair screening via the dipole estimate -----------------
     all_pairs = [(i, j) for i in range(n_act) for j in range(i, n_act)]
@@ -390,12 +445,7 @@ def run_dlpno_mp2(
         orb_mu2: list[np.ndarray] = []
         orb_eps: list[np.ndarray] = []
         for i in range(n_act):
-            if options.tcut_mkn > 0.0:
-                atoms_i = select_domain_atoms_mulliken(
-                    C_loc, S_ao, atom_first, i, i, options.tcut_mkn
-                )
-            else:
-                atoms_i = np.arange(natom, dtype=int)
+            atoms_i = np.where(orb_atom_mask[i])[0]
             mask = np.zeros(nbf, dtype=bool)
             for a in atoms_i:
                 mask[atom_first[a] : atom_first[a + 1]] = True
@@ -412,8 +462,8 @@ def run_dlpno_mp2(
         for i, j in all_pairs:
             if i == j:
                 continue
-            if options.pair_distance_fn is not None:
-                r_ij = float(options.pair_distance_fn(centroids[i], centroids[j]))
+            if pair_distance_fn is not None:
+                r_ij = float(pair_distance_fn(centroids[i], centroids[j]))
             else:
                 r_ij = float(np.linalg.norm(centroids[i] - centroids[j]))
             if r_ij < options.dipole_r_min:
@@ -442,12 +492,7 @@ def run_dlpno_mp2(
     e_pno_correction = 0.0
 
     for i, j in kept_pairs:
-        if options.tcut_mkn > 0.0:
-            domain_atoms = select_domain_atoms_mulliken(
-                C_loc, S_ao, atom_first, i, j, options.tcut_mkn
-            )
-        else:
-            domain_atoms = np.arange(natom, dtype=int)
+        domain_atoms = np.where(orb_atom_mask[i] | orb_atom_mask[j])[0]
         ao_mask = np.zeros(nbf, dtype=bool)
         for a in domain_atoms:
             ao_mask[atom_first[a] : atom_first[a + 1]] = True
@@ -516,7 +561,11 @@ def run_dlpno_mp2(
         # Quasi-canonicalise within the retained PNO space.
         F_pno = d.T @ np.diag(eps_pao) @ d
         F_pno = 0.5 * (F_pno + F_pno.T)
-        eps_pno, u = np.linalg.eigh(F_pno)
+        pno = solve_dense_fock(
+            F_pno, basis_id=f"dlpno-mp2-pair-{i + nf}-{j + nf}-pno",
+        )
+        eps_pno, u = pno.eigenvalues, pno.eigenvectors
+        del pno
         d = d @ u
 
         V_pno = V_semi @ d

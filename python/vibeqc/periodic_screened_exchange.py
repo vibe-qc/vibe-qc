@@ -37,17 +37,18 @@ pi/omega^2), so no Madelung / exxdiv seam applies. This matches the
 CRYSTAL treatment (CRYSTAL23 manual pp. 136-137: the SR operator is
 assembled directly, not as full-minus-long-range).
 
-Policy (maintainer decision 2026-07-09, HANDOVER_SLAB_2D_ROUTING.md):
+Policy (maintainer decision 2026-07-09, the original investigation):
 periodic routes ship
 
 * global hybrids (``is_range_separated`` false): ``c_full =
   hf_exchange_fraction``, unchanged behaviour; and
 * short-range-only screened hybrids (HSE-type, ``c_full == 0``);
 
-and FAIL CLOSED on range-separated functionals with a nonzero
-full-range arm (wB97X, CAM-B3LYP, LC-wPBE, ...): their ``K_full``
-contribution needs an exxdiv (G -> 0 exchange divergence) treatment
-that has not been validated on the periodic routes.
+Other periodic routes FAIL CLOSED on range-separated functionals with a
+nonzero full-range arm. Corrected 3D BIPOLE admits single-range CAM/LRC
+kernels with physical pair support: only the full-range arm receives the
+BvK Ewald correction; erfc retains its finite zero mode. This kernel
+admission does not claim external total-energy or CRYSTAL23 parity.
 """
 
 from __future__ import annotations
@@ -138,7 +139,9 @@ class PeriodicExchangeAssembly:
         return self.c_sr != 0.0
 
 
-def resolve_periodic_exchange(func, *, where: str) -> PeriodicExchangeAssembly:
+def resolve_periodic_exchange(
+    func, *, where: str, allow_long_range: bool = False,
+) -> PeriodicExchangeAssembly:
     """Resolve ``func`` into the periodic exchange assembly, or fail closed.
 
     Parameters
@@ -149,6 +152,11 @@ def resolve_periodic_exchange(func, *, where: str) -> PeriodicExchangeAssembly:
     where
         Caller name used in error messages (e.g.
         ``"run_rks_periodic_gamma_ewald3d"``).
+
+    allow_long_range
+        Internal route capability. Only corrected 3D BIPOLE currently opts in;
+        its caller must require physical pair support and the Ewald split.
+        Other routes keep the existing refusal.
 
     Raises
     ------
@@ -168,6 +176,34 @@ def resolve_periodic_exchange(func, *, where: str) -> PeriodicExchangeAssembly:
     cam_beta = float(func.cam_beta)
     omega = float(func.rsh_omega)
     c_full = cam_alpha + cam_beta
+
+    if allow_long_range:
+        # Yanai, Tew & Handy (2004), Eqs. (1), (6), (7),
+        # doi:10.1016/j.cplett.2004.06.011: (alpha+beta)/r - beta*erfc(omega*r)/r.
+        # Native components also expose multiple-range kernels (e.g. HISS),
+        # which cannot be represented by this single-erfc assembly.
+        import math
+
+        components = getattr(func, "exchange_components", None)
+        if components is None:
+            raise RuntimeError(f"{where}: mixed exchange requires native kernel components")
+        full, short, ranges = 0.0, 0.0, set()
+        for kernel, coefficient, screening in components:
+            if not all(math.isfinite(v) for v in (coefficient, screening)):
+                raise ValueError(f"{where}: exchange components must be finite")
+            if kernel == "coulomb" and screening == 0:
+                full += coefficient
+            elif kernel == "erfc" and screening > 0:
+                short += coefficient
+                if coefficient != 0:
+                    ranges.add(float(screening))
+            else:
+                raise NotImplementedError(f"{where}: unsupported exchange kernel {kernel!r}")
+        if len(ranges) > 1:
+            raise NotImplementedError(f"{where}: multiple screening ranges are unsupported")
+        if full < 0 or full + short < 0:
+            raise NotImplementedError(f"{where}: negative endpoint exchange fractions are unsupported")
+        return PeriodicExchangeAssembly(full, short, next(iter(ranges)) if short else 0.0)
 
     if abs(c_full) > _C_FULL_TOL:
         raise NotImplementedError(
@@ -192,6 +228,26 @@ def resolve_periodic_exchange(func, *, where: str) -> PeriodicExchangeAssembly:
         )
 
     return PeriodicExchangeAssembly(0.0, -cam_beta, omega)
+
+
+def require_bipole_exchange_domain(
+    assembly, *, dimension: int, physical_pairs: bool,
+    use_ewald_j_split: bool, exchange_split_active: bool, driver: str,
+) -> None:
+    """Shared CAM/LC admission for live drivers and queue preflight.
+
+    The full-range arm uses the corrected BvK Ewald gauge, while physical
+    pair support defines the independently summed finite erfc kernel.
+    HSE and global hybrids retain their existing route-specific admission.
+    """
+    if assembly.is_screened and assembly.c_full != 0.0 and not (
+        dimension == 3 and physical_pairs
+        and use_ewald_j_split and exchange_split_active
+    ):
+        raise NotImplementedError(
+            f"{driver}: BIPOLE long-range-corrected hybrids require the "
+            "corrected 3D Ewald gauge and physical AO-pair support"
+        )
 
 
 def build_exchange_gamma(basis, system, lat_opts, D, exx):

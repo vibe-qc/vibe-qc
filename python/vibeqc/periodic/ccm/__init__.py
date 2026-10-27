@@ -33,11 +33,36 @@ Level", *J. Comput. Chem.* **35**, 839 (2014), doi:10.1002/jcc.23550.
 
 Four-center weighting
 ---------------------
-Two weightings are selectable on every driver via ``method=``:
+Two weightings are selectable on every driver via ``method=``, and a third on
+the RHF drivers only:
 
+* ``"p2014"`` (``run_ccm_rhf`` / ``run_ccm_rhf_scalable`` only) -- the 2012
+  program / P2014 Eqs. 18-19 as they were actually run, with the bra partner
+  IMAGED over the closed Wigner-Seitz supercell of the first function and the
+  bridge weight taken relative to that image
+  (:func:`vibeqc.periodic.ccm.padded.ccm_eri_p2014`, C++ kernel
+  ``"p2014-direct"``), with its own nuclear attraction in two named variants
+  (``"program-union"``, default, and ``"printed-eq13"``). It reproduces P2014
+  Table 2 (STO-3G) and Table 4 (deMon DZVP) to the printed digits
+  (``tests/test_ccm_p2014_table2.py``; record ``o35-p2014-faithful-head`` of
+  the 2026-09-16 campaign). Diagnosis lineage, not a production route.
+
+  **Correction, 2026-09-17.** ``"union12"`` below is NOT that algorithm,
+  despite its name and its description as "the historical eq-18 weight": it
+  keeps the bra partner in the HOME copy of the cluster. It misses the
+  published STO-3G ladder by 1.9e-4 to 1.7e-5 Ha/atom (2 to 10 cells), and
+  the DZVP collapse described below is a property of that reimplementation,
+  not of the printed equations: on the same 4-cell cluster on which
+  ``"union12"`` converges to -8.16 Ha/atom, ``"p2014"`` converges from the
+  core guess, with no overlap threshold, to the published -0.552529. What
+  remains true of the 2014 construction itself is weaker: its 4-cell DZVP
+  Aufbau state is a saddle point of the energy expression (lowest real
+  singlet stability eigenvalue -0.674) and a minimum from six cells on.
+  The ``"union12"`` text is kept as written because archived records and
+  issue #242 refer to it.
 * ``"union12"`` (default) -- the historical eq-18 product weight
-  ``w_muν.1/2(w_mur+w_νr).w_rs``; validated in 1-D **in a minimal basis only**,
-  breaks 8-fold ERI symmetry in >=2-D.
+  ``w_muν.1/2(w_mur+w_νr).w_rs`` with the bra pair at home; validated in 1-D
+  **in a minimal basis only**, breaks 8-fold ERI symmetry in >=2-D.
 
   The basis qualifier is not a caution, it is a measured limit (issue #242).
   The eq-18 weighted four-center is not a congruence of the padded ERI Gram
@@ -88,7 +113,7 @@ driver emits :class:`~vibeqc.periodic.ccm.experimental.AICCM2026DevAExperimental
 and property drivers inherit it through the SCF they run). Filter via
 ``warnings.filterwarnings("ignore", category=vibeqc.AICCM2026DevAExperimentalWarning)``.
 
-Implemented and validated (see ``handovers/HANDOVER_AICCM.md`` for the full map):
+Implemented and validated:
 M1 Wigner-Seitz geometry + two-center weighted ``S^CCM``/``T^CCM`` +
 overlap-spectrum guard (all lattices, arbitrary orbitals); M2a three-center
 ``V^CCM``; M2b four-center ``J^CCM``/``K^CCM`` + DIIS HF-CCM SCF. The full
@@ -159,11 +184,14 @@ from .symmetry import (
     ccm_symmetry_unique_atom_pairs,
 )
 from .neutral import (
+    carried_cderi,
     ccm_eri_neutral,
     ccm_neutral_background_constant,
     ccm_neutral_cderi,
+    ccm_neutral_cderi_blocks,
     ccm_neutral_cderi_fold,
 )
+from .block_cderi import CCMBlockCderi
 from .direct import (
     ccm_direct_oneelectron,
     ccm_exchange_q0_madelung,
@@ -173,6 +201,19 @@ from .direct import (
     run_ccm_uhf_direct,
     run_ccm_uks_direct,
 )
+from .bloch_reference import BlochFoldReport, ccm_reference_from_bloch
+from .source import assert_matched_neutral_source, neutral_torus_source
+from .spin_state import (
+    CCMSpinState,
+    OccupationRecord,
+    assert_integer_occupations,
+    occupation_record_of,
+    assert_comparable_neutral_results,
+    assert_compatible_spin_state,
+    resolve_ccm_spin_state,
+    spin_state_of,
+)
+from .stability import CCMRHFStability, ccm_rhf_stability
 from .experimental import AICCM2026DevAExperimentalWarning
 from .route import CCM_ROUTES, resolve_ccm_route, run_ccm_scf
 from .lowd_four_center import (
@@ -229,8 +270,12 @@ __all__ = [
     "run_ccm_rhf_wire",
     "write_ccm_periodic_qvf",
     "ccm_neutral_cderi",
+    "ccm_neutral_cderi_blocks",
+    "CCMBlockCderi",
     "ccm_neutral_background_constant",
     "run_ccm_rhf_direct",
+    "ccm_reference_from_bloch",
+    "BlochFoldReport",
     "run_ccm_uhf_direct",
     "run_ccm_rhf_direct_rijcosx",
     "run_ccm_rks_direct",
@@ -282,6 +327,10 @@ __all__ = [
     "run_ccm_uccsd",
     "CCMUCCSDResult",
     "fold_lattice_matrix_set",
+    "assert_matched_neutral_source",
+    "neutral_torus_source",
+    "CCMRHFStability",
+    "ccm_rhf_stability",
     "minimum_image",
     "min_image_multiplicity",
     "first_shell_vectors",

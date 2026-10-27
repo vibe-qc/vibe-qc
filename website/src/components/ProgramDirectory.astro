@@ -1,0 +1,21 @@
+---
+import {products} from '../data/products.mjs';
+import ReleaseBadge from './ReleaseBadge.astro';
+const base=import.meta.env.BASE_URL;
+const order=['vibe-sketch','vibe-queue','vibe-qc','vibe-view'];
+const roles={ 'vibe-sketch':['Sketch','Draw structures, reactions and calculation inputs.','Desktop app · browser · Python'], 'vibe-queue':['Submit','Submit and monitor calculations across configured machines.','Command line · web console · Python'], 'vibe-qc':['Calculate','Compute molecular and periodic electronic structure.','Command line · Python · C++ engine'], 'vibe-view':['Analyze','Inspect structures, orbitals, densities and results.','Desktop app · browser · terminal'] };
+---
+<div class="program-directory">
+{order.map((id,i)=>{const p=products.find(p=>p.id===id);return <article class="program-row">
+<div class="program-stage"><span>0{i+1}</span><strong>{roles[id][0]}</strong></div>
+<div><h3><a href={`${base}products/${id}/`}>{id}</a></h3><p>{roles[id][1]}</p><small>{roles[id][2]}</small></div>
+<div class="program-release"><ReleaseBadge product={id}/><div class="program-links"><a href={`${base}products/${id}/`}>Overview ↗</a><a href={p.docs}>Manual ↗</a><a href={p.desktopDownload?`${base}download/#${id}`:p.installGuide}>{p.desktopDownload?'Download':'Install from source'} ↗</a></div></div>
+</article>})}
+</div>
+<style>
+.program-row{display:grid;grid-template-columns:110px minmax(0,1fr) minmax(250px,.8fr);gap:24px;align-items:center;padding:25px 0;border-top:1px solid var(--line);}
+.program-stage{display:flex;flex-direction:column;gap:8px;color:var(--phase-pos);font-size:13px;}.program-stage span{color:var(--slate);font-size:11px;}
+h3{margin:0;font-size:23px;}h3 a{text-decoration:none;color:var(--ink);}p{color:var(--slate);margin:8px 0;}small{color:var(--slate);font-size:12px;}.program-links{display:flex;flex-wrap:wrap;gap:14px;font-size:13px;}.program-links a{color:var(--phase-pos);}.program-release{justify-self:end;}
+@media(max-width:800px){.program-row{grid-template-columns:80px 1fr;}.program-release{grid-column:2;justify-self:start;}}
+@media(max-width:450px){.program-row{gap:12px;grid-template-columns:60px 1fr;}}
+</style>

@@ -23,7 +23,7 @@ _SCHEMA_PATH = (
     / "vibeqc"
     / "output"
     / "formats"
-    / "qvf_manifest_v2.schema.json"
+    / "qvf_manifest.schema.json"
 )
 with open(_SCHEMA_PATH, encoding="utf-8") as _f:
     _SCHEMA = json.load(_f)
@@ -747,17 +747,27 @@ def test_periodic_mayer_h2():
     system, basis = _h2_chain_1d()
     from vibeqc._vibeqc_core import (
         LatticeSumOptions,
+        bloch_sum,
         compute_kinetic_lattice,
         compute_nuclear_lattice,
         compute_overlap_lattice,
         monkhorst_pack,
     )
 
+    # Pair-complete one-electron sums (#547): the default V_ne takes the
+    # nuclear images from a ball around the origin cell, so V(0,-g) differs
+    # from V(0,g)^T (4.8e-5 here) and V(k) is not Hermitian; since #472
+    # diagonalize_bloch refuses such an operator. Whether that default flips
+    # is #44's decision.
     opts = LatticeSumOptions()
+    opts.pair_complete_1e = True
     S = compute_overlap_lattice(basis, system, opts)
     T = compute_kinetic_lattice(basis, system, opts)
     V = compute_nuclear_lattice(basis, system, opts)
     km = monkhorst_pack(system, [8, 1, 1])
+    for k in km.kpoints:
+        H = np.asarray(bloch_sum(T, np.asarray(k))) + np.asarray(bloch_sum(V, np.asarray(k)))
+        assert np.abs(H - H.conj().T).max() < 1e-12
 
     M = vq.periodic_mayer_bond_orders(
         [T, V],
@@ -928,3 +938,274 @@ def test_cohp_uses_each_analyzed_spin_hamiltonian(monkeypatch):
             lattice(fa), lattice(np.eye(2)), system, basis, mesh,
             H_terms=lattice(-np.eye(2)),
         )
+
+
+# ---------------------------------------------------------------------------
+# Runner bond orders from the accepted SCF density (#547)
+# ---------------------------------------------------------------------------
+
+
+def _h2_minimal_density_and_overlap(s12: float = 0.66):
+    """Closed-shell H2/STO-3G-like Gamma density and overlap (2 AOs)."""
+    S = np.array([[1.0, s12], [s12, 1.0]])
+    c = np.ones(2) / np.sqrt(2.0 * (1.0 + s12))
+    P = 2.0 * np.outer(c, c)
+    return P, S
+
+
+def test_accepted_state_mayer_gamma_matches_molecular_formula():
+    """A Gamma result's bond orders are Mayer's P S contraction, no Hamiltonian."""
+    from types import SimpleNamespace
+
+    from vibeqc.coop_cohp import _periodic_mayer_from_density
+    from vibeqc.periodic_runner import _accepted_state_mayer_bond_orders
+
+    system, basis = _h2_chain_1d()
+    P, S = _h2_minimal_density_and_overlap()
+    result = SimpleNamespace(density=P, overlap=S)
+    M = _accepted_state_mayer_bond_orders(result, system, basis)
+    ps = P @ S
+    expected = ps[0, 1] * ps[1, 0]
+    assert M.shape == (2, 2)
+    assert M[0, 1] == pytest.approx(expected, abs=1e-14)
+    assert M[0, 1] == pytest.approx(1.0, abs=1e-14)
+    assert M[0, 1] == pytest.approx(M[1, 0])
+    assert M[0, 0] == M[1, 1] == 0.0
+    reference = _periodic_mayer_from_density(
+        [[P]], [S], np.ones(1), [0, 1], 2,
+    )
+    np.testing.assert_allclose(M, reference, atol=0, rtol=0)
+    # The explicit one-k weight is accepted as well.
+    result_w = SimpleNamespace(density=P, overlap=S, restart_weights=np.ones(1))
+    np.testing.assert_allclose(
+        _accepted_state_mayer_bond_orders(result_w, system, basis), M,
+    )
+
+
+def test_accepted_state_mayer_uses_spin_channels_when_present():
+    """Both spin densities contribute two channels; a None channel means closed shell."""
+    from types import SimpleNamespace
+
+    from vibeqc.coop_cohp import _periodic_mayer_from_density
+    from vibeqc.periodic_runner import _accepted_state_mayer_bond_orders
+
+    system, basis = _h2_chain_1d()
+    P, S = _h2_minimal_density_and_overlap()
+    result = SimpleNamespace(
+        density=P, density_alpha=0.5 * P, density_beta=0.5 * P, overlap=S,
+    )
+    M = _accepted_state_mayer_bond_orders(result, system, basis)
+    reference = _periodic_mayer_from_density(
+        [[0.5 * P], [0.5 * P]], [S], np.ones(1), [0, 1], 2,
+    )
+    np.testing.assert_allclose(M, reference, atol=0, rtol=0)
+    # Two singly occupied channels of the same orbital reduce to the
+    # restricted expression.
+    assert M[0, 1] == pytest.approx(1.0, abs=1e-14)
+    closed = SimpleNamespace(density=P, density_alpha=None, density_beta=None, overlap=S)
+    np.testing.assert_allclose(
+        _accepted_state_mayer_bond_orders(closed, system, basis), M,
+    )
+
+
+def test_accepted_state_mayer_averages_per_k_with_result_weights():
+    """Per-k densities and overlaps are contracted at the SCF's k points and weights."""
+    from types import SimpleNamespace
+
+    from vibeqc.coop_cohp import _periodic_mayer_from_density
+    from vibeqc.periodic_runner import _accepted_state_mayer_bond_orders
+
+    system, basis = _h2_chain_1d()
+    P0, S0 = _h2_minimal_density_and_overlap(0.66)
+    P1, S1 = _h2_minimal_density_and_overlap(0.40)
+    phase = np.exp(0.3j)
+    # A complex Hermitian pair at the second k point.
+    S1c = S1.astype(complex)
+    S1c[0, 1] *= phase
+    S1c[1, 0] = np.conj(S1c[0, 1])
+    c1 = np.array([1.0, np.conj(phase)]) / np.sqrt(2.0 * (1.0 + 0.40))
+    P1c = 2.0 * np.outer(c1, c1.conj())
+    weights = np.array([0.25, 0.75])
+    result = SimpleNamespace(
+        density_k=(P0, P1c), overlap_k=(S0, S1c), kpoint_weights=weights,
+    )
+    M = _accepted_state_mayer_bond_orders(result, system, basis)
+    reference = _periodic_mayer_from_density(
+        [[P0, P1c]], [S0, S1c], weights, [0, 1], 2,
+    )
+    np.testing.assert_allclose(M, reference, atol=0, rtol=0)
+    direct = 0.0
+    for w, P, S in zip(weights, (P0, P1c), (S0, S1c)):
+        ps = P @ S
+        direct += w * (ps[0, 1] * ps[1, 0]).real
+    assert M[0, 1] == pytest.approx(direct, abs=1e-14)
+    # Per-k spin channels in lists, overlap under ``overlap``.
+    spin = SimpleNamespace(
+        density_alpha=[0.5 * P0, 0.5 * P1c], density_beta=[0.5 * P0, 0.5 * P1c],
+        overlap=[S0, S1c], kpoint_weights=weights,
+    )
+    np.testing.assert_allclose(
+        _accepted_state_mayer_bond_orders(spin, system, basis), M, atol=1e-14,
+    )
+
+
+def test_accepted_state_mayer_refuses_inconsistent_k_metadata():
+    from types import SimpleNamespace
+
+    from vibeqc.periodic_runner import _accepted_state_mayer_bond_orders
+
+    system, basis = _h2_chain_1d()
+    P, S = _h2_minimal_density_and_overlap()
+    with pytest.raises(ValueError, match="k-point weights"):
+        _accepted_state_mayer_bond_orders(
+            SimpleNamespace(density_k=(P, P), overlap_k=(S, S)), system, basis,
+        )
+    with pytest.raises(ValueError, match="density and 2 overlap"):
+        _accepted_state_mayer_bond_orders(
+            SimpleNamespace(
+                density=P, overlap_k=(S, S), kpoint_weights=np.array([0.5, 0.5]),
+            ),
+            system, basis,
+        )
+    with pytest.raises(ValueError, match="normalized"):
+        _accepted_state_mayer_bond_orders(
+            SimpleNamespace(
+                density_k=(P, P), overlap_k=(S, S), kpoint_weights=np.array([1.0, 1.0]),
+            ),
+            system, basis,
+        )
+    with pytest.raises(ValueError, match="carries no AO overlap"):
+        _accepted_state_mayer_bond_orders(SimpleNamespace(density=P), system, basis)
+    with pytest.raises(ValueError, match="carries no density"):
+        _accepted_state_mayer_bond_orders(SimpleNamespace(overlap=S), system, basis)
+
+
+def test_rebuilt_operator_hermiticity_defect_names_the_broken_term():
+    """The runner's gate measures the origin-ball rebuild against the core's
+    Hermitian contract and says which lattice sum broke it (#547)."""
+    from vibeqc._vibeqc_core import (
+        LatticeSumOptions,
+        compute_kinetic_lattice,
+        compute_nuclear_lattice,
+        compute_overlap_lattice,
+        monkhorst_pack,
+    )
+    from vibeqc.periodic_runner import (
+        _REBUILT_OPERATOR_HERMITIAN_TOL,
+        _rebuilt_operator_hermiticity_defect,
+    )
+
+    system, basis = _h2_chain_1d()
+    km = monkhorst_pack(system, [8, 1, 1])
+
+    ball = LatticeSumOptions()
+    S = compute_overlap_lattice(basis, system, ball)
+    T = compute_kinetic_lattice(basis, system, ball)
+    V = compute_nuclear_lattice(basis, system, ball)
+    defect = _rebuilt_operator_hermiticity_defect(
+        [[T, V]], S, km, term_names=("T", "V"),
+    )
+    # The origin-ball V_ne is not translation covariant: V(k) breaks the
+    # contract while T and S are symmetric to roundoff.
+    assert defect.relative > _REBUILT_OPERATOR_HERMITIAN_TOL
+    assert defect.absolute > 1e-6
+    assert defect.terms["V"] > _REBUILT_OPERATOR_HERMITIAN_TOL
+    assert defect.terms["T"] < 1e-14
+    assert defect.overlap < 1e-14
+    assert defect.n_kpoints == 8 and defect.n_channels == 1
+    assert 0 <= defect.k_index < 8 and defect.channel == 0
+
+    complete = LatticeSumOptions()
+    complete.pair_complete_1e = True
+    S2 = compute_overlap_lattice(basis, system, complete)
+    T2 = compute_kinetic_lattice(basis, system, complete)
+    V2 = compute_nuclear_lattice(basis, system, complete)
+    clean = _rebuilt_operator_hermiticity_defect(
+        [[T2, V2], [T2, V2]], S2, km, term_names=("T", "V"),
+    )
+    assert clean.relative < _REBUILT_OPERATOR_HERMITIAN_TOL
+    assert clean.overlap < _REBUILT_OPERATOR_HERMITIAN_TOL
+    assert clean.n_channels == 2
+
+
+def test_accepted_state_mayer_folds_a_lattice_set_density_on_the_bvk_torus():
+    """A real-space lattice-set density (the BIPOLE drivers' convention) is
+    BvK-periodic and replicated over the whole cell list, so it is folded over
+    one torus of the Monkhorst-Pack mesh, never Bloch-summed over every cell
+    (#547: that overcounted 253-fold on a Gamma H2 cube)."""
+    from types import SimpleNamespace
+
+    from vibeqc._vibeqc_core import (
+        LatticeSumOptions,
+        bloch_sum,
+        compute_overlap_lattice,
+        monkhorst_pack,
+    )
+    from vibeqc.coop_cohp import _periodic_mayer_from_density
+    from vibeqc.periodic_runner import _accepted_state_mayer_bond_orders
+
+    system, basis = _h2_chain_1d()
+    P, _ = _h2_minimal_density_and_overlap()
+    opts = LatticeSumOptions()
+    S_real = compute_overlap_lattice(basis, system, opts)
+    n_cells = len(S_real.cells)
+    assert n_cells > 1
+
+    # A Gamma BvK density: the same block in every cell of the list.
+    D_gamma = compute_overlap_lattice(basis, system, opts)
+    for i in range(n_cells):
+        D_gamma.set_block(i, P)
+    S_gamma = np.asarray(bloch_sum(S_real, np.zeros(3)))
+    gamma_reference = _periodic_mayer_from_density(
+        [[P]], [S_gamma], np.ones(1), [0, 1], 2,
+    )
+    gamma = SimpleNamespace(
+        density=D_gamma, overlap=[S_gamma], kpoints_cart=np.zeros((1, 3)),
+        kpoint_weights=np.ones(1), kmesh=SimpleNamespace(mesh=(1, 1, 1)),
+    )
+    np.testing.assert_allclose(
+        _accepted_state_mayer_bond_orders(gamma, system, basis),
+        gamma_reference, atol=1e-13, rtol=0,
+    )
+    # The mesh may come from the caller instead of the result.
+    bare = SimpleNamespace(density=D_gamma, overlap=S_gamma)
+    np.testing.assert_allclose(
+        _accepted_state_mayer_bond_orders(bare, system, basis, bvk_mesh=(1, 1, 1)),
+        gamma_reference, atol=1e-13, rtol=0,
+    )
+    # Without a mesh the fold is refused rather than guessed.
+    with pytest.raises(ValueError, match="BvK"):
+        _accepted_state_mayer_bond_orders(bare, system, basis)
+
+    # A home-cell-only lattice density (SAD-like) folds to P at every k of
+    # a 4x1x1 torus, and spin channels fold the same way.
+    D_home = compute_overlap_lattice(basis, system, opts)
+    zero = np.zeros_like(P)
+    for i, cell in enumerate(D_home.cells):
+        D_home.set_block(i, P if all(int(v) == 0 for v in cell.index) else zero)
+    km = monkhorst_pack(system, [4, 1, 1])
+    kpoints = np.asarray([np.asarray(k) for k in km.kpoints])
+    weights = np.asarray(km.weights, dtype=float)
+    overlaps = [np.asarray(bloch_sum(S_real, k)) for k in kpoints]
+    reference = _periodic_mayer_from_density(
+        [[P] * len(kpoints)], overlaps, weights, [0, 1], 2,
+    )
+    multi = SimpleNamespace(
+        density=D_home, overlap=overlaps, kpoints_cart=kpoints,
+        kpoint_weights=weights, kmesh=km,
+    )
+    np.testing.assert_allclose(
+        _accepted_state_mayer_bond_orders(multi, system, basis),
+        reference, atol=1e-13, rtol=0,
+    )
+    spin = SimpleNamespace(
+        density_alpha=D_home, density_beta=D_home, overlap=overlaps,
+        kpoints_cart=kpoints, kpoint_weights=weights, kmesh=km,
+    )
+    np.testing.assert_allclose(
+        _accepted_state_mayer_bond_orders(spin, system, basis),
+        _periodic_mayer_from_density(
+            [[P] * len(kpoints)] * 2, overlaps, weights, [0, 1], 2,
+        ),
+        atol=1e-13, rtol=0,
+    )

@@ -42,10 +42,19 @@ struct UGFN2Result : ParameterIdentifiedResult {
 // Run unrestricted GFN2-xTB SCC calculation
 // ---------------------------------------------------------------------------
 
+// The separate experimental atom-charge model has no faithful AES channel.
+// Keep its no-options invocation reproducible when molecular GFN2 defaults
+// to the published atom-resolved model; explicit unsupported requests refuse.
+inline XTBSccOptions ugfn2_default_options() {
+    XTBSccOptions options;
+    options.aes_faithful = false;
+    return options;
+}
+
 UGFN2Result run_ugfn2_xtb(
     const Molecule& mol,
     const GFN2ParameterSet& params,
-    const XTBSccOptions& opts = {});
+    const XTBSccOptions& opts = ugfn2_default_options());
 
 }  // namespace xtb
 }  // namespace semiempirical

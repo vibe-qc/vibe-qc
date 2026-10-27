@@ -82,6 +82,9 @@ def dry_run_manifest(
     print_summary: bool = True,
     stream: TextIO | None = None,
     estimate_bytes: int | None = None,
+    portable_manifest: bool = False,
+    resolved_resource_features: dict[str, Any] | None = None,
+    analytical_memory: dict[str, Any] | None = None,
 ) -> Path:
     """Write a one-shot dry-run manifest and return its path.
 
@@ -111,6 +114,21 @@ def dry_run_manifest(
         (see :func:`is_dry_run_estimate_requested`); ``None`` leaves the
         ``[memory]`` section untouched so the default dry-run manifest is
         unchanged.
+    portable_manifest
+        Forwarded to :class:`ManifestUpdater`. ``True`` (or
+        ``VIBEQC_PORTABLE_MANIFEST=1``) writes every path relative to the
+        manifest's directory (#388).
+
+    resolved_resource_features
+        Resolved ResourceFeatures values only. Missing dimensions stay absent.
+        Input hashes come from ``resource_input_reads`` / ``read_resource_input``
+        in :mod:`vibeqc.output.resource_evidence`; only the returned bytes are
+        covered. Reads outside that explicit scope remain unknown. ``None``
+        preserves the legacy manifest shape.
+
+    analytical_memory
+        Optional partial allocation evidence emitted by the memory estimator.
+        Incomplete terms are never a certified whole-job peak.
 
     Returns
     -------
@@ -122,8 +140,22 @@ def dry_run_manifest(
         record_hostname=record_hostname,
         wall_seconds=0.0,
         estimate_bytes=estimate_bytes,
+        portable_manifest=portable_manifest,
     )
     updater.mark_dry_run()
+    if resolved_resource_features is not None:
+        from .resource_evidence import resource_evidence
+        from .manifest import _emit_flat_section, _atomic_write
+
+        lines: list[str] = []
+        _emit_flat_section(lines, "resource_evidence", resource_evidence(resolved_resource_features))
+        _atomic_write(updater.path, updater.path.read_text() + "\n" + "\n".join(lines) + "\n")
+    if analytical_memory is not None:
+        from .manifest import _emit_flat_section, _atomic_write
+
+        lines = []
+        _emit_flat_section(lines, "analytical_memory", analytical_memory)
+        _atomic_write(updater.path, updater.path.read_text() + "\n" + "\n".join(lines) + "\n")
     if print_summary:
         print_dry_run_summary(plan, stream=stream)
     return updater.path

@@ -19,6 +19,29 @@ wavefunction. This tutorial makes the boundary explicit with two workflows:
 The MACE energy is not carried into either electronic calculation. It lives
 on a model-specific reference scale and selected the geometry only.
 
+## Background
+
+MACE ({vibeqc-cite}`batatia_mace_2022`) is a learned interatomic potential: an
+equivariant message-passing network whose energy is a sum of atomic site
+energies and whose forces are its analytic gradient. **It is an external
+pre-trained model, not a vibe-qc method.** vibe-qc drives its forward pass and
+cites the papers, but the energy and forces are MACE's, on a model-specific
+reference scale, and the geometry they produce is only as good as the model's
+training distribution (Materials Project data for the MACE-MP/MPA family, MIT
+licence; organic molecules for MACE-OFF23, Academic Software License, gated).
+The [MACE tutorial](mace_mlip.md#background) and the
+[MACE user guide](../user_guide/mlip.md#background-what-mace-is) give the
+longer account. That is why this page uses MACE only to propose structures:
+the electronic stage recomputes everything with a real quantum-chemical
+method, and no MACE number crosses over.
+
+```{note}
+The MACE stages need the optional `[mace]` extra including on Python 3.14;
+the interpreter used to check this documentation pass does not carry it, so
+the MACE calls below were not re-run and no new output is quoted. The DLPNO
+and periodic-DFT stages do not need the extra.
+```
+
 ## Choose the workflow before choosing the method
 
 | Structure after optimization | Valid electronic handoff | Not implied |
@@ -33,18 +56,14 @@ whole-slab DLPNO replacement. For an adsorbate surface, use periodic HF/DFT
 for the intact slab or define and validate a separate embedded/finite-cluster
 model.
 
-## Runtime split
+## One runtime for both stages
 
-MACE currently needs Python 3.13 or earlier. DLPNO-CCSD(T) does not need the
-optional Torch stack, so the two molecular stages can run in separate
-environments:
+MACE and DLPNO-CCSD(T) can use the same Python 3.14 environment. Add the
+optional MACE stack to that environment:
 
 ```sh
-python3.13 -m venv .venv-mace
-.venv-mace/bin/pip install -e '.[mace]'
-
 python3.14 -m venv .venv
-.venv/bin/pip install -e '.[test]'
+.venv/bin/pip install -e '.[mace]'
 ```
 
 The source checkout can follow current `main`; every queued calculation must
@@ -53,7 +72,7 @@ The MACE health check records Python, VibeQC, ASE, Torch, e3nn, MACE, API,
 registry, cache files, and cached-weight digests:
 
 ```sh
-.venv-mace/bin/python examples/mlip/00_runtime_healthcheck.py
+.venv/bin/python examples/mlip/00_runtime_healthcheck.py
 ```
 
 ## Workflow A: MACE-OFF23 to molecular DLPNO-CCSD(T)
@@ -63,7 +82,7 @@ weights use the Academic Software License, so the example refuses to run
 without a calculation-local acknowledgement:
 
 ```sh
-.venv-mace/bin/python \
+.venv/bin/python \
   examples/mlip/06_optimize_water_off23_for_dlpno.py \
   --accept-asl --work-dir mace-handoff-output
 ```
@@ -143,7 +162,7 @@ relaxation: both would normalize against or optimize a non-physical volume.
 Run the geometry stage for a compact H2O/h-BN demonstration:
 
 ```sh
-.venv-mace/bin/python \
+.venv/bin/python \
   examples/mlip/08_relax_h2o_hbn_then_periodic_dft.py \
   --work-dir mace-handoff-output
 ```
@@ -181,7 +200,7 @@ an Extended XYZ with
 To run the whole-slab electronic stage in the same process:
 
 ```sh
-.venv-mace/bin/python \
+.venv/bin/python \
   examples/mlip/08_relax_h2o_hbn_then_periodic_dft.py \
   --electronic --work-dir mace-handoff-output
 ```

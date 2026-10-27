@@ -561,6 +561,98 @@ def test_sr_shell_envelope_screen_bounds_accumulated_raw_integral_error(angular,
     assert differences[0] > 1e-14  # exercise actual skipped contributions
 
 
+@pytest.mark.parametrize('angular', [0, 1, 2])
+def test_sr_primitive_triple_screen_keeps_the_raw_budget_with_tight_and_diffuse_primitives(angular):
+    """GitLab IID 543: per-primitive screening inside contracted shells.
+
+    Tight and diffuse primitives share each contracted shell, so at distant
+    pair and auxiliary images only the diffuse primitive triples survive
+    the budgeted primitive screen. The screened source must stay within the
+    requested raw error of the unscreened finite domain, for the value and
+    for the gradient of a weighted contraction of that source.
+    """
+    core = vq._vibeqc_core
+    lattice = np.array([[5.5, .4, .2], [0., 5.8, .3], [0., 0., 6.1]])
+    centers = [[.2, .3, .4], [1.9, .8, 1.1]]
+    system = vq.PeriodicSystem(3, lattice, [vq.Atom(1, r) for r in centers])
+    mol = system.unit_cell_molecule()
+    orbital = core.BasisSet(mol, [
+        core.ShellInfo(0, angular, True, [60., 6., .35], [.2, .5, .6], centers[0]),
+        core.ShellInfo(1, 0, True, [25., 2.5, .25], [.3, .5, -.4], centers[1]),
+    ], 'primitive-screen-orbital')
+    aux = core.BasisSet(mol, [
+        core.ShellInfo(0, 0, True, [30., 3., .4], [.4, .5, .3], centers[0]),
+        core.ShellInfo(1, 1, True, [8., .5], [.6, .5], centers[1]),
+    ], 'primitive-screen-aux')
+    q = np.asarray(system.reciprocal_lattice()) @ [.21, -.17, .07]
+    k = np.array([[.1, -.2, .3], [-.15, .03, .21]])
+    common = (2**24, 10**7, 2**24)
+    reference = core.compute_gdf_sr_three_center(orbital, aux, system, q, k, .5, 14., 16., *common)
+    for error in (1e-6, 1e-10):
+        actual = core.compute_gdf_sr_three_center(
+            orbital, aux, system, q, k, .5, 14., 16., *common, integral_screen_error=error)
+        assert np.max(np.abs(actual - reference)) <= error
+    rng = np.random.default_rng(543)
+    weight = np.ascontiguousarray(rng.normal(size=reference.shape) + 1j * rng.normal(size=reference.shape))
+    weight /= np.abs(weight).sum()
+    gradient = [core.compute_gdf_sr_three_center_gradient_weighted(
+        orbital, aux, system, q, k, .5, 14., 16., weight, *common, screen) for screen in (0., 1e-10)]
+    np.testing.assert_allclose(gradient[1], gradient[0], rtol=0, atol=1e-8)
+
+
+def test_sr_diffuse_p_cancellation_matches_independent_fourier_series():
+    """A primitive epsilon screen must not add an unbudgeted image omission.
+
+    The periodized p Gaussian has a tiny Gamma norm. Its SR integral is an
+    independently converged Fourier series, including the finite zero mode
+    (Ye/Berkelbach 2021 Eq. 12), not another real-space integral build.
+    """
+    from itertools import product
+    from scipy.signal import fftconvolve
+
+    core = vq._vibeqc_core
+    lattice = 10.65 / 2 * (np.ones((3, 3)) - np.eye(3))
+    system = vq.PeriodicSystem(3, lattice, [vq.Atom(1, [0., 0., 0.])])
+    mol = system.unit_cell_molecule()
+    alpha, beta, omega = .0204, .0451232, .4
+    cp = (2*alpha/np.pi)**.75 * 2*np.sqrt(alpha)
+    cs = (2*beta/np.pi)**.75
+    orbital = core.BasisSet(mol, [
+        core.ShellInfo(0, 1, True, [alpha], [cp], [0., 0., 0.]),
+    ], 'diffuse-p', coefficients_pre_normalized=True)
+    aux = core.BasisSet(mol, [
+        core.ShellInfo(0, 0, True, [beta], [cs], [0., 0., 0.]),
+    ], 'diffuse-s', coefficients_pre_normalized=True)
+    volume = abs(np.linalg.det(lattice))
+    reciprocal = 2*np.pi*np.linalg.inv(lattice).T
+
+    def reference(n):
+        g = np.array(list(product(range(-n, n+1), repeat=3))) @ reciprocal.T
+        h = np.array(list(product(range(-2*n, 2*n+1), repeat=3))) @ reciprocal.T
+        g2, h2 = np.sum(g*g, axis=1), np.sum(h*h, axis=1)
+        weights = np.full(len(h), np.pi/(volume*omega**2))
+        nonzero = h2 > 0
+        weights[nonzero] = (
+            4*np.pi*(-np.expm1(-h2[nonzero]/(4*omega**2)))
+            / (volume*h2[nonzero])
+        )
+        auxiliary = cs*(np.pi/beta)**1.5*np.exp(-h2/(4*beta))
+        values = []
+        for axis in (1, 2, 0):  # Libint's pure-p order
+            phi = (-1j*g[:, axis]/(2*alpha))*cp*(np.pi/alpha)**1.5*np.exp(-g2/(4*alpha))
+            density = fftconvolve(phi.reshape((2*n+1,)*3), phi.reshape((2*n+1,)*3)).ravel()/volume
+            values.append(np.sum(weights*auxiliary*density))
+        return np.array(values)
+
+    expected = reference(4)
+    np.testing.assert_allclose(reference(3), expected, rtol=0, atol=1e-20)
+    actual = core.compute_gdf_sr_three_center(
+        orbital, aux, system, np.zeros(3), np.zeros((1, 3)), omega,
+        125., 80., 4096, 10000000, 2**26, integral_screen_error=1e-12,
+    )[0, 0].diagonal()
+    np.testing.assert_allclose(actual, expected, rtol=0, atol=1e-11)
+
+
 def test_sr_envelope_screen_preserves_dense_core_compact_mesh_oracle():
     core = vq._vibeqc_core
     from vibeqc.aux_basis import _rsgdf_shifted_dense_g_mesh
@@ -870,3 +962,27 @@ def test_sr_linked_workspace_admission_preserves_the_raw_source(threads):
             core.compute_gdf_sr_three_center(*args, 1)
     finally:
         core.set_num_threads(old_threads)
+
+
+def test_sr_three_center_multi_q_is_bitwise_each_single_q_build():
+    """GitLab IID 543: one real-space pass serves several transfers.
+
+    Each transfer's rows equal its own single-q build bit for bit, for kets
+    interleaved across transfers and with the primitive screen active.
+    """
+    core = vq._vibeqc_core
+    system, orbital, auxiliary = _weighted_gradient_fixture(1)
+    reciprocal = np.asarray(system.reciprocal_lattice())
+    transfers = np.array([[0., 0., 0.], [.5, 0., 0.], [.5, .5, -.5]]) @ reciprocal.T
+    kets = np.array([[.1, -.2, .3], [0., .25, 0.], [-.15, .03, .21], [.3, .1, -.1]])
+    labels = [1, 0, 2, 1]
+    common = (2**24, 10**7, 2**24, 1e-10)
+    combined = core.compute_gdf_sr_three_center_multi_q(
+        orbital, auxiliary, system, transfers, kets, labels, .6, 6.0, 7.0, *common)
+    for row, label in enumerate(labels):
+        single = core.compute_gdf_sr_three_center(
+            orbital, auxiliary, system, transfers[label], kets[row:row+1], .6, 6.0, 7.0, *common)
+        np.testing.assert_array_equal(combined[row:row+1], single)
+    with pytest.raises(ValueError, match="label"):
+        core.compute_gdf_sr_three_center_multi_q(
+            orbital, auxiliary, system, transfers, kets, [0, 1, 3, 0], .6, 6.0, 7.0, *common)

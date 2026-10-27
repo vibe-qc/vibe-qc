@@ -17,10 +17,15 @@ Two contracts, both per [AGENTS.md § 8](../AGENTS.md):
    ``.g94`` is regenerated from a source that strips the provenance
    header.
 
-We do **not** assert full coverage of all 238 shipped bases — most
-of libint's standard set arrives without inline citations and the
-route table covers only the primary user targets. Expanding the
-database is its own milestone per AGENTS.md § 8.
+We do **not** assert full coverage of all shipped bases: most of
+libint's standard set arrives without inline citations and the route
+table covers only the primary user targets.
+
+3. **Routes are derivable from the records** (#407). Every bundled
+   QVF-Basis record carries ``provenance.citations``, per element range,
+   and the route table's keys for a shipped basis are exactly the union
+   of its record's citation keys. The route table is therefore a view
+   over the records, not a second hand-kept source.
 """
 
 from __future__ import annotations
@@ -299,3 +304,131 @@ def test_inline_doi_in_header(stem: str):
         "data through the libint / BSE pipeline (CLAUDE.md § 1 + "
         "§ 8). Restore the publication's DOI to the header."
     )
+
+
+# pob-TZVP-rev2's records come from five papers (#288): the 2013 parent,
+# H-Br (2019), Rb-I (2022), Cs-Ba + Hf-Po (2021) and La-Lu (2023). Every
+# human-read surface that names the basis's provenance must name all five;
+# the route table is pinned in tests/test_citations.py.
+_POB_TZVP_REV2_DOIS = (
+    "10.1002/jcc.23153",
+    "10.1002/jcc.26013",
+    "10.1002/jcc.26839",
+    "10.1002/jcc.26521",
+    "10.1002/jcc.27097",
+)
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _pob_tzvp_rev2_surfaces() -> dict[str, str]:
+    from vibeqc import basis_crystal
+
+    surfaces = {
+        "basis_crystal._BREDOW_CITATIONS['pob-tzvp-rev2']": (
+            basis_crystal._BREDOW_CITATIONS["pob-tzvp-rev2"]
+        ),
+    }
+    # The .g94 headers were missed in #288 and kept the 2019 paper alone.
+    for sub in ("basis", "custom"):
+        for name in ("pob-tzvp-rev2.ecp", "pob-tzvp-rev2.g94"):
+            path = BUNDLED_BASIS_DIR / sub / name
+            if path.is_file():
+                head = [
+                    line for line in path.read_text().splitlines()[:60]
+                    if line.startswith("!")
+                ]
+                surfaces[f"{sub}/{name} header"] = "\n".join(head)
+    license_md = _REPO_ROOT / "docs" / "license.md"
+    if license_md.is_file():  # absent in an installed wheel
+        rows = [
+            line for line in license_md.read_text().splitlines()
+            if line.startswith("| `pob-tzvp-rev2.g94`")
+        ]
+        assert len(rows) == 1, rows
+        surfaces["docs/license.md pob-tzvp-rev2.g94 row"] = rows[0]
+    return surfaces
+
+
+def test_pob_tzvp_rev2_provenance_surfaces_name_all_five_papers() -> None:
+    """#288: the fetch-time citation, the ECP sidecar header and the
+    license table each credited a subset (the 2019 paper alone, or the
+    2021 paper alone), so each named papers that do not contain most of
+    the basis's 78 records."""
+    surfaces = _pob_tzvp_rev2_surfaces()
+    assert "basis/pob-tzvp-rev2.ecp header" in surfaces
+    assert "basis/pob-tzvp-rev2.g94 header" in surfaces
+    missing = {
+        name: [d for d in _POB_TZVP_REV2_DOIS if d not in text]
+        for name, text in surfaces.items()
+    }
+    missing = {k: v for k, v in missing.items() if v}
+    assert not missing, missing
+
+
+# ---------------------------------------------------------------------------
+# #407: the records carry the citation routes; database.toml is derivable.
+# ---------------------------------------------------------------------------
+
+
+def _record_citation_keys(stem: str) -> set[str] | None:
+    import json
+
+    path = BUNDLED_BASIS_DIR / "qvf" / f"{stem}.qvf.json"
+    if not path.is_file():
+        return None
+    record = json.loads(path.read_text(encoding="utf-8"))
+    routes = (record.get("provenance") or {}).get("citations") or []
+    return {key for route in routes for key in route["keys"]}
+
+
+def test_every_citation_route_key_exists_in_the_database():
+    """A record may only route to a publication the database can print."""
+    db = tomllib.loads(DATABASE_TOML.read_text())
+    entries = set(db.get("entries", {}))
+    missing: dict[str, set[str]] = {}
+    for path in sorted((BUNDLED_BASIS_DIR / "qvf").glob("*.qvf.json")):
+        stem = path.name[: -len(".qvf.json")]
+        keys = _record_citation_keys(stem) or set()
+        if keys - entries:
+            missing[stem] = keys - entries
+    assert not missing, missing
+
+
+def test_route_table_is_the_union_of_the_record_citation_keys():
+    """For every shipped basis with a route, ``[routes.basis_sets]`` lists
+    exactly the keys its record's citation routes carry, so the table can
+    be regenerated from the records and never drifts from them."""
+    routes = _routes()
+    drift: dict[str, tuple[set[str], set[str]]] = {}
+    for stem in sorted(_shipped_stems()):
+        if stem not in routes:
+            continue
+        expected = set(routes[stem])
+        recorded = _record_citation_keys(stem)
+        assert recorded is not None, f"{stem}: no record"
+        if recorded != expected:
+            drift[stem] = (expected - recorded, recorded - expected)
+    assert not drift, (
+        "route table and record citations disagree (route-only, record-only): "
+        f"{drift}"
+    )
+
+
+def test_pob_tzvp_rev2_record_routes_each_range_to_its_paper():
+    """#288 at the record level: the four valence papers cover disjoint
+    element ranges, and the Stuttgart ECP papers cover only ECP elements."""
+    import json
+
+    record = json.loads(
+        (BUNDLED_BASIS_DIR / "qvf" / "pob-tzvp-rev2.qvf.json").read_text(encoding="utf-8")
+    )
+    by_key: dict[str, list[str] | None] = {}
+    for route in record["provenance"]["citations"]:
+        for key in route["keys"]:
+            by_key[key] = route.get("elements")
+    assert by_key["peintinger_pob_tzvp_2013"] is None
+    assert set(by_key["vilela_oliveira_pob_rev2_2019"]) == set(record["elements"]) - set(record["ecps"])
+    assert "Ag" in by_key["laun_pob_rev2_fifth_period_2022"]
+    assert "W" in by_key["laun_pob_rev2_sixth_period_2021"]
+    assert "Gd" in by_key["seidler_pob_rev2_lanthanides_2023"]
+    assert set(by_key["andrae_ecp_1990"]) <= set(record["ecps"])

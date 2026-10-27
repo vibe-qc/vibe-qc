@@ -121,11 +121,18 @@ class Transport(abc.ABC):
         poll_interval_s: float = 30.0,
         sleep: Optional[Callable[[float], None]] = None,
         clock: Optional[Callable[[], float]] = None,
+        max_poll_failures: int = 5,
     ) -> str:
         """Poll ``handle`` until it reaches a terminal state.
 
         Returns the terminal state string. Raises
         :class:`JobTimeoutError` if ``timeout_s`` elapses first.
+
+        A failed poll is retried at the next interval, and only
+        ``max_poll_failures`` failures in a row raise. A poll that fails
+        says nothing about the job, which is still queued or running: raising
+        on the first one abandons it, and a caller that retries then submits
+        the same work again beside it.
 
         ``sleep`` and ``clock`` are injectable for testing — pass a
         no-op ``sleep`` and a fake ``clock`` to exercise the loop
@@ -134,8 +141,19 @@ class Transport(abc.ABC):
         _sleep = sleep or time.sleep
         _clock = clock or time.monotonic
         start = _clock()
+        failures = 0
         while True:
-            state = self.poll(handle)
+            try:
+                state = self.poll(handle)
+            except JobTimeoutError:
+                raise
+            except TransportError:
+                failures += 1
+                if failures >= max_poll_failures:
+                    raise
+                state = "unknown"
+            else:
+                failures = 0
             if state in TERMINAL_STATES:
                 return state
             if _clock() - start > timeout_s:

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Compare MACE and PM6 H2O stretch curves without mixing energy scales.
 
-Requires Python <= 3.13 and the optional MACE stack:
+Requires the optional MACE stack, including on Python 3.14:
 
     pip install -e '.[mace]'
     python examples/mlip/05_mace_pm6_relative_curve.py

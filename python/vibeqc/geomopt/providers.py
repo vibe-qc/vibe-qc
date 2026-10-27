@@ -137,6 +137,7 @@ class MolecularSCFProvider:
         grid_level: str = "orca-defgrid3",
         dispersion_params: Any = None,
         solvent: Any = None,
+        dft_plus_u: Any = None,
         # Wavefunction FD params -- forwarded when method has no analytic grad.
         fd_step_bohr: float = 0.005,
         cisd_options: Any = None,
@@ -170,6 +171,9 @@ class MolecularSCFProvider:
         self._grid_level = grid_level
         self._dispersion_params = dispersion_params
         self._solvent = solvent
+        # Hubbard sites travel with every SCF and analytic gradient so the
+        # optimiser walks the +U surface the final single point reports.
+        self._dft_plus_u = list(dft_plus_u) if dft_plus_u else None
         self._fd_step_bohr = fd_step_bohr
         self._cisd_options = cisd_options
         self._selected_ci_options = selected_ci_options
@@ -310,6 +314,7 @@ class MolecularSCFProvider:
             solvent=self._solvent,
             read_from=read_from,
             grid_level=self._grid_level,
+            dft_plus_u=self._dft_plus_u,
         )
         # The high-level wrapper may have attached an XML or inline basis
         # sidecar during this first call. Record its atom mapping once, then
@@ -473,13 +478,20 @@ class MolecularSCFProvider:
                 ),
                 grid_options=self._grid_options,
                 dispersion_params=self._dispersion_params,
+                dft_plus_u=self._dft_plus_u,
             )
             if self._dispersion_params is not None:
-                from ..dispersion import compute_d3bj
+                from ..dispersion import compute_dispersion
 
-                disp = compute_d3bj(molecule, self._dispersion_params)
+                disp = compute_dispersion(molecule, self._dispersion_params)
                 e += float(disp.energy)
         else:
+            if self._dft_plus_u:
+                raise NotImplementedError(
+                    "Geometry optimisation with DFT+U needs the analytic "
+                    "mean-field gradient; the finite-difference fallback "
+                    "would walk the plain surface."
+                )
             # Wavefunction path (gated-out casscf / caspt2 / nevpt2,
             # selected_ci / ...) and RKS / UKS with a functional whose
             # analytic gradient omits terms (GitLab #571): full-energy

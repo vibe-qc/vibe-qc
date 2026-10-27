@@ -2,10 +2,67 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+import json
+
+import pytest
 
 from examples.regression.core import runner_vibeqc
 from examples.regression.core.spec import MethodSpec
 from examples.regression.systems.periodic.ne_fcc import SPEC as NE_FCC
+
+
+@pytest.mark.parametrize("scf,xc", [("rhf", None), ("uhf", None),
+                                   ("rks", "pbe"), ("uks", "pbe0")])
+@pytest.mark.parametrize("mesh", [(1, 1, 1), (3, 1, 1)])
+def test_periodic_bipole_route_preserves_request_and_artifacts(
+    tmp_path, monkeypatch, scf, xc, mesh,
+):
+    captured = {}
+
+    def job(*args, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(energy=-1., converged=True, n_iter=2,
+                               backend="pbc-bipole")
+
+    def gdf_hold(*args):
+        pytest.fail("BIPOLE must not enter the GDF parity hold")
+
+    monkeypatch.setattr(runner_vibeqc.vq, "run_periodic_job", job)
+    monkeypatch.setattr(runner_vibeqc, "_gamma_gdf_solid_hold_after_tail", gdf_hold)
+    row = runner_vibeqc.run_periodic_case(
+        run_id="unit", target="dev", code_version="test", spec=NE_FCC,
+        basis_name="sto-3g", method=MethodSpec(id="test", scf=scf, xc=xc),
+        kmesh=mesh, jk_method="bipole", cutoff_bohr=17.,
+        nuclear_cutoff_bohr=23., omega=.31, conv_tol_energy=1e-10,
+        max_iter=31, log_path=tmp_path / "case.log", artifact_dir=tmp_path / "case",
+    )
+    assert row.status == "pending" and row.converged
+    assert captured["jk_method"] == "bipole"
+    assert captured["method"] == scf.upper() and captured["functional"] == xc
+    assert captured["kpoints"] == (None if mesh == (1, 1, 1) else mesh)
+    assert captured["bipole_cutoff_bohr"] == 17.
+    assert captured["bipole_nuclear_cutoff_bohr"] == 23.
+    assert captured["ewald_omega"] == .31
+    assert captured["conv_tol_energy"] == 1e-10 and captured["max_iter"] == 31
+    assert "rsgdf_tail_ke_cutoff" not in captured
+    request = json.loads((tmp_path / "case/input.json").read_text())
+    assert request["jk_method"] == "bipole"
+    assert request["kmesh"] == list(mesh)
+    assert request["route_options"] == {
+        "bipole_cutoff_bohr": 17., "bipole_nuclear_cutoff_bohr": 23.,
+        "ewald_omega": .31,
+    }
+
+
+@pytest.mark.parametrize("options", [{"jk_method": "unknown"},
+    {"jk_method": "bipole", "rsgdf_tail_ke_cutoff": 100.}])
+def test_periodic_regression_rejects_incompatible_route_controls(tmp_path, options):
+    with pytest.raises(ValueError):
+        runner_vibeqc.run_periodic_case(
+            run_id="unit", target="dev", code_version="test", spec=NE_FCC,
+            basis_name="sto-3g", method=MethodSpec(id="rhf", scf="rhf"),
+            kmesh=(1, 1, 1), log_path=tmp_path / "case.log", **options,
+        )
 
 
 def test_periodic_regression_runner_uses_public_gdf_gamma_route(tmp_path, monkeypatch):

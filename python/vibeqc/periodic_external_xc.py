@@ -61,6 +61,89 @@ def _cell_index(cell) -> tuple[int, int, int]:
     return (int(values[0]), int(values[1]), int(values[2]))
 
 
+_DIFFERENCE_BITMAP_MAX_BYTES = 1 << 20
+
+
+@dataclass(frozen=True, slots=True)
+class _LatticeDifferenceBitmap:
+    origin: tuple[int, int, int]
+    shape: tuple[int, int, int]
+    bits: bytes
+    count: int
+
+    def __len__(self) -> int:
+        return self.count
+
+    def __contains__(self, index: tuple[int, int, int]) -> bool:
+        x, y, z = (index[i] - self.origin[i] for i in range(3))
+        nx, ny, nz = self.shape
+        # Check each axis before flattening: an out-of-range coordinate must
+        # not alias a valid cell by carrying into the next radix.
+        if not (0 <= x < nx and 0 <= y < ny and 0 <= z < nz):
+            return False
+        offset = (x * ny + y) * nz + z
+        return bool(self.bits[offset >> 3] & (1 << (offset & 7)))
+
+
+def _lattice_difference_set(
+    ket_indices: Sequence[tuple[int, int, int]],
+    bra_indices: Sequence[tuple[int, int, int]],
+) -> frozenset[tuple[int, int, int]] | _LatticeDifferenceBitmap:
+    """Exact finite ``ket - bra`` support, without a Python loop per pair.
+
+    Encode ket offsets and reversed bra offsets in radices large enough for
+    their sums. Integer shifts then form the Minkowski sum with no coordinate
+    carries, periodic wrapping, or filling of holes. This is only a support
+    representation; the full AO density and its adjoint remain unchanged
+    (Pöschel et al., arXiv:2608.19033, Sec. III, Eqs. 7-9).
+    """
+    ket = set(ket_indices)
+    bra = set(bra_indices)
+    if not ket or not bra:
+        return frozenset()
+    ket_min = tuple(min(index[i] for index in ket) for i in range(3))
+    ket_max = tuple(max(index[i] for index in ket) for i in range(3))
+    bra_min = tuple(min(index[i] for index in bra) for i in range(3))
+    bra_max = tuple(max(index[i] for index in bra) for i in range(3))
+    shape = tuple(
+        ket_max[i] - ket_min[i] + bra_max[i] - bra_min[i] + 1
+        for i in range(3)
+    )
+    nx, ny, nz = shape
+    volume = nx * ny * nz
+    # Bound scratch independently of lattice skew and displaced atoms. A
+    # very sparse bounding box also favors explicit tuple differences.
+    if (
+        volume > 8 * _DIFFERENCE_BITMAP_MAX_BYTES
+        or volume > 64 * len(ket) * len(bra)
+    ):
+        return frozenset(
+            (s[0] - a[0], s[1] - a[1], s[2] - a[2])
+            for a in bra for s in ket
+        )
+
+    seed = bytearray((volume + 7) // 8)
+    for x, y, z in ket:
+        offset = (
+            ((x - ket_min[0]) * ny + y - ket_min[1]) * nz + z - ket_min[2]
+        )
+        seed[offset >> 3] |= 1 << (offset & 7)
+    ket_bits = int.from_bytes(seed, "little")
+    del seed
+    required = 0
+    for x, y, z in bra:
+        shift = (
+            ((bra_max[0] - x) * ny + bra_max[1] - y) * nz + bra_max[2] - z
+        )
+        required |= ket_bits << shift
+    return _LatticeDifferenceBitmap(
+        origin=tuple(ket_min[i] - bra_max[i] for i in range(3)),
+        shape=shape,
+        bits=required.to_bytes((volume + 7) // 8, "little"),
+        count=required.bit_count(),
+    )
+
+
 def periodic_xc_difference_closed_cells(
     system,
     cutoff_bohr: float,
@@ -96,29 +179,29 @@ def periodic_xc_difference_closed_cells(
 
     ket_cells = pair_resolved_domain(system, cutoff).cells
     bra_cells = pair_resolved_domain(system, bra_radius).cells
-    required = {
-        tuple(
-            (
-                np.asarray(ket.index, dtype=int)
-                - np.asarray(bra.index, dtype=int)
-            ).tolist()
-        )
-        for bra in bra_cells
-        for ket in ket_cells
-    }
+    required = _lattice_difference_set(
+        [_cell_index(cell) for cell in ket_cells],
+        [_cell_index(cell) for cell in bra_cells],
+    )
     span = float(atom_pair_span(system))
     difference_bound = cutoff + bra_radius + 2.0 * span + 1.0e-9
     candidates = tuple(
         _core.direct_lattice_cells(system, difference_bound)
     )
-    available = {_cell_index(cell) for cell in candidates}
-    missing = required.difference(available)
+    selected = []
+    available = set()
+    for cell in candidates:
+        index = _cell_index(cell)
+        if index in required:
+            selected.append(cell)
+            available.add(index)
+    missing = len(required) - len(available)
     if missing:
         raise RuntimeError(
             "periodic external XC could not materialize its exact "
-            f"difference domain ({len(missing)} lattice cells missing)"
+            f"difference domain ({missing} lattice cells missing)"
         )
-    cells = tuple(cell for cell in candidates if _cell_index(cell) in required)
+    cells = tuple(selected)
     if not cells:
         raise RuntimeError("periodic external XC lattice domain is empty")
     return cells
@@ -328,13 +411,21 @@ class PeriodicExternalXC:
             options.cutoff_bohr = 25.0
         else:
             options = _copy_lattice_options(lattice_options)
-        options.becke_image_radius_bohr = image_radius
-        if float(options.cutoff_bohr) < image_radius:
+        cutoff = float(options.cutoff_bohr)
+        density_radius = float(options.becke_image_radius_bohr)
+        if not np.isfinite(cutoff) or cutoff <= 0.0:
             raise ValueError(
-                "periodic external XC cutoff_bohr must be at least the "
-                "periodic Becke image radius; got "
-                f"{float(options.cutoff_bohr):.6g} < {image_radius:.6g} bohr"
+                "periodic external XC cutoff_bohr must be finite and > 0"
             )
+        if not np.isfinite(density_radius):
+            raise ValueError("periodic external XC density image radius must be finite")
+        # Becke, JCP 88, 2547 (1988), Sec. II, Eqs. (3)-(7),
+        # DOI: 10.1063/1.454033: the partition weights the integrand; it
+        # must not truncate the AO density supplied to a full-grid provider.
+        # Match the native density support convention independently of the
+        # partition radius: unset means full ket reach, positive is capped.
+        density_radius = min(density_radius, cutoff) if density_radius > 0.0 else cutoff
+        options.becke_image_radius_bohr = density_radius
 
         # The XC kernel evaluates AO images a,s within ``cutoff_bohr`` and
         # accumulates the derivative into the difference block g=s-a.  Its
@@ -347,7 +438,7 @@ class PeriodicExternalXC:
             resolved_cells = periodic_xc_difference_closed_cells(
                 system,
                 float(options.cutoff_bohr),
-                image_radius,
+                density_radius,
             )
         else:
             resolved_cells = tuple(cells)
@@ -357,7 +448,7 @@ class PeriodicExternalXC:
                 for cell in periodic_xc_difference_closed_cells(
                     system,
                     float(options.cutoff_bohr),
-                    image_radius,
+                    density_radius,
                 )
             }
             missing = required.difference(present)

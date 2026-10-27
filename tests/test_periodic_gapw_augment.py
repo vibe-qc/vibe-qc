@@ -576,12 +576,20 @@ class TestGapwScf:
         so the SCF aufbau left the core EMPTY and isolated O collapsed to
         ~−35 Ha (e_kin ~17) instead of the all-electron ~−73.8.
 
-        With the analytic Fock the core is recovered: O → −73.557 (+215 mHa
-        vs the GDF all-electron reference), e_kin ~73.4, ε₁ₛ ≈ −20. This pins
-        BOTH symptoms — core kinetic energy and total vs GDF — so a future
-        Fock regression that re-empties the core fails here.
+        With the analytic Fock the core is recovered: e_kin ~73.4, ε₁ₛ ≈ −20.
+        This pins BOTH symptoms — core kinetic energy and total vs GDF — so a
+        future Fock regression that re-empties the core fails here.
 
-        See ``handovers/HANDOVER_GAPW_PRODUCTION.md`` § milestone 3 and
+        The reference must be in the same occupation state as GAPW. GAPW
+        converges to the integer closed-shell state 1s² 2s² 2pₓ² 2p_y²
+        (2p_z empty). The default GDF SCF starts from a spherical SAD density
+        and keeps the degenerate-frontier ensemble (2p occupations 4/3 each),
+        about 0.43 Ha higher, so comparing against it measured the state
+        difference, not the GAPW error. The GDF reference is therefore
+        seeded (READ) with the integer state and converged self-consistently
+        in it; at fixed density the two formulations differ by ~5 mHa there.
+
+        See
         ``examples/regression/gapw_parity/milestone3_analytic_fock.py``.
         """
         L = 12.0
@@ -593,13 +601,29 @@ class TestGapwScf:
         basis = vq.BasisSet(mol, "sto-3g")
         grid = PlaneWaveGrid(np.eye(3) * L, 24, 24, 24)
 
-        # All-electron GDF reference (same gauge, in-process).
+        # Supported periodic all-electron reference. Its full periodic
+        # exchange differs from GAPW's molecular-limit approximation;
+        # retain the 0.3 Ha error bound rather than assume equivalence.
+        # Matched occupation state: seed the integer 1s² 2s² 2px² 2py² density
+        # (STO-3G AO order 1s, 2s, 2px, 2py, 2pz; occupied columns made
+        # S-orthonormal by Cholesky; closed-shell D = 2 C Cᵀ, tr(DS) = 8).
+        S = np.asarray(vq.compute_overlap(basis))
+        C = np.eye(5)[:, :4]
+        C = C @ np.linalg.inv(np.linalg.cholesky(C.T @ S @ C)).T
         opts = vq.PeriodicRHFOptions()
         opts.max_iter = 120
         opts.conv_tol_energy = 1e-9
-        e_gdf = float(
-            vq.run_rhf_periodic_gamma_gdf(system, basis, opts, progress=False).energy
+        opts.initial_guess = vq.InitialGuess.READ
+        opts.read_density = 2.0 * C @ C.T
+        gdf_result = vq.run_pbc_gdf_rhf(
+            system, basis, opts, exxdiv="ewald", progress=False,
         )
+        assert gdf_result.converged, "O all-electron GDF reference did not converge"
+        eps_gdf = np.asarray(gdf_result.mo_energies)
+        assert eps_gdf[4] - eps_gdf[3] > 0.1, (
+            f"GDF reference left the integer 2p state: eps={eps_gdf}"
+        )
+        e_gdf = float(gdf_result.energy)
 
         result = run_periodic_rhf_gapw(
             system, basis, grid=grid, quiet=True,
@@ -616,9 +640,8 @@ class TestGapwScf:
             f"O core not occupied: e_kin={e_kin:.2f} (collapsed core ~17, "
             f"all-electron ~74.8)"
         )
-        # Total within ~0.3 Ha of the all-electron GDF reference (the GAPW
-        # augmentation residual at N=24 is +215 mHa; the collapsed state was
-        # ~+38 Ha off).
+        # Total within ~0.3 Ha of the matched-state all-electron GDF
+        # reference (~+6 mHa at N=24; the collapsed state was ~+38 Ha off).
         assert abs(result.energy - e_gdf) < 0.3, (
             f"O GAPW total {result.energy:.4f} too far from GDF {e_gdf:.4f}"
         )
@@ -705,7 +728,7 @@ class TestGapwScf:
         assert run["gapw_one_centre_resolved"] == "analytic"
         assert run["gapw_molecular_limit_declared"] is True
 
-    def test_gapw_rhf_runner_requires_molecular_limit_declaration(self):
+    def test_gapw_rhf_runner_requires_molecular_limit_declaration(self, tmp_path):
         """The public runner must not infer a molecular box from geometry."""
         L = 12.0
         system = _he_periodic(L)
@@ -722,6 +745,7 @@ class TestGapwScf:
                 dry_run=True,
                 write_density=False,
                 citations=False,
+                output=tmp_path / "refused",
             )
 
     def test_gapw_rks_runner_rejects_irrelevant_molecular_limit(self):
@@ -752,6 +776,7 @@ class TestGapwScf:
     )
     def test_gapw_hf_runner_derivatives_fail_closed(
         self,
+        tmp_path,
         derivative_kwargs,
     ):
         """High-level derivatives must not switch away from the GAPW energy."""
@@ -772,6 +797,7 @@ class TestGapwScf:
                 write_density=False,
                 citations=False,
                 **derivative_kwargs,
+                output=tmp_path / "refused",
             )
 
     def test_gapw_energy_finite_for_different_cutoffs(self):
@@ -1255,7 +1281,7 @@ def test_gapw_molecule_matches_molecular(functional):
     a single-functional Hartree/XC cancellation). The residual is the intrinsic
     GAPW soft-basis bond representation, well within the ±5 mHa target.
 
-    See ``handovers/HANDOVER_GAPW_PRODUCTION.md`` § milestone 3.
+
     """
     L = 12.0
     c = L / 2
@@ -1870,31 +1896,159 @@ def test_multik_gapw_hueckel_uses_shared_fock_adapter(monkeypatch):
     assert seen == [core.InitialGuess.HUECKEL]
 
 
-@pytest.mark.parametrize(
-    ("driver_name", "args", "kwargs"),
-    [
-        (
-            "run_periodic_rks_gapw_multi_k",
-            (None, None, None),
-            {"functional": "lda"},
-        ),
-    ],
-    ids=["rks-multik"],
-)
-def test_direct_gapw_guess_selectors_fail_closed_for_patom(
-    driver_name,
-    args,
-    kwargs,
-):
-    """Pure-DFT multi-k GAPW lacks the exact exchange required by PATOM."""
-    import vibeqc.periodic_gapw_augment as gapw_module
+# Multi-k PATOM uses a full-HF seed even for pure DFT. Its supported
+# GPW/GAPW routes are covered together, including normalized seed input
+# and seed-only exchange, in test_periodic_patom.py.
 
-    with pytest.raises(
-        NotImplementedError,
-        match="initial_guess=PATOM.*not implemented by this route",
-    ):
-        getattr(gapw_module, driver_name)(
-            *args,
-            initial_guess=core.InitialGuess.PATOM,
-            **kwargs,
-        )
+
+@pytest.mark.parametrize("functional", [None, "PBE"])
+def test_gapw_hcore_shared_solver_matches_projected_reference(monkeypatch, functional, record_property):
+    """Same-source complete SCF controls for the route-owned core seed."""
+    from types import SimpleNamespace
+    from vibeqc.solvers import _scf
+    system = _he_periodic(12.0)
+    basis = vq.BasisSet(system.unit_cell_molecule(), "6-31g")
+    kwargs = dict(grid=PlaneWaveGrid(np.eye(3)*12.0, 24, 24, 24),
+                  initial_guess="HCORE", functional=functional,
+                  molecular_limit=True, one_centre="analytic" if functional is None else "block",
+                  max_iter=60, conv_tol_energy=1e-8, conv_tol_density=1e-7,
+                  quiet=True)
+    original = _scf.solve_dense_fock
+    calls = []
+
+    def checked(fock, **options):
+        result = original(fock, **options)
+        x, overlap = options["X"], options["overlap"]
+        eps, vectors = np.linalg.eigh(x.T @ fock @ x)
+        coeff = x @ vectors
+        np.testing.assert_allclose(result.eigenvalues, eps, atol=1e-12)
+        np.testing.assert_allclose(result.eigenvectors[:, :1] @ result.eigenvectors[:, :1].T,
+                                   coeff[:, :1] @ coeff[:, :1].T, atol=1e-12)
+        np.testing.assert_allclose(result.eigenvectors.T @ overlap @ result.eigenvectors,
+                                   np.eye(basis.nbasis), atol=1e-12)
+        assert options["kind"] == "one_electron"
+        assert options["basis_id"] == "gamma-gapw-core-guess"
+        calls.append(result)
+        return result
+
+    monkeypatch.setattr(_scf, "solve_dense_fock", checked)
+    migrated = run_periodic_rhf_gapw(system, basis, **kwargs)
+    assert len(calls) == 1
+
+    def reference(fock, **options):
+        x = options["X"]
+        eps, vectors = np.linalg.eigh(x @ fock @ x)
+        return SimpleNamespace(eigenvalues=eps, eigenvectors=x @ vectors)
+
+    monkeypatch.setattr(_scf, "solve_dense_fock", reference)
+    control = run_periodic_rhf_gapw(system, basis, **kwargs)
+    assert migrated.converged and control.converged
+    np.testing.assert_allclose(migrated.density, control.density, atol=1e-10)
+    assert migrated.energy == pytest.approx(control.energy, abs=1e-10)
+    record_property("energy_Eh", migrated.energy)
+    record_property("control_energy_Eh", control.energy)
+    record_property("energy_difference_Eh", abs(migrated.energy-control.energy))
+
+
+@pytest.mark.parametrize("mode", ["analytic", "block", "projector"])
+@pytest.mark.parametrize("max_iter", [0, 1, 40])
+def test_gapw_rhf_terminal_build(monkeypatch, mode, max_iter, record_property):
+    from vibeqc import periodic_gpw_fock as states
+    from vibeqc.periodic_gapw_runner_adapter import gpw_result_to_runner_shape
+    from vibeqc.output.formats.qvf import qvf_wf_data
+    system = _he_periodic(12.0)
+    basis = vq.BasisSet(system.unit_cell_molecule(), "6-31g")
+    original = states._capture_gapw_rhf_terminal
+    captures = []
+
+    def capture(**kw):
+        captures.append(kw)
+        return original(**kw)
+
+    monkeypatch.setattr(states, "_capture_gapw_rhf_terminal", capture)
+    original_build = states._capture_gapw_rhf_build
+    iterations = []
+
+    def capture_build(**kw):
+        build = original_build(**kw)
+        if kw.get("capture_scope") != "run-local-terminal":
+            iterations.append(build)
+            assert dict(build.energy.components)["coulomb"] == pytest.approx(
+                kw["builder"].gapw_hartree_energy(kw["density"]), abs=1e-12)
+            np.testing.assert_array_equal(build.channels[0].density, kw["density"])
+        return build
+
+    monkeypatch.setattr(states, "_capture_gapw_rhf_build", capture_build)
+    result = run_periodic_rhf_gapw(system, basis,
+        grid=PlaneWaveGrid(np.eye(3)*12, 24, 24, 24),
+        initial_guess="HCORE", molecular_limit=True, one_centre=mode,
+        max_iter=max_iter, quiet=True, damping=.2)
+    build = result.fock_build
+    args = captures[0]
+    assert len(iterations) == result.n_iter
+    for physical, step in zip(iterations, result.scf_trace):
+        assert step["build_id"] == step["solver_build_id"] == physical.identity
+        assert step["density_id"] == physical.density_id
+        assert step["energy"] == pytest.approx(physical.energy.total, abs=1e-12)
+        assert step["solver_role"] in ("physical", "solver")
+    if len(iterations) > 1:
+        assert result.scf_trace[-1]["solver_role"] == "solver"
+    assert build is not None and len(captures) == 1
+    expected = args["kinetic"]+args["nuclear"]+args["coulomb"]-.5*args["exchange"]
+    expected = .5*(expected+expected.T)
+    np.testing.assert_allclose(result.fock, expected, atol=1e-12)
+    np.testing.assert_array_equal(result.fock, build.channels[0].operator.matrix)
+    np.testing.assert_array_equal(result.density, build.channels[0].density)
+    assert build.energy.total == pytest.approx(result.energy, abs=1e-12)
+    assert dict(build.energy.components)["coulomb"] == result.breakdown.e_hartree
+    np.testing.assert_allclose((result.mo_coeffs*result.occupations)@result.mo_coeffs.T,
+                               result.density, atol=1e-10)
+    assert build.metric_electron_counts[0] == pytest.approx(2, abs=1e-10)
+    assert build.source.as_dict()["details"]["augmentation"]["one_centre"] == mode
+    assert result.run_fields["fock_capture_scope"] == "scf-and-terminal"
+    adapted = gpw_result_to_runner_shape(result, system, basis)
+    assert adapted.fock_build is build and adapted.run_fields == result.run_fields
+    assert qvf_wf_data(adapted,basis,system.unit_cell_molecule())["mo_metadata"]["orbital_kind"] == "natural"
+    if max_iter == 40:
+        assert result.converged
+    record_property("energy_Eh", result.energy)
+    record_property("hartree_Eh", result.breakdown.e_hartree)
+    record_property("hartree_half_trace_Eh", .5*float(np.sum(result.density*args["coulomb"])))
+    saved_density = build.channels[0].density.copy()
+    saved_fock = build.channels[0].operator.matrix.copy()
+    result.density[:] = 0
+    result.fock[:] = 0
+    np.testing.assert_array_equal(build.channels[0].density, saved_density)
+    np.testing.assert_array_equal(build.channels[0].operator.matrix, saved_fock)
+
+
+@pytest.mark.parametrize("mode", ["analytic", "projector", "block", "inactive"])
+def test_gapw_joint_hartree_owned_pair(monkeypatch, mode):
+    system = _he_periodic(12.0)
+    basis = vq.BasisSet(system.unit_cell_molecule(), "6-31g")
+    builder = GapwJBuilder(basis, system, PlaneWaveGrid(np.eye(3)*12,24,24,24),
+        one_centre="block" if mode == "inactive" else mode,
+        soft_cutoff=1e6 if mode == "inactive" else 3.0,
+        quiet=True)
+    density = np.array([[.9,.07],[.07,.3]])
+    expected_energy = builder.gapw_hartree_energy(density)
+    expected_matrix = builder.build_J(density).copy()
+    if mode in ("analytic", "projector", "inactive"):
+        owner = builder._gpw if mode == "inactive" else builder
+        name = "build_J" if mode == "inactive" else "_"+mode+"_energy_and_fock"
+        original = getattr(owner, name)
+        calls = []
+        def counted(value):
+            calls.append(value.copy())
+            return original(value)
+        monkeypatch.setattr(owner, name, counted)
+    energy, matrix = builder.build_hartree(density)
+    assert energy == pytest.approx(expected_energy, abs=1e-12)
+    np.testing.assert_allclose(matrix, expected_matrix, atol=1e-12)
+    if mode in ("analytic", "projector", "inactive"):
+        assert len(calls) == 1
+    density[:] = 0
+    matrix[:] = 0
+    # Returned arrays must not expose mutable producer memo storage.
+    np.testing.assert_allclose(builder.build_J(np.array([[.9,.07],[.07,.3]])),
+                               expected_matrix, atol=1e-12)

@@ -68,7 +68,7 @@ class ReactionField:
         ``q = f q0``, ``q0 = -A^-1 V_total``. This is what the rest of
         vibe-qc stores and what the gradient convention assumes.
     V_elec, V_core, V_total : ndarray, shape (n_seg,)
-        The surface potential, kept decomposed. The handover's result
+        The surface potential, kept decomposed. the original investigation's result
         contract requires the split, and Direct COSMO-RS consumes it: its
         feedback acts on the electronic part alone.
     fock : ndarray
@@ -202,22 +202,58 @@ def reaction_field_step(
     )
 
 
-def lu_cavity_solve(A: np.ndarray) -> CavitySolve:
+def lu_cavity_solve(A: np.ndarray, *, overwrite: bool = False) -> CavitySolve:
     """A :class:`CavitySolve` over a pre-factored ``A``.
 
     ``A`` is fixed for a geometry, so factor once and reuse across every
     macro-iteration rather than repeating an ``O(N^3)`` decomposition per
     cycle. Falls back to a plain solve when SciPy is unavailable.
+
+    ``overwrite=True`` factors ``A`` in place and leaves its buffer holding the
+    factors, so the caller must not use ``A`` afterwards. The cavity matrix is
+    symmetric, so its transpose is the same matrix and either memory layout is
+    the Fortran-ordered buffer LAPACK wants: no copy is made. Without it the
+    factorization copies the matrix, twice for the native builder's
+    column-major array, which is ``8 N^2`` bytes each time: 1.9 GB for the
+    15 500 segments of a 74-atom alkane.
     """
-    A_arr = np.asarray(A, dtype=np.float64, order="C")
+    A_in = np.asarray(A, dtype=np.float64)
     try:
         from scipy.linalg import lu_factor, lu_solve
     except Exception:
+        A_c = np.ascontiguousarray(A_in)
+
         def _solve(rhs: np.ndarray) -> np.ndarray:
-            return np.linalg.solve(A_arr, rhs)
+            return np.linalg.solve(A_c, rhs)
         return _solve
 
-    lu, piv = lu_factor(A_arr)
+    # LAPACK wants the matrix Fortran-ordered. The native builder hands back a
+    # column-major array and the Python builders a row-major one; the matrix is
+    # symmetric, so a C-ordered A.T is the same numbers in the right layout.
+    in_place = None
+    if overwrite and A_in.flags.writeable:
+        if A_in.flags.f_contiguous:
+            in_place = A_in
+        elif A_in.flags.c_contiguous:
+            in_place = A_in.T
+    if in_place is not None:
+        # lu_factor copies in recent SciPy whatever overwrite_a says; LAPACK's
+        # getrf works on the buffer it is given.
+        from scipy.linalg import LinAlgWarning, lapack
+
+        lu, piv, info = lapack.dgetrf(in_place, overwrite_a=True)
+        if info < 0:
+            raise ValueError(f"illegal value in argument {-info} of dgetrf")
+        if info > 0:
+            import warnings
+
+            warnings.warn(
+                f"Diagonal number {info} is exactly zero. Singular matrix.",
+                LinAlgWarning,
+                stacklevel=2,
+            )
+    else:
+        lu, piv = lu_factor(A_in)
 
     def _solve_lu(rhs: np.ndarray) -> np.ndarray:
         return np.asarray(lu_solve((lu, piv), rhs), dtype=np.float64)

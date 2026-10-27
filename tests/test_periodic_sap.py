@@ -6,7 +6,8 @@ c_i·erf(ω_i r)/r is Ewald-split with a moderate parameter η into an
 analytical short-range part (two erfc pieces, libint ``erfc_nuclear``,
 real-space lattice-summed — this resolves the sharp near-nucleus structure)
 plus a smooth long-range part (erf(η r)/r with the net effective charges
-Q_A = Σ_i c_i, grid-quadratured). The three pieces reconstruct the molecular
+Q_A = Σ_i c_i, summed in reciprocal space against the analytic AO-pair Fourier
+transform, #483). The three pieces reconstruct the molecular
 +Σ c_i erf(ω_i)/r exactly; the G=0 background is a constant shift that leaves
 the guess density invariant.
 
@@ -241,6 +242,121 @@ def test_vsap_guess_fock_is_well_formed():
     assert np.max(np.abs(D - D.T)) < 1e-10
 
 
+def _lih_at(a_bohr: float, li_shift):
+    """``_lih`` with Li moved by ``li_shift`` (a lattice vector relabels it)."""
+    lat = a_bohr * np.eye(3)
+    atoms = [vq.Atom(3, [float(x) for x in li_shift]),
+             vq.Atom(1, [a_bohr / 2, a_bohr / 2, a_bohr / 2])]
+    system = vq.PeriodicSystem(3, lat, atoms, charge=0, multiplicity=1)
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    return system, basis
+
+
+def _sap_net_charges(system):
+    """Q_A = sum_i c_i^A from the raw SAP table (basis normalization would
+    change the coefficients, so read the file, as the native parser does)."""
+    from pathlib import Path
+    import re
+
+    text = (Path(vq.__file__).parent
+            / "basis_library/basis/sap_helfem_large.g94").read_text()
+    symbols = {1: "H", 3: "Li"}
+    charges = []
+    for atom in system.unit_cell:
+        lines = re.split(rf"(?m)^{symbols[atom.Z]}[ \t]+0[ \t]*\r?\n",
+                         text, maxsplit=1)[1].splitlines()
+        count = int(lines[0].split()[1])
+        charges.append(sum(float(line.split()[1])
+                           for line in lines[1:1 + count]))
+    return np.array(charges)
+
+
+def test_vsap_guess_fock_is_invariant_under_a_lattice_relabel():
+    """#483: moving Li by a lattice vector describes the same crystal, so the
+    pair-complete SAP guess Fock must not change at any k. Integrating the
+    long-range term on a molecular grid of the home-cell atoms moved it by
+    1e-4 Ha here; the reciprocal-space sum leaves only roundoff."""
+    a = 7.6
+    kpoints = ([0.0, 0.0, 0.0], [np.pi / a, 0.0, 0.0])
+    focks = []
+    for shift in ([0.0, 0.0, 0.0], [0.0, 0.0, -a]):
+        system, basis = _lih_at(a, shift)
+        opts = _lat_opts()
+        opts.pair_complete_1e = True
+        focks.append(periodic_guess.periodic_fock_guess_k(
+            system, basis, kpoints, vq.InitialGuess.SAP, lattice_opts=opts))
+    for moved, home in zip(*focks):
+        np.testing.assert_allclose(moved, home, rtol=0, atol=1e-10)
+
+
+def test_vsap_long_range_matches_an_independent_pair_ft_sum():
+    """The native weighted per-cell contraction against the Bloch pair-FT
+    kernel at one cell (vibeqc._aopair_ft) and the Python Y_lm convention:
+    V(default) - V(no G vectors) = (1/Omega) Re sum_G w(G) conj(FT(G; g))."""
+    import math
+
+    from vibeqc._aopair_ft import ao_pair_fourier_transform_at_cells
+    from vibeqc.bipole_ext_el_pole import (
+        _libint_ylm_correction_per_ao,
+        compute_reciprocal_lattice_vectors,
+    )
+
+    system, basis = _lih(7.6)
+    lo = _lat_opts()
+    grid = build_grid(system.unit_cell_molecule())
+    eo = vq.EwaldOptions()
+    full = compute_vsap_lattice(basis, system, grid, "sap_helfem_large", lo, eo)
+    no_long = vq.EwaldOptions()
+    no_long.recip_cutoff_bohr_inv = 1e-6  # below |b_i|: an empty G list
+    short = compute_vsap_lattice(basis, system, grid, "sap_helfem_large", lo, no_long)
+
+    eta = math.sqrt(-math.log(eo.tolerance)) / eo.real_cutoff_bohr
+    G = compute_reciprocal_lattice_vectors(
+        system, 2.0 * eta * math.sqrt(-math.log(eo.tolerance)))
+    G2 = (G ** 2).sum(axis=1)
+    positions = np.array([atom.xyz for atom in system.unit_cell], dtype=float)
+    weights = (4.0 * np.pi / G2) * np.exp(-G2 / (4.0 * eta ** 2)) * (
+        _sap_net_charges(system) @ np.exp(-1j * positions @ G.T))
+    scale = _libint_ylm_correction_per_ao(basis)
+    volume = abs(np.linalg.det(np.asarray(system.lattice)))
+    R = np.array([cell.r_cart for cell in full.cells], dtype=float)
+    ft = ao_pair_fourier_transform_at_cells(basis, G, R)
+    worst = 0.0
+    for c, (left, right) in enumerate(zip(full.blocks, short.blocks)):
+        expected = np.real(np.einsum("k,mnk->mn", weights, ft[c].conj()))
+        expected *= np.outer(scale, scale) / volume
+        worst = max(worst, float(np.abs(np.asarray(left) - right - expected).max()))
+    assert worst < 1e-12
+
+
+def test_vsap_long_range_matches_grid_quadrature_on_a_large_cell():
+    """A Cartesian copy of the basis takes the grid-quadrature fallback; on a
+    12-bohr LiH cell that quadrature is accurate, so both long-range routes
+    must give the same V_SAP (pure p and Cartesian p differ only in order)."""
+    from vibeqc._vibeqc_core import evaluate_ao
+
+    system, basis = _lih(12.0)
+    cartesian = vq.BasisSet(system.unit_cell_molecule(), [
+        vq.ShellInfo(sh.atom_index, sh.l, False, list(sh.exponents),
+                     list(sh.coefficients), list(sh.origin))
+        for sh in basis.shells()
+    ], "sto-3g-cartesian", True)
+    points = np.random.default_rng(483).normal(scale=2.0, size=(64, 3))
+    pure_ao = np.asarray(evaluate_ao(basis, points))
+    cart_ao = np.asarray(evaluate_ao(cartesian, points))
+    order = [int(np.argmin(np.abs(cart_ao - pure_ao[:, [m]]).sum(axis=0)))
+             for m in range(basis.nbasis)]
+    np.testing.assert_allclose(cart_ao[:, order], pure_ao, atol=1e-12)
+
+    lo = _lat_opts(cutoff=20.0, nuc=25.0)
+    grid = build_grid(system.unit_cell_molecule())
+    analytic = _gamma(compute_vsap_lattice(basis, system, grid,
+                                           "sap_helfem_large", lo))
+    quadrature = _gamma(compute_vsap_lattice(cartesian, system, grid,
+                                             "sap_helfem_large", lo))
+    assert np.max(np.abs(quadrature[np.ix_(order, order)] - analytic)) < 5e-4
+
+
 def test_periodic_sap_multik_reaches_same_basin_as_sad():
     """SAP is wired into the multi-k C++ RHF and RKS periodic drivers
     (F_SAP(k) = T(k) + V_SAP(k)). The guess does not change the converged
@@ -300,6 +416,49 @@ def test_periodic_sap_python_gamma_ewald_reaches_same_basin_as_sad():
                - rhf_energy(vq.InitialGuess.SAD)) < 1e-7
     assert abs(rks_energy(vq.InitialGuess.SAP)
                - rks_energy(vq.InitialGuess.SAD)) < 1e-7
+
+
+def test_periodic_sap_gamma_ewald_rohf_reaches_same_basin_as_sad():
+    """The exact-Gamma Ewald ROHF driver takes the SAP seed as real.
+
+    The shared periodic guess adapter returns the Gamma seed as a complex
+    array with a zero imaginary part. The Gamma Ewald evaluated states are
+    real-only (#472), so SAP stopped every Gamma Ewald RHF, RKS, UHF, UKS
+    and ROHF run with "requires a real total density" or "requires real
+    spin densities" (#527 follow-up). RHF/RKS are pinned above and UHF/UKS
+    in test_periodic_open_shell_guesses.py; this pins ROHF.
+    """
+    def rohf_energy(guess):
+        system, basis = _he_box()
+        opts = vq.PeriodicRHFOptions()
+        opts.conv_tol_energy = 1e-9
+        opts.initial_guess = guess
+        result = vq.run_rohf_periodic_gamma_ewald3d(
+            system, basis, opts, auto_optimize_truncation=False, verbose=0)
+        assert result.converged, f"ROHF/{guess.name} did not converge"
+        return result.energy
+
+    assert abs(rohf_energy(vq.InitialGuess.SAP)
+               - rohf_energy(vq.InitialGuess.SAD)) < 1e-7
+
+
+def test_real_gamma_seed_takes_a_zero_imaginary_seed_and_refuses_a_complex_one():
+    """The exact-Gamma seed contract shared by the GDF and Ewald drivers."""
+    from vibeqc.guess import _real_gamma_seed
+
+    real = np.array([[2.0, 0.1], [0.1, 0.5]])
+    assert _real_gamma_seed(real, "test") is real
+
+    as_complex = real.astype(complex)
+    taken = _real_gamma_seed(as_complex, "test")
+    assert not np.iscomplexobj(taken)
+    np.testing.assert_array_equal(taken, real)
+
+    material = as_complex.copy()
+    material[0, 1] += 1e-6j
+    material[1, 0] -= 1e-6j
+    with pytest.raises(ValueError, match="material imaginary part"):
+        _real_gamma_seed(material, "test")
 
 
 def test_periodic_sap_python_gdf_rhf_reaches_same_basin_as_sad():

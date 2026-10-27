@@ -1,0 +1,1 @@
+- Experimental MANTA metric assembly bounds now include two-center Coulomb integral construction through auxiliary l=7, with shared diagnostic plans, strict admission and explicit remaining source/relaxation exclusions.

@@ -1,207 +1,125 @@
 # Generating and reviewing the bundled basis library
 
-The directory `python/vibeqc/basis_library/basis/` is **mechanically
-generated**. End users get every shipped basis set on `pip install`
-because the directory is committed to the repo and packaged into the
-wheel, but the canonical sources live elsewhere and the directory is
-re-assembled by a build-time script. Treating it as hand-edited code
-hides meaningful changes inside hundreds of `.g94` diffs.
+The bundled basis library is a store of QVF-Basis records. Each
+`python/vibeqc/basis_library/qvf/<name>.qvf.json` is the source of truth
+for one basis set: shells, effective core potentials, references and
+provenance in one schema-validated file. `python/vibeqc/basis_library/basis/`
+is **rendered** from those records: the `.g94` orbital files libint reads
+and the `.ecp` sidecars libecpint reads. The rendering is committed so the
+wheel ships it and `LIBINT_DATA_PATH` can point at it, and it is pinned
+byte for byte to the records by `tests/test_basis_qvf_parity.py`. Nothing
+edits the text by hand.
 
-This page documents the generation pipeline and the review checklist
-that every PR touching `basis_library/basis/` should pass.
+This page documents the generation pipeline and the review checklist that
+every change touching `basis_library/` should pass.
 
 ## Pipeline at a glance
 
 ```
-third_party/libint/install/share/libint/<ver>/basis/*.g94   (standard)
-python/vibeqc/basis_library/custom/*.g94 + *.ecp            (vibe-qc-specific)
+python/vibeqc/basis_library/qvf/<name>.qvf.json        (records, the source of truth)
                        │
                        ▼
-            scripts/setup_basis_library.sh
-                       │  copy standard first, custom last (custom wins on name clash)
+     vibeqc.basis_toolkit.library.render_library       (scripts/render_basis_library.py,
+                       │                                 vibe-qc-basis render)
                        ▼
-            scripts/basisset_dev/split_ecp_g94.py
-                       │  split BSE-format ECP-bearing files into
-                       │  <name>.g94 (orbital-only, libint-loadable)
-                       │  <name>.ecp (verbatim ECP blocks for libecpint)
-                       ▼
-python/vibeqc/basis_library/basis/*.g94 + *.ecp             (output, committed)
+python/vibeqc/basis_library/basis/<name>.g94 + .ecp    (committed rendering, pinned to the records)
+build/basis_library/basis/<name>.g94 + .ecp            (runtime overlay with a content receipt,
+                                                        scripts/setup_basis_library.sh)
 ```
 
-### Source directories
+### The record
 
-* **`third_party/libint/install/share/libint/<libint-version>/basis/`**, 
-  the standard set libint installs with itself (Pople, Dunning, def2,
-  Karlsruhe, ANO, …). Built by `scripts/build_libint.sh` as part of
-  `scripts/setup_native_deps.sh`. We do not edit these files; bumping
-  libint refreshes them.
-* **`python/vibeqc/basis_library/custom/`**, vibe-qc-specific bases:
-  every BSE-fetched set (Phase 14), every vibe-qc-engineered set
-  (Phase 16 mpei-tzvp), every basis we ship that libint does not
-  bundle. **`.g94` files in this directory, plus any pre-split
-  `.ecp` sidecars, are the source of truth for the custom side.**
-  The `.g94` files must carry an
-  `! Originating publication: …` header so per-record attribution
-  survives the pipeline (see Citation policy below).
+A record carries, per element, the shells (`angular_momentum`,
+`harmonic_type`, primitives in the G94 coefficient convention) and, where
+the set is valence-only, the ECP (`n_core_electrons`,
+`angular_momentum_max`, one channel per `l`, each term with a
+Gaussian-format `power`; see #207 for the convention). Its `references`
+list the originating publications with DOIs, and its `provenance` block
+(schema 1.1.0) says what the record is:
 
-### Generator scripts
+| field | meaning |
+|---|---|
+| `kind` | `vendor` (bundled from a distribution such as libint's bundle or the Bredow archive, possibly completed with reviewed BSE blocks), `bse` (a whole Basis Set Exchange record), `hand-written`, `vibe-basis` |
+| `upstream` | one entry per source, with version, URL, identifier and which elements it supplied |
+| `retrieval_date` | when the data was retrieved or generated |
+| `content_sha256` | SHA-256 of the canonical JSON of `{elements, ecps}`; renaming or re-describing a record does not change it |
+| `citations` | citation keys (`database.toml` entries) per element range; the route table in `database.toml` must equal their union |
 
-* **`scripts/setup_basis_library.sh`**, the entry point. Idempotent;
-  safe to re-run. Wipes `basis/`, copies libint's set in, copies
-  custom `.g94` files and pre-split `.ecp` sidecars on top (so a
-  custom file with the same stem wins), then invokes the splitter.
-* **`scripts/basisset_dev/split_ecp_g94.py`**, splits BSE-format
-  `.g94` files that bundle orbital blocks together with `<Sym>-ECP`
-  blocks. libint2 cannot parse the ECP blocks
-  (`"invalid angular momentum label"`), so each affected file becomes
-  an orbital-only `<name>.g94` plus a `<name>.ecp` sidecar that
-  vibe-qc reads via libecpint at runtime. The splitter is idempotent
-  on already-split files.
-* **`scripts/basisset_dev/fetch_from_bse.py`**, Phase-14 fetcher
-  that pulls BSE entries into `custom/` with a provenance header.
-  Build-time only; not on the runtime path.
+### The rendering
 
-### Expected output
+`vibeqc.basis_toolkit.exporter_g94` writes every number with `repr`, the
+shortest decimal that parses back to the identical double, so a rendering
+loses no precision (#291). The header of each file is derived from the
+record: the content hash, the provenance line, one `Originating
+publication` line per reference (with its DOI), the element coverage and
+the record's description. An ECP record renders its potentials to the
+sidecar only, local channel first, projectors ascending; libint never sees
+an `-ECP` block.
 
-* Every `python/vibeqc/basis_library/basis/*.g94` is libint-loadable
-  (no `<Sym>-ECP` blocks left in the file).
-* Every ECP-bearing basis has a sister
-  `python/vibeqc/basis_library/basis/<name>.ecp` sidecar carrying
-  the verbatim ECP blocks. The canonical inventory pinned by tests
-  is documented in [`tests/test_basis_ecp_sidecars.py`](../../tests/test_basis_ecp_sidecars.py)
-  (EXPECTED_ECP_BASES).
+### Tools
 
-The `.ecp` sidecar is read by libecpint via `vq.parse_sidecar_path`
-/ `vq.auto_ecp_centers` for Phase-14e auto-population. An accidental
-deletion of a sidecar silently breaks ECP SCF for that basis, the
-regression checks below guard against it.
+* **`scripts/render_basis_library.py`**: standard library only, loads the
+  toolkit by path, so it works before the native core is built.
+  `--target DIR` renders; `--check` compares the committed rendering with
+  the records and exits 1 on any difference, naming the files.
+* **`scripts/setup_basis_library.sh`**: renders the runtime overlay under
+  `build/basis_library/` and writes the content receipt the runtime checks
+  before using it (#409). It refuses when the committed rendering is out of
+  step with the records, because the receipt would otherwise make every
+  import refuse the overlay it just built.
+* **`vibe-qc-basis`** (`vibeqc.basis_toolkit.cli`): `convert` turns BSE
+  JSON, Gaussian94, ORCA, NWChem or CRYSTAL input into a record; `render`
+  and `check` are the two commands above; `validate` checks records against
+  the schema; `inspect` prints a summary.
+* **`scripts/basisset_dev/pob_basis_verify.py`**: compares the per-element
+  CRYSTAL sources under `sources/` with the pob records and their
+  renderings.
 
-## When to regenerate
+## Adding or changing a bundled basis
 
-* After **upgrading libint** (the standard set may have shifted).
-* After **adding or modifying a file under `custom/`**.
-* After **changing the splitter** in `scripts/basisset_dev/split_ecp_g94.py`.
+1. Produce the record with `vibe-qc-basis convert <input> -o
+   python/vibeqc/basis_library/qvf/<name>.qvf.json`. `<name>` is the
+   lower-case identifier users pass to `BasisSet`; the record's `name`
+   must equal the file stem.
+2. Fill `references` (DOIs) and `provenance` (`kind`, `upstream`,
+   `retrieval_date`, `citations`). A BSE import brings references along;
+   the rest is yours to state. The parity test refuses a record without a
+   kind, an upstream or a date.
+3. Render the committed copy:
+   `./scripts/setup_basis_library.sh --target-dir python/vibeqc/basis_library`.
+4. Route the citation keys in `python/vibeqc/output/citations/database.toml`
+   (`[routes.basis_sets]` must list exactly the record's citation keys) and
+   record the component in `docs/license.md`.
+5. If the set is valence-only anywhere, add its family or threshold to
+   `basis_library/registry.toml`, and extend `EXPECTED_ECP_BASES` in
+   `tests/test_basis_ecp_sidecars.py`.
+6. Run `python scripts/render_basis_library.py --check`, then the basis
+   lanes: `tests/test_basis_qvf_parity.py`, `tests/test_basis_integrity.py`,
+   `tests/test_basis_ecp_sidecars.py`, `tests/test_basis_citation_coverage.py`,
+   `tests/test_basis_registry.py`.
 
-```sh
-./scripts/setup_basis_library.sh
-```
+## Review checklist
 
-The output directory (`basis/`) is committed. Do not edit files in
-`basis/` by hand, your changes will be wiped on the next run of the
-setup script. Edit `custom/` instead.
+* `python scripts/render_basis_library.py --check` passes.
+* The record names its publications and provenance; the rendered header
+  names the same DOIs.
+* The citation route table equals the record's citation keys.
+* No `.g94` or `.ecp` changed without its record changing, and vice versa.
+* `scripts/basisset_dev/diff_basis_library.py` summarises the data diff in a
+  form a reviewer can scan.
+* No private machine path or private term in any record or rendering
+  (`tests/test_basis_no_maintainer_paths.py`).
 
-## Citation policy (rule 8)
+## History
 
-Every bundled basis must reach the user as a citable reference. Two
-mechanisms, either one suffices for a given basis but at least one
-must be in place:
-
-1. A route entry under `[routes.basis_sets]` in
-   `python/vibeqc/output/citations/database.toml`, mapping the
-   basis name to one or more `[entries.<key>]` records. This drives
-   the SCF log and the auto-rendered `docs/citing.md`.
-2. An inline `! Originating publication: …` (or `! Citation: …` /
-   `! Cite: …`) header line in the `.g94` source. The setup pipeline
-   preserves the file header verbatim, so per-record provenance
-   survives the `custom/` → `basis/` promotion. Required for any
-   custom basis the route table does not cover.
-
-### Header-key convention
-
-Two header keys appear in the bundle today:
-
-* **`! Originating publication: …`**, the BSE fetcher
-  (`scripts/basisset_dev/fetch_from_bse.py`) emits this on every
-  fetched file. Preferred for any newly-added basis.
-* **`! Cite: …`**, historical key, retained on the pob-* set
-  (`pob-tzvp.g94`, `pob-tzvp-rev2.g94`, `pob-dzvp-rev2.g94`) and on
-  a handful of hand-curated custom sources.
-
-Both forms are accepted by the citation-coverage regex in
-[`tests/test_basis_citation_coverage.py`](../../tests/test_basis_citation_coverage.py).
-Don't churn existing files just to swap keys, preserving the
-header verbatim is the contract. **Whichever key is present, the
-line must carry a concrete reference** (authors + journal + DOI),
-not a pointer like `! Cite: see README.md`. The README is not
-parsed; a pointer leaves the header unable to attribute the basis
-on its own, which is the failure mode that motivated the
-post-22aface3 audit (May 2026).
-
-When you add or rename a basis, update **the same merge** per
-[AGENTS.md § 8](../AGENTS.md): add the `[entries.*]` block, the
-matching `[routes.basis_sets]` line, and extend the `_REQUIRED_*`
-list in `tests/test_citations.py` if the basis is a primary user
-target.
-
-## Licensing policy (rule 1)
-
-Before pulling a new basis into `custom/`, **verify redistribution
-terms**. Check:
-
-* the originating publication's license / copyright statement,
-* the BSE entry's "Role" / "Notes" / per-record license string,
-* any third-party `LICENSE` or `COPYING` files shipped alongside.
-
-If the terms are unclear or restrictive: **do not bundle.** Use the
-on-demand fetcher pattern (modeled on `vqfetch`), pull from source
-on first use, cache locally, surface the per-record provenance +
-license string in the SCF log + `.system` manifest. The full
-per-component inventory is at [`docs/license.md`](../license.md).
-
-## Reviewing a PR that touches `basis_library/basis/`
-
-Generated-data changes are easy to over-trust because the diff is
-huge. Use this checklist:
-
-1. **Did the PR change `custom/` or `setup_basis_library.sh` /
-   `split_ecp_g94.py`?** If not, the `basis/` diff is suspect, 
-   someone hand-edited a generated file. Push back.
-2. **Run the diff helper** (Phase 14, this milestone):
-
-   ```sh
-   .venv/bin/python scripts/basisset_dev/diff_basis_library.py origin/main HEAD
-   ```
-
-   It enumerates added / removed / modified `.g94` and `.ecp` files,
-   flags sidecar-pair changes, and prints provenance-header diffs.
-   The output is a few dozen lines even for a full regeneration.
-3. **For every added basis**: confirm its source (`custom/` file or
-   libint version), its provenance header, its license, and a
-   citation entry per § Citation policy above.
-4. **For every removed basis**: confirm the removal is intentional
-   and documented in the CHANGELOG `[Unreleased]`. ECP sidecar
-   removals are especially easy to miss.
-5. **For every modified `.g94`**: read the diff *for the file*, not
-   just the summary. A coefficient change is a different review than
-   an added element block.
-6. **Run the integrity tests** (Phase 14, this milestone):
-
-   ```sh
-   .venv/bin/python -m pytest tests/test_basis_ecp_sidecars.py \
-                              tests/test_basis_no_maintainer_paths.py \
-                              tests/test_basis_citation_coverage.py
-   ```
-
-   These run without rebuilding native dependencies and finish in
-   under a second on the current bundle.
-7. **Check the per-file headers** don't leak maintainer home paths
-   (`/Users/<name>/…`, `/home/<name>/…`), `test_basis_no_maintainer_paths.py`
-   gates this in CI but the pre-commit hook
-   ([`.githooks/pre-commit`](../../.githooks/pre-commit)) is the
-   first line of defence per clone.
-
-## See also
-
-* [`docs/user_guide/basis_sets.md`](../user_guide/basis_sets.md), 
-  user-facing survey of what we ship and when to pick what.
-* [`docs/license.md`](../license.md), full per-component licensing
-  inventory.
-* [`tests/test_basis_ecp_sidecars.py`](../../tests/test_basis_ecp_sidecars.py)
-  - pinned ECP sidecar contract.
-* [`scripts/setup_basis_library.sh`](../../scripts/setup_basis_library.sh)
-  - the regeneration entry point.
-* [`scripts/basisset_dev/split_ecp_g94.py`](../../scripts/basisset_dev/split_ecp_g94.py)
-  - ECP block splitter.
-* [`AGENTS.md`](../AGENTS.md) § 8, citation database ownership.
-* [`CLAUDE.md`](../CLAUDE.md) § 1, § 8, § 12, licensing, citation,
-  privacy.
+Until 2026-10 the pipeline ran the other way: libint's bundle plus a
+`custom/` directory of hand-placed `.g94` files were copied into
+`basis/`, a splitter moved ECP blocks into sidecars, and a converter
+produced the QVF records from the text. The converter had stopped being
+run: fifteen records carried SP shells in the interleaved layout of an
+earlier importer, and 254 were named `<g94-import>`. The records were
+regenerated from the shipped text (numerically identical, every value),
+seeded with the provenance above by
+`scripts/basisset_dev/seed_qvf_records_1_1.py`, and made authoritative
+(#406, #407, umbrella #295). `custom/`, the splitter and the converter are
+gone.

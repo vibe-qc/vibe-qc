@@ -3,8 +3,7 @@
 Pins the ``fit_screen_threshold`` option of
 :func:`vibeqc.aux_basis.build_lpq_bloch_native_fft` and its driver
 plumbing (``run_krhf_periodic_gdf`` / ``run_krks_periodic_gdf`` /
-``run_kuhf_periodic_gdf``), per
-``handovers/HANDOVER_GDF_FIT_SCREENING.md``:
+``run_kuhf_periodic_gdf``):
 
 * Energy invariance: screened == unscreened to < 1e-8 Ha/cell at
   threshold 1e-10 on the H₂ anchor (c-diamond + MgO run in the slow
@@ -13,7 +12,7 @@ plumbing (``run_krhf_periodic_gdf`` / ``run_krks_periodic_gdf`` /
   units, and the dropped pairs' Lpq entries are exactly zero.
 * No silent truncation: the kept/total pair counts are logged.
 * The ``fit_pair_list`` seam (symmetry-pair-reduction composition,
-  ``handovers/HANDOVER_SYMMETRY_PAIR_REDUCTION.md``): a full pair list
+  the original investigation): a full pair list
   is bit-identical to no list; a restricted list zeroes the complement.
 * Loud NotImplementedError/ValueError on unsupported combinations --
   never a silent no-op.
@@ -77,7 +76,7 @@ def _two_h2_units_box(separation_bohr: float = 10.0, box_bohr: float = 20.0):
 
 def _c_diamond():
     """fcc diamond primitive cell (a = 3.567 Å), 2 C -- the tight-cell
-    control of the handover's c-diamond ladder."""
+    control of the original investigation's c-diamond ladder."""
     a = 3.567 * _A
     lattice = (a / 2.0) * np.array(
         [
@@ -503,7 +502,7 @@ def test_gamma_fast_path_energy_invariant_under_1e10_screen():
     """The Γ (1,1,1) k-mesh takes the pure PBC-GDF fast path
     (run_pbc_gdf_rhf), which supports the screen via the Bloch-delegated
     build_lpq_native_fft + streamed V_ne: screened == unscreened to
-    < 1e-8 Ha/cell (M4 of the handover; this raised NotImplementedError
+    < 1e-8 Ha/cell (M4 of the original investigation; this raised NotImplementedError
     before the Γ plumbing landed)."""
     system, basis = _h2_cubic_box()
     r_exact = run_krhf_periodic_gdf(system, basis, (1, 1, 1), _rhf_opts())

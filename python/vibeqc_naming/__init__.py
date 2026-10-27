@@ -37,6 +37,11 @@ References
 
 from __future__ import annotations
 
+# The standalone vibeqc-naming distribution's version line (#536), independent
+# of vibe-qc's. vibeqc-naming/pyproject.toml carries the same number; its
+# tests pin the two together.
+__version__ = "0.1.1"
+
 from ._types import (
     Confidence,
     NamedResult,

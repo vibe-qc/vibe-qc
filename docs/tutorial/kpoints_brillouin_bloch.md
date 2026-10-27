@@ -7,7 +7,8 @@ every electronic state. This tutorial is the conceptual companion to the
 practical [k-point mesh guide](../user_guide/k_points.md) and the
 [band-structure tutorial](band_structure.md): it explains what a
 k-point *is*, why states carry a wavevector at all, and how to choose a
-mesh. There is no code to run here, but one interactive figure to drag.
+mesh. It ends with a short runnable section that builds the meshes it
+talks about, and there is one interactive figure to drag.
 
 ## Real space and reciprocal space
 
@@ -48,7 +49,8 @@ $u_{n,\mathbf{k}}$. Every state carries two labels: a band index $n$
 phase). This is what reduces an infinite crystal to a finite problem: you
 solve the cell once per $\mathbf{k}$ instead of diagonalising an infinite
 matrix. vibe-qc constructs these Bloch states by lattice (Bloch)
-summation of the unit-cell integrals; see
+summation of the unit-cell integrals, the Gaussian crystalline-orbital
+scheme of {vibeqc-cite}`pisani_crystal_1988`; see
 [periodic methods](../user_guide/periodic_methods.md).
 
 ## The Brillouin zone and the Γ point
@@ -133,7 +135,9 @@ atomic states into propagating waves:
   \mathbf{G}$.
 * **Geometric phase.** How the phase of $u_{n,\mathbf{k}}$ twists as
   $\mathbf{k}$ traverses the BZ is a Berry phase, the origin of the
-  modern theories of electric polarization and of band topology.
+  modern theories of electric polarization
+  ({vibeqc-cite}`kingsmith_vanderbilt_1993`, {vibeqc-cite}`resta_1994`)
+  and of band topology.
 
 ## High-symmetry points and their names
 
@@ -155,14 +159,17 @@ smaller group allows. The textbook example: a triply degenerate
 $\Gamma_{25}'$ level splits into $\Delta_5 + \Delta_2'$ as you walk along
 the $[100]$ direction. vibe-qc's crystal-symmetry layer (see
 [symmetry storage](symmetry_storage.md)) is what detects the little
-group and reduces the sampling to the irreducible $\mathbf{k}$-set.
+group and reduces the sampling to the irreducible $\mathbf{k}$-set
+(space-group detection with spglib, {vibeqc-cite}`togo_shinohara_tanaka_2024`;
+the Bloch-basis symmetry relations of {vibeqc-cite}`dovesi_symmetry_lcao_1986`).
 
 ## Sampling the Brillouin zone: Monkhorst-Pack
 
 Every observable, the total energy, the density, the density of states,
 is an *integral* over the BZ. In practice that integral is approximated
 by a weighted sum over a finite mesh of $\mathbf{k}$-points. The standard
-construction is the **Monkhorst-Pack** grid: a uniform
+construction is the **Monkhorst-Pack** grid
+({vibeqc-cite}`monkhorst_pack_1976`): a uniform
 $N_1 \times N_2 \times N_3$ mesh in fractional reciprocal coordinates.
 
 There is an exact correspondence worth internalising: an $N \times N
@@ -211,6 +218,102 @@ breaks the hexagonal symmetry. vibe-qc's **AUTO** k-point mode applies
 exactly these criteria from a requested spacing; the practical knobs,
 including an explicit k-mesh and the AUTO selector, are in the
 [k-point mesh guide](../user_guide/k_points.md).
+
+## Build a mesh and look at it
+
+Everything above can be made concrete in a few lines with `vibeqc.KPoints`,
+the builder every periodic entry point accepts. Take an H₂ chain with the
+4-bohr repeat of the [periodic HF tutorial](periodic_hf.md), one periodic
+axis (declared `dim=1` here, which is fine for building a
+mesh but not for an SCF; that tutorial runs the chain as a `dim=3` cell with
+transverse vacuum), and construct a six-point Monkhorst-Pack mesh:
+
+```python
+import numpy as np
+import vibeqc as vq
+from vibeqc import Atom, KPoints, PeriodicSystem
+
+chain = PeriodicSystem(dim=1, lattice=np.diag([4.0, 30.0, 30.0]),
+                       unit_cell=[Atom(1, [0, 0, 0]), Atom(1, [0, 0, 1.4])])
+
+kp = KPoints.monkhorst_pack(chain, [6, 1, 1])
+print(kp.kind, kp.mesh, kp.shift, len(kp), round(float(kp.weights.sum()), 6))
+for f, w in zip(kp.kpoints_frac, kp.weights):
+    print(f"  k = {f[0]:+.4f} (fractional)   w = {w:.4f}")
+```
+
+```text
+monkhorst-pack (6, 1, 1) (1, 0, 0) 6 1.0
+  k = +0.0833 (fractional)   w = 0.1667
+  k = +0.2500 (fractional)   w = 0.1667
+  k = +0.4167 (fractional)   w = 0.1667
+  k = +0.5833 (fractional)   w = 0.1667
+  k = +0.7500 (fractional)   w = 0.1667
+  k = +0.9167 (fractional)   w = 0.1667
+```
+
+Read this against the theory: the mesh lives on the periodic axis only
+(the two vacuum axes contribute the single point 0), the fractional
+coordinates are $k a/2\pi$, and because six is even the classical
+Monkhorst-Pack convention shifts the grid by half a step
+(`shift = (1, 0, 0)`), so $\Gamma$ itself is not sampled and the points
+come in $\pm k$ pairs when folded into $[-\tfrac12, \tfrac12)$. `kpoints_cart`
+holds the same points in bohr⁻¹ (here the odd multiples of $|\mathbf b_1|/12$,
+0.1309, 0.3927, ... with $|\mathbf b_1| = 2\pi/4 = 1.5708$ bohr⁻¹), and the
+weights are uniform and sum to one, which is what turns the Brillouin-zone integral into the weighted
+sum used in the SCF. `KPoints.gamma_centred(chain, [6, 1, 1])` removes the
+shift and returns $0, \tfrac16, \ldots, \tfrac56$, including $\Gamma$.
+
+Time-reversal symmetry makes $\varepsilon_n(-\mathbf k) = \varepsilon_n(\mathbf k)$,
+and the chain's inversion centre says the same thing in real space, so half
+of the mesh is redundant. Attach the space group and ask for the
+irreducible wedge:
+
+```python
+vq.attach_symmetry(chain)                       # spglib, once per system
+ibz = KPoints.monkhorst_pack(chain, [6, 1, 1], symmetry=True)
+print(len(ibz), "of", ibz.full_mesh_size, "points;",
+      "reduced:", ibz.is_symmetry_reduced)
+print(np.round(ibz.kpoints_frac[:, 0], 4), np.round(ibz.weights, 4))
+```
+
+```text
+3 of 6 points; reduced: True
+[0.0833 0.25   0.4167] [0.3333 0.3333 0.3333]
+```
+
+Three points with doubled weights reproduce the six-point sum exactly;
+`kp.symmetry_reduce()` performs the same reduction on an existing
+Monkhorst-Pack mesh. For a three-dimensional cell the reduction is much
+larger (48 operations for a cubic crystal), which is why the crystal
+tutorials attach symmetry before building dense meshes.
+
+Finally, a generalised regular grid.
+`KPoints.optimal` searches the Hermite-normal-form grids with a requested
+number of points and picks the one whose k-points are furthest apart
+(generalised regular grids, {vibeqc-cite}`wisesa_grids_2016`,
+{vibeqc-cite}`wang_grids_2021`); it
+needs a three-dimensional cell, so ask it about LiH rocksalt instead of the
+chain:
+
+```python
+a = 4.084 / 0.529177210903
+lih = PeriodicSystem(3, [[0, a/2, a/2], [a/2, 0, a/2], [a/2, a/2, 0]],
+                     [Atom(3, [0, 0, 0]), Atom(1, [a/2, a/2, a/2])])
+opt = KPoints.optimal(lih, 8)
+print(opt.kind, len(opt), opt.grid_matrix.tolist())
+```
+
+```text
+generalized-regular 8 [[2, 0, 0], [0, 2, 0], [0, 0, 2]]
+```
+
+For eight points on an fcc lattice the most uniform grid is the plain
+$2\times2\times2$ one (the grid matrix is diagonal); for other point counts,
+or for less symmetric cells, `optimal` returns a sheared grid that a
+Monkhorst-Pack mesh cannot express. Pass any of these objects as
+`kpoints=` to `run_periodic_job`. The output above is from a vibe-qc 0.17.x
+development build; the mesh arithmetic does not depend on the build.
 
 ## References
 

@@ -1,6 +1,8 @@
 // Restricted Hartree-Fock SCF driver for a single closed-shell molecule.
 
 #pragma once
+#include "vibeqc/opentrustregion.hpp"
+#include "vibeqc/manta_provenance.hpp"
 
 #include <Eigen/Dense>
 #include <optional>
@@ -25,6 +27,10 @@
 namespace vibeqc {
 
 struct RHFOptions {
+    // Explicit whole-SCF orbital optimizer; existing native phase defaults stay unchanged.
+    std::string orbital_optimizer = "native";
+    OpenTrustRegionOptions opentrustregion;
+
     int max_iter = 100;
     double conv_tol_energy = 1e-8;  // |E[k] - E[k-1]| < tol  (Hartree)
     double conv_tol_grad = 1e-6;    // ||F D S - S D F||_Frobenius
@@ -426,28 +432,14 @@ struct RHFOptions {
     DavidsonOptions davidson = {};
     int davidson_min_dim = 100;
 
-    // Restricted-stability VERDICT (issue #144 prerequisite, decision-
-    // neutral). After a converged RHF SCF, the lowest eigenvalue of the
-    // orbital-rotation Hessian at the returned solution is computed
-    // matrix-free (the coupled per-spin UHF machinery evaluated at
-    // equal spin blocks, i.e. the union of the Seeger-Pople singlet and
-    // triplet sectors; Seeger & Pople, J. Chem. Phys. 66, 3045 (1977),
-    // doi:10.1063/1.434318). A negative eigenvalue below -stability_tol
-    // means the converged solution is a saddle or an externally
-    // unstable restricted root: the result carries
-    // internal_instability=true and the output layer warns loudly that
-    // the energy is an excited SCF solution.
-    //
-    // Verdict ONLY — this surface does not rotate, escape, promote to
-    // UHF, or search other basins. What to DO with a negative verdict
-    // is the maintainer decision recorded in
-    // agentic-loop/asks/ask-scf144-restricted-stability-contract-2026-08-27.md;
-    // this option group only makes the verdict visible.
-    //
-    // Default ON (matching UHF/UKS): a silent wrong root is the defect
-    // class #144 tracks. Cost when stable: one Davidson solve, typically
-    // 10-40 J + K builds. Set stability_check=False for legacy
-    // single-SCF behaviour.
+    // Test the real restricted internal singlet and external triplet
+    // orbital-rotation sectors independently (Seeger-Pople 1977,
+    // doi:10.1063/1.434318; KS: Bauernschmitt-Ahlrichs 1996,
+    // doi:10.1063/1.471637). Separate channel records distinguish internal
+    // saddles from spin-breaking instabilities. No complex rotations,
+    // escape or automatic promotion to an unrestricted method are performed.
+    // Both solves share the declared wall and matvec budgets. The default
+    // aggregate verdict rejects either instability or an incomplete test.
     bool stability_check = true;
     // Distinguishes the automatic default from an explicit user request
     // so unsupported routes (e.g. +U) can skip silently by default but
@@ -457,6 +449,17 @@ struct RHFOptions {
     double stability_tol = 1e-4;
     // Davidson matvec cap for the stability solve.
     int stability_davidson_max_iter = 60;
+    // Wall-clock budget for each post-convergence stability solve (#342).
+    // stability_wall_budget_s > 0 is used as given; 0 (default) means
+    // automatic: max(stability_wall_floor_s, stability_wall_fraction x the
+    // SCF loop's own wall, the sum of the per-iteration trace). A spent
+    // budget ends the solve with an UNVERIFIED verdict instead of running
+    // to the matvec cap; a solve that finishes inside it is unchanged.
+    // Defaults: fraction 3.0, floor 600 s (maintainer decision D1,
+    // 2026-09-29).
+    double stability_wall_budget_s = 0.0;
+    double stability_wall_fraction = 3.0;
+    double stability_wall_floor_s = 600.0;
 };
 
 // Per-iteration record populated during the SCF loop. Captured for every
@@ -493,6 +496,8 @@ struct SCFIteration {
 };
 
 struct RHFResult {
+    std::optional<manta::MolecularEngineProvenance> engine_provenance;
+    OpenTrustRegionReport opentrustregion;
     std::optional<BasisSet> restart_basis;
     std::optional<GuessSelection> guess_selection;
     double energy = 0.0;            // total HF energy (Hartree)
@@ -536,11 +541,30 @@ struct RHFResult {
     // Davidson solve itself; ``stability_eigenvalue`` is the lowest
     // orbital-rotation Hessian eigenvalue at the returned solution
     // (>= -stability_tol means stable); ``internal_instability`` is the
-    // negative verdict passed to the output layer.
+    // internal singlet verdict passed to the output layer.
     bool stability_checked = false;
     bool stability_analysis_converged = false;
+    // Why the stability solve ended (vibeqc::StabilityStop as int: 0
+    // converged, 1 matvec budget, 2 wall budget, 3 not run, 4 trivial,
+    // 5 stagnated), the Hessian-vector products it spent and the wall
+    // budget that applied (seconds; 0 = unbounded). Carried into every
+    // output writer by the Python verdict object (#342).
+    int stability_stop_reason = 3;
+    int stability_n_matvec = 0;
+    double stability_wall_budget_s = 0.0;
     double stability_eigenvalue = 0.0;
     bool internal_instability = false;
+    // Separate real restricted (singlet) and spin-breaking (triplet)
+    // channels. Complex-orbital stability is not tested by these fields.
+    bool restricted_stability_channels = false;
+    bool stability_internal_converged = false;
+    bool stability_external_converged = false;
+    double stability_internal_eigenvalue = 0.0;
+    double stability_external_eigenvalue = 0.0;
+    int stability_internal_stop_reason = 3;
+    int stability_external_stop_reason = 3;
+    bool external_instability = false;
+
     // Wall / CPU seconds spent in the post-convergence stability phase.
     double stability_wall_s = 0.0;
     double stability_cpu_s = 0.0;

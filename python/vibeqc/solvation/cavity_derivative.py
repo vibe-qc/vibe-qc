@@ -97,6 +97,8 @@ def cavity_A_adjoints(
     switching: np.ndarray | None = None,
     zeta: float | None = None,
     n_points_per_sphere: int | None = None,
+    exponent_follows_area: bool = True,
+    block_rows: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Per-segment adjoints of ``scale * u^T A v``.
 
@@ -127,37 +129,85 @@ def cavity_A_adjoints(
     w = np.asarray(weights, dtype=np.float64)
     u = np.asarray(q_left, dtype=np.float64).reshape(-1)
     v = np.asarray(q_right, dtype=np.float64).reshape(-1)
+    n = pts.shape[0]
 
-    diff = pts[:, None, :] - pts[None, :, :]
-    r2 = np.einsum("ijk,ijk->ij", diff, diff)
-    r2[r2 == 0.0] = 1.0
-    inv_r3 = 1.0 / (r2 * np.sqrt(r2))
-    np.fill_diagonal(inv_r3, 0.0)
-    sym = u[:, None] * v[None, :] + u[None, :] * v[:, None]
-
-    if representation == GAUSSIAN_CHARGE:
-        return _gaussian_A_adjoints(
-            pts, w, u, v, sym, diff, r2, inv_r3, scale,
-            switching, zeta, n_points_per_sphere,
-        )
-    if representation != POINT_CHARGE:
+    if representation not in (POINT_CHARGE, GAUSSIAN_CHARGE):
         raise ValueError(
             f"cavity_A_adjoints: unknown representation {representation!r} "
             f"(use {POINT_CHARGE!r} or {GAUSSIAN_CHARGE!r})."
         )
 
-    adj_position = scale * np.einsum("ij,ijk->ik", -sym * inv_r3, diff)
+    gaussian = None
+    if representation == GAUSSIAN_CHARGE:
+        gaussian = _gaussian_setup(
+            w, switching, zeta, n_points_per_sphere, exponent_follows_area
+        )
 
-    A_diag = CPCM_DIAG_ALPHA / np.sqrt(w)
-    adj_area = scale * (u * v) * (-A_diag / (2.0 * w))
-    return adj_position, adj_area
+    # Every adjoint is a sum over the partner segment j for a fixed segment i,
+    # so the (n, n, 3) pair tensors can be taken a block of rows at a time and
+    # give the same numbers. Whole, they are 24 n^2 bytes for the separations
+    # plus about ten n^2 arrays beside them: 25 GB at the 15 500 segments of a
+    # 74-atom alkane, against a cavity matrix of 1.9 GB.
+    if block_rows is None:
+        block_rows = max(16, int(4_000_000 // max(n, 1)))
+    adj_position = np.empty((n, 3), dtype=np.float64)
+    adj_pair_area = np.zeros(n, dtype=np.float64)
+    for i0 in range(0, n, block_rows):
+        i1 = min(i0 + block_rows, n)
+        rows = np.arange(i0, i1)
+        diff = pts[i0:i1, None, :] - pts[None, :, :]
+        r2 = np.einsum("ijk,ijk->ij", diff, diff)
+        r2[r2 == 0.0] = 1.0
+        inv_r3 = 1.0 / (r2 * np.sqrt(r2))
+        inv_r3[rows - i0, rows] = 0.0
+        sym = u[i0:i1, None] * v[None, :] + u[None, :] * v[i0:i1, None]
+        if gaussian is None:
+            adj_position[i0:i1] = scale * np.einsum(
+                "ij,ijk->ik", -sym * inv_r3, diff
+            )
+        else:
+            adj_position[i0:i1], adj_pair_area[i0:i1] = _gaussian_rows(
+                gaussian, rows, sym, diff, r2, inv_r3, scale
+            )
+
+    if gaussian is None:
+        A_diag = CPCM_DIAG_ALPHA / np.sqrt(w)
+        return adj_position, scale * (u * v) * (-A_diag / (2.0 * w))
+
+    z, F = gaussian["z"], gaussian["F"]
+    if not exponent_follows_area:
+        # Switched Lebedev cavity: fixed exponents, so only the diagonal's
+        # 1/F_i depends on the area. A_ii = z_i sqrt(2/pi) / F_i with
+        # F_i = a_i / a_raw_i, hence dA_ii/da_i = -A_ii / a_i.
+        A_diag = z * np.sqrt(2.0 / np.pi) / F
+        return adj_position, scale * (u * v) * (-A_diag / w)
+
+    # Off-diagonal channel (absent for point charges), then the diagonal one.
+    A_diag = z * np.sqrt(2.0 / np.pi)
+    return adj_position, adj_pair_area + scale * (u * v) * (-A_diag / (2.0 * w))
 
 
-def _gaussian_A_adjoints(
-    pts, w, u, v, sym, diff, r2, inv_r3, scale,
-    switching, zeta, n_points_per_sphere,
+def _gaussian_setup(
+    w, switching, zeta, n_points_per_sphere, exponent_follows_area=True,
 ):
     """Adjoints of the York-Karplus Gaussian kernel.
+
+    Two cavities use it, and they differ in the one thing the area adjoint
+    depends on: **what the Gaussian exponent follows**.
+
+    * A FINE cavity (``exponent_follows_area=True``) has no switching function
+      and areas that move with the geometry; its exponent is
+      ``zeta_i = zeta / sqrt(a_i)`` of its own area, so the off-diagonal
+      elements carry an area derivative.
+    * A switched Lebedev cavity (``exponent_follows_area=False``) has
+      ``a_i = a_raw_i F_i`` with ``a_raw_i`` the *fixed* Lebedev element of its
+      sphere, so ``zeta_i = zeta sqrt(F_i / a_i) = zeta / sqrt(a_raw_i)`` does
+      not depend on the geometry at all. The off-diagonal elements then depend
+      on the positions only, and the single area dependence is the diagonal's
+      ``1/F_i``: ``A_ii = zeta_i sqrt(2/pi) a_raw_i / a_i``, whose derivative with
+      respect to ``a_i`` at fixed ``zeta_i`` is ``-A_ii / a_i``. The switching
+      factor's own geometry dependence is the cavity derivative's business
+      (:class:`LebedevCavityDerivative` turns an area adjoint into ``dF/dR``).
 
     ``A_ij = erf(zeta_ij r_ij)/r_ij`` with
     ``zeta_ij = zeta_i zeta_j / sqrt(zeta_i^2 + zeta_j^2)`` and
@@ -186,17 +236,17 @@ def _gaussian_A_adjoints(
 
         dA_ii/da_i = -A_ii / (2 a_i)
 
-    Restricted to ``F == 1``. For a switched cavity ``a_i`` and ``F_i`` are not
-    independent (``a_i = a_i^raw F_i``), so ``zeta_i`` is switching-invariant
-    while ``A_ii`` carries ``1/F_i`` -- a different chain rule that is not
-    derived here. It refuses rather than guessing.
+    An area-following exponent on a switched cavity (``F != 1`` with
+    ``exponent_follows_area=True``) is not a construction that exists, and its
+    chain rule is not derived: it refuses rather than guessing.
     """
-    from scipy.special import erf as _erf
-
     from .cpcm import gaussian_exponents, york_karplus_zeta
 
-    if switching is not None and not np.allclose(switching, 1.0, atol=0.0,
-                                                 rtol=1e-14):
+    if (
+        exponent_follows_area
+        and switching is not None
+        and not np.allclose(switching, 1.0, atol=0.0, rtol=1e-14)
+    ):
         raise NotImplementedError(
             "cavity_A_adjoints: the Gaussian-kernel derivative is derived only "
             "for a cavity with no switching function (F == 1). For a switched "
@@ -207,33 +257,45 @@ def _gaussian_A_adjoints(
         )
     if zeta is None:
         zeta = york_karplus_zeta(n_points_per_sphere)
-    z = gaussian_exponents(w, None, zeta=zeta)
+    # The same exponents the matrix was built with: from the switching factor
+    # when the cavity has one, which is what keeps them geometry-independent on
+    # a Lebedev cavity.
+    z = gaussian_exponents(w, None if exponent_follows_area else switching, zeta=zeta)
+    F = np.ones_like(w) if switching is None else np.asarray(switching, dtype=np.float64)
+    return {"z": z, "w": w, "F": F, "follows_area": bool(exponent_follows_area)}
 
+
+def _gaussian_rows(setup, rows, sym, diff, r2, inv_r3, scale):
+    """The Gaussian-kernel adjoints of the segments ``rows``.
+
+    Returns ``(adj_position[rows], adj_pair_area[rows])``; the latter is the
+    off-diagonal area channel, nonzero only when the exponent follows the area.
+    """
+    from scipy.special import erf as _erf
+
+    z, w = setup["z"], setup["w"]
+    zi = z[rows]
     r = np.sqrt(r2)
-    z_ij = np.outer(z, z) / np.sqrt(z[:, None] ** 2 + z[None, :] ** 2)
+    z_ij = np.outer(zi, z) / np.sqrt(zi[:, None] ** 2 + z[None, :] ** 2)
     x = z_ij * r
     gauss = np.exp(-x * x)
     erf_x = _erf(x)
 
     # --- position -----------------------------------------------------
     bracket = erf_x - (2.0 / np.sqrt(np.pi)) * x * gauss
-    np.fill_diagonal(bracket, 0.0)
+    bracket[np.arange(len(rows)), rows] = 0.0
     adj_position = scale * np.einsum(
         "ij,ijk->ik", -sym * bracket * inv_r3, diff
     )
+    if not setup["follows_area"]:
+        return adj_position, np.zeros(len(rows))
 
-    # --- area ---------------------------------------------------------
-    # Off-diagonal channel, absent for point charges.
+    # --- area, off-diagonal channel -----------------------------------
     dA_dzij = (2.0 / np.sqrt(np.pi)) * gauss
-    np.fill_diagonal(dA_dzij, 0.0)
-    dzij_dzi = (z_ij / z[:, None]) ** 3
-    dzi_dai = -z / (2.0 * w)
-    adj_area = scale * dzi_dai * np.einsum(
-        "ij,ij->i", sym * dA_dzij, dzij_dzi
-    )
-    # Diagonal channel.
-    A_diag = z * np.sqrt(2.0 / np.pi)
-    adj_area += scale * (u * v) * (-A_diag / (2.0 * w))
+    dA_dzij[np.arange(len(rows)), rows] = 0.0
+    dzij_dzi = (z_ij / zi[:, None]) ** 3
+    dzi_dai = -zi / (2.0 * w[rows])
+    adj_area = scale * dzi_dai * np.einsum("ij,ij->i", sym * dA_dzij, dzij_dzi)
     return adj_position, adj_area
 
 

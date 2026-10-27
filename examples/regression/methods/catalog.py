@@ -36,19 +36,19 @@ METHODS: Dict[str, MethodSpec] = {
     # GGA + hybrid DFT (vibe-qc supports LDA, PBE, BLYP, B3LYP via LibXC).
     "rks-blyp": MethodSpec(
         id="rks-blyp", scf="rks", xc="blyp",
-        spin="closed", periodic=False, molecular=True,
+        spin="closed", periodic=True, molecular=True,
     ),
     "rks-b3lyp": MethodSpec(
         id="rks-b3lyp", scf="rks", xc="b3lyp",
-        spin="closed", periodic=False, molecular=True,
+        spin="closed", periodic=True, molecular=True,
     ),
     "uks-blyp": MethodSpec(
         id="uks-blyp", scf="uks", xc="blyp",
-        spin="open", periodic=False, molecular=True,
+        spin="open", periodic=True, molecular=True,
     ),
     "uks-b3lyp": MethodSpec(
         id="uks-b3lyp", scf="uks", xc="b3lyp",
-        spin="open", periodic=False, molecular=True,
+        spin="open", periodic=True, molecular=True,
     ),
     # Post-HF correlation (vibe-qc has run_mp2 + run_ump2; molecular only).
     "mp2": MethodSpec(

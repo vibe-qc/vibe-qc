@@ -459,8 +459,8 @@ input (.py)* and vq submission always use the geometry as edited.
   background evaluations interactive.
 * **Auto-optimize engines**: the default is vibe-qc's **MSINDO**
   semi-empirical model (analytic gradients, elements H through Xe).
-  When vibe-qc's `[mace]` extra is installed (PyTorch stack, Python
-  3.13 or older), an **Engine** picker appears offering **MACE**
+  When vibe-qc's `[mace]` extra is installed (PyTorch stack, including Python
+  3.14), an **Engine** picker appears offering **MACE**
   (the MIT-licensed MACE-MPA-0 foundation model, CPU): often better
   geometries, heavier per step, and the first use downloads the model
   weights (the status line says so). MACE energies are the model's

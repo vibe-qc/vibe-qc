@@ -1,0 +1,1 @@
+- Experimental streamed molecular symmetry execution can bind MANTA's certified shell maps once and consume representative keys natively, avoiding repeated Python map copies. Mismatched plan maps refuse before evaluation; complete numerical audits, physical source identities and checked fallbacks remain unchanged.

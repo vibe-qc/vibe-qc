@@ -134,9 +134,9 @@ once you convert Å → bohr.
 | CRYSTAL | vibe-qc |
 |---|---|
 | `BASISSET / POB-TZVP / END` block | `BasisSet(mol, "pob-tzvp")`, same name |
-| Per-element CRYSTAL-format basis lines | Drop the file under `basis_library/custom/` and re-run `./scripts/setup_basis_library.sh`. The CRYSTAL-format parser (`vibeqc.basis_crystal`) handles the per-element layout. |
-| Mixed BSE + custom basis | Same pattern, drop in `custom/`, rebuild. See [basis_sets](basis_sets.md) § "Custom basis sets". |
-| `INPUT` block with explicit primitive coefficients | Same `custom/` mechanism. |
+| Per-element CRYSTAL-format basis lines | Convert the file into a QVF-Basis record with `vibe-qc-basis convert`. The CRYSTAL-format parser (`vibeqc.basis_crystal`) handles the per-element layout. |
+| Mixed BSE + custom basis | Same pattern: one record per basis set. See [basis_sets](basis_sets.md). |
+| `INPUT` block with explicit primitive coefficients | Same record mechanism; the ECP radial powers are converted to the Gaussian convention (#207). |
 
 The bundled pob-* family on `main` covers H-Br (the same coverage
 as the original Peintinger 2013 paper). Current installs ship the
@@ -173,9 +173,16 @@ Gilat-Raubenheimer cell quadrature (no smearing width to converge). It is
 self-consistent for **insulators** (full or symmetry-reduced meshes), and
 parameter-free **post-SCF** for **metals**: converge with
 `smearing_temperature`, then take the GR Fermi level / occupations / `gilat_dos`
-on the converged eigenvalues. Self-consistent GR-driven *metals* await the
-periodic density-mixing program (Kerker / Anderson / Broyden, roadmap v0.10.x);
-until then a metal total energy comes from smearing.
+on the converged eigenvalues. The periodic density mixers shipped in v0.14:
+`run_periodic_job(..., density_mixer="anderson" | "broyden",
+density_mixer_kerker=True)` on the closed-shell GDF route (`jk_method="gdf"`,
+RHF/RKS) and on multi-k RIJCOSX, both with an explicit `kpoints=` mesh; see
+[SCF convergence](scf_convergence.md) for the periodic convergence aids and
+[periodic methods](periodic_methods.md) for the route table. They damp charge
+sloshing, but they do not make a sharp Fermi surface differentiable: a
+GR-driven metallic SCF still has a discontinuous occupation map, so a metal
+total energy still comes from smearing and GR stays the post-SCF analysis
+step (see [metallic BZ integration](metallic_bz_integration.md)).
 ```
 
 ### Coulomb / exchange truncation (TOLINTEG)
@@ -191,7 +198,7 @@ real-space support and Schwarz screening independently.
 | `T2` (Coulomb penetration) | No active analogue; quartet bipolar dispatch is unavailable |
 | `T3` (exchange overlap) | Converge the direct-ERI overlap/Schwarz thresholds independently |
 | `T4` (exchange pseudo-overlap) | No one-to-one analogue |
-| `T5` (pseudopotential) | ECP-bearing BIPOLE jobs are currently unsupported |
+| `T5` (pseudopotential) | Scalar ECP single points use midpoint projector support; converge its radius separately (see [BIPOLE](bipole.md)); no T5 equivalence |
 
 Use the overlap-fold preflight and cutoff ladders to establish real-space
 support, then tighten the Schwarz thresholds as a separate convergence test. See
@@ -236,7 +243,7 @@ when they need tightening.
 | `PW1PW` | `opts.functional = "pw1pw"`, Bredow's periodic hybrid. See [functionals](functionals.md). |
 | `DFTD3` / `XLYP-D3` style suffix | Pass `opts.dispersion = "d3"` / `"d3bj"` / `"d4"`. Independent from the functional name. |
 | `HSE06` (screened hybrid) | `opts.functional = "hse06"`. Short-range exact exchange is supported by the BIPOLE, Ewald, and slab routes, including supported multi-k meshes. |
-| `LC-ωPBE` and other long-range-corrected hybrids | Fail closed on periodic routes until the long-range exact-exchange arm is implemented. |
+| `LC-ωPBE` and other long-range-corrected hybrids | Single-range kernels run on corrected 3D BIPOLE RKS/UKS at Gamma/multi-k with physical pair support; matched crystal qualification remains open. HISS/multiple ranges and other ordinary routes remain refused. |
 
 ## What CRYSTAL does that vibe-qc doesn't (yet)
 
@@ -252,9 +259,10 @@ Use CRYSTAL for these for now:
 * **Phonon dispersion** (`PHONON`). Roadmap.
 * **Elastic constants** (`ELASTCON`). Roadmap.
 * **Long-range-corrected hybrids for solids** (`LC-ωPBE` and related
-  functionals). HSE06 is supported because its exact-exchange arm is
-  short-ranged; long-range exact exchange still fails closed on the
-  periodic routes.
+  functionals). Corrected 3D BIPOLE implements single-range CAM/LC exchange,
+  with focused matrix checks. Matched CRYSTAL total-energy and performance
+  qualification remain open; HISS and other multiple-range kernels remain
+  refused. See [BIPOLE](bipole.md).
 * **Coupled-cluster periodic** (`MP2`, `CCSD`). vibe-qc's molecular
   MP2 / RI-MP2 is solid; periodic post-HF correlation is v2.x scope.
 
@@ -381,6 +389,9 @@ inline the basis block instead.
 
 ## See also
 
+- [CRYSTAL23 capability matrix](../crystal23_capability_matrix.md), the
+  per-capability evidence inventory of the parity programme (#593): what is
+  implemented, source-tested, numerically accepted, unverified or unsupported.
 - [user_guide/bipole](bipole.md), BIPOLE periodic-RHF driver status,
   the 1988 quartet-expansion source, and the Saunders 1992 electrostatics
   reference.
@@ -391,7 +402,7 @@ inline the basis block instead.
   submit CRYSTAL14 jobs through the same `vq` queue used for
   vibe-qc.
 - [user_guide/basis_sets](basis_sets.md) § "CRYSTAL-format basis
-  parser", drop a CRYSTAL `.bas` file under `custom/`.
+  parser", converting a CRYSTAL per-element file into a record.
 - [Why solid-state calculations use `pob-TZVP`](../tutorial/pob_tzvp.md), why
   CRYSTAL-style basis sets matter for periodic calculations.
 - [MgO from the Materials Project: `vqfetch` end-to-end](../tutorial/mgo_from_materials_project.md)

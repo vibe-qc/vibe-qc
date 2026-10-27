@@ -359,10 +359,11 @@ def test_bipole_one_cycle_component_uses_returned_real_space_density(monkeypatch
         progress=False,
     )
 
-    lat_opts = LatticeSumOptions()
-    lat_opts.cutoff_bohr = 6.0
-    lat_opts.nuclear_cutoff_bohr = 6.0
-    lat_opts.coulomb_method = CoulombMethod.DIRECT_TRUNCATED
+    # Reconstruct the operator the driver actually executed. A plain
+    # lattice-index ball differs from the physical AO-pair support (#504).
+    assert result.resolved_domain.policy == "physical_pairs"
+    lat_opts = result.resolved_domain.lattice_1e.restore(LatticeSumOptions)
+    assert lat_opts.pair_complete_1e
     S_lat = compute_overlap_lattice(basis, system, lat_opts)
     T_lat = compute_kinetic_lattice(basis, system, lat_opts)
     D_sad = initial_density_closed_shell(
@@ -577,7 +578,7 @@ def test_bipole_h2_12bohr_gamma_energy_regression():
 def test_bipole_h2_12bohr_gamma_legacy_gauge_energy_and_spheropole():
     """The legacy Γ gauge (locality projection + full-Coulomb direct K +
     EXT EL-SPHEROPOLE in the total) stays reachable via
-    ``use_exchange_ewald_split=False``. M5's padded SR domain
+    ``use_exchange_ewald_split=False, historical_domain=True``. M5's padded SR domain
     applies to this erfc J build too; the analytic-gradient preview requests
     the historical domain explicitly when it exercises this gauge.
 
@@ -592,6 +593,7 @@ def test_bipole_h2_12bohr_gamma_legacy_gauge_energy_and_spheropole():
         opts,
         ewald_precision=1e-6,
         use_exchange_ewald_split=False,
+        historical_domain=True,
         progress=False,
     )
 
@@ -752,10 +754,13 @@ def test_bipole_corrected_split_one_electron_atom_matches_split_invariant():
     assert r.energy == pytest.approx(_H_ATOM_30_SPLIT_INVARIANT, abs=2e-8)
 
 
-def test_bipole_explicit_crystal_alpha_is_still_short_at_the_fixed_cutoff():
-    """The pre-fix configuration, requested explicitly, must still miss the
-    image exchange beyond 12 bohr; otherwise the fixture no longer
-    discriminates the defect."""
+@pytest.mark.parametrize("historical_domain", [False, True])
+def test_bipole_explicit_crystal_alpha_domain_control(historical_domain):
+    """The historical support still misses the exchange tail at small alpha.
+
+    Physical support now resolves that tail even with the explicit alpha;
+    select the historical domain explicitly to retain the negative control.
+    """
     sysp, basis = _h2_30bohr_box()
     km = monkhorst_pack(sysp, [1, 1, 1])
     r = run_pbc_bipole_rhf(
@@ -766,11 +771,17 @@ def test_bipole_explicit_crystal_alpha_is_still_short_at_the_fixed_cutoff():
         ewald_omega=2.8 / 30.0,
         use_ewald_j_split=True,
         use_exchange_ewald_split=True,
+        historical_domain=historical_domain,
         progress=False,
     )
     assert r.converged
     assert r.ewald_alpha_bohr_inv == pytest.approx(2.8 / 30.0)
-    assert r.energy - _H2_30_SPLIT_INVARIANT > 1e-5, r.energy
+    expected_policy = "historical_index_ball" if historical_domain else "physical_pairs"
+    assert r.resolved_domain.policy == expected_policy
+    if historical_domain:
+        assert r.energy - _H2_30_SPLIT_INVARIANT > 1e-5, r.energy
+    else:
+        assert r.energy == pytest.approx(_H2_30_SPLIT_INVARIANT, abs=2e-8)
 
 
 def test_bipole_legacy_gauge_keeps_crystal_alpha_on_a_large_box():
@@ -785,7 +796,71 @@ def test_bipole_legacy_gauge_keeps_crystal_alpha_on_a_large_box():
         _box_options_674(),
         use_ewald_j_split=True,
         use_exchange_ewald_split=False,
+        historical_domain=True,
         progress=False,
     )
     assert r.converged
     assert r.ewald_alpha_bohr_inv == pytest.approx(2.8 / 30.0)
+
+
+@pytest.mark.parametrize("tolerance", [1e-4, 1e-8, 1e-10, 1e-12])
+@pytest.mark.parametrize("alpha", [.05, .4, 1.2])
+def test_reciprocal_precision_controls_gaussian_tail(tolerance, alpha):
+    legacy = bipole_ewald_reciprocal_cutoff(20.**3, alpha)
+    resolved = bipole_ewald_reciprocal_cutoff(20.**3, alpha, tolerance=tolerance)
+    assert resolved >= legacy
+    assert math.exp(-resolved**2 / (4*alpha**2)) <= tolerance*(1+1e-13)
+    if tolerance >= math.exp(-legacy**2 / (4*alpha**2)):
+        assert resolved == legacy
+
+
+@pytest.mark.parametrize("tolerance", [0., -1., 1., float("nan"), float("inf")])
+def test_reciprocal_precision_rejects_invalid_request(tolerance):
+    with pytest.raises(ValueError, match="tolerance"):
+        bipole_ewald_reciprocal_cutoff(20.**3, .4, tolerance=tolerance)
+
+
+@pytest.mark.parametrize("method,functional", [
+    ("rhf", None), ("uhf", None), ("rks", "pbe"), ("uks", "pbe"),
+    ("rks", "pbe0"), ("uks", "pbe0"),
+])
+@pytest.mark.parametrize("mesh", [(1,1,1), (3,1,1)])
+def test_ecp_reciprocal_precision_reaches_converged_reference(method, functional, mesh, record_property):
+    """The tighter request resolves Cl2's previously fixed 3.7e-8 ionic tail.
+
+    Reuse the independently converged periodic Cl2 HF references of #35/#658;
+    KS checks the shared ionic construction, not an independent DFT total.
+    """
+    import importlib
+    from vibeqc.periodic_runner import _resolve_ecp_data, _attach_periodic_ecp_data
+    bond = 1.99 * 1.8897261246257702
+    system = vq.PeriodicSystem(3, 20.*np.eye(3), [
+        vq.Atom(17, [10.,10.,10.-bond/2]), vq.Atom(17, [10.,10.,10.+bond/2])], 0, 1)
+    basis = vq.BasisSet(system.unit_cell_molecule(), "lanl2dz")
+    opts = vq.PeriodicKSOptions() if method.endswith("ks") else PeriodicRHFOptions()
+    _attach_periodic_ecp_data(opts, _resolve_ecp_data(system,basis))
+    opts.initial_guess = InitialGuess.HCORE
+    opts.lattice_opts.cutoff_bohr = 12.
+    opts.lattice_opts.nuclear_cutoff_bohr = 20.
+    opts.max_iter = 100
+    opts.conv_tol_energy = 1e-10
+    opts.conv_tol_grad = 1e-8
+    module = importlib.import_module("vibeqc.pbc_bipole" + ("" if method == "rhf" else "_"+method))
+    run = getattr(module, "run_pbc_bipole_"+method)
+    kwargs = dict(functional=functional) if functional is not None else {}
+    result = run(system,basis,monkhorst_pack(system,list(mesh)),opts,
+                 progress=False,ewald_precision=1e-12,**kwargs)
+    assert result.converged
+    domain = result.resolved_domain
+    assert math.exp(-domain.reciprocal_cutoff_bohr_inv**2 / (4*domain.ewald_alpha_bohr_inv**2)) <= 1.001e-12
+    # PySCF Cell.energy_nuc(), precision=1e-11, same effective Cl charges.
+    ionic_error = result.e_nuclear - (-0.6817597891670868)
+    record_property("ionic_error_hartree", ionic_error)
+    record_property("energy_hartree", result.energy)
+    record_property("G_max", domain.reciprocal_cutoff_bohr_inv)
+    assert abs(ionic_error) < 1e-9
+    if method.endswith("hf"):
+        reference = {(1,1,1): -29.3455846237986, (3,1,1): -29.340156129936254}[mesh]
+        error = result.energy-reference
+        record_property("total_reference_error_hartree", error)
+        assert abs(error) < 5e-9

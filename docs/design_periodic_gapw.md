@@ -450,9 +450,6 @@ The five M0 asks, resolved by the maintainer 2026-05-24:
 
 - [`docs/roadmap.md`](roadmap.md), Acceleration program,
   `v0.10.x` row.
-- [Archived `HANDOVER_GDF_V0_11_2026_05_29.md`](https://vibe-qc.com/docs/)
-  - GDF route state (the closed-shell Γ-only Gaussian route
-  we coexist with).
 - [`docs/user_guide/bipole.md`](user_guide/bipole.md)
   - BIPOLE route reference (the multi-k open-shell Gaussian route
   we coexist with).
@@ -462,3 +459,45 @@ The five M0 asks, resolved by the maintainer 2026-05-24:
   GAPW formulation.
 - Blöchl, *Phys. Rev. B* 50, 17953 (1994), PAW.
 - Lin Lin, *J. Chem. Theory Comput.* 12, 2242 (2016), ACE.
+
+
+### Opt-in coupled nuclear pair domain
+
+`smeared_v_ne_full_gamma(..., lat_opts=opts)` uses a coupled physical domain
+when `opts.pair_complete_1e` is true. The actual erfc lattice cells and
+`opts.cutoff_bohr` define the calibrated AO-pair Fourier projection of the
+FFT potential; the alpha correction uses overlap with the unchanged same
+options. With `V_G = FFT[V]/N_grid` and
+`P_mn(G) = integral P_mn(r) exp(-i G.r) dr`, the projection is
+`sum_G V_G conj(P_mn(G))`, retaining the existing AO normalization.
+The private convention dispatcher forwards supplied options for this route.
+
+The nuclear positions are reduced into the grid cell before the opt-in
+finite-image collocation. This fixes representation-dependent image placement;
+`image_shells`, grid resolution and real-space cutoffs still require convergence.
+No global default or common Fock API changes. Full native matrix translation,
+alpha cancellation and SCF checks remain the numerical acceptance criteria.
+
+### Paired terminal Hartree construction
+
+`GapwJBuilder.build_hartree(D)` returns the explicit Hartree functional and
+J matrix evaluated from an owned snapshot of D. Analytic and projector modes
+retain their joint evaluator result; block mode retains its explicit
+augmentation functional. The returned J owns its storage. Restricted Gamma
+GAPW terminal construction consumes this pair, including the bare RHF
+terminal FockBuild capture. Existing `build_J` and `gapw_hartree_energy`
+entry points remain available. This transport change preserves source
+conventions and the experimental method restrictions above.
+
+### Restricted augmented SCF state
+
+Bare zero-temperature Gamma GAPW RHF now captures a physical FockBuild at
+each SCF input density. The convergence energy uses the explicit paired
+Hartree functional, matching terminal construction. The existing libint
+exchange convention, damping, occupations and DIIS policy are preserved.
+DIIS matrices carry the physical build and density identity into the shared
+eigensolver; they do not replace the physical operator. Scalar SCF trace
+entries expose the physical and solver build identities. The runner reports
+`fock_capture_scope="scf-and-terminal"`; the returned build still evaluates
+the returned density. KS, finite-temperature and +U loop migration remain
+outside this slice, and GAPW admission remains experimental.

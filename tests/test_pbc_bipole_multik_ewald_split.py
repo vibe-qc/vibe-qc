@@ -1122,6 +1122,7 @@ def test_use_ewald_j_split_ibz_native_energy_matches_full_mesh():
         system, basis, kmesh_full, opts,
         use_ewald_j_split=True,
         use_exchange_ewald_split=False,  # gauge-independent consistency check; legacy keeps it cheap (no BvK-torus cutoff)
+        historical_domain=True,
         ewald_precision=1e-6,
         progress=False,
     )
@@ -1129,6 +1130,7 @@ def test_use_ewald_j_split_ibz_native_energy_matches_full_mesh():
         system, basis, kmesh_ibz, opts,
         use_ewald_j_split=True,
         use_exchange_ewald_split=False,  # gauge-independent consistency check; legacy keeps it cheap (no BvK-torus cutoff)
+        historical_domain=True,
         ewald_precision=1e-6,
         progress=False,
     )
@@ -1156,6 +1158,8 @@ def test_use_ewald_j_split_ibz_native_other_drivers_energy_matches_full_mesh(
     options,
 ):
     """RKS/UHF/UKS accept IBZ meshes with ir_mapping like RHF."""
+    # The physical pair default (#316) refuses the legacy gauge; this test
+    # pins the historical operator, so it replays it explicitly (#503).
     system, basis = _build_he_cubic()
     vq.attach_symmetry(system)
     kmesh_full = monkhorst_pack(system, [2, 2, 2], use_symmetry=False)
@@ -1167,6 +1171,7 @@ def test_use_ewald_j_split_ibz_native_other_drivers_energy_matches_full_mesh(
         system, basis, kmesh_full, options(),
         use_ewald_j_split=True,
         use_exchange_ewald_split=False,  # gauge-independent consistency check; legacy keeps it cheap (no BvK-torus cutoff)
+        historical_domain=True,
         ewald_precision=1e-6,
         progress=False,
     )
@@ -1174,6 +1179,7 @@ def test_use_ewald_j_split_ibz_native_other_drivers_energy_matches_full_mesh(
         system, basis, kmesh_ibz, options(),
         use_ewald_j_split=True,
         use_exchange_ewald_split=False,  # gauge-independent consistency check; legacy keeps it cheap (no BvK-torus cutoff)
+        historical_domain=True,
         ewald_precision=1e-6,
         progress=False,
     )
@@ -1368,8 +1374,12 @@ def test_mgo_shrink22_converged_matches_crystal_kconverged():
     assert r.energy == pytest.approx(E_CRYSTAL_SHRINK88, abs=6e-3)
     # Same exchange convention as BIPOLE; independent GDF implementation.
     assert r.energy == pytest.approx(E_PYSCF_KRHF_222, abs=3e-3)
-    # Regression anchor: M5 padded + pair-resolved SYM3b c12 value.
-    assert r.energy == pytest.approx(-271.21478463, abs=5e-4)
+    # Regression anchor on the physical pair default (3a7d097f, #316): the
+    # c12 value now sits at the former converged-cutoff (c16) value, +4.725 mHa
+    # vs CRYSTAL23 SHRINK 8 8 and +0.063 mHa vs PySCF [2,2,2] exxdiv='ewald'.
+    # historical_domain=True reproduces the retired M5 anchor -271.21478463
+    # within 8.9e-5 Ha on the same core (built from main 4736aceb).
+    assert r.energy == pytest.approx(-271.213418870592, abs=5e-4)
     # The coarse matched-k value is NOT a target: BIPOLE sits ~641 mHa above it
     # by construction (the exxdiv convention gap) and must stay well above it.
     assert r.energy - E_CRYSTAL_SHRINK22 > 0.5
@@ -1411,3 +1421,37 @@ def test_bipole_rks_mom_declares_a_fixed_occupied_subspace(monkeypatch):
             )
         assert calls[-1]["fixed_occupied_subspace"] is use_mom
     assert len(calls) == 2
+
+
+@pytest.mark.parametrize("strided", [False, True])
+@pytest.mark.parametrize("supplied_rho", [False, True])
+def test_real_lr_projection_conjugates_no_cell_tensor(strided, supplied_rho):
+    """Signed complex Fourier data retain the old operator without FT copies."""
+    from types import SimpleNamespace
+    from vibeqc.bipole_fock_ewald import JLongRangeCache
+
+    class NoTensorConjugate(np.ndarray):
+        def conj(self, *args, **kwargs):
+            raise AssertionError("LR projection copied the complex cell tensor")
+
+    rng = np.random.default_rng(186)
+    ft = rng.normal(size=(3, 4, 4, 38)) + 1j*rng.normal(size=(3, 4, 4, 38))
+    ft = ft[..., ::2] if strided else np.ascontiguousarray(ft[..., :19])
+    original = ft.copy()
+    protected = ft.view(NoTensorConjugate)
+    protected.flags.writeable = False
+    kernel = rng.normal(size=19)
+    density = rng.normal(size=(3, 4, 4))
+    rho = (rng.normal(size=19) + 1j*rng.normal(size=19) if supplied_rho
+           else sum(np.einsum("mn,mnk->k", d, f) for d, f in zip(density, ft)))
+    rho_before = rho.copy()
+    cache = JLongRangeCache(np.zeros((19, 3)), kernel, protected, np.zeros((3, 3)), .4)
+    expected = [np.einsum("k,mnk->mn", kernel*rho, f.conj()).real for f in original]
+    result = compute_J_long_range_real_space_blocks(
+        SimpleNamespace(nbf=4, cells=[None]*3, blocks=density),
+        SimpleNamespace(nbasis=4), SimpleNamespace(dim=3), .4,
+        cache=cache, rho_hat=rho if supplied_rho else None,
+    )
+    np.testing.assert_allclose(result, expected, rtol=0, atol=1e-12)
+    np.testing.assert_array_equal(ft, original)
+    np.testing.assert_array_equal(rho, rho_before)

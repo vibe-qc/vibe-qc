@@ -1,8 +1,8 @@
 """CRYSTAL isolated-atom .d12 emitter (targets CRYSTAL23).
 
 Uses the same CRYSTAL backend as :mod:`vibe_basis.backends.crystal`,
-but for isolated atoms in a large periodic box (P1, 10 Å cubic cell)
-instead of crystal structures.
+but for isolated atoms with non-periodic MOLECULE geometry
+(CRYSTAL23 manual, geometry input and Appendix A.4).
 """
 
 from __future__ import annotations
@@ -123,12 +123,49 @@ def _spin_blocks(
     return n_unpaired, symmetry_block, method_block, spinlock_block
 
 
+# Conventional-to-primitive cell ratio by lattice centring (the leading
+# letter of the Hermann-Mauguin symbol). R groups are given in the hexagonal
+# setting, three times CRYSTAL's rhombohedral primitive cell.
+_CENTRING = {"P": 1, "A": 2, "B": 2, "C": 2, "I": 2, "F": 4, "R": 3}
+
+
+def primitive_cell_labels(struct) -> Optional[list[int]]:
+    """Z of each atom of CRYSTAL's primitive cell, in ``IAT`` label order.
+
+    CRYSTAL builds the reference cell from the asymmetric unit one orbit at a
+    time, so the labels run through every image of the first asymmetric atom,
+    then the second. Each orbit's size is counted from ``struct.unit_cell``,
+    the expanded conventional cell, divided by the centring. Returns ``None``
+    when that cell cannot say: it is not expanded (no more atoms than the
+    asymmetric unit in a centred lattice), one element sits on two sites, or a
+    count does not divide by the centring.
+    """
+    asym = tuple(struct.crystal_asymm_unit)
+    cell = tuple(getattr(struct, "unit_cell", ()) or ())
+    symbol = str(getattr(struct, "spacegroup", "") or "")
+    factor = _CENTRING.get(symbol[:1].upper()) if symbol else None
+    if not asym or not cell or factor is None:
+        return None
+    if factor > 1 and len(cell) <= len(asym):
+        return None
+    if len({a.Z for a in asym}) != len(asym):
+        return None
+    labels: list[int] = []
+    for a in asym:
+        n = sum(1 for b in cell if b.Z == a.Z)
+        if n == 0 or n % factor:
+            return None
+        labels += [a.Z] * (n // factor)
+    return labels
+
+
 def emit_input_atom_counterpoise(
     struct,
     atom_index: int,
     inline_basis: str,
     method: str = "rhf",
     *,
+    Z: Optional[int] = None,
     nstar: int = 30,
     rmax: float = 10.0,
     trasremo: bool = True,
@@ -187,7 +224,14 @@ def emit_input_atom_counterpoise(
         asymmetric unit is written out in full.
     atom_index
         1-based label of the real atom **in the reference cell**, which
-        is CRYSTAL's ``IAT``. Indexes into ``struct.crystal_asymm_unit``.
+        is CRYSTAL's ``IAT``: the primitive cell CRYSTAL generates, each
+        asymmetric-unit atom's orbit in turn. In Li2O written (Li, O) that
+        cell is (Li, Li, O), so O is 3, not 2.
+    Z
+        The real atom's element. Optional when ``struct.unit_cell`` is an
+        expanded cell (:func:`primitive_cell_labels`), and checked against
+        it when given; otherwise the label must index the asymmetric unit,
+        which is right only while every earlier site has multiplicity 1.
     inline_basis
         Inline basis text covering **every** element in the cell, not
         just the real atom: the ghosts need their functions.
@@ -231,13 +275,29 @@ def emit_input_atom_counterpoise(
         raise ValueError(f"unknown method {method!r}")
 
     n_asym = len(struct.crystal_asymm_unit)
-    if not 1 <= atom_index <= n_asym:
-        raise ValueError(
-            f"atom_index must be a 1-based label into the {n_asym}-atom "
-            f"asymmetric unit of {struct.name!r}, got {atom_index}"
-        )
-
-    Z = struct.crystal_asymm_unit[atom_index - 1].Z
+    labels = primitive_cell_labels(struct)
+    if labels is not None:
+        if not 1 <= atom_index <= len(labels):
+            raise ValueError(
+                f"atom_index must label one of the {len(labels)} atoms of the "
+                f"primitive cell of {struct.name!r}, got {atom_index}"
+            )
+        if Z is not None and labels[atom_index - 1] != Z:
+            raise ValueError(
+                f"atom {atom_index} of the primitive cell of {struct.name!r} is "
+                f"Z={labels[atom_index - 1]}, not Z={Z}"
+            )
+        Z = labels[atom_index - 1]
+    elif Z is None:
+        if not 1 <= atom_index <= n_asym:
+            raise ValueError(
+                f"atom_index {atom_index} lies beyond the {n_asym}-atom asymmetric "
+                f"unit of {struct.name!r}, which has no expanded cell to resolve "
+                "it in: pass Z"
+            )
+        Z = struct.crystal_asymm_unit[atom_index - 1].Z
+    elif atom_index < 1:
+        raise ValueError(f"atom_index must be >= 1, got {atom_index}")
     n_unpaired, symmetry_block, method_block, spinlock_block = _spin_blocks(
         Z, method_lower, n_unpaired, spinlock_cycles, hugegrid
     )
@@ -309,10 +369,9 @@ def emit_input_atom(
 ) -> str:
     """Build a CRYSTAL ``.d12`` deck for an isolated atom.
 
-    Uses a large P1 periodic box (default 10 Å) to simulate an
-    isolated-atom SCF.  CRYSTAL's molecular mode is available
-    but the periodic path with a large box produces the same
-    energy and avoids needing a separate MOLECULE parser.
+    Uses the zero-dimensional MOLECULE route with point group C1
+    (CRYSTAL23 manual, geometry input pp. 20-21 and Appendix A.4).
+    A periodic supercell is not an interchangeable free-atom reference.
 
     Spin and symmetry convention
     ----------------------------
@@ -320,7 +379,7 @@ def emit_input_atom(
     **aspherical and spin-polarised**. This is not a refinement: in the
     plane-wave reference work, spin-restricting the bromine reference
     alone moved KBr's atomization energy by 37 kJ/mol
-    (``handovers/HANDOVER_GPAW_PW_REFERENCE.md``, GPAW-PWREF-002), which
+    (the original investigation, GPAW-PWREF-002), which
     is far larger than the basis-set effects a campaign is trying to
     resolve. Comparing a spin-restricted atom reference against an
     oracle that used a polarised one produces a discrepancy that looks
@@ -352,7 +411,8 @@ def emit_input_atom(
     method
         ``"rhf"`` / ``"hf"`` or a CRYSTAL functional keyword.
     box
-        Cubic lattice constant in Å (default 10.0).
+        Deprecated compatibility parameter, ignored. The atom has no lattice;
+        changing this value never selects a periodic reference.
     toldee
         SCF energy-convergence exponent.
     n_unpaired
@@ -393,17 +453,10 @@ def emit_input_atom(
 
     return (_deck(
         f"{title}\n"
-        "CRYSTAL\n"
-        "0 0 0\n"
-        # Space group 1 (P1, triclinic) takes the FULL cell: a b c and
-        # the three angles. Only the cubic groups accept a single
-        # parameter. Emitting one number under P1 is a
-        # "FORMAT ERROR IN INPUT DECK", which no amount of reading the
-        # text reveals.
+        "MOLECULE\n"
+        "1\n"  # Molecular point group C1, not a space-group/cell record.
         "1\n"
-        f"{box:.3f} {box:.3f} {box:.3f} 90.000 90.000 90.000\n"
-        "1\n"
-        f"{Z} 0.5 0.5 0.5\n"
+        f"{Z} 0.0 0.0 0.0\n"  # Cartesian coordinates in angstrom.
         f"{symmetry_block}"
         "END\n"
         f"{inline_basis.strip()}\n"
@@ -411,12 +464,6 @@ def emit_input_atom(
         f"{method_block}\n"
         f"{spinlock_block}"
         f"{_tolinteg_block(tolinteg)}"
-        # The isolated atom sits in a large P1 box, which is still a 3D
-        # periodic system, so CRYSTAL wants a real Monkhorst-Pack grid.
-        # "0 0" is a format error. One k-point is the right answer here:
-        # at a 10 A box the bands are flat and Gamma is the whole zone.
-        "SHRINK\n"
-        "1 1\n"
         "TOLDEE\n"
         f"{toldee}\n"
         "END\n"

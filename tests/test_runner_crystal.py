@@ -1,11 +1,8 @@
 """Offline tests for ``examples.regression.core.runner_crystal``.
 
-Scope: only the *pure* pieces — the .d12 deck builder, the CRYSTAL14
-.out parser, the method-to-keyword mapping, the lattice-to-(a, b, c,
-α, β, γ) reduction, the job-name sanitization. We do NOT invoke vq,
-spawn CRYSTAL, or talk to a real host here — those are integration
-concerns the laptop's regression suite skips (status='unavailable')
-and Mike validates manually on compute-reference.
+Scope: the deck builder, output parser, method mapping, lattice conversion,
+job naming, and runner timing with mocked submit/wait/fetch. These tests do
+not invoke vq, spawn CRYSTAL, or connect to a host.
 
 Fixtures are inlined synthetic CRYSTAL14 output fragments. The
 anchor-line shapes match real CRYSTAL14 prints (per the .d12 +
@@ -17,12 +14,16 @@ changing the test logic.
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 import textwrap
+import hashlib
+import json
 
 import pytest
 
 from examples.regression.core import runner_crystal
+from examples.regression.core.compare import annotate_against_reference, paired_wall_ratio
 from examples.regression.core.runner_crystal import (
     _UNSUPPORTED,
     _CRYSTAL_BASIS_LIBRARY,
@@ -34,7 +35,7 @@ from examples.regression.core.runner_crystal import (
     parse_crystal_enecycle,
     parse_crystal_out,
 )
-from examples.regression.core.spec import AtomFrac, MethodSpec, PeriodicSpec
+from examples.regression.core.spec import AtomFrac, ExpectedRef, MethodSpec, PeriodicSpec
 
 
 _ROOT = Path(__file__).resolve().parents[1]
@@ -86,8 +87,8 @@ def test_build_d12_pbe_pob_tzvp() -> None:
     # 8-atom block: 4 Mg + 4 O. Spot-check first and last.
     assert " 12   0.0000000   0.0000000   0.0000000" in deck
     assert "  8   0.0000000   0.0000000   0.5000000" in deck
-    # End-of-geometry
-    assert "\nEND\nBASISSET\nPOB-TZVP-REV2\n" in deck
+    # Keyword basis input replaces the geometry END (CRYSTAL23 section 2.2.2).
+    assert "  8   0.0000000   0.0000000   0.5000000\nBASISSET\nPOB-TZVP-REV2\n" in deck
     # DFT block present for non-HF
     assert "\nDFT\nPBE\nXLGRID\nEND\n" in deck
     # SCF block
@@ -97,6 +98,21 @@ def test_build_d12_pbe_pob_tzvp() -> None:
     assert "\nMAXCYCLE\n60\n" in deck
     # Final END
     assert deck.rstrip().endswith("END")
+
+
+@pytest.mark.parametrize("basis_kw", ["STO-3G", "POB-TZVP-REV2"])
+@pytest.mark.parametrize("func_kw", ["HF", "PBE"])
+@pytest.mark.parametrize("mesh", [(1, 1, 1), (4, 4, 4), (2, 4, 8)])
+def test_keyword_basis_replaces_geometry_terminator(basis_kw, func_kw, mesh) -> None:
+    """The manual's keyword basis card starts directly after the last atom."""
+    deck = build_d12(
+        spec=_mgo_spec(), basis_kw=basis_kw, func_kw=func_kw,
+        kmesh=mesh, conv_tol_energy=1e-9, max_iter=80,
+    )
+    assert "  8   0.0000000   0.0000000   0.5000000\nBASISSET\n" + basis_kw + "\n" in deck
+    assert "\nEND\nBASISSET\n" not in deck
+    # Keep the functional block and the top-level SCF terminator distinct.
+    assert deck.splitlines().count("END") == (1 if func_kw == "HF" else 2)
 
 
 def test_build_d12_hf_omits_dft_block() -> None:
@@ -126,14 +142,51 @@ def test_build_d12_gamma_point_smoke() -> None:
     assert "\nDFT\nSVWN\nXLGRID\nEND\n" in deck
 
 
-def test_build_d12_anisotropic_kmesh_uses_max() -> None:
+@pytest.mark.parametrize("mesh", [(2, 4, 8), (8, 2, 1), (1, 3, 5)])
+def test_build_d12_preserves_anisotropic_kmesh_and_gilat_axes(mesh) -> None:
     spec = _mgo_spec()
     deck = build_d12(
         spec=spec, basis_kw="POB-TZVP-REV2", func_kw="PBE",
-        kmesh=(2, 4, 8), conv_tol_energy=1e-7, max_iter=60,
+        kmesh=mesh, conv_tol_energy=1e-7, max_iter=60,
     )
-    # Anisotropic mesh: we pick max(k) = 8 for both SHRINK args.
-    assert "\nSHRINK\n8 8\n" in deck
+    # CRYSTAL23 pp.124-126: IS=0 reads three axes; ISP is ISP1.
+    lines = deck.splitlines()
+    start = lines.index("SHRINK")
+    is_, isp = map(int, lines[start + 1].split())
+    axes = tuple(map(int, lines[start + 2].split()))
+    assert is_ == 0 and axes == mesh
+    assert tuple(isp * n / axes[0] for n in axes) == mesh
+    assert lines[start - 1] == "NOSYMADA"
+
+
+@pytest.mark.parametrize("mesh", [None, (), (2, 4), (2, 4, 8, 1),
+                                  (0, 4, 8), (-1, 4, 8), (True, 4, 8),
+                                  (2.0, 4, 8), (2.5, 4, 8), "248"])
+def test_build_d12_rejects_invalid_kmesh(mesh) -> None:
+    with pytest.raises(ValueError, match="three positive integers"):
+        build_d12(spec=_mgo_spec(), basis_kw="STO-3G", func_kw="HF",
+                  kmesh=mesh, conv_tol_energy=1e-7, max_iter=60)
+
+
+def test_crystal_mesh_convention_matches_runner_tuple_mesh() -> None:
+    import itertools
+    import numpy as np
+    import vibeqc as vq
+    from vibeqc.periodic_runner import _runner_bloch_kmesh
+
+    lattice = np.diag([4.0, 5.0, 6.0])
+    system = vq.PeriodicSystem(3, lattice, [vq.Atom(2, [0.0, 0.0, 0.0])])
+    counts = (2, 4, 8)
+    mesh = _runner_bloch_kmesh(system, counts)
+    frac = np.asarray(mesh.kpoints) @ lattice / (2 * np.pi)
+    # CRYSTAL23 section18.7: unshifted b_i / IS_i lattice. Compare the
+    # full torus modulo reciprocal translations, including its Gamma point.
+    expected = np.array(list(itertools.product(*(range(n) for n in counts))))
+    scaled = frac * np.array(counts)
+    np.testing.assert_allclose(scaled, np.rint(scaled), atol=1e-12, rtol=0)
+    actual = np.rint(scaled).astype(int) % np.array(counts)
+    assert sorted(map(tuple, actual)) == sorted(map(tuple, expected))
+    np.testing.assert_allclose(mesh.weights, np.full(64, 1 / 64), atol=0, rtol=0)
 
 
 def test_build_d12_tight_tol_clamps_to_toldee_12() -> None:
@@ -200,7 +253,7 @@ def test_lattice_reduce_hexagonal_like() -> None:
     "method, expected",
     [
         (MethodSpec(id="rks-lda", scf="rks", xc="lda"),  "SVWN"),
-        (MethodSpec(id="rks-pbe", scf="rks", xc="pbe"),  "PBE"),
+        (MethodSpec(id="rks-pbe", scf="rks", xc="pbe"),  "PBEXC"),
         (MethodSpec(id="rks-blyp", scf="rks", xc="blyp"), "BLYP"),
         # CRYSTAL's B3LYP keyword is the VWN5 flavor — exactly vibe-qc's
         # bare "b3lyp" (ORCA definition); "b3lyp5" is the explicit
@@ -432,10 +485,168 @@ def test_parse_crystal_enecycle_mgo_snapshot() -> None:
     last = records[-1]
     assert last.cycle == 7
     assert last.e_total == pytest.approx(-271.21814374982)
+    assert parse_crystal_out(text).kmesh == (8, 8, 8)
 
 
 def test_parse_crystal_enecycle_absent_returns_empty() -> None:
     assert parse_crystal_enecycle(_CRYSTAL_SCF_CONVERGED) == []
+
+
+@pytest.mark.parametrize("token", ["3.57", "3.57E+00", "3.57D+00", "3.57d+00"])
+def test_parse_crystal_terminal_engine_time(token) -> None:
+    text = (
+        " TTTTTTTTTT SHELLXN TELAPSE 200.00 TCPU 150.00\n"
+        f" TTTTTTTTTT END TELAPSE {token} TCPU 1.43\n"
+    )
+    assert parse_crystal_out(text).wall_s == pytest.approx(3.57)
+
+
+@pytest.mark.parametrize("terminal", [
+    "", " TTTTTTTTTT SCF TELAPSE 3.57 TCPU 1.43",
+    *[f" TTTTTTTTTT END TELAPSE {token} TCPU 1.43"
+      for token in ("0", "-1", "NaN", "Inf", "1e999", "*****", "invalid")],
+    " TTTTTTTTTT END TELAPSE 3.57",
+    " TTTTTTTTTT END TELAPSE TCPU 1.43",
+    " TTTTTTTTTT END TELAPSE 3.57 TCPU 1.43\n" * 2,
+    " TTTTTTTTTT END malformed\n TTTTTTTTTT END TELAPSE 3.57 TCPU 1.43",
+])
+def test_parse_crystal_missing_or_ambiguous_time_is_unavailable(terminal) -> None:
+    assert parse_crystal_out(_CRYSTAL_SCF_CONVERGED + "\n" + terminal).wall_s is None
+
+
+def _run_mock_crystal(tmp_path, monkeypatch, text, kmesh=(8, 8, 8), final_state="completed",
+                      expected_version=None):
+    (tmp_path / "INPUT.out").write_text(text)
+    monkeypatch.setattr(runner_crystal.shutil, "which", lambda _: "/test/bin/vq")
+    monkeypatch.setenv("VIBEQC_CRYSTAL_VQ_HOST", "test-host")
+    monkeypatch.setenv("VIBEQC_CRYSTAL_WRAPPER", "/test/bin/run-crystal.sh")
+    submitted = []
+
+    def submit(**kwargs):
+        submitted.append((kwargs["workdir"] / "INPUT.d12").read_text())
+        return "test-job"
+
+    monkeypatch.setattr(runner_crystal, "vq_submit", submit)
+    monkeypatch.setattr(runner_crystal, "vq_wait", lambda **_: final_state)
+    monkeypatch.setattr(runner_crystal, "vq_fetch", lambda **_: tmp_path)
+    clock = iter((10.0, 910.0))
+    monkeypatch.setattr(runner_crystal.time, "perf_counter", lambda: next(clock))
+
+    row = runner_crystal.run_periodic_case(
+        run_id="timing-test", target="dev", spec=_mgo_spec(), basis_name="sto-3g",
+        method=MethodSpec(id="rhf", scf="rhf"), kmesh=kmesh, expected_version=expected_version,
+        log_path=tmp_path / "runner.log", workdir=tmp_path / "work",
+    )
+
+    return row, submitted
+
+
+@pytest.mark.parametrize("include_terminal", [True, False])
+def test_crystal_runner_uses_engine_time_not_queue_wait(
+    tmp_path, monkeypatch, include_terminal,
+) -> None:
+    text = (_ROOT / "examples/regression/crystal_parity/crystal_demos/"
+            "mgo_sto3g_enecycle.out").read_text()
+    if not include_terminal:
+        text = "\n".join(line for line in text.splitlines()
+                         if " END " not in line)
+    row, _ = _run_mock_crystal(tmp_path, monkeypatch, text)
+
+    assert row.converged is True and row.status == "pending"
+    assert "queue-monitor elapsed=900.0 s (not engine time)" in row.note
+    assert "queue-monitor elapsed 900.0 s; not engine time" in (tmp_path / "runner.log").read_text()
+    reference = replace(row, status="reference")
+    candidate = replace(row, code="vibeqc", status="pass", ref_code="crystal", wall_s=7.14)
+    if include_terminal:
+        assert row.wall_s == pytest.approx(3.57)  # TCPU is 1.43 in this snapshot.
+        assert paired_wall_ratio(candidate, reference) == pytest.approx(2.0)
+    else:
+        assert row.wall_s == 0.0
+        assert "engine wall time unavailable" in row.note
+        assert paired_wall_ratio(candidate, reference) is None
+
+
+_MESH_248 = " SHRINK. FACT.(MONKH.) 2 4 8 NUMBER OF K POINTS IN THE IBZ 36\n"
+
+
+@pytest.mark.parametrize("mesh_output, valid", [
+    (_MESH_248, True),
+    (_MESH_248 * 2, True),
+    (_MESH_248.lower(), True),
+    ("", False),
+    (_MESH_248.replace("2 4 8", "8 8 8"), False),
+    (_MESH_248.replace("2 4 8", "4 2 8"), False),
+    (_MESH_248.replace("2 4 8", "0 4 8"), False),
+    (_MESH_248.replace("2 4 8", "2 4"), False),
+    (_MESH_248 + _MESH_248.replace("2 4 8", "8 8 8"), False),
+    (_MESH_248 + _MESH_248.replace("2 4 8", "malformed"), False),
+])
+def test_crystal_runner_checks_reported_mesh_before_comparison(
+    tmp_path, monkeypatch, mesh_output, valid,
+) -> None:
+    output = (_CRYSTAL_SCF_CONVERGED + "\n" + mesh_output
+              + " TTTTTTTTTT END TELAPSE 3.57 TCPU 1.43\n")
+    row, submitted = _run_mock_crystal(tmp_path, monkeypatch, output, kmesh=(2, 4, 8))
+    assert len(submitted) == 1
+    assert "\nNOSYMADA\nSHRINK\n0 2\n2 4 8\n" in submitted[0]
+    assert row.kmesh == "2x4x8"
+    assert row.converged is True and row.energy_ha is not None
+    assert row.status == ("pending" if valid else "error")
+    candidate = replace(row, code="vibeqc", status="pending", note="", wall_s=7.14)
+    expected = ExpectedRef(system_id=row.system_id, basis=row.basis,
+                           method_id=row.method_id, kmesh=(2, 4, 8))
+    annotate_against_reference([candidate, row], "crystal", expected)
+    if valid:
+        assert row.status == "reference" and candidate.status == "pass"
+        assert "unshifted mesh=(2, 4, 8) (output confirmed)" in row.note
+        assert paired_wall_ratio(candidate, row) == pytest.approx(2.0)
+    else:
+        assert row.status == candidate.status == "error"
+        assert "mesh mismatch" in row.note
+        assert paired_wall_ratio(candidate, row) is None
+
+
+@pytest.mark.parametrize("mesh", [None, (2, 0, 8), (2.5, 4, 8), (True, 4, 8)])
+def test_crystal_runner_rejects_invalid_mesh_before_submission(tmp_path, monkeypatch, mesh):
+    def unexpected_lookup(_):
+        pytest.fail("invalid mesh must fail before looking up vq")
+
+    monkeypatch.setattr(runner_crystal.shutil, "which", unexpected_lookup)
+    row = runner_crystal.run_periodic_case(
+        run_id="invalid-mesh", target="dev", spec=_mgo_spec(), basis_name="sto-3g",
+        method=MethodSpec(id="rhf", scf="rhf"), kmesh=mesh,
+        log_path=tmp_path / "runner.log", workdir=tmp_path / "work",
+    )
+    assert row.status == "error" and "three positive integers" in row.note
+
+
+@pytest.mark.parametrize("final_state, error", [
+    ("completed", ""), ("failed", ""), ("cancelled", ""), ("timeout", ""),
+    ("unknown", ""), ("completed", " ERROR failed after SCF"),
+    ("completed", " FATAL truncated result"),
+    ("completed", " ABNORMAL TERMINATION"),
+])
+def test_crystal_terminal_failure_cannot_be_accepted_reference(
+    tmp_path, monkeypatch, final_state, error,
+):
+    output = (_CRYSTAL_SCF_CONVERGED + "\n" + _MESH_248
+              + " TTTTTTTTTT END TELAPSE 3.57 TCPU 1.43\n" + error)
+    row, _ = _run_mock_crystal(tmp_path, monkeypatch, output,
+                               kmesh=(2, 4, 8), final_state=final_state)
+    # Keep the parsed values for diagnosis, but never promote a failed job
+    # merely because it reached SCF convergence before failing.
+    assert row.converged is True and row.energy_ha is not None and row.wall_s > 0
+    candidate = replace(row, code="vibeqc", status="pending", note="", wall_s=7.14)
+    expected = ExpectedRef(system_id=row.system_id, basis=row.basis,
+                           method_id=row.method_id, kmesh=(2, 4, 8))
+    annotate_against_reference([candidate, row], "crystal", expected)
+    if final_state == "completed" and not error:
+        assert row.status == "reference" and candidate.status == "pass"
+        assert paired_wall_ratio(candidate, row) == pytest.approx(2.0)
+    else:
+        assert row.status == candidate.status == "error"
+        assert paired_wall_ratio(candidate, row) is None
+        assert ("crystal error:" if error else f"vq state={final_state}") in row.note
 
 
 def test_add_crystal_enecycle_keyword_before_final_end() -> None:
@@ -488,3 +699,65 @@ def test_vq_default_host_no_default_in_config(
         runner_crystal.Path, "home", lambda: tmp_path,
     )
     assert runner_crystal._vq_default_host("/usr/bin/vq") is None
+
+
+@pytest.mark.parametrize("text, version", [
+    ("Title CRYSTAL23 comparison\n * CRYSTAL14 *", "CRYSTAL14"),
+    ("CRYSTAL23\nBuilt for CRYSTAL23 comparisons", None),
+    (" *** crystal23 ***\n * CRYSTAL23 *", "CRYSTAL23"),
+    (" * CRYSTAL14 *\n * CRYSTAL23 *", None),
+    ("", None),
+])
+def test_crystal_version_requires_consistent_program_banners(text, version):
+    assert parse_crystal_out(text).version == version
+
+
+@pytest.mark.parametrize("version", ["CRYSTAL23", "CRYSTAL14", "CRYSTAL17", "missing", "conflicting"])
+def test_crystal_expected_version_controls_comparison_and_receipt(tmp_path, monkeypatch, version):
+    output = (_ROOT / "examples/regression/crystal_parity/crystal_demos/"
+              "mgo_sto3g_enecycle.out").read_text()
+    assert parse_crystal_out(output).version == "CRYSTAL23"
+    if version == "missing":
+        output = "\n".join(line for line in output.splitlines() if "CRYSTAL23" not in line)
+    elif version == "conflicting":
+        output += "\n * CRYSTAL14 *\n"
+    else:
+        output = output.replace("CRYSTAL23", version)
+    # A case title cannot satisfy the version requirement.
+    output = "CRYSTAL23 comparison target\n" + output
+    monkeypatch.setenv("VIBEQC_CRYSTAL_CPUS", "2")
+    monkeypatch.setenv("VIBEQC_CRYSTAL_WALL_TIME_SECONDS", "60")
+    row, submitted = _run_mock_crystal(tmp_path, monkeypatch, output, expected_version="CRYSTAL23")
+    valid = version == "CRYSTAL23"
+    assert row.status == ("pending" if valid else "error")
+    assert row.converged and row.energy_ha is not None  # Diagnostic values survive refusal.
+    receipt_paths = list((tmp_path / "work").glob("*/reference.json"))
+    assert len(receipt_paths) == 1
+    receipt = json.loads(receipt_paths[0].read_text())
+    assert receipt["expected_version"] == "CRYSTAL23"
+    assert receipt["reported_version"] == (None if version in ("missing", "conflicting") else version)
+    assert receipt["job_id"] == "test-job" and receipt["final_state"] == "completed"
+    assert receipt["wrapper"] == "/test/bin/run-crystal.sh"
+    assert receipt["cpus"] == 2 and receipt["wall_time_limit_s"] == 60
+    assert receipt["requested_kmesh"] == receipt["reported_kmesh"] == [8, 8, 8]
+    assert receipt["submitted_input_sha256"] == hashlib.sha256(submitted[0].encode()).hexdigest()
+    assert receipt["output_sha256"] == hashlib.sha256((tmp_path / "INPUT.out").read_bytes()).hexdigest()
+    assert "executable bytes were not inspected" in receipt["identity_scope"]
+    candidate = replace(row, code="vibeqc", status="pending", note="", wall_s=7.14)
+    expected = ExpectedRef(system_id=row.system_id, basis=row.basis, method_id=row.method_id, kmesh=(8, 8, 8))
+    annotate_against_reference([candidate, row], "crystal", expected)
+    assert candidate.status == ("pass" if valid else "error")
+    assert (paired_wall_ratio(candidate, row) is not None) == valid
+
+
+@pytest.mark.parametrize("version", [23, "23", "crystal23", "CRYSTAL23-extra", True])
+def test_crystal_invalid_version_fails_before_submission(tmp_path, monkeypatch, version):
+    def unexpected_lookup(_):
+        pytest.fail("invalid version must fail before looking up vq")
+    monkeypatch.setattr(runner_crystal.shutil, "which", unexpected_lookup)
+    row = runner_crystal.run_periodic_case(
+        run_id="invalid-version", target="dev", spec=_mgo_spec(), basis_name="sto-3g",
+        method=MethodSpec(id="rhf", scf="rhf"), kmesh=(1, 1, 1), expected_version=version,
+        log_path=tmp_path / "runner.log", workdir=tmp_path / "work",
+    )
+    assert row.status == "error" and "reference_version" in row.note

@@ -1,18 +1,19 @@
 """EWALD_3D exact exchange: which q -> 0 gauge a k-mesh actually uses.
 
-Reproducer and contract for GitLab #560. ``run_rhf_periodic_multi_k_ewald3d``
-serves two different exchange q -> 0 conventions depending on the mesh it is
-handed:
+Reproducer and contract for GitLab #560 and #23. ``run_rhf_periodic_multi_k_ewald3d``
+serves two exchange q -> 0 conventions:
 
-* a **single Gamma point** takes the molecular-limit kernel -- every image
-  density block is zeroed before the exchange contraction, so the sum has one
-  term and there is no ``q + G = 0`` (Madelung) contribution at all. This is
-  the CRYSTAL/CCM real-space convention;
-* **any other mesh** takes the corrected Ewald split -- ``erfc`` in real space,
-  a reciprocal channel per ``q = k - k'``, plus the probe-charge ``q + G = 0``
-  term, i.e. PySCF's ``exxdiv='ewald'`` (landed in fafeef8b3, because the bare
-  image sum diverges with the lattice cutoff once ``D(g)`` is BvK-torus
-  periodic).
+* the **corrected Ewald split** -- ``erfc`` in real space, a reciprocal channel
+  per ``q = k - k'``, plus the probe-charge ``q + G = 0`` term, i.e. PySCF's
+  ``exxdiv='ewald'`` (landed in fafeef8b3, because the bare image sum diverges
+  with the lattice cutoff once ``D(g)`` is BvK-torus periodic). Since #23 it is
+  the default at **every** mesh, a single Gamma point included;
+* the **molecular-limit kernel** -- every image density block is zeroed before
+  the exchange contraction, so the sum has one term and there is no
+  ``q + G = 0`` (Madelung) contribution at all. This is the CRYSTAL/CCM
+  real-space convention, available at a single Gamma point as
+  ``exchange_exxdiv='none'``. Until #23 it was the single-Gamma default, so the
+  route switched gauge between (1,1,1) and any other mesh.
 
 Both are legitimate conventions with the same infinite-k limit, and they are
 **not equal at any finite mesh**: Carrier, Rohra & Goerling, Phys. Rev. B 75,
@@ -71,13 +72,13 @@ def _unit_cell() -> "vq.PeriodicSystem":
     )
 
 
-_ENERGY_CACHE: dict = {}
+_RESULT_CACHE: dict = {}
 
 
-def _multi_k(mesh, exchange_exxdiv=None):
-    """Energy per unit cell; cached, since several tests want the same runs."""
+def _multi_k_result(mesh, exchange_exxdiv=None):
+    """The SCF result; cached, since several tests want the same runs."""
     key = (tuple(mesh), exchange_exxdiv)
-    if key not in _ENERGY_CACHE:
+    if key not in _RESULT_CACHE:
         unit = _unit_cell()
         basis = vq.make_basis(unit.unit_cell_molecule(), "sto-3g")
         kwargs = {} if exchange_exxdiv is None else {
@@ -87,57 +88,74 @@ def _multi_k(mesh, exchange_exxdiv=None):
             unit, basis, vq.monkhorst_pack(unit, list(mesh)), **kwargs
         )
         assert res.converged
-        _ENERGY_CACHE[key] = float(res.energy)
-    return _ENERGY_CACHE[key]
+        _RESULT_CACHE[key] = res
+    return _RESULT_CACHE[key]
 
 
-def test_route_default_changes_exchange_gauge_between_single_gamma_and_a_mesh():
-    """#560: the EWALD_3D HF route is not on one gauge across its own meshes.
+def _multi_k(mesh, exchange_exxdiv=None):
+    """Energy per unit cell."""
+    return float(_multi_k_result(mesh, exchange_exxdiv).energy)
 
-    Not a wrong number on either side -- each is right in its own convention --
-    but a k-convergence sequence taken with the route defaults is not a
-    sequence in one gauge, and that is what makes the Gamma-supercell energy
-    fail to band-fold onto the multi-k energy.
+
+def test_route_default_is_one_gauge_at_every_mesh():
+    """#23: the EWALD_3D HF route default is the corrected split at every mesh.
+
+    Until #23 a single Gamma point took the molecular-limit kernel by default
+    and every other mesh the corrected split, so a k-convergence sequence taken
+    with defaults was not a sequence in one gauge: (1,1,1) -> (2,2,2) read
+    -1.1235293 -> -1.1191129 Ha, a 4.4 mHa step that mixed real k convergence
+    with a 21.67 mHa gauge switch. Both meshes now agree with PySCF
+    exxdiv='ewald' to the Coulomb-method gap.
     """
     e_111 = _multi_k((1, 1, 1))
     e_222 = _multi_k((2, 2, 2))
 
-    # The real mesh is on the corrected gauge and agrees with PySCF
-    # exxdiv='ewald' to the Coulomb-method gap.
+    assert e_111 == pytest.approx(PYSCF_GAMMA_UNIT_EWALD, abs=PYSCF_METHOD_GAP_HA)
     assert e_222 == pytest.approx(PYSCF_KRHF_222_EWALD, abs=PYSCF_METHOD_GAP_HA)
+    assert abs(e_111 - PYSCF_GAMMA_UNIT_NONE) > 0.3
     assert abs(e_222 - PYSCF_KRHF_222_NONE) > 0.1
 
-    # The single-Gamma mesh is on neither PySCF gauge: it is the molecular-limit
-    # kernel, 21.7 mHa above exxdiv='ewald' and 333 mHa below exxdiv=None.
-    assert e_111 == pytest.approx(-1.1235292398235723, abs=1e-8)
-    assert abs(e_111 - PYSCF_GAMMA_UNIT_EWALD) > 20.0e-3
-    assert abs(e_111 - PYSCF_GAMMA_UNIT_NONE) > 0.3
-
-    # The gauge discontinuity between the route's own two meshes.
-    assert abs(e_111 - e_222) > 4.0e-3
+    # The mesh step is now k convergence alone, the same step PySCF takes
+    # between the two meshes in this gauge.
+    assert (e_111 - e_222) == pytest.approx(
+        PYSCF_GAMMA_UNIT_EWALD - PYSCF_KRHF_222_EWALD, abs=2 * PYSCF_METHOD_GAP_HA
+    )
 
 
 def test_single_gamma_mesh_on_the_corrected_gauge_matches_pyscf():
-    """#560: ``exchange_exxdiv='ewald'`` makes a Gamma mesh use the split.
+    """#560: ``exchange_exxdiv='ewald'`` puts a Gamma mesh on the split.
 
-    This is the capability the route lacked. Without it there is no way to ask
-    for a Gamma-point calculation in the corrected gauge, so the Gamma-supercell
-    energy could not be band-folded onto a multi-k energy at all.
+    The capability #560 added; since #23 it is also the default, and naming it
+    must fail closed where the split is unavailable rather than fall back.
     """
     e_corrected = _multi_k((1, 1, 1), exchange_exxdiv="ewald")
     assert e_corrected == pytest.approx(
         PYSCF_GAMMA_UNIT_EWALD, abs=PYSCF_METHOD_GAP_HA
     )
-    # It is the corrected gauge, not a relabelled default: 21.7 mHa away from
-    # the molecular-limit kernel the same mesh takes by default.
-    assert abs(e_corrected - _multi_k((1, 1, 1))) > 20.0e-3
 
 
-def test_naming_the_gauge_the_route_already_chose_changes_nothing():
-    """Negative control: same route, same mesh, gauge named explicitly.
+def test_molecular_limit_gauge_stays_available_at_a_single_gamma_point():
+    """``exchange_exxdiv='none'``: the pre-#23 single-Gamma default, on request.
 
-    Both defaults reproduce the explicit request for the gauge the route
-    already picks, so the keyword adds a choice and moves no number.
+    The molecular-limit kernel zeroes every image density block, so its sum
+    has one term and no ``q + G = 0`` contribution: the CRYSTAL/CCM
+    real-space convention, 21.7 mHa above exxdiv='ewald' here and 333 mHa
+    below exxdiv=None.
+    """
+    e_none = _multi_k((1, 1, 1), exchange_exxdiv="none")
+    # Re-pinned at #23. The #560-era literal -1.1235292398235723 had drifted
+    # by 9.60e-8 Ha by v0.17.4 (see the note on GitLab #23).
+    assert e_none == pytest.approx(-1.1235293358, abs=1e-8)
+    assert abs(e_none - PYSCF_GAMMA_UNIT_EWALD) > 20.0e-3
+    assert abs(e_none - PYSCF_GAMMA_UNIT_NONE) > 0.3
+    assert abs(e_none - _multi_k((1, 1, 1))) > 20.0e-3
+
+
+def test_naming_the_default_gauge_changes_nothing():
+    """Negative control: same route, same mesh, the default gauge named.
+
+    The default reproduces an explicit ``'ewald'`` at both meshes, so the
+    keyword names the default and moves no number.
 
     The bound is floating-point reproducibility, not physics: two separate SCF
     runs of the same calculation differ by at most 1 ULP under OpenMP
@@ -147,12 +165,43 @@ def test_naming_the_gauge_the_route_already_chose_changes_nothing():
     21.7 mHa gauge step this control exists to catch.
     """
     NOISE_HA = 1.0e-12
-    assert abs(
-        _multi_k((1, 1, 1), exchange_exxdiv="none") - _multi_k((1, 1, 1))
-    ) < NOISE_HA
-    assert abs(
-        _multi_k((2, 2, 2), exchange_exxdiv="ewald") - _multi_k((2, 2, 2))
-    ) < NOISE_HA
+    for mesh in ((1, 1, 1), (2, 2, 2)):
+        assert abs(
+            _multi_k(mesh, exchange_exxdiv="ewald") - _multi_k(mesh)
+        ) < NOISE_HA
+
+
+def test_results_record_the_gauge_that_ran():
+    """#23: a result names its exchange gauge, so nothing downstream guesses it.
+
+    The analytic gradient and the runner's ``.system`` ``[run].exchange_q0``
+    used to infer the gauge from the mesh, which stopped being possible once a
+    single Gamma point could run either one. The Gamma-only driver always runs
+    the molecular limit.
+    """
+    from vibeqc.periodic.exchange_convention import (
+        BVK_EWALD,
+        MOLECULAR_LIMIT,
+        executed_exchange_q0,
+    )
+
+    assert _multi_k_result((1, 1, 1)).exchange_q0 == BVK_EWALD
+    assert _multi_k_result((1, 1, 1), "ewald").exchange_q0 == BVK_EWALD
+    assert _multi_k_result((2, 2, 2)).exchange_q0 == BVK_EWALD
+    assert _multi_k_result((1, 1, 1), "none").exchange_q0 == MOLECULAR_LIMIT
+
+    unit = _unit_cell()
+    basis = vq.make_basis(unit.unit_cell_molecule(), "sto-3g")
+    gamma = vq.run_rhf_periodic_gamma_ewald3d(unit, basis)
+    assert gamma.exchange_q0 == MOLECULAR_LIMIT
+    # Same gauge; the two drivers' default lattice options differ, which
+    # moves the energy by 2e-6 Ha (tests/test_ccm_periodic_3d.py uses the
+    # same bound). The 21.7 mHa gauge step is four orders larger.
+    assert gamma.energy == pytest.approx(
+        _multi_k((1, 1, 1), exchange_exxdiv="none"), abs=1e-5
+    )
+    # The declared gauge wins over the knob a caller passed.
+    assert executed_exchange_q0(gamma, "ewald") == MOLECULAR_LIMIT
 
 
 def test_uncorrected_gauge_is_refused_on_a_real_mesh():

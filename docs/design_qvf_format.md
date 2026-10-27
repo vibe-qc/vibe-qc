@@ -1,12 +1,13 @@
 # Design - QVF container format for visualization data
 
-> **Status**: QVF v1 is implemented with the current v1.2 feature set:
-> the writer emits 40 canonical section kinds, and vibe-view renders 39
-> first-class section kinds plus explicit `bonds` via the structure renderer.
-> The canonical machine-readable contract is
-> [`python/vibeqc/output/formats/qvf_manifest.schema.json`](../python/vibeqc/output/formats/qvf_manifest.schema.json).
-> This document is the human tech spec for that schema and for the
-> current vibe-qc writer / vibe-view reader contract.
+> **Status**: QVF v1 is implemented. The independently versioned
+> [QVF specification](qvf/index.md) is the format authority; this page
+> records the core producer design and its historical implementation details.
+> The bundled schema is a pinned copy of that contract. Current TDDFT output
+> includes `excited_states` and state-linked NTO wavefunctions. Current
+> vibe-view source renders the state table and reads state energies for NTO labels.
+> Its [capability guide](https://vibe-qc.com/vibe-view/docs/capabilities.html)
+> distinguishes supported, deferred and unsupported sections.
 
 QVF (`.qvf`, "Quantum Visualization Format") is a ZIP-based container
 for quantum-chemistry visualization and analysis data. It is designed
@@ -366,6 +367,7 @@ consumed by the structure panel rather than getting its own panel. A future
 | `spectra.ir` | IR frequency / intensity spectrum | yes | yes |
 | `spectra.raman` | Raman spectrum | yes | yes |
 | `spectra.uvvis` | UV/vis spectrum | yes | yes |
+| `excited_states` | State energies, strengths and orbital contributions | yes | yes, in current source |
 | `spectra.ecd` | ECD spectrum | yes | yes |
 | `spectra.vcd` | VCD spectrum | yes | yes |
 | `spectra.nmr` | NMR chemical shifts / tensors / couplings | yes | yes |
@@ -397,16 +399,19 @@ consumed by the structure panel rather than getting its own panel. A future
 | `topology.qtaim` | QTAIM critical points + bond paths | yes | yes |
 | `x_<vendor>.*` | Vendor extension | external producers | listed; known overlays may render |
 
-¹ **All writer kinds now render.** The six kinds the writer promoted from
+¹ **The six Phase J renderers shipped.** The six kinds the writer promoted from
 reserved on 2026-06-09 (`volume.potential`, `volume.rdg`, `fermi_surface`,
 `phonon_bands`, `phonon_dos`, `equation_of_state`) were briefly emitted ahead of
 their viewer renderers (roadmap Phase J, now complete); as of 2026-06 vibe-view
-renders all of them. A consumer that encounters a future not-yet-rendered kind
-should still silently skip it per Rule 2.
+renders all six. This historical milestone does not mean every current
+writer kind has a renderer. Current viewer source renders `excited_states`
+as a table in the browser, terminal and CLI, including state energies,
+strengths and orbital contributions; state energies also label NTOs.
+Unknown and any deferred kinds are listed explicitly in the section audit.
 
-The 40 canonical writer kinds above are what the writer emits and the viewer
-renders today: 39 first-class viewer kinds plus `bonds`, rendered via the
-structure view. See
+The tables above summarize the original scientific kinds. Current archives
+also carry `run.record`, `job.spec` and `excited_states`; other producers
+may supply `reaction.scheme` and `preview`. See
 [The QVF file format, end to end](tutorial/qvf_file_format.md).
 
 The reserved names `volume.orbital_projection`,
@@ -848,7 +853,7 @@ Unrestricted wavefunctions replace `mo_coefficients` with
 `mo_metadata` JSON conventions:
 
 - `spin` is `"restricted"` or `"unrestricted"`; `orbital_kind` is
-  `"canonical"` / `"natural"` / `"localized"`.
+  `"canonical"` / `"natural"` / `"localized"` / `"nto"`.
 - `energies` are in Hartree. `occupations` are electron counts per MO when
   `occupation_semantics` is `"electron_occupation"`. Natural transition
   orbital sections use the same numeric slot for transition weights and MUST
@@ -857,6 +862,14 @@ Unrestricted wavefunctions replace `mo_coefficients` with
   consumers must treat an unmarked legacy natural section as ambiguous rather
   than inferring the meaning from its section id or from the sum of its
   values.
+- Since QVF v0.3.0 (spec § 5.3) vibe-qc writes NTOs with `orbital_kind:
+  "nto"`, `nto_role` (`"hole"` / `"particle"`), and `state_ref` /
+  `state_index` into the `excited_states` section (§ 5.12), whose state
+  names the hole section as `nto_ref`. The weights are λₖ = σₖ², the
+  eigenvalues of T Tᵀ (Martin 2003), summing to 1; archives written before
+  carry σₖ, `orbital_kind: "natural"` and the deprecated
+  `excitation_index` / `excitation_energy_ev`. An unrestricted state is one
+  pair with `spin: "unrestricted"` and α and β sets (QVF spec Sec. 5.3).
 - `k_point` (optional) records the fractional reciprocal-space coordinate
   the MO coefficients describe. **Absent (or `[0, 0, 0]`) means the Γ-point**
   - the only k-point a `wavefunction.gto` section may carry in v1. Producers
@@ -1263,6 +1276,9 @@ E(V) = E0 + 9V0B0/16 · {[(V0/V)^(2/3) − 1]³ · B0' + [(V0/V)^(2/3) − 1]² 
 Carries a computed bond-order table (Mayer, Wiberg, etc.) with interatomic
 distances. Distinct from the `bonds` connectivity section: `bond_orders`
 is a quantitative per-pair table, `bonds` is a qualitative connectivity list.
+Periodic runs fill it with Mayer bond orders contracted from the accepted
+SCF density and AO overlap at the run's own k points and weights; no
+property Hamiltonian is rebuilt or re-diagonalized for this section.
 
 ```jsonc
 {

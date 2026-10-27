@@ -179,3 +179,192 @@ def test_quiet_build_plumbing_is_lifecycle_only():
 def test_helper_defines_its_entry_points(fn: str):
     text = HELPER.read_text(encoding="utf-8")
     assert f"{fn}()" in text
+
+
+def _resume_module():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "native_resume", SCRIPTS / "_native_build_resume.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.fixture
+def resume_tree(tmp_path, monkeypatch):
+    """Tiny tracked source and explicit fake compiler; no native science is built."""
+    import shutil
+
+    root = tmp_path / "product"
+    scripts = root / "scripts"
+    scripts.mkdir(parents=True)
+    for name in ("build_libint.sh", "_native_stamp.sh", "_libint_max_am.sh"):
+        shutil.copyfile(SCRIPTS / name, scripts / name)
+    source = root / "third_party/libint/src"
+    source.mkdir(parents=True)
+    (source / "kernel.cc").write_text("int kernel() { return 1; }\n")
+    subprocess.run(["git", "init", "-q", str(source)], check=True)
+    subprocess.run(["git", "-C", str(source), "add", "kernel.cc"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(source),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+        check=True,
+    )
+    compiler = tmp_path / "compiler"
+    compiler.write_text("#!/bin/sh\necho 12.2.0\n")
+    compiler.chmod(0o755)
+    monkeypatch.setenv("CXX", str(compiler))
+    return root, source, compiler
+
+
+def test_authenticated_resume_preserves_completed_objects(resume_tree, capsys):
+    root, _, compiler = resume_tree
+    module = _resume_module()
+    module.prepare(root)
+    assert capsys.readouterr().out == "fresh\n"
+    _, _, build, _contract = module.locations(root)
+    build.mkdir()
+    (build / "CMakeCache.txt").write_text(f"CMAKE_CXX_COMPILER:FILEPATH={compiler}\n")
+    (build / "build.ninja").write_text("# fake build graph\n")
+    sentinel = build / "completed.o"
+    sentinel.write_bytes(b"completed object preserved")
+    module.configured(root)
+    before = sentinel.stat().st_mtime_ns
+    module.prepare(root)
+    assert capsys.readouterr().out == "resume\n"
+    assert sentinel.stat().st_mtime_ns == before
+    assert sentinel.read_bytes() == b"completed object preserved"
+
+
+@pytest.mark.parametrize(
+    "change", ["source", "compiler", "configuration", "recipe", "environment"]
+)
+def test_resume_refuses_changed_inputs_without_deleting_objects(
+    resume_tree, monkeypatch, change
+):
+    root, source, compiler = resume_tree
+    module = _resume_module()
+    module.prepare(root)
+    _, _, build, _ = module.locations(root)
+    build.mkdir()
+    (build / "CMakeCache.txt").write_text(f"CMAKE_CXX_COMPILER:FILEPATH={compiler}\n")
+    (build / "build.ninja").write_text("# graph\n")
+    (build / "completed.o").write_bytes(b"keep")
+    module.configured(root)
+    if change == "source":
+        (source / "kernel.cc").write_text("changed input")
+    elif change == "compiler":
+        compiler.write_text("different compiler")
+    elif change == "configuration":
+        with (build / "CMakeCache.txt").open("a") as out:
+            out.write("CMAKE_CXX_FLAGS:STRING=-ffast-math\n")
+    elif change == "recipe":
+        with (root / "scripts/build_libint.sh").open("a") as out:
+            out.write("echo changed-recipe\n")
+    else:
+        monkeypatch.setenv("CXXFLAGS", "-ffast-math")
+    with pytest.raises(ValueError, match="changed"):
+        module.prepare(root)
+    assert (build / "completed.o").read_bytes() == b"keep"
+
+
+def test_unrecorded_tree_requires_explicit_legacy_proof(resume_tree):
+    root, _, compiler = resume_tree
+    module = _resume_module()
+    _, _, build, _ = module.locations(root)
+    build.mkdir()
+    (build / "CMakeCache.txt").write_text(f"CMAKE_CXX_COMPILER:FILEPATH={compiler}\n")
+    with pytest.raises(ValueError, match="unrecorded"):
+        module.prepare(root)
+    assert (build / "CMakeCache.txt").exists()
+
+
+def test_failed_resume_never_finalizes_native_markers(resume_tree, monkeypatch):
+    root, _, _ = resume_tree
+    module = _resume_module()
+    proof = {"inputs": {"compiler": "fixture"}, "configuration": {}}
+    monkeypatch.setattr(module, "verify_legacy", lambda *args: proof)
+    monkeypatch.setattr(module, "held_build_lock", lambda *args: ())
+
+    def fail(*args, **kwargs):
+        raise subprocess.CalledProcessError(1, args[0])
+
+    monkeypatch.setattr(module.subprocess, "run", fail)
+    with pytest.raises(subprocess.CalledProcessError):
+        module.recover(root, "a" * 40, True)
+    dep, _, _, _ = module.locations(root)
+    assert not (dep / "install/.vibeqc-max-am").exists()
+    assert not (dep / "resume-result.json").exists()
+
+
+def test_resume_lifecycle_preserves_published_libint_recipe():
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            ". scripts/_native_stamp.sh; _vibeqc_recipe_hash scripts/build_libint.sh",
+        ],
+        cwd=_REPO_ROOT,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    assert result.stdout.strip() == _resume_module().LEGACY_RECIPE
+
+
+def test_nested_superbuild_cache_appears_after_first_configure(resume_tree, capsys):
+    root, _, compiler = resume_tree
+    module = _resume_module()
+    module.prepare(root)
+    _, _, build, _ = module.locations(root)
+    build.mkdir()
+    content = f"CMAKE_CXX_COMPILER:FILEPATH={compiler}\nCMAKE_CXX_FLAGS:STRING=\n"
+    (build / "CMakeCache.txt").write_text(content)
+    (build / "build.ninja").write_text("# graph\n")
+    module.configured(root)
+    child = build / "library"
+    child.mkdir()
+    (child / "CMakeCache.txt").write_text(content)
+    module.prepare(root)
+    (child / "CMakeCache.txt").write_text(content + "INJECTED:BOOL=ON\n")
+    with pytest.raises(ValueError, match="configuration changed"):
+        module.prepare(root)
+
+
+def test_legacy_bool_normalization_does_not_accept_changed_options():
+    module = _resume_module()
+    assert module.option_matches("0", "OFF")
+    assert module.option_matches("ON", "ON")
+    assert not module.option_matches("1", "OFF")
+    assert not module.option_matches(None, "OFF")
+    assert not module.option_matches("6;6;5", "6;6;6")
+
+
+def test_legacy_recovery_refuses_wrong_product_identity(resume_tree, monkeypatch):
+    root, _, _ = resume_tree
+    module = _resume_module()
+    monkeypatch.setattr(module, "run", lambda *args, **kwargs: "wrong-sha")
+    with pytest.raises(ValueError, match="immutable SHA"):
+        module.verify_legacy(root, "a" * 40)
+
+
+def test_legacy_recovery_refuses_unrecorded_compiler_environment(
+    resume_tree, monkeypatch
+):
+    root, _, _ = resume_tree
+    module = _resume_module()
+    monkeypatch.setenv("CPATH", "/different/includes")
+    with pytest.raises(ValueError, match="CPATH"):
+        module.verify_legacy(root, "a" * 40)

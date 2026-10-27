@@ -21,7 +21,7 @@ bipole at a real multi-k mesh on a 3-D cell through the public
 ``run_periodic_job`` route. This file closes that gap twice over: a live
 regression test for the RHF route, and a static signature contract that
 catches a swapped callsite for *any* ``run_pbc_bipole_*`` driver without
-running an SCF (BUG-PER-002 in handovers/HANDOVER_OPEN_BUGS_V015.md).
+running an SCF (BUG-PER-002 in the original investigation).
 """
 
 from __future__ import annotations
@@ -36,6 +36,8 @@ import numpy as np
 import pytest
 import vibeqc as vq
 
+from tests.refusal_receipt import assert_preflight_refusal
+
 # The four BIPOLE driver homes; a run_pbc_bipole_* callsite in
 # periodic_runner.py must resolve to a function defined in one of these.
 _DRIVER_MODULES = (
@@ -44,6 +46,101 @@ _DRIVER_MODULES = (
     "vibeqc.pbc_bipole_uhf",
     "vibeqc.pbc_bipole_uks",
 )
+
+
+@pytest.mark.parametrize("method,functional", [
+    ("RHF", None), ("UHF", None), ("RKS", "pbe"), ("UKS", "pbe"),
+    ("RKS", "pbe0"), ("UKS", "pbe0"),
+])
+@pytest.mark.parametrize("mesh", [(1, 1, 1), (3, 1, 1)])
+@pytest.mark.parametrize("tolerance,convergence", [
+    (None, None), (1e-8, "off"), (1e-8, "auto"),
+])
+def test_public_bipole_gradient_tolerance_reaches_driver(
+    monkeypatch, tmp_path, method, functional, mesh, tolerance, convergence,
+):
+    system = vq.PeriodicSystem(
+        3, 10 * np.eye(3), [vq.Atom(1, [0., 0., 0.]), vq.Atom(1, [0., 0., 1.4])],
+        multiplicity=3 if method.startswith("U") else 1,
+    )
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    module_name = "vibeqc.pbc_bipole" + ("" if method == "RHF" else "_" + method.lower())
+    expected = 1e-6 if tolerance is None else tolerance
+
+    class ReachedDriver(Exception):
+        pass
+
+    def capture(system_arg, basis_arg, kmesh, options, **kwargs):
+        assert options.conv_tol_grad == expected
+        assert options.conv_tol_energy == 1e-9
+        assert len(kmesh.kpoints) == np.prod(mesh)
+        raise ReachedDriver
+
+    monkeypatch.setattr(importlib.import_module(module_name),
+                        "run_pbc_bipole_" + method.lower(), capture)
+    stem = tmp_path / "gradient-tolerance"
+    request = {} if tolerance is None else {"conv_tol_grad": tolerance}
+    if functional is not None:
+        request["functional"] = functional
+    with pytest.raises(ReachedDriver):
+        vq.run_periodic_job(
+            system, basis, method=method, jk_method="bipole", kpoints=mesh,
+            conv_tol_energy=1e-9, convergence=convergence, initial_guess="HCORE",
+            output=stem, output_qvf=False, progress=False, citations=False,
+            record_hostname=False, **request,
+        )
+    assert f"conv_tol_grad       = {expected}" in stem.with_suffix(".out").read_text()
+
+
+@pytest.mark.parametrize("tolerance", [True, np.bool_(True), 0., -1e-8, np.nan, np.inf])
+def test_public_bipole_gradient_tolerance_refuses_invalid_before_dry_run(tmp_path, tolerance):
+    system, basis = _h2_3d(box=12.)
+    stem = tmp_path / "invalid-gradient-tolerance"
+    with pytest.raises(ValueError, match="conv_tol_grad must be positive and finite") as refusal:
+        vq.run_periodic_job(
+            system, basis, method="RHF", jk_method="bipole", conv_tol_grad=tolerance,
+            output=stem, dry_run=True, progress=False,
+        )
+    assert_preflight_refusal(stem, refusal.value)
+
+
+def test_public_gdf_gradient_tolerance_remains_unsupported(tmp_path):
+    system, basis = _h2_3d(box=12.)
+    stem = tmp_path / "unsupported-gradient-tolerance"
+    with pytest.raises(NotImplementedError, match="explicit conv_tol_grad") as refusal:
+        vq.run_periodic_job(
+            system, basis, method="RHF", jk_method="gdf", conv_tol_grad=1e-8,
+            output=stem, dry_run=True, progress=False,
+        )
+    assert_preflight_refusal(stem, refusal.value)
+
+
+@pytest.mark.parametrize("method,functional", [
+    ("RHF", None), ("UHF", None), ("RKS", "pbe"), ("UKS", "pbe"),
+    ("RKS", "pbe0"), ("UKS", "pbe0"),
+])
+@pytest.mark.parametrize("mesh", [(1, 1, 1), (3, 1, 1)])
+def test_public_bipole_gradient_tolerance_native_scf(tmp_path, method, functional, mesh):
+    system = vq.PeriodicSystem(
+        3, 10 * np.eye(3), [vq.Atom(1, [0., 0., 0.]), vq.Atom(1, [0., 0., 1.4])],
+        multiplicity=3 if method.startswith("U") else 1,
+    )
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    stem = tmp_path / "native-gradient-tolerance"
+    request = {} if functional is None else {"functional": functional}
+    result = vq.run_periodic_job(
+        system, basis, method=method, jk_method="bipole", kpoints=mesh,
+        bipole_cutoff_bohr=12., bipole_nuclear_cutoff_bohr=12.,
+        conv_tol_energy=1e-9, conv_tol_grad=1e-9, max_iter=30,
+        convergence="off", damping=0., initial_guess="HCORE",
+        output=stem, output_qvf=False, write_xyz_file=False,
+        write_cif_file=False, write_xsf_structure_file=False,
+        write_molden_file=False, write_population_file=False,
+        citations=False, record_hostname=False, progress=False, **request,
+    )
+    assert result.converged
+    assert result.scf_trace[-1].grad_norm < 1e-9
+    assert "conv_tol_grad       = 1e-09" in stem.with_suffix(".out").read_text()
 
 
 def _h2_3d(box: float = 18.0):
@@ -471,7 +568,7 @@ def test_explicit_bipole_non_dense_solver_fails_before_dry_run_manifest(
     system, basis = _h2_3d(box=12.0)
     stem = tmp_path / "bipole-davidson"
 
-    with pytest.raises(NotImplementedError, match="supports only.*dense"):
+    with pytest.raises(NotImplementedError, match="supports only.*dense") as refusal:
         vq.run_periodic_job(
             system,
             basis,
@@ -484,7 +581,7 @@ def test_explicit_bipole_non_dense_solver_fails_before_dry_run_manifest(
             progress=False,
         )
 
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem, refusal.value)
 
 
 @pytest.mark.parametrize(
@@ -608,7 +705,7 @@ def test_bipole_surrogate_post_scf_tasks_fail_before_scf(
         )
 
 
-def test_bipole_ecp_metadata_fails_before_scf(monkeypatch, tmp_path):
+def test_bipole_ecp_historical_fails_before_scf(monkeypatch, tmp_path):
     pr = importlib.import_module("vibeqc.periodic_runner")
     system = vq.PeriodicSystem(
         3, 12.0 * np.eye(3),
@@ -627,12 +724,13 @@ def test_bipole_ecp_metadata_fails_before_scf(monkeypatch, tmp_path):
         lambda *_args: ([block], [[0.0, 0.0, 0.0]], [1.0, 1.0], 10),
     )
 
-    with pytest.raises(NotImplementedError, match="ECP-bearing bases"):
+    with pytest.raises(NotImplementedError, match="corrected physical pair"):
         vq.run_periodic_job(
             system,
             basis,
             method="RHF",
             jk_method="bipole",
+            bipole_historical_domain=True,
             output=tmp_path / "ecp",
             output_qvf=False,
             progress=False,
@@ -701,7 +799,7 @@ def test_bipole_far_field_fails_before_dry_run_manifest(tmp_path):
     system, basis = _h2_3d(box=12.0)
     stem = tmp_path / "far-field-preflight"
 
-    with pytest.raises(NotImplementedError, match="three-translation"):
+    with pytest.raises(NotImplementedError, match="three-translation") as refusal:
         vq.run_periodic_job(
             system,
             basis,
@@ -713,7 +811,7 @@ def test_bipole_far_field_fails_before_dry_run_manifest(tmp_path):
             output_qvf=False,
             progress=False,
         )
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem, refusal.value)
 
 
 # --- #511: an explicit use_multipole_far_field is never silently dropped ----
@@ -748,7 +846,7 @@ def test_far_field_on_non_bipole_route_fails_closed(tmp_path, jk_method):
     system, basis = _h2_3d()
     stem = tmp_path / f"far-field-{jk_method}"
 
-    with pytest.raises(NotImplementedError, match="use_multipole_far_field"):
+    with pytest.raises(NotImplementedError, match="use_multipole_far_field") as refusal:
         vq.run_periodic_job(
             system,
             basis,
@@ -762,7 +860,7 @@ def test_far_field_on_non_bipole_route_fails_closed(tmp_path, jk_method):
         )
     # The refusal must precede the dry-run manifest, so queue preflight
     # cannot certify a request live dispatch would silently reinterpret.
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem, refusal.value)
 
 
 @pytest.mark.parametrize("jk_method", _NON_BIPOLE_FAR_FIELD_ROUTES)
@@ -854,7 +952,7 @@ def test_fractional_legacy_gauge_fails_before_dry_run_manifest(
 ):
     system, basis = _h2_3d(box=12.0)
     stem = tmp_path / f"{method.lower()}-fractional-legacy"
-    with pytest.raises(NotImplementedError, match="fractional occupations"):
+    with pytest.raises(NotImplementedError, match="fractional occupations") as refusal:
         vq.run_periodic_job(
             system,
             basis,
@@ -868,7 +966,7 @@ def test_fractional_legacy_gauge_fails_before_dry_run_manifest(
             progress=False,
             **kwargs,
         )
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem, refusal.value)
 
 
 def test_auto_smearing_legacy_gauge_fails_before_dry_run_manifest(tmp_path):
@@ -879,7 +977,7 @@ def test_auto_smearing_legacy_gauge_fails_before_dry_run_manifest(tmp_path):
     )
     basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
     stem = tmp_path / "auto-smearing-legacy"
-    with pytest.raises(NotImplementedError, match="fractional occupations"):
+    with pytest.raises(NotImplementedError, match="fractional occupations") as refusal:
         vq.run_periodic_job(
             system,
             basis,
@@ -893,7 +991,7 @@ def test_auto_smearing_legacy_gauge_fails_before_dry_run_manifest(tmp_path):
             output_qvf=False,
             progress=False,
         )
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem, refusal.value)
 
 
 @pytest.mark.parametrize(
@@ -922,7 +1020,7 @@ def test_bipole_bz_integration_fails_before_dry_run_manifest(
         basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
     stem = tmp_path / f"bz-preflight-{method.lower()}"
 
-    with pytest.raises((ValueError, NotImplementedError), match=match):
+    with pytest.raises((ValueError, NotImplementedError), match=match) as refusal:
         vq.run_periodic_job(
             system,
             basis,
@@ -936,7 +1034,7 @@ def test_bipole_bz_integration_fails_before_dry_run_manifest(
             output_qvf=False,
             progress=False,
         )
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem, refusal.value)
 
 
 @pytest.mark.parametrize(
@@ -966,6 +1064,7 @@ def test_bipole_bz_integration_fails_before_dry_run_manifest(
         (
             {
                 "bipole_exact_zone_bohr": 5.0,
+                "bipole_historical_domain": True,
                 "symmetry": "attach",
                 "symmetry_reduce_fock": True,
             },
@@ -988,7 +1087,7 @@ def test_bipole_raw_controls_fail_before_dry_run_manifest(
     system, basis = _h2_3d(box=12.0)
     stem = tmp_path / ("raw-preflight-" + match.split()[0])
 
-    with pytest.raises((ValueError, NotImplementedError), match=match):
+    with pytest.raises((ValueError, NotImplementedError), match=match) as refusal:
         vq.run_periodic_job(
             system,
             basis,
@@ -1000,7 +1099,7 @@ def test_bipole_raw_controls_fail_before_dry_run_manifest(
             progress=False,
             **kwargs,
         )
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem, refusal.value)
 
 
 @pytest.mark.parametrize("method", ["RHF", "RKS", "UHF", "UKS"])
@@ -1093,7 +1192,7 @@ def test_invalid_multik_gpw_gapw_plus_u_fails_before_dry_run(
         basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
     stem = tmp_path / f"invalid-{jk_method}-{method.lower()}-plus-u"
 
-    with pytest.raises(NotImplementedError, match=r"multi-k .* DFT\+U"):
+    with pytest.raises(NotImplementedError, match=r"multi-k .* DFT\+U") as refusal:
         vq.run_periodic_job(
             system,
             basis,
@@ -1108,7 +1207,7 @@ def test_invalid_multik_gpw_gapw_plus_u_fails_before_dry_run(
             output_qvf=False,
             progress=False,
         )
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem, refusal.value)
 
 
 @pytest.mark.parametrize("jk_method", ["gpw", "gapw"])
@@ -1148,7 +1247,7 @@ def test_multik_gpw_gapw_hybrid_rks_plus_u_fails_before_dry_run(
     system, basis = _h2_3d()
     stem = tmp_path / f"hybrid-{jk_method}-plus-u-{'x'.join(map(str, kpoints))}"
 
-    with pytest.raises(NotImplementedError, match="hybrid or range-separated"):
+    with pytest.raises(NotImplementedError, match="hybrid or range-separated") as refusal:
         vq.run_periodic_job(
             system,
             basis,
@@ -1162,17 +1261,25 @@ def test_multik_gpw_gapw_hybrid_rks_plus_u_fails_before_dry_run(
             output_qvf=False,
             progress=False,
         )
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem, refusal.value)
 
 
+# A wire is refused by AUTO itself (no route has a 1-D Coulomb gauge), before
+# the DFT+U guard is reached; a slab reaches the low-dimensional DFT+U guard.
 @pytest.mark.parametrize(
-    ("dim", "method"),
-    [(1, "RHF"), (1, "UHF"), (1, "UKS"), (2, "UKS")],
+    ("dim", "method", "refusal_match"),
+    [
+        (1, "RHF", "no route for a dim=1"),
+        (1, "UHF", "no route for a dim=1"),
+        (1, "UKS", "no route for a dim=1"),
+        (2, "UKS", "low-dimensional"),
+    ],
 )
 def test_auto_low_dimensional_dft_plus_u_fails_before_dry_run(
     tmp_path,
     dim,
     method,
+    refusal_match,
 ):
     atoms = [vq.Atom(1, [9.0, 9.0, 8.3]), vq.Atom(1, [9.0, 9.0, 9.7])]
     if dim == 1:
@@ -1192,7 +1299,7 @@ def test_auto_low_dimensional_dft_plus_u_fails_before_dry_run(
     basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
     stem = tmp_path / f"low-d-plus-u-{dim}-{method.lower()}"
 
-    with pytest.raises(NotImplementedError, match="low-dimensional"):
+    with pytest.raises(NotImplementedError, match=refusal_match) as refusal:
         vq.run_periodic_job(
             system,
             basis,
@@ -1204,7 +1311,7 @@ def test_auto_low_dimensional_dft_plus_u_fails_before_dry_run(
             output_qvf=False,
             progress=False,
         )
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem, refusal.value)
 
 
 def test_auto_gamma_dft_plus_u_inherits_bipole_post_scf_guards(tmp_path):
@@ -1272,7 +1379,8 @@ def test_periodic_terminal_checkpoint_uses_result_convergence():
     ("task_kwargs", "match"),
     [
         ({"optimize": True, "dispersion": "d3bj"}, "dispersion"),
-        ({"optimize": True, "symmetry_stabilize": True}, "Fock symmetry"),
+        ({"optimize": True, "symmetry_stabilize": True,
+          "bipole_historical_domain": True}, "Fock symmetry"),
         (
             {
                 "optimize": True,
@@ -1324,6 +1432,7 @@ def test_explicit_bipole_symmetry_requires_attached_model(tmp_path):
             basis,
             method="RHF",
             jk_method="bipole",
+            bipole_historical_domain=True,
             symmetry_reduce_fock=True,
             output=tmp_path / "symmetry-no-model",
             output_qvf=False,
@@ -1338,13 +1447,14 @@ def test_broken_spin_state_rejects_explicit_fock_symmetry_before_dry_run(
 ):
     system, basis = _h2_3d(box=12.0)
     stem = tmp_path / f"{method.lower()}-broken-symmetry"
-    with pytest.raises(NotImplementedError, match="atomic_spins"):
+    with pytest.raises(NotImplementedError, match="atomic_spins") as refusal:
         vq.run_periodic_job(
             system,
             basis,
             method=method,
             functional="lda" if method == "UKS" else None,
             jk_method="bipole",
+            bipole_historical_domain=True,
             symmetry="attach",
             symmetry_reduce_fock=True,
             atomic_spins=[1, -1],
@@ -1353,7 +1463,7 @@ def test_broken_spin_state_rejects_explicit_fock_symmetry_before_dry_run(
             output_qvf=False,
             progress=False,
         )
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem, refusal.value)
 
 
 @pytest.mark.parametrize(
@@ -1480,7 +1590,7 @@ def test_restricted_open_shell_bipole_rejects_ignored_explicit_knobs(
 ):
     system, basis = _h2_3d()
     stem = tmp_path / f"rohf-{label.replace('/', '-')}"
-    with pytest.raises(NotImplementedError, match=label):
+    with pytest.raises(NotImplementedError, match=label) as refusal:
         vq.run_periodic_job(
             system,
             basis,
@@ -1493,7 +1603,7 @@ def test_restricted_open_shell_bipole_rejects_ignored_explicit_knobs(
             progress=False,
             **kwargs,
         )
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem, refusal.value)
 
 
 @pytest.mark.parametrize(
@@ -1566,7 +1676,7 @@ def test_public_bipole_rejects_unrestricted_oda_before_dry_run(
     system.multiplicity = 3
     stem = tmp_path / f"{method.lower()}-oda"
 
-    with pytest.raises(NotImplementedError, match="BIPOLE ODA"):
+    with pytest.raises(NotImplementedError, match="BIPOLE ODA") as refusal:
         vq.run_periodic_job(
             system,
             basis,
@@ -1580,7 +1690,7 @@ def test_public_bipole_rejects_unrestricted_oda_before_dry_run(
             output_qvf=False,
             progress=False,
         )
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem, refusal.value)
 
 
 @pytest.mark.parametrize(
@@ -1599,7 +1709,7 @@ def test_public_bipole_rejects_fractional_oda_before_dry_run(
     )
     stem = tmp_path / "rks-fractional-oda"
 
-    with pytest.raises(NotImplementedError, match="BIPOLE ODA"):
+    with pytest.raises(NotImplementedError, match="BIPOLE ODA") as refusal:
         vq.run_periodic_job(
             system,
             basis,
@@ -1614,7 +1724,7 @@ def test_public_bipole_rejects_fractional_oda_before_dry_run(
             progress=False,
             **occupation_kwargs,
         )
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem, refusal.value)
 
 
 @pytest.mark.parametrize(
@@ -1676,7 +1786,7 @@ def test_auto_plus_u_bipole_fallback_rechecks_dense_solver(tmp_path):
     system, basis = _h2_3d(box=12.0)
     stem = tmp_path / "auto-plus-u-davidson"
 
-    with pytest.raises(NotImplementedError, match="solver='dense'"):
+    with pytest.raises(NotImplementedError, match="solver='dense'") as refusal:
         vq.run_periodic_job(
             system,
             basis,
@@ -1688,7 +1798,7 @@ def test_auto_plus_u_bipole_fallback_rechecks_dense_solver(tmp_path):
             output_qvf=False,
             progress=False,
         )
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem, refusal.value)
 
 
 def test_kpoints_smearing_rejects_bipole_optimization_before_dry_run(
@@ -1703,7 +1813,7 @@ def test_kpoints_smearing_rejects_bipole_optimization_before_dry_run(
     )
     stem = tmp_path / "kpoints-smearing-optimize"
 
-    with pytest.raises(NotImplementedError, match="finite-temperature BIPOLE"):
+    with pytest.raises(NotImplementedError, match="finite-temperature BIPOLE") as refusal:
         vq.run_periodic_job(
             system,
             basis,
@@ -1717,7 +1827,7 @@ def test_kpoints_smearing_rejects_bipole_optimization_before_dry_run(
             output_qvf=False,
             progress=False,
         )
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem, refusal.value)
 
 
 def test_bipole_optimizer_rejects_ad_hoc_multik_before_dry_run(tmp_path):
@@ -1728,7 +1838,7 @@ def test_bipole_optimizer_rejects_ad_hoc_multik_before_dry_run(tmp_path):
     )
     stem = tmp_path / "bipole-optimize-ad-hoc-kmesh"
 
-    with pytest.raises(NotImplementedError, match="complete Monkhorst-Pack"):
+    with pytest.raises(NotImplementedError, match="complete Monkhorst-Pack") as refusal:
         vq.run_periodic_job(
             system,
             basis,
@@ -1741,14 +1851,14 @@ def test_bipole_optimizer_rejects_ad_hoc_multik_before_dry_run(tmp_path):
             output_qvf=False,
             progress=False,
         )
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem, refusal.value)
 
 
 def test_bipole_optimizer_rejects_legacy_multik_before_dry_run(tmp_path):
     system, basis = _h2_3d()
     stem = tmp_path / "bipole-optimize-legacy-multik"
 
-    with pytest.raises(NotImplementedError, match="corrected Ewald"):
+    with pytest.raises(NotImplementedError, match="corrected Ewald") as refusal:
         vq.run_periodic_job(
             system,
             basis,
@@ -1762,7 +1872,7 @@ def test_bipole_optimizer_rejects_legacy_multik_before_dry_run(tmp_path):
             output_qvf=False,
             progress=False,
         )
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem, refusal.value)
 
 
 @pytest.mark.parametrize("functional", ["vv10", "b2plyp"])
@@ -1774,7 +1884,7 @@ def test_bipole_rejects_incomplete_ks_functional_before_dry_run(
 ):
     system, basis = _h2_3d(box=12.0)
     stem = tmp_path / f"bipole-{method.lower()}-{functional}"
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(NotImplementedError) as refusal:
         vq.run_periodic_job(
             system,
             basis,
@@ -1786,7 +1896,7 @@ def test_bipole_rejects_incomplete_ks_functional_before_dry_run(
             output_qvf=False,
             progress=False,
         )
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem, refusal.value)
 
 
 @pytest.mark.parametrize("method", ["UHF", "UKS"])
@@ -1798,7 +1908,7 @@ def test_public_bipole_multik_spin_schedule_fails_before_dry_run(
     system.multiplicity = 3
     stem = tmp_path / f"{method.lower()}-multik-spin-schedule"
 
-    with pytest.raises(NotImplementedError, match="SPIN_SCHEDULE is Gamma-only"):
+    with pytest.raises(NotImplementedError, match="SPIN_SCHEDULE is Gamma-only") as refusal:
         vq.run_periodic_job(
             system,
             basis,
@@ -1814,7 +1924,7 @@ def test_public_bipole_multik_spin_schedule_fails_before_dry_run(
             output_qvf=False,
             progress=False,
         )
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem, refusal.value)
 
 
 def test_atomic_spin_length_fails_before_dry_run(tmp_path):
@@ -1822,7 +1932,7 @@ def test_atomic_spin_length_fails_before_dry_run(tmp_path):
     system.multiplicity = 3
     stem = tmp_path / "bad-atomic-spin-length"
 
-    with pytest.raises(ValueError, match="atomic_spins length.*atom count"):
+    with pytest.raises(ValueError, match="atomic_spins length.*atom count") as refusal:
         vq.run_periodic_job(
             system,
             basis,
@@ -1834,7 +1944,7 @@ def test_atomic_spin_length_fails_before_dry_run(tmp_path):
             output_qvf=False,
             progress=False,
         )
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem, refusal.value)
 
 
 @pytest.mark.parametrize(
@@ -1852,7 +1962,7 @@ def test_public_bipole_rejects_lone_non_gamma_twist_before_dry_run(
     kpoints = vq.KPoints.from_list(system, [[0.25, 0.0, 0.0]])
     stem = tmp_path / f"{method.lower()}-lone-twist"
 
-    with pytest.raises(NotImplementedError, match="lone non-Gamma"):
+    with pytest.raises(NotImplementedError, match="lone non-Gamma") as refusal:
         vq.run_periodic_job(
             system,
             basis,
@@ -1865,7 +1975,7 @@ def test_public_bipole_rejects_lone_non_gamma_twist_before_dry_run(
             output_qvf=False,
             progress=False,
         )
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem, refusal.value)
 
 
 def test_auto_plus_u_bipole_fallback_rechecks_lone_twist_after_planning(
@@ -1876,7 +1986,7 @@ def test_auto_plus_u_bipole_fallback_rechecks_lone_twist_after_planning(
     kpoints = vq.KPoints.from_list(system, [[0.25, 0.0, 0.0]])
     stem = tmp_path / "auto-plus-u-lone-twist"
 
-    with pytest.raises(NotImplementedError, match="lone non-Gamma"):
+    with pytest.raises(NotImplementedError, match="lone non-Gamma") as refusal:
         vq.run_periodic_job(
             system,
             basis,
@@ -1888,7 +1998,7 @@ def test_auto_plus_u_bipole_fallback_rechecks_lone_twist_after_planning(
             output_qvf=False,
             progress=False,
         )
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem, refusal.value)
 
 
 @pytest.mark.parametrize(
@@ -1931,7 +2041,7 @@ def test_explicit_exchange_split_requires_complete_mp_mesh_before_dry_run(
     )
     stem = tmp_path / "explicit-list-corrected-exchange"
 
-    with pytest.raises(NotImplementedError, match="complete Monkhorst-Pack"):
+    with pytest.raises(NotImplementedError, match="complete Monkhorst-Pack") as refusal:
         vq.run_periodic_job(
             system,
             basis,
@@ -1944,7 +2054,7 @@ def test_explicit_exchange_split_requires_complete_mp_mesh_before_dry_run(
             output_qvf=False,
             progress=False,
         )
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem, refusal.value)
 
 
 def test_gilat_requires_complete_mp_mesh_before_dry_run(tmp_path):
@@ -1955,7 +2065,7 @@ def test_gilat_requires_complete_mp_mesh_before_dry_run(tmp_path):
     )
     stem = tmp_path / "explicit-list-gilat"
 
-    with pytest.raises(NotImplementedError, match="complete Monkhorst-Pack"):
+    with pytest.raises(NotImplementedError, match="complete Monkhorst-Pack") as refusal:
         vq.run_periodic_job(
             system,
             basis,
@@ -1969,7 +2079,7 @@ def test_gilat_requires_complete_mp_mesh_before_dry_run(tmp_path):
             output_qvf=False,
             progress=False,
         )
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem, refusal.value)
 
 
 @pytest.mark.parametrize(
@@ -2063,7 +2173,7 @@ def test_public_bipole_rejects_nonpositive_max_iter_before_dry_run(tmp_path):
     system, basis = _h2_3d(box=12.0)
     stem = tmp_path / "zero-max-iter"
 
-    with pytest.raises(ValueError, match="max_iter must be at least 1"):
+    with pytest.raises(ValueError, match="max_iter must be at least 1") as refusal:
         vq.run_periodic_job(
             system,
             basis,
@@ -2075,7 +2185,7 @@ def test_public_bipole_rejects_nonpositive_max_iter_before_dry_run(tmp_path):
             output_qvf=False,
             progress=False,
         )
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem, refusal.value)
 
 
 def test_bipole_nonconvergence_refusal_names_the_terminal_check(tmp_path):
@@ -2104,3 +2214,278 @@ def test_bipole_nonconvergence_refusal_names_the_terminal_check(tmp_path):
     assert "Terminal check on the density returned" in message
     assert "|dE| = " in message and "conv_tol_energy" in message
     assert "||[F,DS]|| = " in message and "conv_tol_grad" in message
+
+
+@pytest.mark.parametrize("method", ["rhf", "uhf", "rks", "uks"])
+@pytest.mark.parametrize("mesh_kind", ["gamma", "multi", "auto-list"])
+def test_direct_physical_bipole_refuses_legacy_exchange(method, mesh_kind):
+    """Reject the resolved unsupported gauge, including AUTO mesh fallback."""
+    system, basis = _h2_3d(box=12.)
+    if mesh_kind == "auto-list":
+        mesh = vq.KPoints.from_list(
+            system, [[0., 0., 0.], [.25, 0., 0.]],
+        ).to_bloch_kmesh()
+    else:
+        mesh = vq.monkhorst_pack(system, [1 if mesh_kind == "gamma" else 2, 1, 1])
+    options = vq.PeriodicKSOptions() if method.endswith("ks") else vq.PeriodicRHFOptions()
+    module = "vibeqc.pbc_bipole" + ("" if method == "rhf" else "_" + method)
+    driver = getattr(importlib.import_module(module), "run_pbc_bipole_" + method)
+    with pytest.raises(NotImplementedError, match="physical BIPOLE support requires"):
+        driver(
+            system, basis, mesh, options,
+            use_exchange_ewald_split=None if mesh_kind == "auto-list" else False,
+            progress=False,
+        )
+
+
+@pytest.mark.parametrize("method", ["RHF", "UHF", "RKS", "UKS"])
+@pytest.mark.parametrize("automatic", [False, True])
+def test_public_physical_bipole_refuses_legacy_exchange_before_dry_run(
+    tmp_path, method, automatic,
+):
+    system, basis = _h2_3d(box=12.)
+    stem = tmp_path / "physical-legacy-refusal"
+    mesh = (vq.KPoints.from_list(system, [[0., 0., 0.], [.25, 0., 0.]])
+            if automatic else (1, 1, 1))
+    with pytest.raises(NotImplementedError, match="corrected Ewald|complete Monkhorst-Pack") as refusal:
+        vq.run_periodic_job(
+            system, basis, method=method, jk_method="bipole", kpoints=mesh,
+            functional="lda" if method.endswith("KS") else None,
+            use_exchange_ewald_split=None if automatic else False,
+            output=stem, dry_run=True, progress=False, record_hostname=False,
+        )
+    assert_preflight_refusal(stem, refusal.value)
+
+
+@pytest.mark.parametrize("method", ["RHF", "UHF", "RKS", "UKS"])
+def test_public_physical_bipole_refuses_legacy_symmetry(tmp_path, method):
+    system, basis = _h2_3d(box=12.)
+    stem = tmp_path / "physical-symmetry-refusal"
+    with pytest.raises(NotImplementedError, match="physical support requires the full direct") as refusal:
+        vq.run_periodic_job(
+            system, basis, method=method, jk_method="bipole",
+            functional="lda" if method.endswith("KS") else None,
+            output=stem, dry_run=True, progress=False, record_hostname=False,
+            symmetry_stabilize=True,
+        )
+    assert_preflight_refusal(stem, refusal.value)
+
+
+@pytest.mark.parametrize("method", ["RHF", "UHF", "RKS", "UKS"])
+def test_public_physical_bipole_admits_density_qualified_reduction(tmp_path, method):
+    system, basis = _h2_3d(box=12.)
+    vq.run_periodic_job(
+        system, basis, method=method, jk_method="bipole",
+        functional="lda" if method.endswith("KS") else None,
+        output=tmp_path / "physical-symmetry-reduction", dry_run=True,
+        symmetry="attach", symmetry_reduce_fock=True,
+        progress=False, record_hostname=False,
+    )
+
+
+# ---------------------------------------------------------------------------
+# BIPOLE QVF carries density-only Mayer bond orders although its band
+# properties are omitted by reason (#547)
+# ---------------------------------------------------------------------------
+
+
+def _qvf_bond_order_payload(path):
+    import json
+    import zipfile
+
+    with zipfile.ZipFile(path, "r") as zf:
+        manifest = json.loads(zf.read("manifest.json"))
+        kinds = {s.get("kind") for s in manifest.get("sections", [])}
+        for section in manifest.get("sections", []):
+            if section.get("kind") == "bond_orders":
+                member = section["members"]["bond_orders"]
+                return json.loads(zf.read(member["path"])), kinds
+    return None, kinds
+
+
+@pytest.mark.parametrize("population", [False, True], ids=["density-only", "population-dump"])
+def test_bipole_qvf_writes_accepted_density_bond_orders_without_band_properties(
+    tmp_path, population,
+):
+    """The BIPOLE property rebuild is skipped by reason (#32), and the notice
+    used to say the Mayer table was dropped with it. The table needs only the
+    accepted density and overlap: with the population dump off it is now
+    contracted from the lattice-set density at the run's k points, with it on
+    the population summary's table is kept. Either way DOS/PDOS/COOP/COHP stay
+    omitted and the notice says which is which."""
+    import warnings
+
+    from vibeqc.periodic_runner import _accepted_state_mayer_bond_orders
+
+    system, basis = _h2_3d(box=12.0)
+    stem = tmp_path / "h2_bipole_bond_orders"
+    with warnings.catch_warnings(record=True) as record:
+        warnings.simplefilter("always")
+        result = vq.run_periodic_job(
+            system, basis, method="RHF", jk_method="bipole",
+            output=str(stem), output_qvf=True, progress=False,
+            write_population_file=population,
+        )
+    assert result.converged
+    notices = [str(w.message) for w in record if "property_payload" in str(w.message)]
+    assert len(notices) == 1, notices
+    assert "DOS/PDOS/COOP/COHP were not written" in notices[0]
+    assert "and Mayer bond orders were not" not in notices[0]
+    assert "come from the accepted SCF density" in notices[0]
+    assert not any("bond_orders_computation" in str(w.message) for w in record)
+
+    run = tomllib.loads(stem.with_suffix(".system").read_text("utf-8"))["run"]
+    assert run["property_hamiltonian"].startswith("omitted (")
+    assert "BIPOLE" in run["property_hamiltonian"]
+
+    payload, kinds = _qvf_bond_order_payload(stem.with_suffix(".qvf"))
+    assert payload is not None, kinds
+    assert "dos.total" not in kinds and "dos.projected" not in kinds
+    assert payload["method"] == "mayer"
+    assert len(payload["pairs"]) == 1
+    pair = payload["pairs"][0]
+    assert (pair["symbol_i"], pair["symbol_j"]) == ("H", "H")
+    assert pair["distance_ang"] == pytest.approx(1.4 * 0.529177210903, abs=1e-9)
+    expected = _accepted_state_mayer_bond_orders(
+        result, system, basis, bvk_mesh=(1, 1, 1),
+    )
+    # The population summary contracts the same accepted density, so both
+    # sources agree to roundoff; the density-only path reproduces it exactly.
+    assert pair["order"] == pytest.approx(
+        expected[0, 1], abs=1e-12 if not population else 1e-8,
+    )
+    assert 0.9 < pair["order"] < 1.1
+
+
+@pytest.mark.parametrize("method", ["RKS", "UKS"])
+@pytest.mark.parametrize("functional", ["cam-b3lyp", "lc-wpbe", "wb97x"])
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_public_bipole_cam_refuses_historical_before_manifest(
+    tmp_path, method, functional, dry_run,
+):
+    system, basis = _h2_3d(box=10.)
+    stem = tmp_path / "cam-historical"
+    with pytest.raises(NotImplementedError, match="corrected.*physical") as refusal:
+        vq.run_periodic_job(
+            system, basis, method=method, functional=functional, jk_method="bipole",
+            bipole_historical_domain=True, kpoints=(2, 1, 1), convergence="off",
+            initial_guess="HCORE", output=stem, dry_run=dry_run, progress=False,
+            citations=False, record_hostname=False,
+        )
+    assert_preflight_refusal(stem, refusal.value)
+
+
+@pytest.mark.parametrize("method", ["RKS", "UKS"])
+@pytest.mark.parametrize("functional", ["cam-b3lyp", "lc-wpbe", "wb97x", "hse06", "pbe0", "pbe"])
+@pytest.mark.parametrize("mesh", [(1, 1, 1), (2, 1, 1)])
+def test_public_bipole_cam_supported_preflight_and_dispatch(
+    monkeypatch, tmp_path, method, functional, mesh,
+):
+    system, basis = _h2_3d(box=10.)
+    stem = tmp_path / "cam-supported"
+    request = dict(method=method, functional=functional, jk_method="bipole",
+        kpoints=mesh, convergence="off", initial_guess="HCORE", output=stem,
+        output_qvf=False, progress=False, citations=False, record_hostname=False)
+    vq.run_periodic_job(system, basis, dry_run=True, **request)
+    assert stem.with_suffix(".system").exists()
+
+    class ReachedDriver(Exception):
+        pass
+
+    def capture(system_arg, basis_arg, kmesh, options, **kwargs):
+        assert options.functional == functional
+        assert len(kmesh.kpoints) == np.prod(mesh)
+        assert kwargs.get("historical_domain", False) is False
+        assert kwargs.get("use_exchange_ewald_split") is not False
+        raise ReachedDriver
+
+    module = importlib.import_module("vibeqc.pbc_bipole_"+method.lower())
+    monkeypatch.setattr(module, "run_pbc_bipole_"+method.lower(), capture)
+    with pytest.raises(ReachedDriver):
+        vq.run_periodic_job(system, basis, **{**request, "output": tmp_path / "live"})
+
+
+@pytest.mark.parametrize("method", ["RHF", "RKS", "UHF", "UKS"])
+@pytest.mark.parametrize("mesh", [(1, 1, 1), (3, 1, 1)])
+def test_public_bipole_ecp_preflight_and_dispatch(monkeypatch, tmp_path, method, mesh):
+    system = vq.PeriodicSystem(3, np.eye(3)*20.,
+        [vq.Atom(17, [10., 10., 8.]), vq.Atom(17, [10., 10., 12.])], 0, 1)
+    basis = vq.BasisSet(system.unit_cell_molecule(), "lanl2dz")
+    request = dict(method=method, jk_method="bipole", kpoints=mesh,
+        convergence="off", initial_guess="HCORE", output_qvf=False,
+        progress=False, citations=False, record_hostname=False)
+    if method.endswith("KS"):
+        request["functional"] = "pbe0"
+    vq.run_periodic_job(system, basis, output=tmp_path / "dry", dry_run=True, **request)
+    assert (tmp_path / "dry.system").exists()
+
+    class ReachedDriver(Exception):
+        pass
+
+    def capture(system_arg, basis_arg, kmesh, options, **kwargs):
+        assert [a.Z for a in system_arg.unit_cell] == [17, 17]
+        assert options.ecp_total_ncore == 20
+        assert list(options.ecp_effective_charges) == [7., 7.]
+        assert len(options.ecp_primitive_blocks) == 2
+        assert len(kmesh.kpoints) == np.prod(mesh)
+        raise ReachedDriver
+
+    module = importlib.import_module("vibeqc.pbc_bipole" + ("" if method == "RHF" else "_"+method.lower()))
+    monkeypatch.setattr(module, "run_pbc_bipole_"+method.lower(), capture)
+    with pytest.raises(ReachedDriver):
+        vq.run_periodic_job(system, basis, output=tmp_path / "live", **request)
+
+
+@pytest.mark.parametrize("control", ["optimize", "hessian", "symmetry_stabilize", "symmetry_reduce_fock", "bipole_historical_domain"])
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_public_bipole_ecp_unsupported_preflight(tmp_path, control, dry_run):
+    system = vq.PeriodicSystem(3, np.eye(3)*20.,
+        [vq.Atom(17, [10., 10., 8.]), vq.Atom(17, [10., 10., 12.])], 0, 1)
+    basis = vq.BasisSet(system.unit_cell_molecule(), "lanl2dz")
+    stem = tmp_path / control
+    with pytest.raises((ValueError, NotImplementedError)) as refusal:
+        vq.run_periodic_job(system, basis, method="RHF", jk_method="bipole",
+            initial_guess="HCORE", convergence="off", output=stem,
+            progress=False, dry_run=dry_run, **{control: True})
+    assert_preflight_refusal(stem, refusal.value)
+
+
+def test_public_bipole_ecp_complete_single_point(tmp_path):
+    bond = 1.99 * 1.8897261246257702
+    system = vq.PeriodicSystem(3, np.eye(3)*20.,
+        [vq.Atom(17, [10.,10.,10.-bond/2]), vq.Atom(17, [10.,10.,10.+bond/2])], 0, 1)
+    basis = vq.BasisSet(system.unit_cell_molecule(), "lanl2dz")
+    result = vq.run_periodic_job(system, basis, method="RHF", jk_method="bipole",
+        initial_guess="HCORE", convergence="off", kpoints=(1,1,1),
+        bipole_cutoff_bohr=12., bipole_nuclear_cutoff_bohr=20., ewald_precision=1e-10,
+        output=tmp_path / "ecp-single-point", output_qvf=False,
+        progress=False, citations=False, record_hostname=False)
+    assert result.converged
+    assert result.ecp_total_ncore == 20
+    assert result.n_electrons == 14
+    assert abs(result.energy - (-29.3455846237986)) < 1e-6
+    assert result.ecp_source.provider == "bipole-scalar-ecp-v1"
+
+
+@pytest.mark.parametrize("method,functional", [("RHF", None), ("UHF", None),
+                                               ("RKS", "pbe0"), ("UKS", "pbe0")])
+def test_bipole_stale_full_mesh_refuses_direct_and_before_dry_run(tmp_path, monkeypatch, method, functional):
+    system, basis = _h2_3d()
+    old_system = vq.PeriodicSystem(3, .9*np.asarray(system.lattice), list(system.unit_cell))
+    stale = vq.KPoints.monkhorst_pack(old_system, (2, 1, 1), shift=(0, 0, 0)).to_bloch_kmesh()
+    module_name = "vibeqc.pbc_bipole" + ("" if method == "RHF" else "_"+method.lower())
+    module = importlib.import_module(module_name)
+    options = vq.PeriodicRHFOptions() if functional is None else vq.PeriodicKSOptions()
+    if functional is not None:
+        options.functional = functional
+    def forbidden(*args, **kwargs):
+        raise AssertionError("stale mesh must refuse before lattice preparation")
+    monkeypatch.setattr(module, "prepare_bipole_lattice_options", forbidden)
+    with pytest.raises(ValueError, match="full kmesh points do not match"):
+        getattr(module, "run_pbc_bipole_"+method.lower())(system, basis, stale, options, progress=False)
+    stem = tmp_path / (method.lower()+"-stale-grid")
+    with pytest.raises(ValueError, match="full kmesh points do not match") as refusal:
+        vq.run_periodic_job(system, basis, method=method, functional=functional,
+                            jk_method="bipole", kpoints=stale, dry_run=True,
+                            output=stem, output_qvf=False, progress=False)
+    assert_preflight_refusal(stem, refusal.value)

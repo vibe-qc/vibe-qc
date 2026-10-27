@@ -12,7 +12,7 @@ evidence for it.
 The CCM direct drivers return bare per-supercell API dataclasses
 (``CCMSCFResult`` / ``CCMKSResult``); ``run_periodic_job``'s output stage
 consumes per-unit-cell results with ``getattr``-guarded optional fields
-(contract inventory: ``HANDOVER_AICCM_DIRECT_TORUS.md`` § Milestone 2d).
+(contract inventory: Milestone 2d).
 This module constructs that result:
 
 * ``energy`` is per **unit cell** (the CCM per-supercell energy / N_c);
@@ -88,12 +88,59 @@ class CCMRealGammaConvention:
     executed_fock_mixing: float
     executed_damping: float
     executed_level_shift: float
+    #: The RSGDF tail the direct producer applied (``None`` = none), read from
+    #: the result; and which fit built the operator (``"classic"``: the fold and
+    #: supercell builders; ``"injected"`` for a caller-supplied cderi). The
+    #: Bloch producer records the same two fields, which is how a Theorem-1
+    #: pair is audited from the two ``.system`` files (vibe-qc #378). Placed
+    #: after the non-default fields: a defaulted field ahead of them made the
+    #: dataclass unconstructible and every ``variant="real-gamma"`` runner job
+    #: fail at import.
+    rsgdf_tail_ke_cutoff: Optional[float] = None
+    fit_source: str = ""
+    #: Primitive-cell XC image reach actually used (zero for HF/unrecorded).
+    xc_lattice_cutoff_bohr: float = 0.0
     experimental: bool = True
     #: Screened-exchange assembly for HSE-class runs (None otherwise):
     #: (c_full, c_sr, omega_screen) -- the SR-direct (CRYSTAL-style)
     #: assembly convention; see tests/test_ccm_rsh_direct.py for the
     #: cross-code finite-size caveat.
     screened_exchange: Optional[tuple[float, float, float]] = None
+    #: IID 291 / ruling R6: whether the producer was asked to run a cell
+    #: measured as vacuum-padded, and the 1-based lattice directions that
+    #: measured as vacuum. Read off the driver result, never re-derived.
+    vacuum_padding_allowed: bool = False
+    vacuum_padded_axes: tuple = ()
+    #: The neutral fitted-torus Hamiltonian this run evaluated, as the
+    #: ``as_dict()`` of the producer's :class:`~vibeqc.fock_state.SourceProvenance`
+    #: (``provider``, ``identity``, ``details``), and its identity alone for
+    #: the manifest. Equal identities on a real-Gamma and a neutral-Bloch
+    #: run mean one operator (#519, RG-2); read off the result, never
+    #: re-derived.
+    neutral_source: Optional[dict] = None
+    neutral_source_identity: str = ""
+    #: LUMO - HOMO of the returned supercell-Gamma solution in Ha
+    #: (:func:`~vibeqc.periodic.ccm.properties.ccm_homo_lumo_gap`, the
+    #: spin-resolved gap for UHF/UKS): a state-selection signal (#519, RG-9).
+    frontier_gap: Optional[float] = None
+    #: The RHF stability verdict (``CCMRHFStability.as_dict()``) and the
+    #: instability-following steps, when the RHF arm ran them (RG-9).
+    stability: Optional[dict] = None
+    instability_follow: tuple = ()
+    #: How the fitted integrals were held (``"dense"``, ``"block"`` or
+    #: ``"block-star"``), read off the driver's ``cderi_info``. One operator
+    #: in every storage (#519 RG-5, RG-10), so it is not part of the source
+    #: identity; recorded for cost and reproducibility.
+    cderi_storage: str = "dense"
+    #: The spin sector the producer executed (#519 RG-14): the ``as_dict()``
+    #: of :class:`~vibeqc.periodic.ccm.spin_state.CCMSpinState`, read off the
+    #: driver result, and the requested policy (``"legacy"``, ``"per-cell"``
+    #: or a total multiplicity, as a string).
+    spin_state: Optional[dict] = None
+    spin_policy: str = "legacy"
+    #: How the sector's electrons were distributed (#519 RG-15): the
+    #: ``as_dict()`` of the producer's ``OccupationRecord``.
+    occupation: Optional[dict] = None
 
 
 @dataclass
@@ -145,6 +192,9 @@ class CCMRealGammaResult:
     density_alpha: Optional[object] = None
     density_beta: Optional[object] = None
     guess_selection: object = None
+    #: The producer's terminal :class:`~vibeqc.fock_state.FockBuild` (#472),
+    #: carried verbatim so the manifest records its identities (#519, RG-3).
+    fock_build: object = None
 
 
 def _fold_density_to_lattice_set(ccm, D_sc, lat_opts=None):
@@ -176,6 +226,38 @@ def _screened_assembly_for(functional: Optional[str]):
     return (float(exx.c_full), float(exx.c_sr), float(exx.omega_screen))
 
 
+def _frontier_gap_of(res, ccm):
+    """LUMO - HOMO of a direct result in Ha, ``None`` when undefined."""
+    from .properties import ccm_homo_lumo_gap
+
+    try:
+        gap = float(ccm_homo_lumo_gap(res, ccm).gap)
+    except (AttributeError, ValueError, IndexError):
+        return None
+    return gap if np.isfinite(gap) else None
+
+
+def real_gamma_read_source(source, *, open_shell=False):
+    """Extract a target-supercell READ density, never a unit-cell projection.
+
+    Accept a matrix/spin pair or a direct/ccm_reference_from_bloch result.
+    A runner result is unwrapped to its supercell ccm_result. Bloch results
+    must first use ccm_reference_from_bloch so its existing mapping guards
+    remain authoritative. File-based and geometry-projected READ is separate.
+    """
+    source = getattr(source, "ccm_result", source)
+    if source is None or isinstance(source, (str, bytes)) or hasattr(source, "__fspath__"):
+        raise ValueError("real-Gamma initial_guess=READ requires an in-memory supercell density")
+    if open_shell:
+        if isinstance(source, (tuple, list)) and len(source) == 2:
+            return source
+        da, db = getattr(source, "density_alpha", None), getattr(source, "density_beta", None)
+        if da is None or db is None:
+            raise ValueError("real-Gamma READ requires supercell alpha and beta densities")
+        return da, db
+    return getattr(source, "density", source)
+
+
 def run_real_gamma_scf(
     system: PeriodicSystem,
     basis_name: str,
@@ -183,12 +265,16 @@ def run_real_gamma_scf(
     mesh: Sequence[int],
     *,
     initial_guess: object = "AUTO",
+    initial_density=None,
     functional: Optional[str] = None,
     exxdiv: Optional[str] = "ewald",
     cderi_build: str = "fold",
     cderi_symmetry=None,
     aux_basis: Optional[str] = None,
     ke_cutoff: float = 200.0,
+    # The RSGDF high-|G| tail of the neutral fit (None = the resolver's
+    # default, ccm_neutral_tail_ke_cutoff, which sizes it at every N_c).
+    tail_ke_cutoff: Optional[float] = None,
     # M4b (#778): pre-build L here and keep it on the result, so a
     # correlation driver can ride the same kernel the SCF converged on.
     # Off by default -- the default path is byte-identical to before.
@@ -198,6 +284,13 @@ def run_real_gamma_scf(
     lat_opts: Optional[LatticeSumOptions] = None,
     grid_options: Optional[GridOptions] = None,
     becke_image_radius_bohr: float = 10.0,
+    rcut_strategy: object = "pyscf_auto",
+    allow_vacuum_padding: bool = False,
+    stability_check: bool = False,
+    follow_instability: bool = False,
+    fit_source: str = "classic",
+    cderi_storage: str = "dense",
+    spin_state: object = "legacy",
 ) -> CCMRealGammaResult:
     """Run the real-Γ direct-route SCF and adapt it to the runner contract.
 
@@ -208,12 +301,48 @@ def run_real_gamma_scf(
     contract yet); use the API driver
     :func:`vibeqc.periodic.ccm.direct.run_ccm_double_hybrid_direct`.
 
+    ``allow_vacuum_padding=True`` forwards the IID 291 opt-in (ruling R6) to
+    the direct drivers: a cell measured as vacuum-padded runs as a warned,
+    recorded vacuum-parameter study instead of being refused, and the
+    convention record carries ``vacuum_padding_allowed`` and
+    ``vacuum_padded_axes`` read off the driver result.
+
     For KS methods, ``grid_options`` and ``becke_image_radius_bohr`` are
     forwarded unchanged to the periodic AO-grid XC builder.  The direct
     driver negotiates any external provider's required grid profile before
     building its cderi and uses the same image radius for the Becke partition
-    and shifted-AO density projection.  HF methods do not consume XC-grid
+    and shifted-AO density projection for external XC. Built-in XC uses the
+    shared primitive-cell AO-pair bound under ``rcut_strategy="pyscf_auto"``;
+    ``"flat"`` preserves the supplied lattice cutoff. HF methods do not consume XC-grid
     controls.
+
+    ``fit_source`` (#519, RG-12) selects the fit the fold builds:
+    ``"classic"`` (default, the all-reciprocal fit with its RSGDF tail) or
+    ``"sr"``, the multi-k GDF driver's default SR/LR fit
+    (:class:`~vibeqc.periodic.ccm.fit_source.RangeSeparatedFitSource` at the
+    driver's defaults), whose Bloch control is the neutral-bloch variant with
+    ``fit_source="sr"``. ``ke_cutoff``/``tail_ke_cutoff``/``aux_basis``
+    apply to the classic fit only.
+
+    ``cderi_storage`` (#519, RG-6) holds the fitted integrals ``"dense"``
+    (default), per transfer ``"block"`` or star-reduced ``"block-star"``;
+    the three are one operator. A correlated run needs the dense array its
+    treatment reads, so the runner keeps correlation on dense storage.
+
+    ``spin_state`` (#519, RG-14) selects the torus spin sector:
+    ``"legacy"`` (default, the supercell parity rule), ``"per-cell"`` (the
+    cell's counts replicated with spins aligned) or an integer total
+    multiplicity; see :mod:`vibeqc.periodic.ccm.spin_state`. It is resolved
+    on the cluster before the driver runs, a sector that is open shell
+    refuses the restricted ``method``, and the executed counts are recorded
+    on the convention record as ``spin_state``.
+
+    ``initial_guess`` admits HCORE (the AUTO default), READ with
+    ``initial_density`` and an explicit ``"SAD"`` on the supercell (#519,
+    RG-9). ``stability_check`` / ``follow_instability`` (RHF only) forward
+    to :func:`~vibeqc.periodic.ccm.direct.run_ccm_rhf_direct`; the verdict
+    and any following steps land on the convention record beside the
+    frontier gap.
     """
     from .system import CCMSystem
     from .direct import (
@@ -223,14 +352,48 @@ def run_real_gamma_scf(
         run_ccm_uks_direct,
     )
 
-    from ...guess import InitialGuess, select_initial_guess
+    from ...guess import (
+        InitialGuess,
+        periodic_guess_capabilities,
+        select_initial_guess,
+    )
+    # HCORE, READ and, only when named, SAD (#519 RG-9): AUTO stays HCORE.
     selection = select_initial_guess(
         system.unit_cell_molecule(), initial_guess, is_periodic=True,
         is_open_shell=str(method).strip().upper() in ("UHF", "UKS"),
-        supported=(InitialGuess.HCORE,), driver="run_real_gamma_scf",
+        supported=periodic_guess_capabilities(
+            "aiccm-real-gamma", requested=initial_guess),
+        restart_supplied=initial_density is not None, driver="run_real_gamma_scf",
     )
 
+    if selection.effective == InitialGuess.READ and initial_density is None:
+        raise ValueError("run_real_gamma_scf: initial_guess=READ requires initial_density")
     method_upper = str(method).strip().upper()
+    fit_label = str(fit_source).strip().lower()
+    if fit_label in ("auto", "classic"):
+        fit_object = None
+    elif fit_label == "sr":
+        from .fit_source import RangeSeparatedFitSource
+
+        fit_object = RangeSeparatedFitSource()
+    else:
+        raise ValueError(
+            "run_real_gamma_scf: fit_source must be 'classic' or 'sr', got "
+            f"{fit_source!r}")
+    storage = str(cderi_storage).strip().lower()
+    if storage not in ("dense", "block", "block-star"):
+        raise ValueError(
+            "run_real_gamma_scf: cderi_storage must be 'dense', 'block' or "
+            f"'block-star', got {cderi_storage!r}")
+    if storage != "dense" and retain_cderi:
+        raise NotImplementedError(
+            "run_real_gamma_scf: the correlation treatments read the dense "
+            "cderi array; run a correlated job with cderi_storage='dense'")
+    if (stability_check or follow_instability) and method_upper != "RHF":
+        raise NotImplementedError(
+            "run_real_gamma_scf: the stability check covers RHF (the real "
+            "RHF orbital Hessian); Kohn-Sham kernels and open-shell "
+            f"references are not implemented (method={method_upper!r})")
     nrep = tuple(int(n) for n in mesh)
     if len(nrep) != 3 or any(n < 1 for n in nrep):
         raise ValueError(
@@ -250,29 +413,39 @@ def run_real_gamma_scf(
         basis=unit_basis,
         system=system,
     )
-    ccm = CCMSystem(system, nrep, basis_name)
+    ccm = CCMSystem(system, nrep, basis_name, spin_state=spin_state)
+    # A stand-in cluster (unit tests) may carry no resolved state.
+    resolved_state = getattr(ccm, "spin_state", None)
+    if (method_upper in ("RHF", "RKS") and resolved_state is not None
+            and not resolved_state.closed_shell):
+        raise ValueError(
+            f"run_real_gamma_scf: method={method_upper!r} is a restricted "
+            "reference but the resolved spin sector is open shell "
+            f"({ccm.spin_state.describe()}); use UHF/UKS for this sector.")
 
-    kw = dict(cderi_build=cderi_build, cderi_symmetry=cderi_symmetry,
+    kw = dict(initial_density=initial_density, cderi_build=cderi_build,
+              cderi_symmetry=cderi_symmetry,
               aux_basis=aux_basis, ke_cutoff=float(ke_cutoff),
+              tail_ke_cutoff=(None if tail_ke_cutoff is None
+                              else float(tail_ke_cutoff)),
               exxdiv=exxdiv, max_iter=int(max_iter),
-              conv_tol=float(conv_tol), lat_opts=lat_opts)
-    # M4b (#778): when the caller will correlate on this reference, build L
-    # here and hand the SAME array to the SCF, so the correlation cannot ride
-    # a different kernel than the reference converged on. Only the HF
-    # branches: correlation needs an HF determinant, and the KS branches also
-    # build a screened L_sr this would not cover.
+              conv_tol=float(conv_tol), lat_opts=lat_opts,
+              allow_vacuum_padding=bool(allow_vacuum_padding),
+              fit_source=fit_object, cderi_storage=storage)
+    # M4b (#778): when the caller will correlate on this reference, the
+    # correlation must ride the SAME array the SCF converged on. Since
+    # 2026-09-24 every direct driver stamps that array on ``result.cderi``
+    # (one build per job), so nothing is pre-built here any more: the
+    # reference is taken off the SCF result below. Only the HF branches keep
+    # it: correlation needs an HF determinant, and the KS branches also
+    # build a screened L_sr this would not cover. An SCF-only run drops the
+    # array so the result does not pin a large tensor.
     retained_cderi = None
-    if retain_cderi and method_upper in ("RHF", "UHF"):
-        from .direct import _neutral_cderi_for
-
-        retained_cderi = _neutral_cderi_for(
-            ccm, None, cderi_build, float(ke_cutoff), aux_basis,
-            cderi_symmetry)
-        # A prebuilt cderi already fixes the fitting basis, and the drivers
-        # refuse aux_basis beside one rather than silently ignoring it.
-        kw = dict(kw, cderi=retained_cderi, aux_basis=None)
     if method_upper == "RHF":
-        res = run_ccm_rhf_direct(ccm, **kw, initial_guess=selection.requested)
+        res = run_ccm_rhf_direct(
+            ccm, **kw, initial_guess=selection.requested,
+            stability_check=bool(stability_check),
+            follow_instability=bool(follow_instability))
     elif method_upper == "UHF":
         res = run_ccm_uhf_direct(ccm, **kw, initial_guess=selection.requested)
     elif method_upper == "RKS":
@@ -281,6 +454,7 @@ def run_real_gamma_scf(
             functional or "pbe",
             grid_options=grid_options,
             becke_image_radius_bohr=float(becke_image_radius_bohr),
+            rcut_strategy=rcut_strategy,
             **kw,
             initial_guess=selection.requested,
         )
@@ -290,6 +464,7 @@ def run_real_gamma_scf(
             functional or "pbe",
             grid_options=grid_options,
             becke_image_radius_bohr=float(becke_image_radius_bohr),
+            rcut_strategy=rcut_strategy,
             **kw,
             initial_guess=selection.requested,
         )
@@ -297,6 +472,11 @@ def run_real_gamma_scf(
         raise NotImplementedError(
             "jk_method='real-gamma' implements RHF, UHF, RKS, and UKS; "
             f"got method={method_upper!r}")
+
+    if retain_cderi and method_upper in ("RHF", "UHF"):
+        retained_cderi = getattr(res, "cderi", None)
+    elif getattr(res, "cderi", None) is not None:
+        res.cderi = None
 
     n_c = int(ccm.n_cells)
     applicability = getattr(res, "exchange_q0_applicability", None)
@@ -312,11 +492,35 @@ def run_real_gamma_scf(
         nrep=nrep,
         n_cells=n_c,
         cderi_build=str(cderi_build),
+        rsgdf_tail_ke_cutoff=getattr(res, "rsgdf_tail_ke_cutoff", None),
+        fit_source=str(getattr(res, "fit_source", "") or ""),
+        xc_lattice_cutoff_bohr=float(getattr(res, "xc_lattice_cutoff_bohr", 0.0)),
         executed_fock_mixing=_EXECUTED_FOCK_MIXING,
         executed_damping=_EXECUTED_DAMPING,
         executed_level_shift=_EXECUTED_LEVEL_SHIFT,
         screened_exchange=_screened_assembly_for(
             functional if method_upper in ("RKS", "UKS") else None),
+        vacuum_padding_allowed=bool(
+            getattr(res, "vacuum_padding_allowed", False)),
+        vacuum_padded_axes=tuple(
+            int(a) for a in (getattr(res, "vacuum_padded_axes", ()) or ())),
+        neutral_source=(None if getattr(res, "neutral_source", None) is None
+                        else res.neutral_source.as_dict()),
+        neutral_source_identity=(
+            "" if getattr(res, "neutral_source", None) is None
+            else str(res.neutral_source.identity)),
+        frontier_gap=_frontier_gap_of(res, ccm),
+        stability=(None if getattr(res, "stability", None) is None
+                   else res.stability.as_dict()),
+        instability_follow=tuple(getattr(res, "instability_follow", ()) or ()),
+        cderi_storage=str((getattr(res, "cderi_info", None) or {}).get(
+            "storage", storage)),
+        spin_state=(None if getattr(res, "spin_state", None) is None
+                    else res.spin_state.as_dict()),
+        spin_policy=(str(spin_state) if resolved_state is None
+                     else str(resolved_state.requested)),
+        occupation=(None if getattr(res, "occupation", None) is None
+                    else res.occupation.as_dict()),
     )
 
     open_shell = getattr(res, "density_alpha", None) is not None and \
@@ -395,6 +599,7 @@ def run_real_gamma_scf(
         ccm_system=ccm,
         cderi=retained_cderi,
         guess_selection=getattr(res, "guess_selection", None),
+        fock_build=getattr(res, "fock_build", None),
         functional=(functional if method_upper in ("RKS", "UKS") else None),
         e_xc=(float(res.e_xc) / n_c if getattr(res, "e_xc", None) is not None
               else None),

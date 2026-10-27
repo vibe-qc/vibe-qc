@@ -1,0 +1,1 @@
+- Molecular DLPNO-UCCSD retained union pair-PNO and enabled singles-PNO Fock solves now use the shared checked boundary with explicit source, frozen and spin-coordinate labels. Density selection, degenerate spin spaces, PAO projection, frozen partitions and numerical gates are preserved.

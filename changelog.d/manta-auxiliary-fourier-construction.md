@@ -1,0 +1,1 @@
+- Enclose auxiliary Fourier construction through the existing experimental MANTA metric/rank/inverse/J/K audit, with immutable per-element diagnostics, count admission and explicit basis-data and total-energy exclusions.

@@ -9,8 +9,7 @@ extension modules, so when a test purges ``vibeqc*`` from ``sys.modules``
 leave the dotted form -- ``from vibeqc._vibeqc_core.semiempirical import
 nddo`` -- permanently broken for the rest of the process: ~70 semiempirical
 tests failed with ModuleNotFoundError in single-process full-suite runs
-while passing in per-file isolation (2026-06-11, see
-handovers/HANDOVER_TEST_HEALTH.md). ``vibeqc/__init__.py`` now re-registers the
+while passing in per-file isolation (2026-06-11). ``vibeqc/__init__.py`` now re-registers the
 compiled submodule tree on every package import.
 """
 

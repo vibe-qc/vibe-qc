@@ -20,6 +20,11 @@ from scipy.linalg import eigh
 
 from ._casci import CASCIResult, casci
 
+# Determinant count up to which the MRCI matrix is diagonalised densely. Above
+# it the sparse matrix goes to Lanczos for the lowest root (#326): a dense
+# MR-CISD space of 2.6e4 determinants is 5.4 GB and an O(n^3) eigh.
+_DENSE_DIAGONALIZATION_MAX_DET = 4000
+
 
 @dataclass
 class MRCIResult:
@@ -253,18 +258,31 @@ def mrci(
             "Use a smaller active space or increase max_det."
         )
 
-    # Step 4: Build MRCI Hamiltonian.
-    from ._slater_condon import build_hamiltonian_matrix_unrestricted
+    # Step 4: Build MRCI Hamiltonian, sparse from alpha/beta string tables
+    # (the same elements as the dense determinant-pair builder, bit for bit).
+    from ._slater_condon import build_hamiltonian_sparse_unrestricted
 
-    H_mrci = build_hamiltonian_matrix_unrestricted(mrci_dets, h1e_mo, h2e_mo)
+    H_mrci = build_hamiltonian_sparse_unrestricted(mrci_dets, h1e_mo, h2e_mo)
+    det_index = {d: i for i, d in enumerate(mrci_dets)}
 
-    # Step 5: Diagonalize.
-    eigvals, eigvecs = eigh(H_mrci)
-    e_total = float(eigvals[0]) + nuclear_repulsion
-    ci = eigvecs[:, 0]
+    # Step 5: Diagonalize: dense for small spaces, Lanczos for the lowest root
+    # otherwise. Lanczos starts from the CASCI vector plus a fixed-seed
+    # component in every direction, so it is deterministic and cannot be
+    # confined to the reference's symmetry sector.
+    if n_det <= _DENSE_DIAGONALIZATION_MAX_DET:
+        eigvals, eigvecs = eigh(H_mrci.toarray())
+        e0, ci = float(eigvals[0]), eigvecs[:, 0]
+    else:
+        from scipy.sparse.linalg import eigsh
+
+        v0 = 1e-3 * np.random.default_rng(326).standard_normal(n_det)
+        for d, c in zip(ref_dets_full, np.asarray(cas.ci_coeffs).ravel()):
+            v0[det_index[d]] += c
+        eigvals, eigvecs = eigsh(H_mrci, k=1, which="SA", v0=v0 / np.linalg.norm(v0), tol=0.0)
+        e0, ci = float(eigvals[0]), eigvecs[:, 0]
+    e_total = e0 + nuclear_repulsion
 
     # Step 6: Reference weight for +Q correction.
-    det_index = {d: i for i, d in enumerate(mrci_dets)}
     ref_weight = float(
         sum(ci[det_index[d]] ** 2 for d in ref_dets_full if d in det_index)
     )

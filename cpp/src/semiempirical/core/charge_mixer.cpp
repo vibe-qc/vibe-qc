@@ -7,18 +7,15 @@ namespace vibeqc {
 namespace semiempirical {
 
 // ===================================================================
-// ChargeDIISMixer — Pulay DIIS with normalized error vectors,
-// delayed start, and adaptive damping.
+// ChargeDIISMixer — Pulay DIIS with a commonly scaled residual Gram matrix.
 //
-// Key insight: the SCC charge response dq → dq_new is strongly
-// nonlinear far from convergence, so DIIS extrapolation (which
-// assumes linearity) can overshoot and diverge.  We fix this by:
-//
-//   1. Normalised error vectors (correlation-based B-matrix).
-//   2. Delayed DIIS start: simple mixing for the first N iterations
-//      to enter the linear regime.
-//   3. Adaptive damping: blend DIIS with raw input more heavily
-//      early, less near convergence.
+// Pulay, Chem. Phys. Lett. 73, 393 (1980), Eqs. (4)-(6),
+// DOI: 10.1016/0009-2614(80)80396-4. The minimized residual is sum_i c_i e_i,
+// with sum_i c_i = 1. Normalizing each e_i separately changes this problem:
+// an obsolete large error then receives the same weight as a small one.
+// One common scale keeps the constraint block numerically comparable without
+// changing the minimizer. Nearly parallel history is refreshed, not retained
+// indefinitely; nonlinear extrapolations still use the coefficient guard.
 // ===================================================================
 
 void ChargeDIISMixer::mix(Eigen::VectorXd& dq_out,
@@ -28,29 +25,38 @@ void ChargeDIISMixer::mix(Eigen::VectorXd& dq_out,
     if (n == 0) return;
 
     // Compute residual: e = dq_in - dq_out  (raw SCF output minus mixed input).
-    // DIIS stores the mixed inputs and their residuals, then extrapolates
-    // a linear combination of mixed inputs that minimises the residual norm.
+    // Store inputs and residuals together; the extrapolated vectors below
+    // are their mapped outputs, dq_out + e_raw = dq_in.
     Eigen::VectorXd e_raw = dq_in - dq_out;
     double e_norm = e_raw.norm();
     last_error_ = e_norm;
 
     // Store the MIXED input (dq_out, what SCF used) and its residual.
-    Eigen::VectorXd e_hat = (e_norm > 1e-30) ? e_raw / e_norm : e_raw;
     if (q_history_.empty()) {
         q_history_.push_back(dq_out);
-        e_history_.push_back(e_hat);
+        e_history_.push_back(e_raw);
     } else {
         bool should_push = true;
         if (!e_history_.empty()) {
-            double dot = std::abs(e_hat.dot(e_history_.back()));
+            const double previous_norm = e_history_.back().norm();
+            const double dot = e_norm > 1e-30 && previous_norm > 1e-30
+                ? std::abs((e_raw / e_norm).dot(
+                      e_history_.back() / previous_norm))
+                : 1.0;
             should_push = (dot < 0.999);
         }
         if (should_push) {
             q_history_.push_back(dq_out);
-            e_history_.push_back(e_hat);
+            e_history_.push_back(e_raw);
             while (q_history_.size() > max_subspace_) {
                 q_history_.pop_front(); e_history_.pop_front();
             }
+        } else {
+            // Parallel residuals add no independent direction, but the
+            // current input can be much closer to the fixed point. Keep
+            // its paired residual instead of retaining an obsolete input.
+            q_history_.back() = dq_out;
+            e_history_.back() = e_raw;
         }
     }
 
@@ -64,12 +70,16 @@ void ChargeDIISMixer::mix(Eigen::VectorXd& dq_out,
     }
 
     // ---- DIIS extrapolation ----
+    double residual_scale = 0.0;
+    for (const auto& error : e_history_) {
+        residual_scale = std::max(residual_scale, error.norm());
+    }
     Eigen::MatrixXd A = Eigen::MatrixXd::Zero(m + 1, m + 1);
     Eigen::VectorXd b = Eigen::VectorXd::Zero(m + 1);
     for (Eigen::Index i = 0; i < m; ++i) {
         for (Eigen::Index j = 0; j <= i; ++j) {
-            double bij = e_history_[static_cast<std::size_t>(i)].dot(
-                         e_history_[static_cast<std::size_t>(j)]);
+            double bij = (e_history_[static_cast<std::size_t>(i)] / residual_scale).dot(
+                         e_history_[static_cast<std::size_t>(j)] / residual_scale);
             A(i, j) = bij; A(j, i) = bij;
         }
         A(i, m) = -1.0; A(m, i) = -1.0;
@@ -101,8 +111,15 @@ void ChargeDIISMixer::mix(Eigen::VectorXd& dq_out,
     }
 
     Eigen::VectorXd dq_diis = Eigen::VectorXd::Zero(n);
-    for (Eigen::Index i = 0; i < m; ++i)
-        dq_diis += sol(i) * q_history_[static_cast<std::size_t>(i)];
+    // Fixed-point DIIS extrapolates g(q_i), not q_i. See Chupin et al.,
+    // ESAIM: M2AN 55, 2785 (2021), Section 2.1, Eqs. (2.2)-(2.6),
+    // DOI: 10.1051/m2an/2021069. Extrapolating only the inputs can return
+    // the same point forever when the residual minimum in their affine
+    // span is nonzero; the mapped outputs supply the missing advance.
+    for (Eigen::Index i = 0; i < m; ++i) {
+        const auto index = static_cast<std::size_t>(i);
+        dq_diis += sol(i) * (q_history_[index] + e_history_[index]);
+    }
 
     if (!dq_diis.allFinite()) {
         double alpha = std::max(0.25, damping_);
@@ -110,12 +127,8 @@ void ChargeDIISMixer::mix(Eigen::VectorXd& dq_out,
         return;
     }
 
-    // Use the DIIS extrapolation directly.  The damping_ parameter
-    // controls fallback intensity when DIIS fails; when it succeeds
-    // we trust the extrapolation.  (A damped blend of the extrapolated
-    // vector was measured to break naphthalene-type SCCs into
-    // non-convergence; the GFN2 driver instead guards DIIS with a
-    // stall-revert wrapper around the pure extrapolation.)
+    // Use the mapped extrapolation directly. Damping controls fallback
+    // steps; convergence is checked against a newly evaluated SCC map.
     dq_out = dq_diis;
 }
 

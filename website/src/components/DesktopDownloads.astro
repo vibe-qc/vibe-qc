@@ -1,0 +1,60 @@
+---
+import releases from '../data/published-releases.json';
+import maceRelease from '../data/published-mace-release.json';
+import { desktopProducts } from '../data/desktop-releases.mjs';
+const profiles = {
+  'vibe-sketch': {step:'01 / Sketch', summary:'Draw molecules and reactions. Prepare calculation inputs.', mac:'14', linux:'AppImage', runtime:'Python, RDKit, QVF and the editor'},
+  'vibe-queue': {step:'02 / Submit', summary:'Submit and manage jobs from the command line or local web console.', mac:'14', linux:'tar.gz', runtime:'Python, the vq command, daemon and web-console dependencies'},
+  'vibe-qc': {step:'03 / Calculate', summary:'Run molecular and periodic quantum-chemistry calculations.', mac:'27', linux:'tar.gz', runtime:'Python, the native calculation engine, basis/ECP data, naming, structure fetching and D3/D4'},
+  'vibe-view': {step:'04 / Analyze', summary:'Explore structures, orbitals, densities and calculation results.', mac:'14', linux:'AppImage', runtime:'Python, PyVista, VTK, Trame and RDKit'},
+};
+const base = import.meta.env.BASE_URL;
+---
+<div class="desktop-grid">
+  {desktopProducts.map(product => <article class="card" id={product} data-desktop-product={product}>
+    <span class="eyebrow">{profiles[product].step}</span><h3>{product}</h3><div class="release-number"><span>Current release</span><strong data-release-version>v{releases[product].version}</strong></div>
+    <p data-release-status>{profiles[product].summary}</p>
+    <p><a class="download-button" data-platform="macos" href={releases[product].manifest.artifacts.macos.url}>macOS · DMG ↓</a> <span class="package-size" data-size="macos">{Math.round(releases[product].manifest.artifacts.macos.size / 1000000)} MB</span></p>
+    <p>Apple Silicon (ARM64), macOS {profiles[product].mac} or newer. Ad-hoc signed; not Apple-notarized.</p>
+    <p><a class="download-button" data-platform="linux" href={releases[product].manifest.artifacts.linux.url}>Linux · {profiles[product].linux === 'AppImage' ? 'AppImage' : 'Standalone archive'} ↓</a> <span class="package-size" data-size="linux">{Math.round(releases[product].manifest.artifacts.linux.size / 1000000)} MB</span></p>
+    <p>x86-64. Includes {profiles[product].runtime}. {profiles[product].linux === 'AppImage' ? 'Requires standard desktop and graphics libraries.' : 'Requires glibc 2.36 or newer (Debian 12 compatible). Extract the archive and run the commands in bin/. No separate Python installation needed.'}</p>
+    {profiles[product].linux === 'tar.gz' && <p>The macOS app opens Terminal with its commands ready. {product === 'vibe-queue' ? 'Remote machines still need their calculation engines and SSH access configured.' : 'The standard package omits machine-learning runtimes and developer/reference tools.'}</p>}
+    <div class="route-links"><a href={`${base}products/${product}/`}>Program overview ↗</a><a href={product === 'vibe-qc' ? '/docs/' : `/${product}/docs/`}>Manual ↗</a><a data-checksums href={`/updates/${product}/releases/${releases[product].version}/SHA256SUMS`}>SHA-256 checksums ↗</a><a data-platform="source" href={releases[product].manifest.artifacts.source.url}>Corresponding source ↗</a></div>
+    {product === 'vibe-qc' && <details class="mace-downloads">
+      <summary>Optional package: vibe-qc + MACE</summary>
+      <p>v{maceRelease.version}. Includes the normal QC runtime plus MACE and PyTorch, with one Python 3.14 interpreter. Choose this package to run MACE without installing additional Python packages. Model weights download separately on first use.</p>
+      <p><a class="download-button" href={maceRelease.artifacts.macos.url}>macOS + MACE · DMG ↓</a> <span class="package-size">{Math.round(maceRelease.artifacts.macos.size / 1000000)} MB</span></p>
+      <p><a class="download-button" href={maceRelease.artifacts.linux.url}>Linux + MACE · Archive ↓</a> <span class="package-size">{Math.round(maceRelease.artifacts.linux.size / 1000000)} MB</span></p>
+      <p>Apple Silicon, macOS 27 or newer; or Linux x86-64, glibc 2.36 or newer. Linux includes CPU-only PyTorch. The same QC commands work in either package.</p>
+      <div class="route-links"><a href={`/updates/vibe-qc/variants/mace/releases/${maceRelease.version}/SHA256SUMS`}>MACE package checksums ↗</a><a href={maceRelease.artifacts.source.url}>Corresponding source ↗</a><a href={`/updates/vibe-qc/variants/mace/releases/${maceRelease.version}/release.json`}>Package details ↗</a></div>
+    </details>}
+    <details><summary>Release details</summary><a data-release-details href={`/updates/${product}/releases/${releases[product].version}/release.json`}>Version, source commit and package hashes ↗</a></details>
+  </article>)}
+</div>
+<script>
+  import { currentRelease } from '../data/current-releases.mjs';
+  for (const card of document.querySelectorAll<HTMLElement>('[data-desktop-product]')) {
+    const product = card.dataset.desktopProduct!;
+    currentRelease(product)
+      .then(release => {
+        card.querySelector('[data-release-version]')!.textContent = `v${release.version}`;
+        card.querySelector<HTMLAnchorElement>('[data-checksums]')!.href = `/updates/${product}/releases/${release.version}/SHA256SUMS`;
+        card.querySelector<HTMLAnchorElement>('[data-release-details]')!.href = `/updates/${product}/releases/${release.version}/release.json`;
+        for (const kind of ['macos', 'linux', 'source']) {
+          const anchor = card.querySelector<HTMLAnchorElement>(`[data-platform="${kind}"]`)!;
+          anchor.href = release.artifacts[kind].url;
+          const size = card.querySelector(`[data-size="${kind}"]`);
+          if(size) size.textContent = `${Math.round(release.artifacts[kind].size / 1000000)} MB`;
+        }
+      }).catch(() => {
+        card.querySelector('[data-release-status]')!.textContent = 'Showing the verified website snapshot. These downloads and checksums match the displayed version; live release metadata is temporarily unavailable.';
+      });
+  }
+</script>
+<style>
+.package-size{font-size:12px;color:var(--slate);margin-left:8px;white-space:nowrap}.desktop-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr));gap:24px; }
+.card{scroll-margin-top:100px;} .release-number{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:20px 0;border-block:1px solid var(--line);padding:14px 0;} .release-number span{font-size:12px;color:var(--slate);} .release-number strong{font-size:32px;letter-spacing:-.04em;color:var(--phase-pos);font-variant-numeric:tabular-nums;} h3 {margin:12px 0 16px;font-size:24px;} .card p{color:var(--slate);line-height:1.65;margin:12px 0;} a{color:var(--phase-pos);}
+.download-button{display:inline-block;padding:12px 18px;background:var(--phase-pos);color:#10201b;border-radius:5px;font-weight:600;}
+.route-links{display:flex;flex-wrap:wrap;gap:12px 20px;font-size:14px;}details{margin-top:18px;font-size:13px;}
+@media(max-width:650px){.desktop-grid{grid-template-columns:1fr;}}
+</style>

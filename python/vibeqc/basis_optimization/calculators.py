@@ -68,21 +68,53 @@ def _to_periodic_system(structure: Any):
             f"vq.PeriodicSystem); got {type(structure).__name__}"
         )
 
-    lattice = np.asarray(structure.lattice_matrix_angstrom(), dtype=float)
-    lattice_bohr = lattice * ANGSTROM_TO_BOHR
+    # GitLab #128: `lattice_matrix_angstrom` returns ROWS ("rows = a, b, c
+    # vectors", vibe_basis/io/structures.py), and `PeriodicSystem` reads
+    # COLUMNS. Handing the row matrix straight over built a sheared crystal
+    # from a correct one: a hexagonal Structure with a = b = 2.504 Angstrom
+    # and gamma = 120 arrived as 2.7996 / 2.1685 and 116.565, while the
+    # fractional-to-Cartesian product below -- which is right for rows -- kept
+    # the atoms where they belonged. Cubic compounds have a diagonal matrix
+    # and are unaffected, which is why this survived.
+    lattice_rows_bohr = (
+        np.asarray(structure.lattice_matrix_angstrom(), dtype=float)
+        * ANGSTROM_TO_BOHR
+    )
 
     atoms = []
     for site in structure.unit_cell:
         frac = np.asarray(site.fxyz, dtype=float)
-        cart = frac @ lattice_bohr
+        cart = frac @ lattice_rows_bohr
         atoms.append(vq.Atom(int(site.Z), [float(c) for c in cart]))
 
-    return vq.PeriodicSystem(
+    system = vq.PeriodicSystem(
         dim=3,
-        lattice=lattice_bohr,
+        lattice=lattice_rows_bohr.T,
         unit_cell=atoms,
         multiplicity=int(getattr(structure, "multiplicity", 1) or 1),
     )
+    declared = getattr(structure, "crystal_system", None)
+    if declared:
+        from vibeqc.lattice_convention import check_crystal_system
+
+        # The Structure already knows what it is meant to be, so let it say
+        # so: this is the one marshalling step where a declaration is free.
+        check_crystal_system(system, declared)
+
+    # The space group is the tighter claim, and it is checked against
+    # ``crystal_spacegroup`` rather than the ``spacegroup`` string on purpose.
+    # ``_structure_from_periodic_system`` clears the integer to 0 after a
+    # relaxation, for the reason given in its docstring -- the field describes
+    # the *input* geometry and a relaxation has moved the atoms -- while the
+    # string is carried over and goes stale. So a zero here means "this
+    # record's symmetry data is no longer trustworthy", and skipping the check
+    # then is the whole point rather than a loophole.
+    declared_group = int(getattr(structure, "crystal_spacegroup", 0) or 0)
+    if declared_group:
+        from vibeqc.lattice_convention import check_space_group
+
+        check_space_group(system, declared_group)
+    return system
 
 
 def _structure_from_periodic_system(system: Any, template: Any) -> Any:
@@ -112,7 +144,12 @@ def _structure_from_periodic_system(system: Any, template: Any) -> Any:
     lattice_bohr = np.asarray(system.lattice, dtype=float)
     lattice_ang = lattice_bohr / ANGSTROM_TO_BOHR
 
-    a_vec, b_vec, c_vec = lattice_ang
+    # GitLab #128: ``PeriodicSystem.lattice`` holds the vectors as COLUMNS, so
+    # they are read off the transpose. Unpacking the matrix directly took its
+    # rows, which mirrored the transpose on the way in: the two cancelled on a
+    # round trip, and the cubic fixture that covered it could not tell the
+    # difference because a diagonal matrix is its own transpose.
+    a_vec, b_vec, c_vec = lattice_ang.T
     a = float(np.linalg.norm(a_vec))
     b = float(np.linalg.norm(b_vec))
     c = float(np.linalg.norm(c_vec))
@@ -127,10 +164,12 @@ def _structure_from_periodic_system(system: Any, template: Any) -> Any:
 
     from vibe_basis.io.structures import StructureAtom
 
-    inv = np.linalg.inv(lattice_bohr)
     sites = []
     for atom in system.unit_cell:
-        frac = np.asarray(atom.xyz, dtype=float) @ inv
+        # r_cart = lattice @ frac for the column convention, so the fractional
+        # coordinates solve that system rather than multiplying by the inverse
+        # on the right (which would be the row reading).
+        frac = np.linalg.solve(lattice_bohr, np.asarray(atom.xyz, dtype=float))
         sites.append(
             StructureAtom(Z=int(atom.Z), fxyz=tuple(float(f) for f in frac))
         )
@@ -177,14 +216,9 @@ def _parse_inline_basis_text(basis_text: str, Z: int):
     which this function used to do -- hands O the Mg basis for MgO. That
     converges, and it is wrong.
     """
-    atoms = _parse_inline_basis_atoms(basis_text)
-    for atom in atoms:
-        if atom.Z == Z:
-            return atom
-    raise KeyError(
-        f"no basis block for Z={Z} in the inline basis text "
-        f"(found: {sorted(a.Z for a in atoms)})"
-    )
+    from vibeqc.basis_crystal import parse_crystal_inline_element
+
+    return parse_crystal_inline_element(basis_text, Z, source="<engine basis_text>")
 
 
 def _write_basis(library, atoms: Sequence[Any], stem: str) -> str:
@@ -193,15 +227,13 @@ def _write_basis(library, atoms: Sequence[Any], stem: str) -> str:
     The name is uuid-suffixed so libint's ``BasisSet`` constructor never
     returns a cached parse of a *previous* candidate that happened to
     share a name -- the failure mode there is an optimizer that appears
-    to converge while every evaluation used the same basis.
+    to converge while every evaluation used the same basis. ECP-bearing
+    atoms get their ``.ecp`` sidecar beside it
+    (:meth:`~vibeqc.basis_optimization.io.TempBasisLibrary.write_g94`).
     """
     import uuid
 
-    from vibeqc.basis_crystal import emit_g94
-
-    name = f"{stem}-{uuid.uuid4().hex[:8]}"
-    (library.path / "basis" / f"{name}.g94").write_text(emit_g94(list(atoms)))
-    return name
+    return library.write_g94(atoms, basis_name=f"{stem}-{uuid.uuid4().hex[:8]}")
 
 
 # ---------------------------------------------------------------------------
@@ -226,6 +258,12 @@ def _resolve_method(method: str, multiplicity: int) -> tuple[str, Optional[str]]
     if method.lower() in _HF_ALIASES:
         return ("RHF" if restricted else "UHF"), None
     return ("RKS" if restricted else "UKS"), method
+
+
+#: How far a counterpoise atom may sit above its bare atom, in Hartree,
+#: before it is read as a different electronic state rather than SCF noise.
+#: The ghost basis contains the bare one, so in one state it cannot be higher.
+_COUNTERPOISE_ABOVE_BARE_TOL = 1.0e-7
 
 
 # ---------------------------------------------------------------------------
@@ -255,7 +293,7 @@ class VibeQcEngine(EnergyEngine):
     ``EngineEnergy.detail["atom_reference"]`` because it *must* match
     the convention of whatever reference the cohesive energy is compared
     against -- spin-restricting the Br reference alone moved KBr's
-    atomization by 37 kJ/mol (``handovers/HANDOVER_GPAW_PW_REFERENCE.md``,
+    atomization by 37 kJ/mol (the original investigation,
     GPAW-PWREF-002).
 
     Parameters
@@ -292,9 +330,18 @@ class VibeQcEngine(EnergyEngine):
         default) uses a fresh temporary directory that is deleted after
         each evaluation; set it to keep the ``.out`` files for a
         post-mortem.
+    bsse_nstar, bsse_rmax
+        The counterpoise cluster's truncation, as ``ATOMBSSE``'s ``NSTAR``
+        and ``RMAX`` (angstrom): the free atom keeps the ghost functions of
+        the neighbours in the first ``bsse_nstar`` stars that lie closer
+        than ``bsse_rmax``. The defaults equal ``Crystal23Engine``'s so the
+        two engines compute the same quantity. The pob reference set uses
+        per-system converged values (LiF ``30 / 10.0``, MgO ``10 / 5.0``),
+        so converge them rather than trust them. Used only when the
+        pipeline asks for counterpoise atoms.
     scf_kwargs
         Extra kwargs forwarded to the **molecular** SCF runner used for
-        isolated atoms.
+        isolated atoms, bare or counterpoise.
     """
 
     name: str = "vibeqc"
@@ -303,11 +350,12 @@ class VibeQcEngine(EnergyEngine):
     label: str = "vibe-qc"
 
     #: ``zero_point`` uses the M1 Gamma-point phonon driver
-    #: (``vibeqc.basis_optimization.phonons``). ``relax`` stays undeclared
-    #: until BIPOLE has a certified variable-cell optimizer; ``counterpoise``
-    #: stays undeclared because this engine has no ghost-basis atom path.
-    #: The pipeline therefore records either unsupported stage as skipped.
-    capabilities = frozenset({"zero_point"})
+    #: (``vibeqc.basis_optimization.phonons``). ``counterpoise`` computes the
+    #: free atom in a ghost cluster cut from its host crystal, as CRYSTAL's
+    #: ``ATOMBSSE`` does (``vibeqc.basis_optimization.counterpoise``).
+    #: ``relax`` stays undeclared until BIPOLE has a certified variable-cell
+    #: optimizer, so the pipeline records that stage as skipped.
+    capabilities = frozenset({"zero_point", "counterpoise"})
 
     def __init__(
         self,
@@ -318,8 +366,12 @@ class VibeQcEngine(EnergyEngine):
         relax_kwargs: Optional[dict] = None,
         phonon_kwargs: Optional[dict] = None,
         work_dir: Optional[Any] = None,
+        bsse_nstar: int = 30,
+        bsse_rmax: float = 10.0,
         **scf_kwargs,
     ) -> None:
+        self.bsse_nstar = int(bsse_nstar)
+        self.bsse_rmax = float(bsse_rmax)
         self._library = library
         self._kpoints = kpoints
         self._periodic_kwargs = dict(periodic_kwargs or {})
@@ -695,32 +747,25 @@ class VibeQcEngine(EnergyEngine):
     ) -> EngineEnergy:
         """Free-atom energy of element *Z*, in Hartree.
 
-        *host* is accepted for protocol compatibility and must be
-        ``None``: this engine does not declare the ``counterpoise``
-        capability, so `CohesivePipeline` never asks it for a
-        ghost-basis atom. Passing one anyway is a caller error rather
-        than an infeasible point, so it raises instead of returning
-        ``ok=False`` -- silently computing a *bare* atom when a
-        counterpoise one was requested would substitute a different
-        quantity, which is the exact class of error the counterpoise
-        work exists to remove.
-
         Spin-polarised at the ground-state multiplicity, aspherical --
         see the class docstring for why that convention is load-bearing
         rather than a detail.
+
+        *host*, when given, requests a **counterpoise-corrected** atom:
+        the atom computed in the ghost basis of that host crystal, as
+        CRYSTAL's ``ATOMBSSE`` does. The cluster keeps the neighbours in
+        the first ``bsse_nstar`` stars that lie closer than ``bsse_rmax``
+        angstrom (see :mod:`vibeqc.basis_optimization.counterpoise`). The
+        real atom is the first atom of element *Z* in the host's unit
+        cell, which is right for the ordered compounds of the pob test
+        sets, where every atom of an element is symmetry equivalent. The
+        bare atom is computed first and seeds the cluster SCF, so the
+        cluster lands in the same electronic state; a cluster energy
+        above the bare one means it did not, and is returned as a
+        failure rather than as a negative superposition error.
         """
-        import contextlib
-
-        if host is not None:
-            raise NotImplementedError(
-                "VibeQcEngine does not support counterpoise free atoms; it "
-                "does not declare the 'counterpoise' capability. Use "
-                "Crystal23Engine for ATOMBSSE-corrected atoms, or run the "
-                "pipeline with counterpoise=False."
-            )
-
         try:
-            import vibeqc as vq
+            import vibeqc as vq  # noqa: F401 -- fail early with a clear error
         except ImportError:
             raise RuntimeError("VibeQcEngine needs vibe-qc installed") from None
 
@@ -762,55 +807,213 @@ class VibeQcEngine(EnergyEngine):
         detail["scf_method"] = scf_method
         detail["functional"] = functional
 
+        if host is not None:
+            return self._counterpoise_atom_energy(
+                basis_text, Z, host, multiplicity, scf_method, functional, detail
+            )
+
+        import contextlib
+
         with contextlib.ExitStack() as stack:
             library = stack.enter_context(self._new_library())
             basis_name = _write_basis(library, [atom], f"vqe-atom{Z}")
-
-            mol = vq.Molecule(
-                [vq.Atom(Z, [0.0, 0.0, 0.0])], multiplicity=multiplicity
+            result, failure = self._bare_atom_scf(
+                Z, multiplicity, basis_name, scf_method, functional
             )
-            basis = vq.BasisSet(mol, basis_name)
-
-            if scf_method == "RHF":
-                runner, opts = vq.run_rhf, vq.RHFOptions()
-            elif scf_method == "UHF":
-                runner, opts = vq.run_uhf, vq.UHFOptions()
-            elif scf_method == "RKS":
-                runner, opts = vq.run_rks, vq.RKSOptions()
-                opts.functional = functional
-            else:
-                runner, opts = vq.run_uks, vq.UKSOptions()
-                opts.functional = functional
-
-            for key, value in self._scf_kwargs.items():
-                setattr(opts, key, value)
-
-            try:
-                result = runner(mol, basis, opts)
-            except Exception as exc:  # noqa: BLE001 -- reported, not raised
-                return EngineEnergy.failed(
-                    self.name,
-                    "scf_error",
-                    engine_version=self.version(),
-                    error=repr(exc),
-                    **detail,
-                )
-
-        if result is None:
-            return EngineEnergy.failed(
-                self.name, "no_result", engine_version=self.version(), **detail
-            )
+        if failure is not None:
+            return self._atom_failure(failure, result, detail)
         detail["n_iter"] = getattr(result, "n_iter", None)
+        return EngineEnergy(
+            energy=float(result.energy),
+            ok=True,
+            engine=self.name,
+            engine_version=self.version(),
+            detail=detail,
+        )
+
+    # -- free-atom SCF ----------------------------------------------------
+
+    def _atom_scf(
+        self,
+        mol: Any,
+        basis: Any,
+        scf_method: str,
+        functional: Optional[str],
+        *,
+        read_from: Any = None,
+    ) -> tuple[Any, Optional[tuple[str, str]]]:
+        """Run one atom SCF; return ``(result, None)`` or ``(result, failure)``.
+
+        *failure* is ``(failure_mode, error)``. With *read_from* the SCF
+        starts from that prior result's densities, projected onto
+        *basis*, and the caller's ``initial_guess`` is overridden.
+        """
+        import vibeqc as vq
+
+        if scf_method == "RHF":
+            runner, opts = vq.run_rhf, vq.RHFOptions()
+        elif scf_method == "UHF":
+            runner, opts = vq.run_uhf, vq.UHFOptions()
+        elif scf_method == "RKS":
+            runner, opts = vq.run_rks, vq.RKSOptions()
+            opts.functional = functional
+        else:
+            runner, opts = vq.run_uks, vq.UKSOptions()
+            opts.functional = functional
+
+        for key, value in self._scf_kwargs.items():
+            setattr(opts, key, value)
+
+        kwargs: dict[str, Any] = {}
+        if read_from is not None:
+            opts.initial_guess = vq.InitialGuess.READ
+            kwargs["read_from"] = read_from
+
+        try:
+            result = runner(mol, basis, opts, **kwargs)
+        except Exception as exc:  # noqa: BLE001 -- reported, not raised
+            return None, ("scf_error", repr(exc))
+        if result is None:
+            return None, ("no_result", "")
         if not bool(getattr(result, "converged", False)):
+            return result, ("non_converged", "")
+        return result, None
+
+    def _bare_atom_scf(
+        self,
+        Z: int,
+        multiplicity: int,
+        basis_name: str,
+        scf_method: str,
+        functional: Optional[str],
+    ) -> tuple[Any, Optional[tuple[str, str]]]:
+        """The bare free atom at the origin, in the library basis *basis_name*."""
+        import vibeqc as vq
+
+        mol = vq.Molecule([vq.Atom(Z, [0.0, 0.0, 0.0])], multiplicity=multiplicity)
+        basis = vq.BasisSet(mol, basis_name)
+        return self._atom_scf(mol, basis, scf_method, functional)
+
+    def _atom_failure(
+        self,
+        failure: tuple[str, str],
+        result: Any,
+        detail: dict[str, Any],
+    ) -> EngineEnergy:
+        mode, error = failure
+        extra: dict[str, Any] = dict(detail)
+        if error:
+            extra["error"] = error
+        if result is not None:
+            extra["n_iter"] = getattr(result, "n_iter", None)
+            if mode == "non_converged":
+                extra["energy"] = float(result.energy)  # diagnostic only
+        return EngineEnergy.failed(
+            self.name, mode, engine_version=self.version(), **extra
+        )
+
+    def _counterpoise_atom_energy(
+        self,
+        basis_text: str,
+        Z: int,
+        host: Any,
+        multiplicity: int,
+        scf_method: str,
+        functional: Optional[str],
+        detail: dict[str, Any],
+    ) -> EngineEnergy:
+        """Atom *Z* in the ghost basis of *host*: BOC-3, CRYSTAL's ATOMBSSE."""
+        import contextlib
+
+        from vibeqc.basis_optimization.counterpoise import (
+            ghost_cluster,
+            ghost_cluster_basis,
+            ghost_cluster_molecule,
+        )
+
+        detail["atom_reference"] = (
+            "counterpoise_ghost_cluster_aspherical_spin_polarised_ground_multiplicity"
+        )
+        detail["host"] = getattr(host, "name", None)
+        detail["bsse_nstar"] = self.bsse_nstar
+        detail["bsse_rmax"] = self.bsse_rmax
+
+        try:
+            system = _to_periodic_system(host)
+        except Exception as exc:  # noqa: BLE001 -- reported, not raised
             return EngineEnergy.failed(
                 self.name,
-                "non_converged",
+                "bad_host",
                 engine_version=self.version(),
-                energy=float(result.energy),  # diagnostic only
+                error=repr(exc),
+                **detail,
+            )
+
+        center = next(
+            (i for i, a in enumerate(system.unit_cell) if int(a.Z) == Z), None
+        )
+        if center is None:
+            raise ValueError(
+                f"element Z={Z} does not appear in the unit cell of "
+                f"{getattr(host, 'name', host)!r}"
+            )
+
+        cluster = ghost_cluster(
+            system, center, nstar=self.bsse_nstar, rmax_angstrom=self.bsse_rmax
+        )
+        detail["cluster"] = cluster.summary()
+
+        try:
+            elements = sorted({Z, *cluster.ghost_Z})
+            blocks = [_parse_inline_basis_text(basis_text, z) for z in elements]
+        except (ValueError, KeyError) as exc:
+            return EngineEnergy.failed(
+                self.name,
+                "bad_input",
+                engine_version=self.version(),
+                error=repr(exc),
+                **detail,
+            )
+
+        with contextlib.ExitStack() as stack:
+            library = stack.enter_context(self._new_library())
+            basis_name = _write_basis(library, blocks, f"vqe-cp-atom{Z}")
+
+            bare, failure = self._bare_atom_scf(
+                Z, multiplicity, basis_name, scf_method, functional
+            )
+            if failure is not None:
+                mode, error = failure
+                return self._atom_failure(
+                    (f"bare_{mode}", error), bare, detail
+                )
+            detail["bare_energy"] = float(bare.energy)
+
+            mol = ghost_cluster_molecule(cluster, multiplicity=multiplicity)
+            basis = ghost_cluster_basis(cluster, mol, basis_name)
+            detail["cluster_nbasis"] = int(basis.nbasis)
+            result, failure = self._atom_scf(
+                mol, basis, scf_method, functional, read_from=bare
+            )
+
+        if failure is not None:
+            return self._atom_failure(failure, result, detail)
+
+        energy = float(result.energy)
+        detail["n_iter"] = getattr(result, "n_iter", None)
+        detail["bsse_hartree"] = detail["bare_energy"] - energy
+        # The ghost basis contains the bare basis, so in the same state the
+        # cluster energy cannot be higher. A margin above SCF noise.
+        if energy > detail["bare_energy"] + _COUNTERPOISE_ABOVE_BARE_TOL:
+            return EngineEnergy.failed(
+                self.name,
+                "counterpoise_above_bare",
+                engine_version=self.version(),
+                energy=energy,  # diagnostic only
                 **detail,
             )
         return EngineEnergy(
-            energy=float(result.energy),
+            energy=energy,
             ok=True,
             engine=self.name,
             engine_version=self.version(),

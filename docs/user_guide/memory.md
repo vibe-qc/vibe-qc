@@ -216,14 +216,32 @@ RIJCOSX, and coupled solvent) skip the implicit check and allocate no stability
 phase. Only the explicitly enabled Newton/TRAH second-order kernels retain the
 dense whole-grid tables described above.
 
-The 3D true-multi-k pure-DFT GDF route retains its analytic-FT Ewald J cache
-only when the full tensor plus one similarly sized construction temporary
-fits `VIBEQC_J_EWALD3D_CACHE_MIB` (4096 MiB by default). Larger cases contract
-reciprocal vectors and output cells in batches, so they never retain an
-`(n_cells, n_AO, n_AO, n_G)` complex tensor. Those batches use the separate
-`VIBEQC_J_EWALD3D_FT_CELL_CHUNK_MIB` target (512 MiB by default). Lowering
-either positive value trades reuse/batch size for memory; neither changes the
-`VIBEQC_J_EWALD3D_KE` reciprocal cutoff or the energy convention.
+The multi-k GDF drivers hold no analytic-FT Ewald J cache. Every k-mesh run
+contracts its Hartree from the cached fit of its `gdf_method`, and the
+unfitted pure-DFT Ewald J with its cache planning was removed (GitLab #415),
+so `VIBEQC_J_EWALD3D_CACHE_MIB` is no longer read. The direct contraction of
+the Ewald J from D(k) (`build_periodic_j_ewald3d_k_from_k_density`, still used
+by the periodic guess) batches reciprocal vectors and output cells under the
+`VIBEQC_J_EWALD3D_FT_CELL_CHUNK_MIB` target (512 MiB by default), so it never
+retains an `(n_cells, n_AO, n_AO, n_G)` complex tensor. Lowering that value
+trades batch size for memory; it does not change the `VIBEQC_J_EWALD3D_KE`
+reciprocal cutoff or the energy convention.
+
+The multi-k `EWALD_3D` SCF drivers (the Ewald route of `run_rhf_periodic_multi_k_ewald3d`
+and its RKS, UHF and UKS siblings) do retain such a tensor for the whole SCF:
+the per-cell analytic-FT Hartree cache, `stored cells x n_AO^2 x n_G` complex
+values after exactly empty physical-support cells are dropped. Before it is
+allocated, its size is compared with a budget (GitLab #640):
+`VIBEQC_J_EWALD3D_FT_CACHE_MAX_MIB` when set, otherwise half of the memory
+available at that moment. Within the budget the cache is retained as before.
+Above it the driver keeps a stream plan with the same cells, G mesh, kernel
+and support, and every Hartree build recomputes the per-cell Fourier
+transform in reciprocal batches under the `VIBEQC_J_EWALD3D_FT_CELL_CHUNK_MIB`
+target, so only that batch workspace is live; the decision, the retained size
+and the budget are logged. The streamed `J(g)` matches the retained cache to
+roundoff, not bit for bit, because the batches change the reduction order.
+This budget bounds the retained tensor only, not the process; set
+`VIBEQC_J_EWALD3D_FT_CACHE_MAX_MIB=0` to stream always.
 
 ## Reading the probe yourself
 
@@ -276,8 +294,93 @@ The estimator returns a
 [`MemoryEstimate`](../api/index.md) dataclass with a
 `by_category` dict, so you can inspect exactly where the memory goes.
 
+Some categories grow with the OpenMP worker count, because every concurrent
+worker owns its own scratch (molecular DFT batch tables, DF transform and
+triples workers). By default the estimate uses the current runtime count
+(`vibeqc.get_num_threads()`). Pass `n_threads=N` to size it for another
+count, for example a job you will run with a different allocation:
+`estimate_memory(mol, basis, method="rks", n_threads=32)`.
+
 For conventional molecular SCF, the dense AO contribution is
 $N_\mathrm{bf}^4\times8$ bytes. For direct SCF, the estimator replaces
 that category with `Direct-SCF shell-pair scratch`. Switching the reference
 SCF route does not remove method-specific MP2, CCSD, CCSD(T), response, or
 property intermediates, so estimate the complete requested method.
+
+### Periodic GDF dry-run allocation contract
+
+For three-dimensional GDF, dry-run charges the dense auxiliary factor cache,
+bounded SR/LR fitting and whitening workspace, one-electron lattice and
+Bloch matrices, nuclear images and Fourier workspace, and semilocal XC data.
+The weighted nuclear Fourier kernel reserves at most one quarter of its
+configured Fourier workspace, capped at 64 MiB, for exact primitive Gaussian
+damping reuse. The table belongs to one call and contains at most 128 exponent
+sums; entries outside that budget use the original scalar evaluation. The
+remaining chunk budget includes shared powers and both scratch rows per worker.
+This reuse leaves reciprocal support, phases and summation order unchanged.
+It does not charge a dense AO-pair Fourier bundle. Pure semilocal DFT stores
+diagonal k pairs; HF exchange stores the required bra/ket pairs. Open-shell
+references share those factors while retaining separate spin densities, Fock
+matrices and accelerator histories.
+
+Reciprocal-vector storage uses a conservative integer index box around the
+resolved cutoff, with enumerator boundary slack and half-cell q-shift padding.
+An enumerated reciprocal sphere counts fewer points and cannot replace this
+allocation bound. Direct-space metadata also reserves an index box, while
+one-electron matrix counts may use a tighter conservative volume bound.
+
+Optimization retains the larger XC value or gradient phase workspace, including
+AO Hessians and shifted-grid response scratch, in addition to the GDF costs.
+The final manifest estimate also covers standalone gradient preflight. One
+Python/NumPy allowance and the configured safety headroom are applied once.
+Native workspace declarations and XC scratch depend on the effective worker
+count. Exact comparisons therefore require identical resolved planner inputs
+and workers; different worker counts can legitimately change the estimate.
+
+
+### Analytical allocation evidence in dry runs
+
+Opt-in molecular dry runs include an additive `analytical_memory` section with
+schema `vibeqc.analytical-memory/1`. `terms_json` contains named allocations,
+route, actual input dimensions, byte values, rank scope and integer lower-bound
+valid domains. These values are emitted at the existing allocation estimators;
+they are not a separate chemistry model. Current coverage includes molecular
+conventional ERI storage, direct shell-pair scratch, resolved density-fitting
+storage, mean-field matrix, DIIS and MO workspaces, and dense TD response allocations.
+
+`complete = false` explicitly marks partial coverage. `unknown_json` lists
+unmodelled allocations and the missing complete-route lifetime model. A consumer
+must not sum these terms or use them as a qualified whole-job peak. The existing
+`memory.estimate_bytes` remains the conservative planning estimate; it is not
+upgraded to an analytical guarantee. `headroom_factor` is recorded separately
+from pre-headroom allocation values and from any scheduler margin.
+
+Resource evidence now includes basis and auxiliary dimensions only after actual
+basis construction, and threads from the native runtime or an explicit validated
+count. The auxiliary dimension fallback used for conservative planning is never
+exported as resolved evidence. Occupied and virtual dimensions are included only
+when a route estimator resolved them. TD response roots are recorded where the
+response size is resolved. Unresolved ranks and k-points remain
+absent; rank-scoped memory does not assert a rank count. Uninstrumented input
+reads retain the existing explicit-read coverage limitation.
+
+
+#### Process baseline qualification
+
+Conventional and direct RHF export the existing ERI or direct-shell scratch,
+matrix, DIIS, MO and Python/NumPy baseline categories. The baseline has route
+`assumed_python_runtime_baseline` and one process per rank. Its fixed planning
+floor does not specify a qualified runtime, native library or imported-module
+domain. Covering every category therefore does not establish a complete process
+peak: `complete = false` and the baseline limitation appears in `unknown_json`.
+No analytical raw or headroom-adjusted peak is emitted. Queue consumers must
+preserve the unknown rather than fall back to the legacy scalar.
+
+The existing conservative planner and its separate headroom are unchanged.
+Individual allocation evidence remains useful, but whole-process predictions
+require a justified runtime baseline model and independent measured validation.
+Changing headroom or fitting an already observed evaluation set does not qualify
+that baseline. Unsupported DF, correlated, periodic and TD peaks stay unknown.
+
+For a measured, opt-in residual on top of this planner, see
+[explicit runtime memory profiles](../runtime_memory_profiles.md).

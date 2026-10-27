@@ -7,6 +7,14 @@ exchange-correlation functional $v_\text{xc}[\rho]$. The theory
 section below explains the Kohn-Sham mapping, where the grid comes
 from, and what DFT can and cannot tell you.
 
+## Run the baseline
+
+Use the installed engine environment and a run directory outside the checkout.
+The first block is standalone. The grid block below continues in the same
+script and reuses its molecule and basis. Coordinates here are in bohr; the
+printed energy components are in hartree. This is a fixed-geometry example,
+not a geometry optimization.
+
 ```python
 from vibeqc import Atom, Molecule, BasisSet, RKSOptions, run_rks
 
@@ -21,6 +29,8 @@ opts = RKSOptions()
 opts.functional = "PBE"     # or "LDA", "BLYP", "B3LYP", "PBE0", etc.
 # Supplied low-level options keep their grid, here the legacy product grid.
 result = run_rks(mol, basis, opts)
+if not result.converged:
+    raise RuntimeError("PBE SCF did not converge; inspect result.scf_trace")
 
 print(f"E_KS        = {result.energy:.10f}")
 print(f"E_Coulomb   = {result.e_coulomb:.10f}")
@@ -28,8 +38,8 @@ print(f"E_xc        = {result.e_xc:.10f}")
 print(f"E_HF_exch   = {result.e_hf_exchange:.10f}")
 ```
 
-Any functional name libxc understands is accepted, there are over
-500. Common choices:
+Any functional name libxc ({vibeqc-cite}`libxc_2018`) understands is
+accepted, there are over 500. Common choices:
 
 | Name | Type | Use case |
 |---|---|---|
@@ -40,6 +50,18 @@ Any functional name libxc understands is accepted, there are over
 | `PBE0` | hybrid GGA | Semiconductors, molecular properties |
 | `TPSS` / `TPSSh` | meta-GGA / hybrid meta-GGA | Better barriers than GGAs; TPSSh = 10 % HF |
 | `M06-L` / `M06-2X` | meta-GGA / 54 % hybrid meta-GGA | Minnesota family; M06-2X for thermochemistry + non-covalent |
+
+Primary references for the table: SVWN combines Slater exchange
+({vibeqc-cite}`slater_x_1951`) with VWN correlation
+({vibeqc-cite}`vwn_1980`); PBE is {vibeqc-cite}`pbe_1996`; BLYP pairs
+B88 exchange ({vibeqc-cite}`becke_b88_1988`) with LYP correlation
+({vibeqc-cite}`lee_yang_parr_1988`); B3LYP is
+{vibeqc-cite}`becke_1993` in the form of
+{vibeqc-cite}`stephens_b3lyp_1994`; PBE0 is
+{vibeqc-cite}`adamo_barone_pbe0_1999`; TPSS and TPSSh are
+{vibeqc-cite}`tao_tpss_2003` and {vibeqc-cite}`staroverov_tpssh_2003`;
+M06-L and M06-2X are {vibeqc-cite}`zhao_truhlar_m06l_2006` and
+{vibeqc-cite}`zhao_truhlar_m06_2008`.
 
 Hybrids automatically enable the HF-exchange mixing through libint
 under the hood; no extra option needed.
@@ -53,10 +75,21 @@ and the XC functional at each one. Three knobs set how dense that
 cloud is:
 
 ```python
+# doc-audit: skip - continues with mol, basis, opts and result from the baseline
+baseline_energy = result.energy
 opts.grid.n_radial = 99   # radial shells per atom
 opts.grid.n_theta  = 29   # polar (θ) points per shell
 opts.grid.n_phi    = 58   # azimuthal (φ) points per shell
+refined = run_rks(mol, basis, opts)
+if not refined.converged:
+    raise RuntimeError("Refined-grid PBE SCF did not converge")
+print(f"Grid change = {(refined.energy - baseline_energy) * 1e6:+.3f} microhartree")
 ```
+
+Changing `opts` does not update the result already computed; the second
+`run_rks` call evaluates the modified grid. This comparison holds the geometry,
+basis and functional fixed but changes radial and angular resolution together.
+Use [DFT grid convergence](dft_grid_convergence.md) to vary them separately.
 
 These are controls for a custom product grid. Fresh options supplied to the
 low-level `run_rks(mol, basis, opts)` keep the legacy 75 x 17 x 36 grid,
@@ -77,7 +110,7 @@ the energy toward the value the functional would give with a perfect
 integral. It does **not** make the functional itself more accurate
 against experiment; it only removes integration noise. Check grid convergence
 for tight energy *differences*, benchmark totals and smooth forces along a reaction path, especially for grid-sensitive
-meta-GGAs such as SCAN (see the
+meta-GGAs such as SCAN ({vibeqc-cite}`sun_scan_2015`; see the
 [functionals guide](../user_guide/functionals.md)). The quadrature
 scheme behind these knobs (Becke partitioning, the Treutler-Ahlrichs
 radial map, and the product-vs-Lebedev angular choice) is spelled out
@@ -103,8 +136,11 @@ helps and hurts.
 HF is tractable but misses electron correlation. Explicit correlated
 wavefunction methods (MP2, CCSD, CCSD(T), CI) recover it at increasing
 cost, CCSD(T) scales $\mathcal{O}(N^7)$. DFT trades exactness for
-scaling: it's **in principle exact** (Hohenberg-Kohn 1964) but only
-**in practice tractable** (Kohn-Sham 1965) with approximations to the
+scaling: it's **in principle exact** (P. Hohenberg and W. Kohn,
+*Phys. Rev.* **136**, B864 (1964), doi:10.1103/PhysRev.136.B864) but
+only **in practice tractable** (W. Kohn and L. J. Sham, *Phys. Rev.*
+**140**, A1133 (1965), doi:10.1103/PhysRev.140.A1133) with
+approximations to the
 unknown exchange-correlation functional. Typical cost $\mathcal{O}(N^3)$
 for pure DFT, $\mathcal{O}(N^4)$ for hybrids.
 
@@ -182,24 +218,28 @@ The first two terms are $h$ + Coulomb (same as HF). $V^\text{xc}_{\mu\nu}
 = \int \chi_\mu(\mathbf{r}) \, v_\text{xc}[\rho](\mathbf{r}) \, \chi_\nu(\mathbf{r}) \, \mathrm{d}^3 r$
 is the XC matrix built by numerical quadrature on the molecular grid
 (see below). For **hybrid functionals** the fraction $\alpha$ of HF
-exchange is mixed in, e.g., $\alpha = 0.20$ for B3LYP, $0.25$ for
-PBE0, and libint evaluates the same four-index integrals the HF
+exchange is mixed in, e.g., $\alpha = 0.20$ for B3LYP
+({vibeqc-cite}`becke_1993`), $0.25$ for PBE0
+({vibeqc-cite}`adamo_barone_pbe0_1999`), and libint evaluates the same four-index integrals the HF
 driver uses.
 
 ### Numerical integration: the grid
 
 $V^\text{xc}$ has no closed form and must be integrated numerically.
 vibe-qc uses the **Becke partitioning** scheme: atom-centered fuzzy
-Voronoi cells smeared by a polynomial $p_k(s)$ (Becke 1988) so that
+Voronoi cells smeared by a polynomial $p_k(s)$
+({vibeqc-cite}`becke_grid_1988`) so that
 nuclear cusps in $v_\text{xc}$ are cleanly resolved. Around each atom
 the integration uses a direct product:
 
-- **Radial grid**: Treutler-Ahlrichs M4 mapping $u \to r$ with
+- **Radial grid**: Treutler-Ahlrichs M4 mapping
+  ({vibeqc-cite}`treutler_ahlrichs_1995`) $u \to r$ with
   Chebyshev (2nd-kind) nodes (`n_radial`, default 75).
 - **Angular grid**: by default a direct product of Gauss-Legendre
   nodes in $\cos\theta$ (`n_theta`) and equally spaced $\phi$ nodes
   (`n_phi`), giving 17 × 36 = 612 points per shell at the default quality.
-  A Lebedev-Laikov path is also available (`opts.grid.angular =
+  A Lebedev-Laikov path ({vibeqc-cite}`lebedev_laikov_1999`) is also
+  available (`opts.grid.angular =
   AngularScheme.Lebedev` with `opts.grid.lebedev_order`); it reaches
   the same accuracy in roughly half the points (order 29 = 302
   points/shell).
@@ -211,7 +251,9 @@ to `fine` can move total energies by a few tens of µHa.
 
 ### Jacob's ladder
 
-Perdew's hierarchy of DFT approximations climbs a metaphorical ladder
+Perdew's hierarchy of DFT approximations (J. P. Perdew and K. Schmidt,
+*AIP Conf. Proc.* **577**, 1 (2001), doi:10.1063/1.1390175) climbs a
+metaphorical ladder
 from "Hartree world" (no XC at all) toward exactness, each rung
 adding a new ingredient:
 
@@ -220,13 +262,15 @@ adding a new ingredient:
 | 1 | $\rho$ only | LDA (SVWN, PW92) |
 | 2 | + $\nabla\rho$ | GGA (PBE, BLYP) |
 | 3 | + $\tau = \sum_i \lvert\nabla\phi_i\rvert^2 / 2$ | meta-GGA (TPSS, SCAN, r²SCAN) |
-| 4 | + exact HF exchange (constant fraction) | hybrid (B3LYP, PBE0) |
-| 5 | + range-separated HF exchange | RSH (ωB97X, CAM-B3LYP) |
+| 4 | + exact HF exchange (constant or range-separated fraction) | hybrid (B3LYP, PBE0), range-separated hybrid (ωB97X, CAM-B3LYP) |
+| 5 | + unoccupied (virtual) orbitals | double hybrid (B2PLYP), RPA |
 
 Higher rung ≠ automatically better, it's an accuracy/cost trade-off
 that depends on the property and system class. See
 [DFT functional comparison](functional_comparison.md) for a practical comparison
-on water; vibe-qc currently supports rungs 1, 2, and 4.
+on water. vibe-qc ships functionals on all five rungs: LDA, GGAs,
+meta-GGAs, global and range-separated hybrids, and double hybrids such
+as [B2PLYP](double_hybrid_b2plyp.md).
 
 ### Where DFT helps and hurts
 
@@ -235,14 +279,16 @@ on water; vibe-qc currently supports rungs 1, 2, and 4.
   transition-metal chemistry, within 1-3 kcal/mol and 0.01 Å at a
   GGA/hybrid level for ordinary molecules.
 - **Hurts, self-interaction error.** An electron interacts with
-  itself through the Coulomb term. HF cancels this exactly (the
-  diagonal $K$ term); local DFT only partially cancels it. That's
+  itself through the Coulomb term (J. P. Perdew and A. Zunger,
+  *Phys. Rev. B* **23**, 5048 (1981), doi:10.1103/PhysRevB.23.5048).
+  HF cancels this exactly (the diagonal $K$ term); local DFT only partially cancels it. That's
   why pure-DFT HOMOs are too shallow and charge-transfer states
   have the wrong trend with distance. Hybrids help by mixing in
   exact exchange.
 - **Hurts, no long-range dispersion.** GGAs and hybrids are blind
   to the $-C_6/R^6$ tail (see [Dispersion corrections (D3-BJ)](dispersion.md) for
-  the D3(BJ) fix).
+  the D3(BJ) fix, {vibeqc-cite}`grimme_d3_2010`,
+  {vibeqc-cite}`grimme_d3bj_2011`).
 - **Hurts, strongly correlated systems.** Any system where a single
   Slater determinant is a poor starting point (biradicals, some
   transition-metal complexes, bond-breaking, Mott insulators). DFT
@@ -252,8 +298,8 @@ on water; vibe-qc currently supports rungs 1, 2, and 4.
 ## Resources
 
 ~250 MB peak RAM, <0.5 s on one core (Apple M2 baseline) for the
-H₂O / 6-31G\* PBE example. The DFT XC grid (default 75-radial ×
-302-angular Lebedev shells per atom, ~20 k points for H₂O) dominates
+H₂O / 6-31G\* PBE example. The DFT XC grid (here the legacy
+75-radial × 612-angular product grid, 137,700 points for H₂O) dominates
 the per-iteration cost over the Fock build at this size; tighten or
 loosen via the grid options on `RKSOptions.grid`.
 

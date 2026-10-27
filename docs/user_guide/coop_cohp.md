@@ -13,19 +13,49 @@ vibe-qc returns and plots the Lobster-style **negative COHP**, written
 `-COHP`, so positive values indicate bonding in both the COOP and displayed
 COHP curves.
 
+COOP and COHP are **production** on the GDF routes. The analysis projects the
+same spin Hamiltonian that produced the analysed eigenpairs, the accepted SCF
+Fock matrix per spin channel, and refuses any other operator: an `H_terms`
+whose Bloch sum differs from the analysed Fock raises `ValueError` instead of
+being labelled COHP (`python/vibeqc/coop_cohp.py`). On the BIPOLE, AICCM and
+full-grid external-XC routes `coop_cohp=True` is not computed; the request
+fails before SCF with the reason stated (`NotImplementedError`: the generic
+property path would rebuild a fixed-cutoff surrogate operator that is not the
+converged Hamiltonian of that route), and a QVF written on such a route
+records `property_hamiltonian = "omitted (...)"` in the `.system` manifest
+rather than shipping curves of a different operator. The remaining routes
+(GPW, GAPW, Gamma RIJCOSX) rebuild a fixed-cutoff operator for DOS, PDOS,
+COOP and COHP; the runner measures it against the 1e-10 Hermitian contract
+of the core's Bloch solver on the DOS mesh before anything is diagonalized.
+A defect omits those four sections, records
+`property_hamiltonian = "omitted (...)"` with the measured
+`property_hermiticity_defect` in `.system`, and names the lattice sum that
+broke the contract in the `dos_computation` notice; a passing operator is
+recorded as `"rebuilt-fixed-cutoff"`. Because that rebuild sums its terms on
+an origin-centred cell ball, which is not translation covariant, it fails
+already for H2/STO-3G in a cube, so on these routes the curves are written
+today only for cells with one AO; periodic Mayer bond orders come from the
+accepted SCF density and are written regardless, on BIPOLE and on the ECP
+and external-XC cases whose rebuild is skipped as well (the AICCM routes
+keep their route-owned analyses). The label vocabulary is
+defined in [Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+
 ## Recommended workflow
 
 The high-level periodic runner is the supported way to compute COOP, COHP,
 periodic Mayer bond orders, total DOS, and PDOS as one post-SCF output family.
-The following complete example uses a 1D H2 chain:
+The following complete example uses an H2 chain. vibe-qc has no route with a
+consistent 1-D Coulomb gauge, so the chain is a `dim=3` cell with vacuum on
+the two transverse axes:
 
 ```python
+import numpy as np
 import vibeqc as vq
 
 a = 6.0
-vacuum = 30.0
+vacuum = 15.0
 system = vq.PeriodicSystem(
-    dim=1,
+    dim=3,
     lattice=[[a, 0.0, 0.0], [0.0, vacuum, 0.0], [0.0, 0.0, vacuum]],
     unit_cell=[
         vq.Atom(1, [0.0, vacuum / 2, vacuum / 2]),
@@ -39,19 +69,29 @@ result = vq.run_periodic_job(
     basis,
     method="RKS",
     functional="lda",
+    jk_method="gdf",
     kpoints=[8, 1, 1],
-    dos_kmesh=[32, 1, 1],
     output_qvf=True,
     coop_cohp=True,
     output="h2-chain-coop-cohp",
 )
-
-print(result.converged, result.energy)
+print(result.converged, round(result.energy, 6))
 ```
 
-The runner embeds `dos.coop`, `dos.cohp`, total DOS, PDOS, and periodic bond
-data in `h2-chain-coop-cohp.qvf`. It also records the route and required
+On the vibe-qc 0.17.x development build (Apple M2) this converges to
+-1.120456 Ha in about 50 s of wall time, and the `.system` manifest records
+`property_hamiltonian = "accepted-scf"` with `property_kpoints = 8`. The
+runner embeds `dos.coop`, `dos.cohp`, total DOS, PDOS, and periodic bond
+data in `h2-cube-coop-cohp.qvf`. It also records the route and required
 citations in the `.out`, `.system`, `.references`, and `.bibtex` siblings.
+
+The 1-D H chain of the [band-structure page](band_structure.md) works the
+same way at Gamma (drop `kpoints=` and `jk_method=`; `dim=1` selects the
+Gamma GDF driver). On the current development build a `dim=1` cell with a
+multi-k mesh fails closed before SCF (`NotImplementedError: ... no
+consistent Coulomb gauge for a dim = 1 cell`, see
+[multi-k SCF](multi_k_scf.md)), so a wire's COOP/COHP is a Gamma-point
+analysis today.
 
 For bulk GDF, the payload uses the returned SCF eigenpairs, spin Fock
 matrices, overlaps and accepted densities. This retains XC and ECP contributions
@@ -69,20 +109,30 @@ interpretation and the numerical projections. A physical spin-Fock
 projection on effective energies needs to retain that stated meaning.
 
 ```{warning}
-Other periodic routes still use the legacy reconstructed post-SCF operator,
-which can omit XC. Their COHP weights now use that same analyzed operator in
-each spin channel, but this does not make it the converged Kohn-Sham spectrum.
+The GPW, GAPW, RIJCOSX and slab-Ewald routes are served by the generic
+property rebuild: a fixed-cutoff `T + V + J - x K` operator assembled from
+the converged density, without the XC potential. Its COHP weights use that
+same rebuilt operator in each spin channel, so the curves are internally
+consistent, but they are the COOP/COHP of the rebuilt operator, not of the
+converged Kohn-Sham spectrum. Treat them as diagnostics; for standard COHP
+use a GDF route. BIPOLE, AICCM and external-XC routes refuse the request
+instead, as stated above.
 ```
 
 Inspect the archive without writing a custom parser:
 
 ```sh
-vibeqc coop h2-chain-coop-cohp.qvf
-vibeqc coop --json h2-chain-coop-cohp.qvf
-vibeqc mayer h2-chain-coop-cohp.qvf
-vibeqc mayer --json --threshold 0.1 h2-chain-coop-cohp.qvf
-vibe-view open h2-chain-coop-cohp.qvf
+vibeqc coop h2-cube-coop-cohp.qvf
+vibeqc coop --json h2-cube-coop-cohp.qvf
+vibeqc mayer h2-cube-coop-cohp.qvf
+vibeqc mayer --json --threshold 0.1 h2-cube-coop-cohp.qvf
+vibe-view open h2-cube-coop-cohp.qvf
 ```
+
+For the run above, `vibeqc coop` prints the single H0-H1 pair at 0.74 Å
+with ICOOP +0.3965 at $E_F$ = 0.725 eV and $\sigma$ = 0.050 eV (the -ICOHP
+column follows), and `vibeqc mayer` prints the same pair with bond order
+1.0000.
 
 `coop_cohp=True` requires QVF output: the archive is the only place the
 analysis is written. Passing `coop_cohp=True` with `output_qvf=False` raises a
@@ -123,9 +173,17 @@ P^{H}_{AB,n\mathbf{k}}\,\delta_\sigma(E-\varepsilon_{n\mathbf{k}}).
 $$
 
 For standard COHP, $\mathbf{H}$ is the same spin Hamiltonian used to generate
-$\mathbf{C}$ and $\varepsilon$. A projection of any other operator must be
-identified as an explicit operator projection, rather than standard COHP. The returned COHP
-array already includes the leading minus sign. Interpret the displayed
+$\mathbf{C}$ and $\varepsilon$ ({vibeqc-cite}`dronskowski_cohp_1993`, Eqs. 4
+to 12, which rewrite the band energy $\sum_j f_j\varepsilon_j$ exactly as
+$\int^{E_F} \mathrm{COHP}(E)\,\mathrm dE$; the identity holds only for the
+operator that produced the eigenpairs). A projection of any other operator
+must be identified as an explicit operator projection, rather than standard
+COHP. COOP is the overlap-weighted analogue of Hughbanks and Hoffmann
+({vibeqc-cite}`hughbanks_hoffmann_coop_1983`); the AO projection follows
+Deringer, Tchougreeff and Dronskowski ({vibeqc-cite}`deringer_cohp_2011`)
+and the sign and plotting convention that of LOBSTER
+({vibeqc-cite}`maintz_lobster3_2016`). The returned COHP array already
+includes the leading minus sign. Interpret the displayed
 convention as:
 
 | Curve value | COOP | Returned `-COHP` |
@@ -209,8 +267,63 @@ For an unrestricted operator, pass the beta-spin lattice blocks as
 periodic results do not promise those fields.
 
 `periodic_mayer_bond_orders` uses the same explicit-block model for a scalar
-bond-order matrix. The production runner computes its own consistent version
-for QVF output.
+bond-order matrix; the next section gives its definition. The production
+runner computes its own consistent version for QVF output.
+
+## Periodic Mayer bond orders
+
+The Mayer bond order ({vibeqc-cite}`mayer_bond_order_1983`) is the
+energy-integrated, scalar companion of COOP: where COOP resolves the overlap
+population between two atoms by energy, the Mayer index sums the occupied
+contribution into one number per atom pair. In a periodic system the
+molecular definition is averaged over the k mesh,
+
+$$
+B_{AB} = \sum_{\mathbf k} w_{\mathbf k}\sum_{\mu\in A}\sum_{\nu\in B}
+\big[\mathbf P(\mathbf k)\,\mathbf S(\mathbf k)\big]_{\mu\nu}\,
+\big[\mathbf P(\mathbf k)\,\mathbf S(\mathbf k)\big]_{\nu\mu},
+\qquad
+\mathbf P(\mathbf k) = \mathbf C(\mathbf k)\,\mathbf n\,\mathbf C(\mathbf k)^\dagger,
+$$
+
+with $\mathbf n$ the diagonal occupation matrix (2 per occupied band in the
+restricted case). For an unrestricted density the $\alpha$ and $\beta$
+contributions are formed with occupation 1 each and summed with the standard
+molecular factor of 2, so a closed shell reproduces the restricted value. The
+result is a symmetric `(n_atoms, n_atoms)` matrix with zero diagonal; it
+depends on the basis and on the Mulliken-type partition exactly as the
+molecular index does, so compare values only across runs with the same basis
+and route.
+
+`periodic_mayer_bond_orders(F_terms, S_real, system, basis, kmesh, *,
+n_electrons_per_cell=None, F_terms_beta=None)` in `vibeqc.coop_cohp` is the
+explicit-block API: it Bloch-sums the Fock terms and the overlap at every mesh
+point, diagonalises, fills the lowest `n_electrons_per_cell / 2` bands (or
+the $\alpha$ and $\beta$ counts implied by the cell multiplicity when
+`F_terms_beta` is given) and evaluates the formula above. With
+`n_electrons_per_cell=None` every band is occupied, the non-interacting Hcore
+limit, which is only useful as a shape check.
+
+The runner computes the same matrix on every run that produces the DOS
+payload, on the GDF routes from the accepted SCF eigenstates, and writes the
+pairs with $B_{AB} \ge 0.05$ into the QVF `bond_orders` section as a JSON
+member `bond_orders` with `method = "mayer"` and a `pairs` list; each pair
+records `i`, `j`, `symbol_i`, `symbol_j`, `order` and `distance_ang` (the
+raw home-cell distance, as for the COOP pairs). The CLI reads that section
+back:
+
+```sh
+vibeqc mayer h2-cube-coop-cohp.qvf                    # table, pairs with order >= 0.05
+vibeqc mayer --threshold 0.1 h2-cube-coop-cohp.qvf    # raise the display cutoff
+vibeqc mayer --json h2-cube-coop-cohp.qvf             # every stored pair, machine readable
+```
+
+For the H2 cube above the table holds one row, `H0-H1  0.74 Å  1.0000`: a
+single bond shared over the eight k points. A QVF without a `bond_orders`
+section (a route whose property payload was omitted, or a run without
+`output_qvf=True`) makes the command exit with `contains no bond_orders
+section` rather than printing zeros. For molecular Mayer and Wiberg indices,
+and the periodic Wiberg variant, see [bond analysis](bond_analysis.md).
 
 ## Plotting an explicit result
 
@@ -283,11 +396,16 @@ threads, host, and version.
 The runner selects the defining references automatically when the analysis
 executes:
 
-- Hughbanks and Hoffmann, *J. Am. Chem. Soc.* **105**, 3528 (1983), COOP.
-- Dronskowski and Blochl, *J. Phys. Chem.* **97**, 8617 (1993), COHP.
+- Hughbanks and Hoffmann, *J. Am. Chem. Soc.* **105**, 3528 (1983), COOP,
+  {vibeqc-cite}`hughbanks_hoffmann_coop_1983`.
+- Dronskowski and Blochl, *J. Phys. Chem.* **97**, 8617 (1993), COHP,
+  {vibeqc-cite}`dronskowski_cohp_1993`.
 - Deringer, Tchougreeff, and Dronskowski, *J. Phys. Chem. A* **115**, 5461
-  (2011), projection framework.
-- Maintz et al., *J. Comput. Chem.* **37**, 1030 (2016), Lobster convention.
+  (2011), projection framework, {vibeqc-cite}`deringer_cohp_2011`.
+- Maintz et al., *J. Comput. Chem.* **37**, 1030 (2016), Lobster convention,
+  {vibeqc-cite}`maintz_lobster3_2016`.
+- Mayer, *Chem. Phys. Lett.* **97**, 270 (1983), bond order,
+  {vibeqc-cite}`mayer_bond_order_1983`.
 
 Continue with:
 

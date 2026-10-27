@@ -1,7 +1,7 @@
 """Periodic MACE on bulk silicon: compact strain probe and optional relaxation.
 
-Requires the optional ``[mace]`` extra (PyTorch + e3nn), ASE, and Python
-<= 3.13:
+Requires the optional ``[mace]`` extra (PyTorch + e3nn), ASE, including on Python
+3.14:
 
     pip install 'vibe-qc[mace]'
 

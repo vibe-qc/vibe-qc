@@ -181,6 +181,7 @@ class CCMSystem:
         interaction_range_ang: Optional[float] = None,
         weight_tol_bohr: float = 1e-6,
         lattice_sum_options: Optional["LatticeSumOptions"] = None,
+        spin_state: object = "legacy",
     ):
         if basis is None:
             raise ValueError("a basis-set name is required (e.g. basis='sto-3g')")
@@ -237,6 +238,16 @@ class CCMSystem:
         # the equivalent k-spacing Δk = pi/r_in (the radius<->k-mesh duality).
         self.wsc_inscribed_radius = wsc_inscribed_radius(self.cluster_vectors)
         self.kspacing_equiv = kspacing_for_interaction_range(self.wsc_inscribed_radius)
+
+        # The torus spin sector (#519 RG-14): resolved here, before any
+        # basis or integral work and before the shell-aware dispatch of the
+        # drivers, so an impossible request fails at construction on every
+        # mesh. ``"legacy"`` reproduces the historical supercell rule below
+        # number for number; see vibeqc.periodic.ccm.spin_state.
+        from .spin_state import resolve_ccm_spin_state
+
+        self.spin_state = resolve_ccm_spin_state(
+            unit_system, self.nrep, spin_state, who="CCMSystem")
 
         # Reference supercell molecule (the "real" cluster atoms u_j).
         self.supercell = self._build_supercell(unit_system)
@@ -328,6 +339,13 @@ class CCMSystem:
         wrong-number trap (the cluster ran closed-shell). ``n_unpaired <= 1``
         cells keep the parity behaviour exactly (a doublet cell on an
         even-cell cluster still pairs up — the historical, pinned convention).
+
+        **Explicit spin state (#519 RG-14):** the rules above are the
+        ``spin_state="legacy"`` policy, resolved by
+        :func:`~vibeqc.periodic.ccm.spin_state.resolve_ccm_spin_state` into
+        ``self.spin_state`` before this method runs; ``"per-cell"`` and an
+        explicit total multiplicity select the other sectors. The supercell
+        molecule carries the resolved torus multiplicity.
         """
         n1, n2, n3 = self.nrep
         a = self.unit_vectors  # rows = unit-cell lattice vectors a_j
@@ -346,27 +364,14 @@ class CCMSystem:
                         )
         charge = int(unit_system.charge) * (n1 * n2 * n3)
         n_elec = sum(int(at.Z) for at in out) - charge
-        n_unpaired_unit = int(unit_system.multiplicity) - 1
-        if n_unpaired_unit >= 2:
-            # Explicit high spin: validate the UNIT cell's own spin state
-            # before replicating. Without this, an impossible request (e.g.
-            # 3 electrons with multiplicity 3) would raise at odd N_c but
-            # silently become a parity-consistent different state at even
-            # N_c (Li mult-3 at (2,1,1) -> a quintet) -- the request must
-            # fail loudly at construction, independent of cluster size.
-            n_elec_unit = n_elec // (n1 * n2 * n3)
-            if ((n_elec_unit - n_unpaired_unit) % 2 != 0
-                    or n_unpaired_unit > n_elec_unit):
-                raise ValueError(
-                    f"CCMSystem: unit-cell electron count {n_elec_unit} and "
-                    f"multiplicity {unit_system.multiplicity} are "
-                    "incompatible (n_alpha/n_beta non-integer)."
-                )
-            # Ferromagnetic replication (see docstring).
-            multiplicity = n_unpaired_unit * (n1 * n2 * n3) + 1
-        else:
-            multiplicity = 1 if (n_elec % 2 == 0) else 2
-        return Molecule(out, charge, multiplicity)
+        state = self.spin_state
+        if int(state.n_electrons) != int(n_elec):
+            raise RuntimeError(
+                f"CCMSystem: the resolved spin state counts {state.n_electrons} "
+                f"electrons but the supercell holds {n_elec}")
+        # The resolved torus sector (legacy: parity pairing, explicit high
+        # spin replicated ferromagnetically, validated at construction).
+        return Molecule(out, charge, int(state.multiplicity))
 
     def _decompose_atoms(self):
         nb = self.n_basis_atoms
@@ -477,7 +482,7 @@ class CCMSystem:
         ``PeriodicSystem`` stores them as **columns**, so the cell is transposed
         here. (NB: ``vibeqc.ase_periodic.atoms_to_periodic_system`` omits this
         transpose, which transposes non-orthogonal cells -- flagged in
-        ``handovers/HANDOVER_AICCM.md`` for the periodic-SCF owners; we build the system
+        the original investigation for the periodic-SCF owners; we build the system
         directly so CCM is correct for every lattice regardless.)
         """
         from ase.units import Bohr
@@ -685,7 +690,8 @@ class CCMSystem:
         )
         return (
             f"CCMSystem(nrep={self.nrep}{rc}, r_in={self.wsc_inscribed_radius:.3g}b, "
-            f"n_atoms={self.n_atoms}, nbf={self.nbf}, basis={self.basis_name!r}"
+            f"n_atoms={self.n_atoms}, nbf={self.nbf}, basis={self.basis_name!r}, "
+            f"spin_state={self.spin_state.requested!r}"
         )
 
 

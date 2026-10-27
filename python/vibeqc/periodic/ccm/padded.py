@@ -314,7 +314,7 @@ def ccm_eri(ccm, pad: "PaddedCluster | None" = None) -> np.ndarray:
     per-atom-pair, applied to whole AO blocks). NOT yet bit-exact: it is not
     perfectly cyclically invariant, so small high-symmetry clusters show minor
     orbital-degeneracy splitting. Dense ``n_ref_ao**4`` -- small-cluster path.
-    See ``handovers/HANDOVER_AICCM.md`` Sec. "M2b status" for the open bit-exact version.
+    The bit-exact version remains open.
     """
     from vibeqc import compute_eri
 
@@ -359,6 +359,232 @@ def ccm_eri(ccm, pad: "PaddedCluster | None" = None) -> np.ndarray:
     # Bra-ket symmetrise (eq. Fock = dE/dP): splits each wrapped interaction 1/2
     # between the bra-folded and ket-folded representations and makes J/K Hermitian.
     return 0.5 * (eff + np.transpose(eff, (2, 3, 0, 1)))
+
+
+# ---------------------------------------------------------------------------
+# The 2012 program / P2014 construction ("p2014"), with the bra partner imaged
+# ---------------------------------------------------------------------------
+#
+# ``ccm_eri`` ("union12") keeps the bra partner in the HOME copy of the cluster.
+# P2014 Eq. 19 and the original program (``~/gitlab/aiccm``,
+# ``integrals/eri_functions.pyx::calcERIsUnion12``: ``for J, wIJ in
+# zip(bfng[I].WSC_bfng, ...)`` with ``j = J % d``) sum the bra partner over the
+# closed Wigner-Seitz supercell of the first function, images included, and take
+# the bridge weight relative to that IMAGED partner. In "union12" a pair whose
+# minimum image is a wrapped one enters only as a ket pair through the bra-ket
+# symmetrisation, at half weight, and the interaction of two wrapped pairs is
+# absent. Found by the paper chat, 2026-09-17 (paper repository,
+# ``theory/analysis-2026-09-17/``); the builders below are the faithful form.
+
+#: Nuclear-attraction variants of the "p2014" selector.
+#:
+#: * ``"program-union"`` -- the 2012 program's ``'union'`` path
+#:   (``operators/one_functions.pyx::attractionWSCIJ``): nucleus weight
+#:   ``(omega_IC + omega_JC)/2`` with ``omega_JC`` relative to the IMAGED
+#:   partner J, and NO pair weight ``omega_IJ`` (every image of J inside the
+#:   closed Wigner-Seitz cell of I enters with weight one). This is what the
+#:   published P2014 numbers were produced with (two-cell value -0.540663).
+#: * ``"printed-eq13"`` -- P2014 Eq. 13 as printed: the same nucleus weight
+#:   times the pair weight ``omega_IJ`` (two-cell value -0.540361; the two
+#:   agree to 1e-8 from four cells on).
+P2014_NUCLEAR_VARIANTS = ("program-union", "printed-eq13")
+
+
+def _cell_add(a, b):
+    return (a[0] + b[0], a[1] + b[1], a[2] + b[2])
+
+
+def _cell_sub(a, b):
+    return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
+
+
+def _p2014_anchor_cells(ccm) -> list:
+    """Cells an anchor (ket function K, or a nucleus) can sit in with a non-zero
+    union weight: inside the closed Wigner-Seitz supercell of a home function I
+    (cell ``g_c`` a weight cell) or of its imaged partner J at ``g_b`` (cell
+    ``g_c - g_b`` a weight cell). Pruned to the pairs that carry weight."""
+    weights = ccm.cell_weight_matrices()
+    keys = list(weights.keys())
+    nz = {g: weights[g] > 0.0 for g in keys}
+    anchors = set()
+    for gb in keys:
+        a_has_b = nz[gb].any(axis=1)          # home atoms A with a partner in g_b
+        b_has_a = nz[gb].any(axis=0)          # partner atoms B (in g_b) that are used
+        if not a_has_b.any():
+            continue
+        for gc in set(keys) | {_cell_add(gb, g) for g in keys}:
+            hit = False
+            m1 = nz.get(gc)
+            if m1 is not None and (a_has_b[:, None] & m1).any():
+                hit = True
+            m2 = nz.get(_cell_sub(gc, gb))
+            if not hit and m2 is not None and (b_has_a[:, None] & m2).any():
+                hit = True
+            if hit:
+                anchors.add(gc)
+    return sorted(anchors)
+
+
+def p2014_nuclear_cells(ccm) -> list:
+    """Padded cells for the "p2014" nuclear attraction: imaged partners + nuclei."""
+    keys = set(ccm.cell_weight_matrices().keys())
+    return sorted({(0, 0, 0)} | keys | set(_p2014_anchor_cells(ccm)))
+
+
+def p2014_eri_cells(ccm) -> list:
+    """Padded cells for the "p2014" four-centre fold: imaged partner ``g_b``,
+    anchor ``g_c`` (union of the two Wigner-Seitz supercells) and the ket partner
+    at ``g_c + g_d`` -- the +-2 supercell translations of the 2012 program."""
+    keys = list(ccm.cell_weight_matrices().keys())
+    anchors = _p2014_anchor_cells(ccm)
+    cells = {(0, 0, 0)} | set(keys) | set(anchors)
+    for gc in anchors:
+        for gd in keys:
+            cells.add(_cell_add(gc, gd))
+    return sorted(cells)
+
+
+def ccm_nuclear_p2014(ccm, pad: "PaddedCluster | None" = None, *,
+                      variant: str = "program-union",
+                      symmetrize: bool = True) -> np.ndarray:
+    """Nuclear attraction of the 2012 program / P2014 with the partner imaged.
+
+    For a home function I and every image J (cell ``g_b``) inside the closed
+    Wigner-Seitz supercell of I, the nucleus image ``C = (C0, g_c)`` carries
+    ``(omega_IC + omega_JC)/2`` with ``omega_JC = W[g_c - g_b][J0, C0]`` taken
+    relative to the IMAGED partner (:func:`ccm_nuclear` takes it relative to the
+    home image of the partner). ``variant`` selects
+    :data:`P2014_NUCLEAR_VARIANTS`. ``symmetrize=False`` returns the row-wise
+    assembled matrix so a test can measure its asymmetry.
+    """
+    if variant not in P2014_NUCLEAR_VARIANTS:
+        raise ValueError(
+            f"ccm_nuclear_p2014: unknown variant {variant!r}; choose from "
+            f"{P2014_NUCLEAR_VARIANTS}")
+    if pad is None:
+        pad = build_padded_cluster(ccm, p2014_nuclear_cells(ccm))
+    weights = ccm.cell_weight_matrices()
+    keys = list(weights.keys())
+    ao = ccm.ao_atom
+    rows = np.arange(pad.n_ref_ao)
+    aoA, aoB = ao[:, None], ao[None, :]
+    n_at = ccm.n_atoms
+    zero = np.zeros(n_at)
+
+    out = np.zeros((ccm.nbf, ccm.nbf))
+    for c, (C0, gc) in enumerate(pad.pad_atom_of):
+        w_i = weights.get(gc)
+        om_i = w_i[:, C0] if w_i is not None else zero        # omega_{I, C}
+        terms = []
+        for gb in keys:
+            w_j = weights.get(_cell_sub(gc, gb))
+            om_j = w_j[:, C0] if w_j is not None else zero    # omega_{J@g_b, C}
+            pair = weights[gb] if variant == "printed-eq13" else (weights[gb] > 0.0)
+            atom_w = pair * (0.5 * (om_i[:, None] + om_j[None, :]))
+            if np.any(atom_w):
+                terms.append((gb, atom_w))
+        if not terms:
+            continue
+        z = int(pad.pad_Z[c])
+        nuc_mol = Molecule([Atom(z, pad.pad_positions[c].tolist())], 0, 1 if z % 2 == 0 else 2)
+        i_pad = compute_nuclear(pad.basis, nuc_mol)          # signed (attractive)
+        for gb, atom_w in terms:
+            cols = pad.cell_to_cols.get(gb)
+            if cols is None:
+                raise ValueError(
+                    f"ccm_nuclear_p2014: padded cluster lacks partner cell {gb}.")
+            out += atom_w[aoA, aoB] * i_pad[np.ix_(rows, cols)]
+    return 0.5 * (out + out.T) if symmetrize else out
+
+
+def ccm_eri_p2014(ccm, pad: "PaddedCluster | None" = None, *,
+                  ket_symmetrize: bool = True) -> np.ndarray:
+    """Effective four-centre tensor of the 2012 program / P2014 Eqs. 18-19.
+
+    For a home function I: J over every image (cell ``g_b``) in the closed
+    Wigner-Seitz supercell of I, weight ``omega_IJ = W[g_b][I, J0]``; K over
+    every image (cell ``g_c``) with the bridge weight
+    ``(omega_IK + omega_JK)/2``, ``omega_IK = W[g_c][I, K0]`` and
+    ``omega_JK = W[g_c - g_b][J0, K0]`` relative to the IMAGED J; L over every
+    image in the cell of K (cell ``g_c + g_d``), weight ``omega_KL = W[g_d]``.
+    ``omega_IJ (omega_IK + omega_JK)/2 omega_KL (IJ|KL)`` is accumulated into
+    ``V[i, j, k, l]`` with the indices folded onto the cluster.
+
+    The 2012 program contracts ``J_ij = V[i,j,k,l] D_kl`` and
+    ``K_ij = (V[i,k,j,l] + V[i,l,k,j]) D_kl / 2``, which for a symmetric density
+    is the standard contraction of the KET-SYMMETRISED tensor
+    ``Vbar = (V_ijkl + V_ijlk)/2``; ``Vbar`` is eight-fold symmetric (paper
+    repository, analysis note of 2026-09-17), so it is what this function
+    returns by default and what ``run_ccm_rhf(method="p2014")`` contracts with
+    the usual ``"mnrs,rs"`` / ``"msrn,rs"`` einsums. ``ket_symmetrize=False``
+    returns the raw ``V`` (first-pair symmetric only) for structure tests.
+
+    Dense ``n_pad**4`` validation path; the integral-direct C++ kernel
+    ``"p2014-direct"`` (:func:`~vibeqc.periodic.ccm.scf.run_ccm_rhf_scalable`)
+    is the production form.
+    """
+    from vibeqc import compute_eri
+
+    if pad is None:
+        pad = build_padded_cluster(ccm, p2014_eri_cells(ccm))
+    _check_padded_eri_size(pad, "ccm_eri_p2014")
+    eri_pad = np.asarray(compute_eri(pad.basis), dtype=float)
+    weights = ccm.cell_weight_matrices()
+    ao = ccm.ao_atom
+    n = ccm.nbf
+    home = np.arange(n)
+    keys = list(weights.keys())
+    wexp = {g: weights[g][ao[:, None], ao[None, :]] for g in keys}
+    anchors = _p2014_anchor_cells(ccm)
+
+    eff = np.zeros((n, n, n, n))
+    for gb in keys:
+        wab = wexp[gb]                                   # (a, b): b imaged at g_b
+        if not np.any(wab):
+            continue
+        cols_b = pad.cell_to_cols.get(gb)
+        if cols_b is None:
+            raise ValueError(f"ccm_eri_p2014: padded cluster lacks cell {gb}.")
+        for gc in anchors:
+            w_ac = wexp.get(gc)                          # omega_IK, relative to I
+            w_bc = wexp.get(_cell_sub(gc, gb))           # omega_JK, relative to imaged J
+            if w_ac is None and w_bc is None:
+                continue
+            cross = np.zeros((n, n, n))
+            if w_ac is not None:
+                cross += 0.5 * w_ac[:, None, :]
+            if w_bc is not None:
+                cross += 0.5 * w_bc[None, :, :]
+            bra = wab[:, :, None] * cross                # (a, b, c)
+            if not np.any(bra):
+                continue
+            cols_c = pad.cell_to_cols.get(gc)
+            if cols_c is None:
+                raise ValueError(f"ccm_eri_p2014: padded cluster lacks cell {gc}.")
+            for gd in keys:
+                wcd = wexp[gd]                           # (c, d): d at g_c + g_d
+                w4 = bra[:, :, :, None] * wcd[None, None, :, :]
+                if not np.any(w4):
+                    continue
+                cols_d = pad.cell_to_cols.get(_cell_add(gc, gd))
+                if cols_d is None:
+                    raise ValueError(
+                        "ccm_eri_p2014: padded cluster lacks cell "
+                        f"{_cell_add(gc, gd)} (weighted quartets would be dropped).")
+                eff += w4 * eri_pad[np.ix_(home, cols_b, cols_c, cols_d)]
+    if not ket_symmetrize:
+        return eff
+    return 0.5 * (eff + np.transpose(eff, (0, 1, 3, 2)))
+
+
+def ccm_hcore_p2014(ccm, *, nuclear_attraction: str = "program-union"):
+    """``(h, T, V)`` for the "p2014" selector: lattice-fold kinetic energy plus
+    :func:`ccm_nuclear_p2014` in the named variant."""
+    from .integrals import ccm_kinetic
+
+    t = ccm_kinetic(ccm)
+    v = ccm_nuclear_p2014(ccm, variant=nuclear_attraction)
+    return t + v, t, v
 
 
 def ccm_eri_symmetric(ccm, pad: "PaddedCluster | None" = None) -> np.ndarray:

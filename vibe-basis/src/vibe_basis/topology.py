@@ -40,8 +40,8 @@ Shell shape mirrors ``vibeqc.basis_crystal.CrystalShell`` field for field
 (``shell_type``, ``exponents``, ``coefficients``, ``coefficients_p``,
 ``occupancy``, ``scale_factor``) so the Tier-2 adapter is a transcription and
 not a translation. It is deliberately a separate class rather than an import:
-see the duplicated-``OptResult`` incident in HANDOVER_BASISOPT.md 3.6, whose
-lesson was that the boundary needs *declared* shapes, not shared ones.
+the duplicated-``OptResult`` incident demonstrated that the boundary needs
+*declared* shapes, not shared ones.
 """
 
 from __future__ import annotations
@@ -54,11 +54,13 @@ from typing import Any, Callable
 __all__ = [
     "BasisTopology",
     "Move",
+    "Relaxed",
     "ScanResult",
     "ScanScore",
     "Shell",
     "TopologyError",
     "even_tempered_ratio",
+    "front_gap",
     "greedy_scan",
     "pareto_front",
     "propose_moves",
@@ -87,6 +89,11 @@ class Shell:
 
     Mirrors ``vibeqc.basis_crystal.CrystalShell``. ``coefficients_p`` carries
     the p-side of an ``SP`` shell and is empty otherwise, exactly as there.
+    ``scale_factor`` is a CRYSTAL ``SCAL`` still to apply: the effective
+    exponents are ``exponents * scale_factor**2``, with 0.0 and 1.0 meaning
+    as written (``vibe_basis.io.export.crystal_exponent_factor``). A shell
+    transcribed from a parsed ``CrystalShell`` has 1.0, because vibe-qc's
+    parser applies the factor on the way in.
     """
 
     shell_type: str
@@ -422,6 +429,36 @@ class ScanScore:
         return (self.objective, self.cost, self.instability)
 
 
+@dataclass(frozen=True)
+class Relaxed:
+    """A score, and the topology the evaluation relaxed the candidate to.
+
+    An evaluator that relaxes a candidate's exponents before scoring it
+    returns this instead of a bare :class:`ScanScore`. The scan then carries
+    the relaxed topology forward: the next round's moves are seeded from the
+    relaxed exponents, and :attr:`ScanResult.topology` reports them. A bare
+    score keeps the candidate as proposed. ``detail`` is the evaluator's
+    provenance for the candidate (energies, evaluation count, failures);
+    the scan copies it into :attr:`ScanResult.candidates`.
+    """
+
+    score: ScanScore
+    topology: "BasisTopology"
+    detail: Mapping[str, Any] = field(default_factory=dict)
+
+
+def _scored(
+    result: Any, proposed: BasisTopology
+) -> tuple[ScanScore, BasisTopology, dict[str, Any]]:
+    if isinstance(result, Relaxed):
+        return result.score, result.topology, dict(result.detail)
+    if isinstance(result, ScanScore):
+        return result, proposed, {}
+    raise TopologyError(
+        f"evaluate must return a ScanScore or a Relaxed, got {type(result).__name__}"
+    )
+
+
 def pareto_front(
     scored: Mapping[str, ScanScore] | Sequence[tuple[str, ScanScore]]
 ) -> tuple[str, ...]:
@@ -450,6 +487,43 @@ def pareto_front(
     return tuple(keep)
 
 
+def front_gap(
+    scored: Mapping[str, ScanScore] | Sequence[tuple[str, ScanScore]],
+    name: str,
+    *,
+    compare: Sequence[str] = ("cost",),
+) -> float:
+    """How far candidate ``name`` trails the best rival, in objective units.
+
+    The rivals are the candidates no worse than ``name`` on every axis in
+    ``compare`` (``"cost"``, ``"instability"``). The gap is how much the best
+    of them beats ``name`` on the objective, and 0.0 when none does. So a
+    candidate on the Pareto front has gap 0, and a candidate behind it by
+    less than a plateau threshold is "within the threshold of the front".
+
+    The default compares cost alone, which is stricter than the front over
+    all three axes: leaving instability out admits more rivals, never fewer.
+    """
+    axes = tuple(compare)
+    for axis in axes:
+        if axis not in ("cost", "instability"):
+            raise TopologyError(
+                f"compare axes are 'cost' and 'instability', got {axis!r}"
+            )
+    items = list(scored.items()) if isinstance(scored, Mapping) else list(scored)
+    by_name = dict(items)
+    if name not in by_name:
+        raise TopologyError(f"no candidate named {name!r}")
+    me = by_name[name]
+    if not math.isfinite(me.objective):
+        return math.inf
+    best = me.objective
+    for other, s in items:
+        if all(getattr(s, axis) <= getattr(me, axis) for axis in axes):
+            best = min(best, s.objective)
+    return max(0.0, me.objective - best)
+
+
 # ---------------------------------------------------------------------------
 # The driver
 # ---------------------------------------------------------------------------
@@ -457,7 +531,13 @@ def pareto_front(
 
 @dataclass(frozen=True)
 class ScanResult:
-    """What a scan produced, and enough provenance to defend it."""
+    """What a scan produced, and enough provenance to defend it.
+
+    ``candidates`` holds one record per evaluated candidate, in evaluation
+    order and named as in ``front``: its move and that move's provenance,
+    the score, the topology it was scored at (``to_atom_dict()``, relaxed
+    when the evaluator relaxed it) and the evaluator's ``detail``.
+    """
 
     topology: BasisTopology
     score: ScanScore
@@ -465,18 +545,39 @@ class ScanResult:
     front: tuple[str, ...]
     rounds: int
     stopped_because: str
+    candidates: tuple[dict[str, Any], ...] = ()
+
+    def scores(self) -> tuple[tuple[str, ScanScore], ...]:
+        """``(name, score)`` for every candidate, as ``front`` was taken over."""
+        return tuple((c["name"], c["score"]) for c in self.candidates)
+
+
+def _candidate(
+    name: str, move: str, provenance: str, score: ScanScore,
+    topology: BasisTopology, detail: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "name": name,
+        "move": move,
+        "provenance": provenance,
+        "score": score,
+        "n_primitives": topology.n_primitives,
+        "topology": topology.to_atom_dict(),
+        "detail": detail,
+    }
 
 
 def greedy_scan(
     topology: BasisTopology,
     element: str,
     shell_type: str,
-    evaluate: Callable[[BasisTopology], ScanScore],
+    evaluate: Callable[[BasisTopology], ScanScore | Relaxed],
     *,
     threshold: float = 1.0,
     patience: int = 2,
     max_rounds: int = 8,
     beam_width: int = 1,
+    map_candidates: Callable[..., Iterable[Any]] | None = None,
 ) -> ScanResult:
     """Hill-climb the topology, with the roadmap's plateau rule.
 
@@ -497,6 +598,13 @@ def greedy_scan(
     objective may still be the one to ship on cost or conditioning. Reporting
     a front rather than a winner is the point: the operating point is the
     maintainer's call.
+
+    ``evaluate`` returns a :class:`ScanScore`, or a :class:`Relaxed` when it
+    moved the candidate's exponents; the relaxed topology is then the one
+    the beam carries and the result reports. ``map_candidates(evaluate,
+    topologies)`` evaluates one round's candidates and returns their results
+    in order; pass a thread pool's ``map`` to run them concurrently. The
+    default evaluates them one after another.
     """
     if threshold < 0.0:
         raise TopologyError(f"threshold must be >= 0, got {threshold}")
@@ -507,26 +615,50 @@ def greedy_scan(
     if max_rounds < 0:
         raise TopologyError(f"max_rounds must be >= 0, got {max_rounds}")
 
-    base_score = evaluate(topology)
+    if map_candidates is None:
+        def map_candidates(f, topologies):
+            return [f(t) for t in topologies]
+
+    base_score, base_topology, base_detail = _scored(evaluate(topology), topology)
     all_scores: list[tuple[str, ScanScore]] = [("round0:baseline", base_score)]
+    candidates: list[dict[str, Any]] = [_candidate(
+        "round0:baseline", "baseline", "the starting topology",
+        base_score, base_topology, base_detail,
+    )]
     history: list[dict[str, Any]] = []
-    beam: list[tuple[BasisTopology, ScanScore]] = [(topology, base_score)]
-    best_topology, best_score = topology, base_score
+    beam: list[tuple[BasisTopology, ScanScore]] = [(base_topology, base_score)]
+    best_topology, best_score = base_topology, base_score
     stale = 0
     stopped = "max_rounds reached"
     rounds = 0
 
     for rnd in range(1, max_rounds + 1):
         rounds = rnd
+        proposed: list[tuple[str, Move]] = []
         seen: list[tuple[str, BasisTopology, ScanScore, Move]] = []
         for slot, (parent, _) in enumerate(beam):
             for move in propose_moves(parent, element, shell_type):
-                if move.name == "baseline" and rnd > 1:
-                    continue  # the incumbent is already in the beam
-                tag = f"round{rnd}:slot{slot}:{move.name}"
-                score = evaluate(move.topology)
-                seen.append((tag, move.topology, score, move))
-                all_scores.append((tag, score))
+                if move.name == "baseline":
+                    # Round 1's control is the round-0 evaluation of the same
+                    # topology, reused: a second relaxation of it is wasted
+                    # queue time. Later rounds have the incumbent in the beam.
+                    if rnd == 1:
+                        seen.append(("round0:baseline", base_topology, base_score, move))
+                    continue
+                proposed.append((f"round{rnd}:slot{slot}:{move.name}", move))
+        results = list(map_candidates(evaluate, [m.topology for _, m in proposed]))
+        if len(results) != len(proposed):
+            raise TopologyError(
+                f"map_candidates returned {len(results)} results for "
+                f"{len(proposed)} candidates"
+            )
+        for (tag, move), result in zip(proposed, results):
+            score, relaxed, detail = _scored(result, move.topology)
+            seen.append((tag, relaxed, score, move))
+            all_scores.append((tag, score))
+            candidates.append(_candidate(
+                tag, move.name, move.provenance, score, relaxed, detail
+            ))
 
         if not seen:
             stopped = "no moves proposed"
@@ -566,4 +698,5 @@ def greedy_scan(
         front=pareto_front(all_scores),
         rounds=rounds,
         stopped_because=stopped,
+        candidates=tuple(candidates),
     )

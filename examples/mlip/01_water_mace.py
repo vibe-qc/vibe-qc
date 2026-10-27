@@ -1,6 +1,6 @@
 """MACE machine-learning interatomic potential on H2O — single point + opt.
 
-Requires the optional ``[mace]`` extra (PyTorch + e3nn) and Python <= 3.13:
+Requires the optional ``[mace]`` extra (PyTorch + e3nn) including on Python 3.14:
 
     pip install 'vibe-qc[mace]'
 

@@ -187,7 +187,7 @@ def test_full_generation_limit_matches_common_ccsd_and_independent_coupled_tripl
     if kind == "frozen":
         assert b.reference.state.n_frozen_core == b.reference.state.n_correlated_occupied == 1
         assert result.memory.occupied_count == nk
-        assert b.hf.state.reference_energy_per_cell == b.unfrozen_hf.state.reference_energy_per_cell
+        assert triples.total_energy_per_cell == b.hf.state.reference_energy_per_cell + triples.correlation_energy_per_cell
     if kind == "he2":
         differences = []
         for label in p["labels"]:

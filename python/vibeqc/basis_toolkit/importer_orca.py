@@ -1,8 +1,28 @@
-"""Import ORCA ``%basis`` block format into the canonical model.
+"""Import an ORCA ``%basis`` block, shells and ECPs, into the canonical model.
 
-ORCA's ``%basis`` directive uses ``NewGTO`` / ``end`` blocks to define
-per-element basis sets.  This importer parses that syntax and converts it
-into :class:`BasisSetData`.
+Reads the forms the ORCA 6.1 manual documents (sections 2.7.5 and 2.7.6)
+and :mod:`.exporter_orca` writes::
+
+    %basis
+      NewGTO Ag            # or the atomic number, NewGTO 47
+        S  3
+          1   12.567714    0.0151
+          ...
+      end
+      NewECP Ag
+        N_core 28
+        lmax g
+        s 3
+          1   12.567714   255.054771   2
+          ...
+      end
+    end
+
+Shell labels may be letters (``s p d f g h i k``, any case) or the integer
+angular momentum. A shell with a ``SCALE x`` other than 1 is refused: the
+manual does not say how ORCA applies it. ECP rows are
+``index exponent coefficient power`` with ``power`` the Gaussian-format n of
+``r^(n-2)``; the ``lmax`` channel is the local one.
 """
 
 from __future__ import annotations
@@ -10,10 +30,14 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from ._element_data import VALID_SYMBOLS
+from ._element_data import ATOMIC_NUMBER, SYMBOL, VALID_SYMBOLS
 from .model import (
+    SCHEMA_VERSION,
     BasisRole,
     BasisSetData,
+    ECPEntry,
+    ECPPotential,
+    ECPTerm,
     ElementBasis,
     HarmonicType,
     Primitive,
@@ -23,19 +47,41 @@ from .model import (
 
 __all__ = ["from_orca", "from_orca_file"]
 
-_RE_NEWGTO = re.compile(r"^\s*NewGTO\s+([A-Z][a-z]?)\s*$", re.IGNORECASE)
-_RE_SHELL_LINE = re.compile(r"^\s*([S|P|D|F|G|H|I])\s+(\d+)\s*$")
-_RE_END = re.compile(r"^\s*end\s*$", re.IGNORECASE)
+_ORCA_LETTERS = "spdfghik"
+_RE_BLOCK = re.compile(r"^(NewGTO|NewECP)\s+(\S+)\s*$", re.IGNORECASE)
+_RE_END = re.compile(r"^end\s*$", re.IGNORECASE)
 
-_AM_LABEL: dict[str, list[int]] = {
-    "S": [0],
-    "P": [1],
-    "D": [2],
-    "F": [3],
-    "G": [4],
-    "H": [5],
-    "I": [6],
-}
+
+def _float(token: str) -> float:
+    return float(token.replace("D", "E").replace("d", "e"))
+
+
+def _l_of(label: str) -> int:
+    text = label.strip()
+    if text.isdigit():
+        return int(text)
+    letter = text.lower()
+    if len(letter) != 1 or letter not in _ORCA_LETTERS:
+        raise ValueError(f"unknown ORCA shell label {label!r}")
+    return _ORCA_LETTERS.index(letter)
+
+
+def _symbol(token: str) -> str:
+    """``"Ag"``, ``"AG"`` or ``"47"`` -> ``"Ag"``."""
+    text = token.strip().strip('"')
+    if text.isdigit():
+        z = int(text)
+        if z not in SYMBOL:
+            raise ValueError(f"unknown atomic number {z} in ORCA input")
+        return SYMBOL[z]
+    sym = text[:1].upper() + text[1:].lower()
+    if sym not in VALID_SYMBOLS:
+        raise ValueError(f"unknown element symbol {token!r} in ORCA input")
+    return sym
+
+
+def _clean(raw: str) -> str:
+    return raw.split("#", 1)[0].strip()
 
 
 def from_orca(
@@ -46,170 +92,106 @@ def from_orca(
     family: str | None = None,
     harmonic_type: str = "spherical",
 ) -> BasisSetData:
-    """Parse an ORCA ``%basis`` block string into :class:`BasisSetData`.
+    """Parse ORCA ``NewGTO`` / ``NewECP`` blocks into :class:`BasisSetData`.
 
-    Parameters
-    ----------
-    text:
-        ORCA ``%basis ... end`` block text (the ``%basis`` and final
-        ``end`` lines are optional -- parsing starts at the first
-        ``NewGTO``).
-    name:
-        Override basis name.  Defaults to ``"<orca-import>"``.
-    role:
-        Basis role (orbital, auxiliary, fitting, ecp).
-    family:
-        Basis family hint.
-    harmonic_type:
-        Default harmonic convention.
-
-    Returns
-    -------
-    BasisSetData
+    The ``%basis`` wrapper and its final ``end`` are optional. A ``NewGTO``
+    that names a built-in basis (a quoted string) cannot be resolved here
+    and is refused.
     """
-    lines = text.splitlines()
+    lines = [_clean(raw) for raw in text.splitlines()]
     elements: dict[str, ElementBasis] = {}
-    current_symbol: str | None = None
-    current_shells: list[Shell] = []
-    current_label: str | None = None
-    current_n_prim: int = 0
-    current_prims_read: int = 0
-    current_primitives: list[Primitive] = []
-    in_basis = True  # tolerant: if no %basis wrapper, parse everything
-    saw_basis_keyword = False
-
-    for raw in lines:
-        line = raw.strip()
-        # Skip comments and empty lines.
-        if not line or line.startswith("#") or line.startswith("!"):
+    ecps: dict[str, ECPEntry] = {}
+    i = 0
+    n = len(lines)
+    while i < n:
+        line = lines[i]
+        i += 1
+        if not line or line.lower().startswith("%basis") or _RE_END.match(line):
             continue
-
-        # Enter basis block.
-        if line.lower().startswith("%basis"):
-            saw_basis_keyword = True
-            in_basis = True
+        m = _RE_BLOCK.match(line)
+        if not m:
             continue
-
-        # End line: closes current element.  If we saw %basis, the
-        # *first* end closes the element and the *second* end closes
-        # the basis block.
-        # End line: closes current element.
-        if _RE_END.match(line):
-            if saw_basis_keyword and not in_basis:
-                continue
-            # Flush pending shell before finalising element.
-            if current_label is not None and current_primitives:
-                am = _AM_LABEL.get(current_label)
-                if am:
-                    current_shells.append(
-                        Shell(
-                            angular_momentum=am,
-                            harmonic_type=HarmonicType(harmonic_type),
-                            primitives=current_primitives,
-                        )
+        kind, sym = m.group(1).lower(), _symbol(m.group(2))
+        if kind == "newgto":
+            shells: list[Shell] = []
+            while i < n and not _RE_END.match(lines[i]):
+                head = lines[i].split()
+                i += 1
+                if not head:
+                    continue
+                if head[0].startswith('"'):
+                    raise ValueError(f"{sym}: NewGTO names a built-in basis {head[0]}; only explicit shells can be imported")
+                l = _l_of(head[0])
+                nprim = int(head[1])
+                if len(head) >= 4 and head[2].lower() == "scale" and _float(head[3]) != 1.0:
+                    # The ORCA 6.1 manual mentions SCALE without saying whether
+                    # it multiplies the exponents by X or by X**2 (CRYSTAL's
+                    # rule); importing would mean guessing.
+                    raise ValueError(
+                        f"{sym}: NewGTO shell with SCALE {head[3]}; ORCA does not document "
+                        "the scaling rule, so write the scaled exponents out instead"
                     )
-                current_label = None
-                current_primitives = []
-            # Finalise current element.
-            if current_symbol is not None and current_shells:
-                elements[current_symbol] = ElementBasis(
-                    element=current_symbol, shells=current_shells
-                )
-            current_symbol = None
-            current_shells = []
-            continue
+                prims: list[Primitive] = []
+                for _ in range(nprim):
+                    while i < n and not lines[i]:
+                        i += 1
+                    row = lines[i].split()
+                    i += 1
+                    prims.append(Primitive(exponent=_float(row[1]), coefficient=_float(row[2])))
+                shells.append(Shell(angular_momentum=[l], harmonic_type=HarmonicType(harmonic_type), primitives=prims))
+            i += 1  # the block's end
+            if shells:
+                elements[sym] = ElementBasis(element=sym, shells=shells)
+        else:
+            n_core = None
+            lmax = None
+            channels: dict[int, list[ECPTerm]] = {}
+            while i < n and not _RE_END.match(lines[i]):
+                head = lines[i].split()
+                i += 1
+                if not head:
+                    continue
+                key = head[0].lower()
+                if key == "n_core":
+                    n_core = int(head[1])
+                    continue
+                if key == "lmax":
+                    lmax = _l_of(head[1])
+                    continue
+                l = _l_of(head[0])
+                nterm = int(head[1])
+                terms: list[ECPTerm] = []
+                for _ in range(nterm):
+                    while i < n and not lines[i]:
+                        i += 1
+                    row = lines[i].split()
+                    i += 1
+                    terms.append(ECPTerm(coefficient=_float(row[2]), exponent=_float(row[1]), power=int(row[3])))
+                channels[l] = terms
+            i += 1
+            if n_core is None or lmax is None:
+                raise ValueError(f"{sym}: NewECP needs N_core and lmax")
+            if lmax not in channels:
+                channels[lmax] = [ECPTerm(coefficient=0.0, exponent=1.0, power=2)]
+            potentials = [ECPPotential(angular_momentum=lmax, terms=channels[lmax])] + [
+                ECPPotential(angular_momentum=l, terms=channels[l]) for l in sorted(channels) if l != lmax
+            ]
+            ecps[sym] = ECPEntry(element=sym, n_core_electrons=n_core, angular_momentum_max=lmax, potentials=potentials)
 
-        # New element.
-        m_new = _RE_NEWGTO.match(line)
-        if m_new:
-            # Flush pending shell of previous element.
-            if current_label is not None and current_primitives:
-                am = _AM_LABEL.get(current_label)
-                if am:
-                    current_shells.append(
-                        Shell(
-                            angular_momentum=am,
-                            harmonic_type=HarmonicType(harmonic_type),
-                            primitives=current_primitives,
-                        )
-                    )
-                current_label = None
-                current_primitives = []
-            # Finalise previous element.
-            if current_symbol is not None and current_shells:
-                elements[current_symbol] = ElementBasis(
-                    element=current_symbol, shells=current_shells
-                )
-            current_symbol = m_new.group(1)
-            if current_symbol not in VALID_SYMBOLS:
-                raise ValueError(
-                    f"Unknown element symbol {current_symbol!r} in ORCA NewGTO"
-                )
-            current_shells = []
-            current_label = None
-            current_primitives = []
-            current_prims_read = 0
-            continue
-
-        # Shell header.
-        m_shell = _RE_SHELL_LINE.match(line)
-        if m_shell:
-            # Finalise previous shell if any.
-            if current_label is not None and current_primitives:
-                am = _AM_LABEL.get(current_label)
-                if am is None:
-                    raise ValueError(f"Unknown shell label {current_label!r}")
-                current_shells.append(
-                    Shell(
-                        angular_momentum=am,
-                        harmonic_type=HarmonicType(harmonic_type),
-                        primitives=current_primitives,
-                    )
-                )
-            current_label = m_shell.group(1).upper()
-            current_n_prim = int(m_shell.group(2))
-            current_primitives = []
-            current_prims_read = 0
-            continue
-
-        # Primitive line:  "0  13.01  0.019685"
-        parts = line.split()
-        if len(parts) >= 3:
-            try:
-                # parts[0] is the index (skip), parts[1] is exponent, parts[2] is coefficient
-                exponent = float(parts[1])
-                coeff = float(parts[2])
-            except (ValueError, IndexError):
-                continue
-            current_primitives.append(Primitive(exponent=exponent, coefficient=coeff))
-            current_prims_read += 1
-
-    # Finalise last element.
-    if current_label is not None and current_primitives:
-        am = _AM_LABEL.get(current_label)
-        if am is not None:
-            current_shells.append(
-                Shell(
-                    angular_momentum=am,
-                    harmonic_type=HarmonicType(harmonic_type),
-                    primitives=current_primitives,
-                )
-            )
-    if current_symbol is not None and current_shells:
-        elements[current_symbol] = ElementBasis(
-            element=current_symbol, shells=current_shells
-        )
-
-    if not elements:
-        raise ValueError("No element blocks found in ORCA basis input")
-
+    if not elements and not ecps:
+        raise ValueError("No NewGTO or NewECP blocks found in ORCA basis input")
+    for sym, element in elements.items():
+        element.ecp_id = sym if sym in ecps else None
+    order = lambda d: dict(sorted(d.items(), key=lambda kv: ATOMIC_NUMBER.get(kv[0], 999)))
+    label = name or "<orca-import>"
     return BasisSetData(
-        schema_version="1.0.0",
-        name=name or "<orca-import>",
-        description=f"Imported from ORCA: {name or '<orca-import>'}",
+        schema_version=SCHEMA_VERSION,
+        name=label,
+        description=f"Imported from ORCA: {label}",
         role=BasisRole(role),
         basis_family=family,
-        elements=elements,
+        elements=order(elements),
+        ecps=order(ecps) or None,
         provenance=Provenance(origin="file"),
     )
 
@@ -224,6 +206,4 @@ def from_orca_file(
 ) -> BasisSetData:
     """Read an ORCA basis file and parse it."""
     text = Path(path).read_text(encoding="utf-8")
-    return from_orca(
-        text, name=name, role=role, family=family, harmonic_type=harmonic_type
-    )
+    return from_orca(text, name=name, role=role, family=family, harmonic_type=harmonic_type)

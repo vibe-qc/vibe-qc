@@ -858,6 +858,52 @@ Eigen::MatrixXd build_omx_fock_v2(const OMxContext& ctx,
     return F;
 }
 
+// The implemented NDDO energy, Dral 2016 eqs 1-4. Keep the accumulation
+// order shared with the SCF so candidate comparisons do not change the model.
+double omx_energy(const OMxContext& ctx, const Eigen::MatrixXd& D,
+                  const Eigen::MatrixXd& F) {
+    double energy = 0.0;
+    for (int mu = 0; mu < ctx.n_basis; ++mu) {
+        energy += D(mu, mu) * (ctx.H_core(mu, mu) + F(mu, mu));
+        for (int nu = mu + 1; nu < ctx.n_basis; ++nu)
+            energy += 2.0 * D(mu, nu) * (ctx.H_core(mu, nu) + F(mu, nu));
+    }
+    return 0.5 * energy + ctx.E_core;
+}
+
+// A bounded energy-descent screen, not a complete RHF stability analysis.
+// Rotate one occupied orbital into one virtual, preserving electron count
+// and idempotency. Only the four frontier orbitals on either side are sampled,
+// at +/-0.1 radian: at most 32 energy evaluations per screen. The variational
+// orbital-rotation criterion follows Seeger & Pople, JCP 66, 3045 (1977),
+// doi:10.1063/1.434318; this finite subset does not implement their Hessian.
+// The fixed subset, angle and two-restart limit are implementation choices.
+Eigen::MatrixXd om2_descent_seed(const OMxContext& ctx,
+                                const Eigen::MatrixXd& C, int n_occ,
+                                const Eigen::MatrixXd& D, double energy,
+                                double tolerance) {
+    Eigen::MatrixXd best;
+    double best_energy = energy - tolerance;
+    const double cosine = std::cos(0.1), sine = std::sin(0.1);
+    for (int i = std::max(0, n_occ - 4); i < n_occ; ++i) {
+        for (int a = n_occ; a < std::min(ctx.n_basis, n_occ + 4); ++a) {
+            for (double sign : {-1.0, 1.0}) {
+                const Eigen::VectorXd orbital = cosine * C.col(i)
+                    + sign * sine * C.col(a);
+                const Eigen::MatrixXd trial = D + 2.0 * (
+                    orbital * orbital.transpose() - C.col(i) * C.col(i).transpose());
+                const double trial_energy = omx_energy(
+                    ctx, trial, build_omx_fock_v2(ctx, trial));
+                if (std::isfinite(trial_energy) && trial_energy < best_energy) {
+                    best_energy = trial_energy;
+                    best = trial;
+                }
+            }
+        }
+    }
+    return best;
+}
+
 // Pulay DIIS extrapolation state (residual = [F, P] in the orthogonal NDDO
 // basis, where S = I by construction).
 struct DiisState {
@@ -905,6 +951,23 @@ struct DiisState {
 // secular equation.
 // ===========================================================================
 
+OMxLegacyPairOperands evaluate_omx_legacy_pair_operands(
+    const Molecule& mol, const OMxParameterSet& params,
+    const Eigen::MatrixXd& density) {
+    if (mol.atoms().size() != 2)
+        throw std::invalid_argument("OMx legacy operands: exactly two atoms required");
+    for (const auto& atom : mol.atoms())
+        for (double x : atom.xyz)
+            if (!std::isfinite(x))
+                throw std::invalid_argument("OMx legacy operands: nonfinite coordinate");
+    const OMxContext ctx = omx_setup(mol, params, "OMx legacy operands");
+    if (density.rows() != ctx.n_basis || density.cols() != ctx.n_basis
+        || !density.allFinite() || !density.isApprox(density.transpose(), 1e-12))
+        throw std::invalid_argument("OMx legacy operands: invalid density");
+    const Eigen::MatrixXd zero = Eigen::MatrixXd::Zero(ctx.n_basis, ctx.n_basis);
+    return {ctx.S, build_omx_fock_v2(ctx, density) - build_omx_fock_v2(ctx, zero)};
+}
+
 PM6Result run_omx_v2(
     const Molecule& mol,
     const OMxParameterSet& params,
@@ -930,6 +993,11 @@ PM6Result run_omx_v2(
     DiisState diis;
     double e_last = 0.0;
     PM6Result result;
+    const bool select_om2_state = params.variant() == OMxVariant::OM2;
+    bool refining_state = false;
+    int state_refinement_start = 0;
+    int state_restarts = 0;
+    double recovery_energy_ceiling = 0.0;
 
     // Pulay DIIS is fast for the ordinary OMx cases, but near-degenerate
     // closed-shell densities can enter a persistent occupation cycle.  Keep
@@ -950,18 +1018,70 @@ PM6Result run_omx_v2(
         Eigen::MatrixXd err = F * D - D * F;
         double res = err.cwiseAbs().maxCoeff();
 
-        // Energy at the current density: E = ½ Tr[P(H + F)] + E_core.
-        double E_total = 0.0;
-        for (int mu = 0; mu < ctx.n_basis; ++mu) {
-            E_total += D(mu, mu) * (ctx.H_core(mu, mu) + F(mu, mu));
-            for (int nu = mu + 1; nu < ctx.n_basis; ++nu)
-                E_total += 2.0 * D(mu, nu) * (ctx.H_core(mu, nu) + F(mu, nu));
-        }
-        E_total = 0.5 * E_total + ctx.E_core;
-
-        const bool converged =
+        double E_total = omx_energy(ctx, D, F);
+        bool converged =
             (iter > 1 && res < conv_tol && std::abs(E_total - e_last) < conv_tol);
         e_last = E_total;
+
+        if (select_om2_state && converged) {
+            // DIIS can return either of two stationary roots at adjacent FD
+            // points. Use the physical Fock, not extrapolated orbital energies,
+            // and require an Aufbau projector before screening for descent.
+            Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> physical(F);
+            if (physical.info() != Eigen::Success)
+                throw std::runtime_error("OM2 state selection: diagonalisation failed");
+            const Eigen::MatrixXd orbitals = physical.eigenvectors();
+            const Eigen::MatrixXd occupied = orbitals.leftCols(n_occ);
+            const Eigen::MatrixXd projector = 2.0 * occupied * occupied.transpose();
+            const Eigen::MatrixXd projected_fock = build_omx_fock_v2(ctx, projector);
+            const double projected_energy = omx_energy(ctx, projector, projected_fock);
+            converged = (projector - D).cwiseAbs().maxCoeff() < conv_tol
+                && (projected_fock * projector - projector * projected_fock)
+                       .cwiseAbs().maxCoeff() < conv_tol
+                && std::abs(projected_energy - E_total) < conv_tol;
+            if (converged) {
+                D = projector;
+                C = orbitals;
+                eps = physical.eigenvalues();
+                E_total = projected_energy;
+                // Never replace a detected descent by an unchecked/higher root.
+                if (state_restarts && E_total > recovery_energy_ceiling + conv_tol)
+                    converged = false;
+                else {
+                    const Eigen::MatrixXd seed = om2_descent_seed(
+                        ctx, C, n_occ, D, E_total, conv_tol);
+                    if (seed.size()) {
+                        if (state_restarts == 2 || iter == max_iter) {
+                            result.energy = E_total;
+                            result.e_electronic = E_total - ctx.E_core;
+                            result.e_core = ctx.E_core;
+                            result.density = D;
+                            result.mo_coeffs = C;
+                            result.mo_energies = eps;
+                            result.n_basis = ctx.n_basis;
+                            result.n_occ = n_occ;
+                            result.n_iter = iter;
+                            result.converged = false;
+                            return result;
+                        }
+                        recovery_energy_ceiling = E_total;
+                        ++state_restarts;
+                        D = seed;
+                        diis.clear();
+                        refining_state = true;
+                        state_refinement_start = iter + 1;
+                        continue;
+                    }
+                }
+            }
+            // A mixed/incorrect projector or a higher recovered state cannot
+            // be accepted solely on a small commutator and energy difference.
+            if (!converged && !refining_state) {
+                refining_state = true;
+                state_refinement_start = iter;
+                diis.clear();
+            }
+        }
 
         if (converged || iter == max_iter) {
             result.energy = E_total;
@@ -977,9 +1097,16 @@ PM6Result run_omx_v2(
             return result;
         }
 
-        const bool use_damping =
-            iter >= damping_start && iter < diis_restart;
-        if (iter == damping_start || iter == diis_restart) diis.clear();
+        // Cross the occupation-change region using 32 damped physical-Fock
+        // steps, then start fresh DIIS for its linear tail. Never spend extra
+        // iterations beyond max_iter, or reuse the rejected root's history.
+        const bool state_damping = refining_state
+            && iter - state_refinement_start < 32;
+        const bool use_damping = refining_state ? state_damping
+            : iter >= damping_start && iter < diis_restart;
+        if ((refining_state && iter == state_refinement_start + 32)
+            || (!refining_state && (iter == damping_start || iter == diis_restart)))
+            diis.clear();
 
         // Skip the zero-density first iterate: its commutator residual is
         // exactly zero, which poisons the DIIS equations.  The recovery phase
@@ -995,7 +1122,8 @@ PM6Result run_omx_v2(
         C = solver.eigenvectors();
         Eigen::MatrixXd C_occ = C.leftCols(n_occ);
         Eigen::MatrixXd D_new = 2.0 * C_occ * C_occ.transpose();
-        D = use_damping ? 0.5 * D + 0.5 * D_new : D_new;
+        D = state_damping ? 0.7 * D + 0.3 * D_new
+                           : use_damping ? 0.5 * D + 0.5 * D_new : D_new;
     }
 
     result.n_iter = max_iter;

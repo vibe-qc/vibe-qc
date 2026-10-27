@@ -135,18 +135,21 @@ def parameters():
 
 
 def test_dftb0_folding_identity_supercell_wider_than_cutoff(parameters):
-    """Gamma-supercell(4) == 4-point mesh at a width exceeding the cutoff.
+    """Gamma-supercell(5) == 5-point mesh at a width exceeding the cutoff.
 
-    Chain width 4 x 4.1 = 16.4 bohr > cutoff 15 bohr: the translation
+    Chain width 5 x 4.1 = 20.5 bohr > cutoff 20 bohr: the translation
     ball is empty beyond g=0, so pre-fix this was a free-boundary
     cluster (686 uHa/cell-scale surface error against the mesh; fixed
     fail-closed by gen-1).  Pair-distance selection keeps every image
-    pair within the cutoff and the folding identity is exact.
+    pair within the cutoff and the folding identity is exact.  The row
+    used a 4-cell chain at 15 bohr; the #373 Li overlaps leave S(k)
+    indefinite there (smallest eigenvalue -0.0036), 20 bohr is the
+    shortest cutoff with a positive-definite S(k) (#565).
     """
     primitive = _hli_chain()
-    repeats = 4
+    repeats = 5
     supercell = _hli_chain(repeats)
-    cutoff = 15.0
+    cutoff = 20.0
 
     # The translation ball still collapses - that enumerator is
     # deliberately untouched (shared by the Gaussian stack).
@@ -178,9 +181,9 @@ def test_scc_dftb_folding_identity_supercell_wider_than_cutoff(parameters):
     convergence tolerance.
     """
     primitive = _hli_chain()
-    repeats = 4
+    repeats = 5
     supercell = _hli_chain(repeats)
-    cutoff = 15.0
+    cutoff = 20.0  # positive-definite S(k), as in the DFTB0 row above
 
     kpoint_options = _se.SCCOptions()
     kpoint_options.max_iter = 500

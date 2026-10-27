@@ -7,12 +7,14 @@ partial charge ``q``. Each reference data point is computed from a
 fixes it at one particular coordination environment.
 
 This module is the **catalogue** of those reference systems. For each
-element in scope it provides a list of closed-shell host molecules
+element in scope it provides a list of host molecules
 with standard geometries, the index of the target (reference) atom,
 and the target's nominal coordination number. Phase D4b-4 feeds each
-system through the :func:`vibeqc.molecular_c6` pipeline (RHF ->
-coupled ``a(iw)`` -> Casimir-Polder) to produce the reference
+system through the PBE38 coupled-response pipeline and Casimir-Polder
+integration to produce the reference
 ``a(iw)`` / C6 table.
+The CH doublet uses spin-resolved UKS response; the other bundled hosts
+use closed-shell RKS response.
 
 Scope of this milestone
 -----------------------
@@ -23,14 +25,16 @@ chemistry needs more than one reference system. Deferred to a later
 milestone:
 
 * **Free-atom references** for the open-shell first-row atoms
-  (C ^3P, N ⁴S, O ^3P, F ^2P, B ^2P, H ^2S). The reference-C6 pipeline
-  is RHF-only; the free-atom limit needs the UHF/ROHF response path.
-  Closed-shell free atoms (He, Ne) *are* included.
-* **Period-3 and below** (Si, P, S, Cl, ...) and the transition
-  metals. Same machinery, more systems -- a later sweep.
-
-See ``handovers/HANDOVER_D4_NATIVE.md`` Sec. 3 (the re-derivation campaign)
-and Sec. 6 (current state / next action).
+  (C ^3P, N ⁴S, O ^3P, F ^2P, B ^2P, H ^2S) are not in the bundled
+  catalogue. Custom catalogues can use spin-resolved UKS response;
+  stable reference states and adequate basis sets still need validation.
+  Closed-shell free atoms (He, Ne) *are* included in the bundled catalogue.
+* **Period 4 and below** and the transition metals (Cu's two records
+  live in the frozen dataset, generated from an explicit catalogue).
+  Same machinery, more systems -- a later sweep. Period 3 (Na-Ar) was
+  added on 2026-10-26 (issue #132) with the same closed-shell design;
+  its doublet radicals (SiH3, PH2, SH) wait for the UKS hybrid reference
+  SCF to pass the Hermitian operator guard again (issue #672).
 
 Geometry provenance
 -------------------
@@ -63,13 +67,13 @@ ANGSTROM_TO_BOHR = 1.8897259886
 
 # Element symbol <-> Z, for the elements this catalogue covers.
 _SYMBOL = {1: "H", 2: "He", 5: "B", 6: "C", 7: "N", 8: "O", 9: "F",
-           10: "Ne"}
+           10: "Ne", 11: "Na", 12: "Mg", 13: "Al", 14: "Si", 15: "P",
+           16: "S", 17: "Cl", 18: "Ar"}
 
 
 @dataclass(frozen=True)
 class ReferenceSystem:
-    """One D4 reference system: an element in a fixed coordination
-    environment, given by a closed-shell host molecule.
+    """One D4 reference system in a fixed coordination environment.
 
     Attributes
     ----------
@@ -99,9 +103,8 @@ class ReferenceSystem:
         milestone; the non-neutral references that calibrate the
         D4 charge dependence are a later addition.
     multiplicity
-        Spin multiplicity. ``1`` (closed shell) for every system
-        here -- a hard requirement of the RHF-only reference
-        pipeline.
+        Spin multiplicity. The bundled catalogue uses singlets; custom
+        open-shell systems use the spin-resolved UKS response pipeline.
     geometry_source
         Provenance string for the geometry.
     """
@@ -127,15 +130,13 @@ class ReferenceSystem:
             raise ValueError(
                 f"{self.label}: target atom Z={target_z} but element="
                 f"{self.element}")
-        if self.multiplicity != 1:
-            raise ValueError(
-                f"{self.label}: only closed-shell (multiplicity=1) "
-                f"reference systems are supported in Phase D4b-3")
         n_elec = sum(z for z, *_ in self.atoms_angstrom) - self.charge
-        if n_elec % 2 != 0:
+        spin = self.multiplicity - 1
+        if (not isinstance(self.multiplicity, int)
+                or spin < 0 or spin > n_elec or (n_elec - spin) % 2):
             raise ValueError(
-                f"{self.label}: odd electron count ({n_elec}) is "
-                f"inconsistent with multiplicity=1")
+                f"{self.label}: electron count ({n_elec}) is inconsistent "
+                f"with multiplicity={self.multiplicity}")
 
     @property
     def symbol(self) -> str:
@@ -225,6 +226,36 @@ def _bent_xh2(z_centre: int, r: float, angle_deg: float):
             (1, -x, 0.0, z))
 
 
+def _bent_xh2_general(z_centre: int, z_lig: int, r: float, angle_deg: float):
+    """C2v L-E-L with ligand ``z_lig`` (e.g. SO2); same frame as
+    :func:`_bent_xh2`."""
+    half = math.radians(angle_deg) / 2.0
+    x = r * math.sin(half)
+    z = r * math.cos(half)
+    return ((z_centre, 0.0, 0.0, 0.0),
+            (z_lig, x, 0.0, z),
+            (z_lig, -x, 0.0, z))
+
+
+def _staggered_x2h6(z: int, r_xx: float, r_xh: float, angle_hxx_deg: float):
+    """D3d staggered X2H6 (ethane-like, e.g. Si2H6): X1 at the origin,
+    X2 on +z at ``r_xx``; every X-H bond is ``r_xh`` and every H-X-X
+    angle is ``angle_hxx_deg``. Target atom first."""
+    theta = math.radians(angle_hxx_deg)
+    out = [(z, 0.0, 0.0, 0.0), (z, 0.0, 0.0, r_xx)]
+    for k in range(3):
+        phi = 2.0 * math.pi * k / 3.0
+        out.append((1, r_xh * math.sin(theta) * math.cos(phi),
+                    r_xh * math.sin(theta) * math.sin(phi),
+                    r_xh * math.cos(theta)))
+    for k in range(3):
+        phi = 2.0 * math.pi * k / 3.0 + math.pi / 3.0
+        out.append((1, r_xh * math.sin(theta) * math.cos(phi),
+                    r_xh * math.sin(theta) * math.sin(phi),
+                    r_xx - r_xh * math.cos(theta)))
+    return tuple(out)
+
+
 # ---------------------------------------------------------------------
 # The reference-system catalogue.
 #
@@ -271,6 +302,11 @@ _REFERENCE_SYSTEMS: tuple[ReferenceSystem, ...] = (
         element=6, label="C/CH4-sp3",
         atoms_angstrom=_tetrahedral(6, 1, 1.0870),
         target_index=0, nominal_cn=4.0, geometry_source=_CCCBDB),
+    ReferenceSystem(
+        element=6, label="C/CH-doublet",
+        atoms_angstrom=((6, 0.0, 0.0, 0.0), (1, 0.0, 0.0, 1.1199)),
+        target_index=0, nominal_cn=1.0, multiplicity=2,
+        geometry_source="https://webbook.nist.gov/cgi/cbook.cgi?ID=C3315375&Mask=1000"),
     ReferenceSystem(
         element=6, label="C/C2H4-sp2",
         atoms_angstrom=(
@@ -346,6 +382,134 @@ _REFERENCE_SYSTEMS: tuple[ReferenceSystem, ...] = (
     ReferenceSystem(
         element=10, label="Ne/atom",
         atoms_angstrom=_atom_only(10),
+        target_index=0, nominal_cn=0.0,
+        geometry_source="free atom"),
+
+    # =================================================================
+    # Period 3 (Na-Ar), added 2026-10-25 (issue #132). Same design as
+    # period 2: the saturated hydride first (it is the canonical
+    # reference, see _build_canonical_references), then the other
+    # coordination environments, closed-shell hosts only. The SiH3, PH2
+    # and SH doublets that would add CN 3, 2 and 1 records through the
+    # spin-resolved UKS response are deferred: on 2026-10-26 the UKS
+    # hybrid reference SCF on aug-cc-pVTZ trips the Hermitian operator
+    # guard (the shipped CH doublet does too), issue #672. Open-shell
+    # free atoms stay out of the bundled catalogue, as for period 2.
+    # =================================================================
+
+    # --- Sodium (Z=11) -- CN 1 ------------------------------------
+    # NaH is sodium's canonical reference host (the pure hydride the
+    # extraction needs); its own extracted record is withheld from the
+    # frozen dataset because the zeta-scaled hydride subtraction leaves a
+    # negative high-frequency tail (see d4_reference_period3_protocol.json,
+    # withheld_records). The stored sodium records are Na2 and NaF.
+    ReferenceSystem(
+        element=11, label="Na/NaH",
+        atoms_angstrom=_diatomic(11, 1, 1.8874),
+        target_index=0, nominal_cn=1.0, geometry_source=_CCCBDB),
+    ReferenceSystem(
+        element=11, label="Na/Na2",
+        atoms_angstrom=_diatomic(11, 11, 3.0789),
+        target_index=0, nominal_cn=1.0, geometry_source=_CCCBDB),
+    ReferenceSystem(
+        element=11, label="Na/NaF",
+        atoms_angstrom=_diatomic(11, 9, 1.9260),
+        target_index=0, nominal_cn=1.0, geometry_source=_CCCBDB),
+
+    # --- Magnesium (Z=12) -- closed-shell atom, CN 2 ---------------
+    ReferenceSystem(
+        element=12, label="Mg/atom",
+        atoms_angstrom=_atom_only(12),
+        target_index=0, nominal_cn=0.0,
+        geometry_source="free atom"),
+    ReferenceSystem(
+        element=12, label="Mg/MgH2",
+        atoms_angstrom=_linear_triatomic(12, 1, 1.7033),
+        target_index=0, nominal_cn=2.0, geometry_source=_CCCBDB),
+    ReferenceSystem(
+        element=12, label="Mg/MgF2",
+        atoms_angstrom=_linear_triatomic(12, 9, 1.7710),
+        target_index=0, nominal_cn=2.0, geometry_source=_CCCBDB),
+
+    # --- Aluminium (Z=13) -- CN 3 / 1 ------------------------------
+    ReferenceSystem(
+        element=13, label="Al/AlH3-sp2",
+        atoms_angstrom=_trigonal_planar(13, 1, 1.5860),
+        target_index=0, nominal_cn=3.0,
+        geometry_source="NIST CCCBDB, computed equilibrium geometry (no gas-phase experiment)"),
+    ReferenceSystem(
+        element=13, label="Al/AlF3-sp2",
+        atoms_angstrom=_trigonal_planar(13, 9, 1.6330),
+        target_index=0, nominal_cn=3.0, geometry_source=_CCCBDB),
+    ReferenceSystem(
+        element=13, label="Al/AlH",
+        atoms_angstrom=_diatomic(13, 1, 1.6478),
+        target_index=0, nominal_cn=1.0, geometry_source=_CCCBDB),
+
+    # --- Silicon (Z=14) -- CN 4 / 3 / 2 / 1 -------------------------
+    ReferenceSystem(
+        element=14, label="Si/SiH4-sp3",
+        atoms_angstrom=_tetrahedral(14, 1, 1.4798),
+        target_index=0, nominal_cn=4.0, geometry_source=_CCCBDB),
+    ReferenceSystem(
+        element=14, label="Si/Si2H6-sp3",
+        atoms_angstrom=_staggered_x2h6(14, 2.3310, 1.4920, 110.3),
+        target_index=0, nominal_cn=4.0, geometry_source=_CCCBDB),
+    ReferenceSystem(
+        element=14, label="Si/SiH2-singlet",
+        atoms_angstrom=_bent_xh2(14, 1.5140, 92.08),
+        target_index=0, nominal_cn=2.0, geometry_source=_CCCBDB),
+    ReferenceSystem(
+        element=14, label="Si/SiO",
+        atoms_angstrom=_diatomic(14, 8, 1.5097),
+        target_index=0, nominal_cn=1.0, geometry_source=_CCCBDB),
+
+    # --- Phosphorus (Z=15) -- CN 3 / 2 / 1 --------------------------
+    ReferenceSystem(
+        element=15, label="P/PH3-sp3",
+        atoms_angstrom=_pyramidal_xh3(15, 1.4200, 93.345),
+        target_index=0, nominal_cn=3.0, geometry_source=_CCCBDB),
+    ReferenceSystem(
+        element=15, label="P/P2",
+        atoms_angstrom=_diatomic(15, 15, 1.8934),
+        target_index=0, nominal_cn=1.0, geometry_source=_CCCBDB),
+    ReferenceSystem(
+        element=15, label="P/PN",
+        atoms_angstrom=_diatomic(15, 7, 1.4909),
+        target_index=0, nominal_cn=1.0, geometry_source=_CCCBDB),
+
+    # --- Sulfur (Z=16) -- CN 2 / 1 ----------------------------------
+    ReferenceSystem(
+        element=16, label="S/H2S",
+        atoms_angstrom=_bent_xh2(16, 1.3356, 92.11),
+        target_index=0, nominal_cn=2.0, geometry_source=_CCCBDB),
+    ReferenceSystem(
+        element=16, label="S/SO2",
+        atoms_angstrom=_bent_xh2_general(16, 8, 1.4308, 119.33),
+        target_index=0, nominal_cn=2.0, geometry_source=_CCCBDB),
+    ReferenceSystem(
+        element=16, label="S/CS",
+        atoms_angstrom=_diatomic(16, 6, 1.5349),
+        target_index=0, nominal_cn=1.0, geometry_source=_CCCBDB),
+
+    # --- Chlorine (Z=17) -- terminal in every environment ----------
+    ReferenceSystem(
+        element=17, label="Cl/HCl",
+        atoms_angstrom=_diatomic(1, 17, 1.2746),
+        target_index=1, nominal_cn=1.0, geometry_source=_CCCBDB),
+    ReferenceSystem(
+        element=17, label="Cl/Cl2",
+        atoms_angstrom=_diatomic(17, 17, 1.9879),
+        target_index=0, nominal_cn=1.0, geometry_source=_CCCBDB),
+    ReferenceSystem(
+        element=17, label="Cl/ClF",
+        atoms_angstrom=_diatomic(17, 9, 1.6283),
+        target_index=0, nominal_cn=1.0, geometry_source=_CCCBDB),
+
+    # --- Argon (Z=18) -- closed-shell free atom --------------------
+    ReferenceSystem(
+        element=18, label="Ar/atom",
+        atoms_angstrom=_atom_only(18),
         target_index=0, nominal_cn=0.0,
         geometry_source="free atom"),
 )

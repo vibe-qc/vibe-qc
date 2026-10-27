@@ -7,15 +7,26 @@ myst:
 
 # AICCM troubleshooting and diagnostics
 
+```{admonition} Status: experimental
+:class: warning
+
+Every route diagnosed on this page (both AICCM lines) is an experimental route. Every Γ-line SCF driver emits `vibeqc.AICCM2026DevAExperimentalWarning` and every χ-CCM driver emits `vibeqc.AICCM2026DevBExperimentalWarning`; the `.system` manifest records `method_status = "experimental"` for every AICCM job run through `run_periodic_job(method="aiccm", variant=...)`. Its numbers are research output, not validated results, and it is not part of the release gate. The label vocabulary is defined in [Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+```
+
 This page catalogues the common failure modes and diagnostic signals you
-will encounter with Γ-CCM and χ-CCM[^xccm-convention]. Γ-CCM uses the
-union-and-weight/Wigner--Seitz integral-weighting construction; χ-CCM uses the
-finite-translation-group character construction. For each: what it looks like,
+will encounter with Γ-CCM and χ-CCM[^xccm-convention]. Γ-CCM is the neutral
+finite-torus construction (variants `real-gamma` and `neutral-bloch`); the
+`four-center` variant is the 2014 union-and-weight lineage kept in the same
+development line; χ-CCM uses the finite-translation-group character
+construction. For each: what it looks like,
 which JSON field or log line to
 check, and the fix.
 
-[^xccm-convention]: Γ-CCM and χ-CCM are distinct CCM approaches. Γ-CCM uses
-    the union-and-weight/Wigner--Seitz integral-weighting construction; χ-CCM
+[^xccm-convention]: Γ-CCM and χ-CCM are distinct CCM approaches. Γ-CCM is
+    the neutral finite-torus construction with two producers, `variant="real-gamma"`
+    and `variant="neutral-bloch"` (ruling R1, 2026-08-21); the `four-center` variant
+    is the 2014 union-and-weight/Wigner-Seitz lineage, a different construction
+    kept in the same `aiccm2026dev-a` development line. χ-CCM
     uses the finite-translation-group character construction. They are compared
     at a declared common exchange-q=0 convention. Their distinction is not a
     choice of Coulomb kernels, and equality for a specified operator/route is
@@ -66,9 +77,10 @@ rocksalt RKS-PBE/atom: 4-center −4.540 vs GDF −4.203 Ha - a 337 mHa/atom
 gap.
 
 **Cause.** These routes do not merely evaluate one named CCM approach with
-two interchangeable backends. The four-center route constructs Γ-CCM by
-union-and-weight/Wigner--Seitz integral weighting; the GDF route constructs a
-neutral fitted-torus control. Their gap is therefore an operator/construction
+two interchangeable backends. The four-center route is the 2014
+union-and-weight/Wigner-Seitz lineage; the GDF route (`run_ccm_rhf_gdf`, the
+`neutral-bloch` producer) constructs the neutral finite-torus Hamiltonian,
+which is Γ-CCM proper under ruling R1. Their gap is therefore an operator/construction
 gap. A leading monopole/Madelung interpretation is a useful hypothesis, not a
 proof that one route can replace the other.
 
@@ -95,7 +107,7 @@ print(f"Gamma CCM - neutral control = {(e_gamma - e_control) * 1000:.1f} mHa/ato
 ```
 
 **Fix.** Decide which construction or control is being studied and label it
-exactly. For Γ-CCM, keep the union-and-weight route and require its own
+exactly. For the four-centre lineage, keep the union-and-weight route and require its own
 convergence and external validation before making quantitative ionic claims.
 For a neutral fitted-torus control, use `run_ccm_rhf_gdf` / `aiccm-ri` and keep
 both SCF and post-HF on the matching neutral operator. Never publish the GDF
@@ -122,7 +134,7 @@ reference family, not a CCM-weighting issue.
 **Diagnose.** Compare RI vs four-center on the same 1-D/2-D system:
 
 ```bash
-python run_case.py h-chain aiccm-hf   # union-and-weight Γ-CCM
+python run_case.py h-chain aiccm-hf   # four-centre union-and-weight lineage (Γ-CCM line)
 python run_case.py h-chain aiccm-ri   # GDF RI (over-binds ~192 mHa/atom)
 python run_case.py h-chain bipole     # ordinary periodic BIPOLE control
 ```
@@ -245,7 +257,7 @@ Dense 3-D four-centers OOM beyond small clusters.
 **Diagnose.** Monitor memory. The C++ scalable HF kernel handles the
 SCF; the post-HF ERI builder does not yet have a scalable 3-D path.
 
-**Fix.** For scalable Γ-CCM SCF, use the scalable union-and-weight route rather
+**Fix.** For scalable four-centre SCF in the Γ-CCM line, use the scalable union-and-weight route rather
 than changing the construction. If the intended calculation is instead a
 neutral fitted-torus control, use `run_ccm_rhf_gdf`; its neutral-cderi DLPNO
 stack remains a control, not Γ-CCM. The 3-D χ-CCM post-HF routes use

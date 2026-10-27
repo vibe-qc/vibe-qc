@@ -147,6 +147,46 @@ The complete script is `examples/embedding/open_shell_adsorbate.py`.
   thick-slab GDF parity lands; use it to explore the embedding workflow,
   not for production adsorption energies yet.
 
+## Theory
+
+The substrate is eliminated exactly in the Gaussian basis: region I (the
+tagged atoms plus the surface layers) couples to the semi-infinite substrate
+$S$ only through an energy-dependent embedding self-energy, the LCAO form of
+Inglesfield's embedding potential ({vibeqc-cite}`inglesfield_embedding_1981`).
+On the UHF route each spin $\sigma$ has its own region-I Green's function at
+complex energy $z$ and surface k-point,
+
+$$
+\mathbf G^{\sigma}_I(z) = \Big[\, z\,\mathbf S_{II} - \mathbf h_{II}
+- \mathbf J[\mathbf D^{\alpha} + \mathbf D^{\beta}] + \mathbf K[\mathbf D^{\sigma}]
+- \boldsymbol\Sigma_{\mathrm{emb}}(z) \Big]^{-1},
+\qquad
+\boldsymbol\Sigma_{\mathrm{emb}}(z) = (\mathbf H_{IS} - z\,\mathbf S_{IS})\,
+\mathbf g_S(z)\,(\mathbf H_{SI} - z\,\mathbf S_{SI}),
+$$
+
+where $\mathbf h_{II}$ is the one-electron block and the same
+$\boldsymbol\Sigma_{\mathrm{emb}}$ serves both spins. The substrate surface
+Green's function $\mathbf g_S$ comes from principal-layer decimation
+({vibeqc-cite}`lopez_sancho_rubio_1985`), and $\boldsymbol\Sigma_{\mathrm{emb}}$
+is linearised about a reference energy inside the occupied window
+({vibeqc-cite}`ishida_embedding_2001`). Each spin density is the contour
+integral up to the fixed Fermi level,
+
+$$
+\mathbf D^{\sigma}_I = -\frac{1}{\pi}\operatorname{Im}
+\int_{E_{\mathrm{bottom}}}^{E_F} \mathbf G^{\sigma}_I(E + i0^{+})\,\mathrm dE ,
+$$
+
+evaluated on a complex contour with `contour_n_nodes` points, and the J and K
+terms are iterated to self-consistency. Holding `e_bottom` and `e_fermi`
+fixed is what makes the central-difference force the derivative of one energy
+function. The Layer B adsorption energy of the closed-shell walkthrough
+instead takes the change
+in the integrated density of states from Lloyd's formula
+({vibeqc-cite}`lloyd_1967`). The full derivation is in the
+[user-guide theory section](../user_guide/surface_embedding.md#theory).
+
 ## Where this generalises
 
 - **Closed-shell surfaces**: drop `multiplicity`/`scf_method` and use the
@@ -155,7 +195,7 @@ The complete script is `examples/embedding/open_shell_adsorbate.py`.
   (Lloyd adsorption energy) walkthrough.
 - **Spin-polarised DFT (UKS)**: a roadmap item. The open-shell route is
   UHF (J + K) today; UKS with a `Vxc` augmentation is future work
-  (`handovers/HANDOVER_GF_EMBEDDING.md`).
+  (the original investigation).
 - **Conventional supercell slabs**: for the non-embedding picture, see
   [Slabs and adsorbates](../user_guide/slabs_and_adsorbates.md) and the
   [slab-adsorbate DFT tutorial](slab_adsorbate_dft.md).

@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "jk_method": "bipole",
+  "cases": [
+    {
+      "system_id": "h2_box12",
+      "basis": "sto-3g",
+      "method_id": "rhf",
+      "kmesh": [
+        1,
+        1,
+        1
+      ],
+      "tolerance_ha": 0.0001,
+      "tolerance_rationale": "0.1 mHa per cell: the BIPOLE parity notes for this cell measured BIPOLE against PySCF at -0.0022 mHa (RHF, cutoff 12) and +0.034 mHa (UHF triplet, 2x1x1). A state-transport control, not scientific acceptance.",
+      "reference_code": "pyscf",
+      "notes": "Restricted closed-shell reference for the UHF limit."
+    },
+    {
+      "system_id": "h2_box12",
+      "basis": "sto-3g",
+      "method_id": "uhf",
+      "kmesh": [
+        1,
+        1,
+        1
+      ],
+      "tolerance_ha": 0.0001,
+      "tolerance_rationale": "0.1 mHa per cell: the BIPOLE parity notes for this cell measured BIPOLE against PySCF at -0.0022 mHa (RHF, cutoff 12) and +0.034 mHa (UHF triplet, 2x1x1). A state-transport control, not scientific acceptance.",
+      "reference_code": "pyscf",
+      "notes": "Closed-shell limit: UHF singlet must reproduce RHF.",
+      "multiplicity": 1
+    },
+    {
+      "system_id": "h2_box12",
+      "basis": "sto-3g",
+      "method_id": "uhf",
+      "kmesh": [
+        1,
+        1,
+        1
+      ],
+      "tolerance_ha": 0.0001,
+      "tolerance_rationale": "0.1 mHa per cell: the BIPOLE parity notes for this cell measured BIPOLE against PySCF at -0.0022 mHa (RHF, cutoff 12) and +0.034 mHa (UHF triplet, 2x1x1). A state-transport control, not scientific acceptance.",
+      "reference_code": "pyscf",
+      "notes": "Per-cell triplet, 2 alpha / 0 beta electrons per cell.",
+      "multiplicity": 3
+    },
+    {
+      "system_id": "h2_box12",
+      "basis": "sto-3g",
+      "method_id": "rhf",
+      "kmesh": [
+        2,
+        1,
+        1
+      ],
+      "tolerance_ha": 0.0001,
+      "tolerance_rationale": "0.1 mHa per cell: the BIPOLE parity notes for this cell measured BIPOLE against PySCF at -0.0022 mHa (RHF, cutoff 12) and +0.034 mHa (UHF triplet, 2x1x1). A state-transport control, not scientific acceptance.",
+      "reference_code": "pyscf",
+      "notes": "Restricted closed-shell reference on an anisotropic mesh."
+    },
+    {
+      "system_id": "h2_box12",
+      "basis": "sto-3g",
+      "method_id": "uhf",
+      "kmesh": [
+        2,
+        1,
+        1
+      ],
+      "tolerance_ha": 0.0001,
+      "tolerance_rationale": "0.1 mHa per cell: the BIPOLE parity notes for this cell measured BIPOLE against PySCF at -0.0022 mHa (RHF, cutoff 12) and +0.034 mHa (UHF triplet, 2x1x1). A state-transport control, not scientific acceptance.",
+      "reference_code": "pyscf",
+      "notes": "Closed-shell limit on an anisotropic mesh.",
+      "multiplicity": 1
+    },
+    {
+      "system_id": "h2_box12",
+      "basis": "sto-3g",
+      "method_id": "uhf",
+      "kmesh": [
+        2,
+        1,
+        1
+      ],
+      "tolerance_ha": 0.0001,
+      "tolerance_rationale": "0.1 mHa per cell: the BIPOLE parity notes for this cell measured BIPOLE against PySCF at -0.0022 mHa (RHF, cutoff 12) and +0.034 mHa (UHF triplet, 2x1x1). A state-transport control, not scientific acceptance.",
+      "reference_code": "pyscf",
+      "notes": "Uniform per-cell triplet over the 2-cell BvK supercell; PySCF needs nelec = (4, 0) over the supercell.",
+      "multiplicity": 3
+    }
+  ]
+}

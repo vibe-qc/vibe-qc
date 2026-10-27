@@ -1,0 +1,1 @@
+- Improve the molecular properties tutorial with convergence and charge-sum checks, atom-index and density conventions, and the actual optimized dimer XYZ filename. Clarify the population-analysis example geometry and historical values.

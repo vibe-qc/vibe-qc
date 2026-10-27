@@ -1,0 +1,1 @@
+- Add experimental parameter-opt molecular energy fitting: immutable parameters and reference protocols, balanced correlated contrasts, grouped splits, isolated DFTB/PM6 adapters, bounded conditional and nonlinear solves, restart artifacts and a queued-fit example. Broader P0-P3 scientific acceptance remains tracked in #676.

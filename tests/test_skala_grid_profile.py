@@ -261,6 +261,17 @@ def test_periodic_heteronuclear_profile_passes_image_atomic_numbers():
     # A point-centered image domain has a different denominator from the
     # explicit home-centered list. Verify the H/F radius correction against
     # independent normalized products on the physical point neighborhood.
+    # Images switch off smoothly across a band of 0.1 R beyond the point
+    # radius (#482): inclusion chi, pair factor 1 - chi_j (1 - s_ij), and
+    # the owner's own product scaled by chi_i.
+    image_radius = 2.
+    band = .1*image_radius
+
+    def becke_step(mu):
+        for _ in range(3):
+            mu = .5*mu*(3-mu*mu)
+        return .5*(1-mu)
+
     max_point_radius = np.max(np.linalg.norm(np.asarray(actual.points), axis=1))
     image_bound = int(np.ceil((3*max_point_radius+2.)/3.4))+2
     centers = np.array([[3.4*n+offset, 0., 0.]
@@ -268,18 +279,24 @@ def test_periodic_heteronuclear_profile_passes_image_atomic_numbers():
     radii = np.tile(np.sqrt([.35, .5]), 2*image_bound+1)
     selected = np.random.default_rng(772).choice(len(actual.weights), 96, replace=False)
     hetero_witnesses = 0
+    banded = 0
     for index in selected:
         point = np.asarray(actual.points)[index]
         owner = actual.atom_of_point[index]
         image_distances = np.linalg.norm(centers-point, axis=1)
-        point_radius = max(2., 2*float(image_distances.min()))
-        if np.linalg.norm(point-np.asarray(system.unit_cell[owner].xyz)) > point_radius:
+        point_radius = max(image_radius, 2*float(image_distances.min()))
+        if np.linalg.norm(point-np.asarray(system.unit_cell[owner].xyz)) >= point_radius+band:
             assert actual.weights[index] == 0.
             continue
-        keep = np.flatnonzero(image_distances <= point_radius)
+        keep = np.flatnonzero(image_distances < point_radius+band)
         distances = np.linalg.norm(centers[keep]-point, axis=1)
-        weights = np.ones(len(keep))
-        unadjusted = np.ones(len(keep))
+        chi = np.array([
+            1. if d <= point_radius else becke_step(2*(d-point_radius)/band-1)
+            for d in distances
+        ])
+        banded += bool(np.any(chi < 1.))
+        weights = chi.copy()
+        unadjusted = chi.copy()
         for i in range(len(keep)):
             for j in range(len(keep)):
                 if i == j:
@@ -288,17 +305,15 @@ def test_periodic_heteronuclear_profile_passes_image_atomic_numbers():
                 ratio = radii[keep[j]]/radii[keep[i]]
                 adjustment = np.clip(.25*(ratio-1/ratio), -.5, .5)
                 corrected = mu+adjustment*(1-mu*mu)
-                for _ in range(3):
-                    mu = .5*mu*(3-mu*mu)
-                    corrected = .5*corrected*(3-corrected*corrected)
-                weights[i] *= .5*(1-corrected)
-                unadjusted[i] *= .5*(1-mu)
+                weights[i] *= 1-chi[j]*(1-becke_step(corrected))
+                unadjusted[i] *= 1-chi[j]*(1-becke_step(mu))
         position = np.flatnonzero(keep == 2*image_bound+owner)[0]
         reference = weights[position]/weights.sum()
         observed = actual.weights[index]/actual.atomic_weights[index]
         assert observed == pytest.approx(reference, rel=0, abs=3e-13)
         hetero_witnesses += abs(reference-unadjusted[position]/unadjusted.sum()) > 1e-5
     assert hetero_witnesses >= 5
+    assert banded >= 5
 
     wrong_home_numbers = numbers.copy()
     wrong_home_numbers[1] = 1

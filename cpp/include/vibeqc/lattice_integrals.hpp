@@ -48,6 +48,12 @@ std::vector<LatticeCell> physical_eri_lattice_cells(
     const BasisSet& basis, const PeriodicSystem& system,
     double pair_cutoff_bohr, double interaction_cutoff_bohr);
 
+// Exact source labels selected by the shared physical nuclear selector for
+// each supplied AO midpoint. Provenance only; no integral or alternate domain.
+std::vector<std::vector<std::array<int, 4>>> physical_nuclear_source_indices(
+    const PeriodicSystem& system, const Eigen::MatrixXd& midpoints,
+    double cutoff_bohr);
+
 LatticeMatrixSet compute_overlap_lattice(const BasisSet& basis,
                                          const PeriodicSystem& system,
                                          const LatticeSumOptions& opts);
@@ -117,10 +123,16 @@ LatticeMatrixSet compute_nuclear_lattice_explicit(
 // Consumers today: used by the Phase 12e-c Ewald dispatch of
 // compute_nuclear_lattice. Exposed as a public entry point so tests can
 // cover the short-range component in isolation.
+//
+// ``source_tol`` > 0 (pair-complete 3-D sums only) gives each AO product its
+// own nuclear source radius, no larger than ``nuclear_cutoff_bohr``, outside
+// which the summed erfc attraction is bounded by ``source_tol`` Hartree per
+// matrix element. ``0`` (default) keeps every image within the cutoff.
 LatticeMatrixSet compute_nuclear_erfc_lattice(const BasisSet& basis,
                                               const PeriodicSystem& system,
                                               double omega,
-                                              const LatticeSumOptions& opts);
+                                              const LatticeSumOptions& opts,
+                                              double source_tol = 0.0);
 
 // ---------------------------------------------------------------------------
 // Full 3D Ewald-summed nuclear-attraction lattice sum (Phase 12e-c)
@@ -161,19 +173,19 @@ LatticeMatrixSet compute_nuclear_lattice_ewald(const BasisSet& basis,
 //   ω_i^A = √α_i^A,
 //
 // the periodic generalisation of the molecular SAP Fock's V_SAP term (see
-// ``sap_expansions`` in guess.hpp for the fitted (α_i, c_i) data). Each SAP
-// term is a *pure* erf-screened Coulomb potential — the smooth, Gaussian-tail
-// piece of an Ewald split — so the lattice sum is evaluated entirely in
-// reciprocal space (no real-space erfc complement), per (atom, primitive) via
-// ``ewald_point_charge_potential`` with α = ω_i. The G = 0 (uniform-background)
-// term is *omitted*: it shifts v^{SAP} by a constant, which shifts the guess
-// Fock F_SAP = T + V_SAP by c·S and leaves the generalised-eigenproblem
-// eigenvectors — and hence the guess density — unchanged.
+// ``sap_expansions`` in guess.hpp for the fitted (α_i, c_i) data). The sum is
+// Ewald split at η (``ewald_opts``): each SAP term's erfc complement and the
+// erfc(η) partner are libint-analytic real-space sums over the nuclear images,
+// and the smooth remainder Σ_A Q_A erf(η r)/r with Q_A = Σ_i c_i^A is summed
+// in reciprocal space against the analytic AO-pair Fourier transform of each
+// block. V_SAP(g) is therefore exact for the chosen cutoffs and does not
+// change when an atom moves by a lattice vector (#483). The G = 0 background
+// term shifts F_SAP = T + V_SAP by c·S and leaves the guess density unchanged.
 //
-// The matrix element is evaluated by numerical integration on the same Becke
-// grid the periodic DFT path uses (the smooth potential has no 1/r cusp, so
-// grid quadrature is accurate to the grid floor, ~1e-6 Ha — ample for a
-// starting guess). ``grid`` must be built on ``system.unit_cell_molecule()``.
+// ``grid`` (built on ``system.unit_cell_molecule()``) is used only for a basis
+// with a shell outside the pair-FT kernel's contract (Cartesian l > 0, or
+// l > 6): there the long-range term falls back to quadrature on it, accurate
+// to the grid floor but not translation invariant.
 //
 // Works for dim == 3. Elements without SAP data in the chosen basis are
 // rejected (a clear error) rather than silently degraded — the bare-nuclear

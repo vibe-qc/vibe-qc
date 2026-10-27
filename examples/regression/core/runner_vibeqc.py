@@ -6,6 +6,7 @@ and :func:`run_molecule_case` (H₂ / H₂O / Ne / …).
 from __future__ import annotations
 
 import json
+import math
 import shutil
 import time
 import traceback
@@ -22,7 +23,9 @@ from vibeqc.output.formats.system_info import write_system_manifest
 from vibeqc.output.plan import OutputPlan
 from vibeqc.progress import ProgressLogger
 
+from . import input_identity
 from .case import CodeRow
+from .periodic_matrix import periodic_state_request
 from .spec import MethodSpec, MoleculeSpec, PeriodicSpec
 
 ANGSTROM_TO_BOHR = 1.0 / 0.529177210903
@@ -214,14 +217,92 @@ def _gamma_gdf_solid_hold_after_tail(
 
 
 def _build_periodic_system(spec: PeriodicSpec) -> "vq.PeriodicSystem":
-    lat_ang = np.asarray(spec.lattice_ang, dtype=float)
-    lat_bohr = lat_ang * ANGSTROM_TO_BOHR
+    # spec.lattice_ang ROWS are the lattice vectors, so r = frac @ L. The
+    # orientation-free lattice_vectors form avoids the #445 shear that a
+    # row matrix passed as ``lattice`` (columns) gives a non-symmetric cell.
+    lat_bohr = np.asarray(spec.lattice_ang, dtype=float) * ANGSTROM_TO_BOHR
     atoms = []
     for at in spec.atoms:
-        frac = np.asarray(at.frac, dtype=float)
-        cart_bohr = lat_bohr @ frac
+        cart_bohr = np.asarray(at.frac, dtype=float) @ lat_bohr
         atoms.append(vq.Atom(int(at.z), [float(x) for x in cart_bohr]))
-    return vq.PeriodicSystem(dim=3, lattice=lat_bohr, unit_cell=atoms)
+    # vibe-qc's periodic charge and multiplicity are per primitive cell,
+    # the convention periodic_state_request resolves.
+    return vq.PeriodicSystem(3, lattice_vectors=list(lat_bohr), unit_cell=atoms,
+                             charge=int(spec.charge),
+                             multiplicity=int(spec.multiplicity))
+
+
+def _input_identity(system, basis, basis_name: str, method: MethodSpec) -> dict:
+    """What this run actually built, for physical-input qualification (#648)."""
+    atoms = [(int(a.Z), *map(float, a.xyz)) for a in system.unit_cell]
+    shells = []
+    for shell in basis.shells():
+        alpha = np.asarray(shell.exponents, dtype=float)
+        # libint coefficients include each primitive's normalization,
+        # proportional to alpha^((2l+3)/4); remove it.
+        d = np.asarray(shell.coefficients, dtype=float) / alpha ** ((2 * shell.l + 3) / 4)
+        shells.append((shell.atom_index, shell.l, shell.pure, alpha, [d]))
+    if method.scf in ("rhf", "uhf"):
+        xc = input_identity.xc_identity(kind="hf", hf_fraction=1.0, omega=0.0)
+    else:
+        xc = input_identity.xc_identity_from_functional(vq.Functional(method.xc or "LDA"))
+    return {**_geometry_basis_ecp(system, atoms, shells, basis), "xc": xc}
+
+
+def _geometry_basis_ecp(system, atoms, shells, basis) -> dict:
+    lattice_rows = np.asarray(system.lattice, dtype=float).T
+    return {
+        "geometry": input_identity.geometry_identity(lattice_rows, atoms),
+        "basis": input_identity.basis_identity(shells),
+        "ecp": _resolved_ecp_identity(system, basis),
+    }
+
+
+def _resolved_ecp_identity(system, basis) -> dict:
+    """Use the public driver's resolver, including zero-core potentials.
+
+    This is the resolved preflight input, not an attestation of later integral
+    execution. Unknown or ambiguous centers remain unverified.
+    """
+    from vibeqc.periodic_runner import _resolve_ecp_data
+
+    try:
+        blocks, centers, charges, total_core = _resolve_ecp_data(system, basis)
+        atoms = list(system.unit_cell)
+        if not blocks and not charges:
+            charges = [float(a.Z) for a in atoms]
+        if len(charges) != len(atoms) or len(blocks) != len(centers):
+            raise ValueError("inconsistent ECP center/count metadata")
+        cores, terms = {}, {str(i): [] for i in range(len(atoms))}
+        for i, (a, charge) in enumerate(zip(atoms, charges)):
+            core = float(a.Z) - charge
+            if not math.isfinite(core) or abs(core - round(core)) > 1e-10:
+                raise ValueError("nonintegral ECP core count")
+            cores[str(i)] = int(round(core))
+        if sum(cores.values()) != total_core:
+            raise ValueError("inconsistent total ECP core count")
+        seen = set()
+        for block, center in zip(blocks, centers):
+            matches = [i for i, a in enumerate(atoms)
+                       if np.allclose(a.xyz, center, rtol=0, atol=1e-10)]
+            if len(matches) != 1 or matches[0] in seen:
+                raise ValueError("ambiguous ECP center-to-atom mapping")
+            atom = matches[0]
+            seen.add(atom)
+            if not block.ams or not all(len(v) == block.n_primitive for v in
+                                       (block.ams, block.ns, block.exponents, block.coefficients)):
+                raise ValueError("inconsistent ECP primitive arrays")
+            # libecpint's highest angular channel is local. Its n includes
+            # the radial Jacobian; the potential itself contains r^(n-2).
+            local = max(block.ams)
+            terms[str(atom)] = [[-1 if l == local else int(l), int(n) - 2, float(e), float(c)]
+                                for l, n, e, c in zip(block.ams, block.ns,
+                                                     block.exponents, block.coefficients)]
+        if any(core and int(atom) not in seen for atom, core in cores.items()):
+            raise ValueError("missing ECP operator for a core-replaced atom")
+        return input_identity.ecp_identity(cores, terms, "periodic production ECP resolver")
+    except Exception as exc:
+        return input_identity.unverified(f"ECP operator resolution failed: {type(exc).__name__}: {exc}")
 
 
 def _format_geometry_block(spec: PeriodicSpec) -> str:
@@ -252,15 +333,15 @@ def _format_geometry_block(spec: PeriodicSpec) -> str:
 def _make_options(method: MethodSpec, spec: PeriodicSpec, *,
                   cutoff_bohr: float, nuclear_cutoff_bohr: float,
                   conv_tol_energy: float, max_iter: int):
-    if method.scf == "rks":
+    if method.scf in ("rks", "uks"):
         opts = vq.PeriodicKSOptions()
         opts.functional = (method.xc or "LDA").upper()
-    elif method.scf == "rhf":
+    elif method.scf in ("rhf", "uhf"):
         opts = vq.PeriodicRHFOptions()
     else:
         raise NotImplementedError(
             f"runner_vibeqc: scf={method.scf!r} not wired in this iteration; "
-            f"only rks and rhf are supported in wave 1."
+            f"only rhf, uhf, rks and uks are supported."
         )
     opts.lattice_opts.cutoff_bohr = float(cutoff_bohr)
     opts.lattice_opts.nuclear_cutoff_bohr = float(nuclear_cutoff_bohr)
@@ -271,7 +352,7 @@ def _make_options(method: MethodSpec, spec: PeriodicSpec, *,
         opts.initial_guess = vq.InitialGuess.SAD
     elif spec.default_initial_guess.upper() == "HCORE":
         opts.initial_guess = vq.InitialGuess.HCORE
-    if method.scf == "rks":
+    if method.scf in ("rks", "uks"):
         opts.use_periodic_becke = bool(spec.default_use_periodic_becke)
     return opts
 
@@ -279,6 +360,7 @@ def _make_options(method: MethodSpec, spec: PeriodicSpec, *,
 def run_periodic_case(
     *, run_id: str, target: str, code_version: str, spec: PeriodicSpec,
     basis_name: str, method: MethodSpec, kmesh: Tuple[int, int, int],
+    jk_method: str = "gdf",
     spacing_bohr: Optional[float] = None,
     cutoff_bohr: Optional[float] = None,
     nuclear_cutoff_bohr: Optional[float] = None,
@@ -295,6 +377,10 @@ def run_periodic_case(
     Writes a complete verbose log section to ``log_path`` (truncated by
     ProgressLogger on construction).
     """
+    if jk_method not in ("gdf", "bipole"):
+        raise ValueError("periodic regression jk_method must be 'gdf' or 'bipole'")
+    if jk_method != "gdf" and rsgdf_tail_ke_cutoff is not None:
+        raise ValueError("rsgdf_tail_ke_cutoff requires jk_method='gdf'")
     if spacing_bohr is None:
         spacing_bohr = spec.default_spacing_bohr
     if cutoff_bohr is None:
@@ -308,6 +394,14 @@ def run_periodic_case(
     if max_iter is None:
         max_iter = spec.default_max_iter
 
+    route_options = (
+        {"bipole_cutoff_bohr": cutoff_bohr,
+         "bipole_nuclear_cutoff_bohr": nuclear_cutoff_bohr,
+         "ewald_omega": omega}
+        if jk_method == "bipole"
+        else {"rsgdf_tail_ke_cutoff": rsgdf_tail_ke_cutoff}
+    )
+
     row = CodeRow(
         run_id=run_id, target=target, system_id=spec.id, family=spec.family,
         basis=basis_name, method_id=method.id,
@@ -320,6 +414,12 @@ def run_periodic_case(
         artifact_stem=stem,
         log_path=log_path,
     )
+    try:
+        state = periodic_state_request(spec, method, code="vibeqc")
+    except ValueError as exc:
+        row.status = "unavailable"
+        row.note = f"vibeqc: state refused before execution: {exc}"
+        return row
     if artifact_dir is not None:
         _write_json(
             artifact_dir / "input.json",
@@ -328,9 +428,12 @@ def run_periodic_case(
                 "run_id": run_id,
                 "target": target,
                 "system": asdict(spec),
+                "state": state,
                 "basis": basis_name,
                 "method": _method_payload(method),
                 "kmesh": list(kmesh),
+                "jk_method": jk_method,
+                "route_options": route_options,
                 "settings": {
                     "spacing_bohr": spacing_bohr,
                     "cutoff_bohr": cutoff_bohr,
@@ -354,11 +457,14 @@ def run_periodic_case(
 
     try:
         system = _build_periodic_system(spec)
-        plog.info(
-            f"system: {len(system.unit_cell)} atoms / "
-            f"{int(system.n_electrons())} electrons"
-        )
         row.n_electrons = int(system.n_electrons())
+        unpaired = int(system.multiplicity) - 1
+        row.n_alpha = (row.n_electrons + unpaired) // 2
+        row.n_beta = (row.n_electrons - unpaired) // 2
+        plog.info(
+            f"system: {len(system.unit_cell)} atoms / {row.n_electrons} electrons "
+            f"(alpha {row.n_alpha}, beta {row.n_beta}; {state['convention']})"
+        )
 
         basis = vq.make_basis(system.unit_cell_molecule(), basis_name)
         plog.info(
@@ -366,6 +472,9 @@ def run_periodic_case(
         )
         row.n_basis_functions = int(basis.nbasis)
         row.n_basis_shells = int(basis.nshells)
+        if artifact_dir is not None:
+            _write_json(artifact_dir / "input_identity.json",
+                        _input_identity(system, basis, basis_name, method))
 
         opts = _make_options(
             method, spec,
@@ -375,9 +484,9 @@ def run_periodic_case(
             max_iter=max_iter,
         )
 
-        # Active-settings dump — every knob, no hidden defaults. The
-        # transparency directive (v0.7) is non-negotiable.
-        plog.banner("Active settings")
+        # These options configure the overlap preflight. The public driver
+        # receives the explicit request below and records its resolved options.
+        plog.banner("Preflight settings")
         plog.write_raw(format_options(opts, title=type(opts).__name__))
         plog.write_raw(format_options(
             opts.lattice_opts, title="LatticeSumOptions",
@@ -411,8 +520,9 @@ def run_periodic_case(
         job_kpoints_label = "Gamma" if job_kpoints is None else f"kpoints={job_kpoints}"
         plog.info(
             "periodic JK route: "
-            f"run_periodic_job(jk_method='gdf', {job_kpoints_label})"
+            f"run_periodic_job(jk_method={jk_method!r}, {job_kpoints_label})"
         )
+        plog.info(f"periodic route controls: {route_options}")
         if rsgdf_tail_ke_cutoff is not None:
             plog.info(
                 "periodic GDF tail: "
@@ -423,14 +533,15 @@ def run_periodic_case(
             basis,
             method=method.scf.upper(),
             functional=method.xc,
-            jk_method="gdf",
+            jk_method=jk_method,
             kpoints=job_kpoints,
             output=job_output,
             max_iter=max_iter,
             conv_tol_energy=conv_tol_energy,
             damping=spec.default_damping,
             initial_guess=spec.default_initial_guess,
-            rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
+            **({"atomic_spins": state["atomic_spins"]} if state["atomic_spins"] else {}),
+            **route_options,
             write_molden_file=False,
             write_density=False,
             write_xyz_file=False,
@@ -456,7 +567,7 @@ def run_periodic_case(
             f"({row.n_iter} iters, wall {wall:.1f} s)"
         )
         backend = str(getattr(result, "backend", "") or "")
-        if "+PARITY_HELD" in backend or _gamma_gdf_solid_hold_after_tail(
+        if "+PARITY_HELD" in backend or (jk_method == "gdf" and _gamma_gdf_solid_hold_after_tail(
             system,
             basis,
             spec,
@@ -464,7 +575,7 @@ def run_periodic_case(
             method,
             kmesh,
             rsgdf_tail_ke_cutoff,
-        ):
+        )):
             row.status = "unavailable"
             row.note = (
                 "vibeqc: Gamma GDF solid absolute-energy parity held for "

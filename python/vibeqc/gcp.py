@@ -589,14 +589,10 @@ def compute_gcp(
                 f"parameter set."
             )
 
-    if damping is not None and with_gradient:
-        raise NotImplementedError(
-            "compute_gcp: analytic gradient with short-range damping is "
-            "not implemented yet. The composite energy totals use the "
-            "damped gCP; geometry optimisation of a damped composite "
-            "(pbeh-3c / hse-3c / r2scan-3c) needs the damped gradient -- "
-            "tracked as a follow-up."
-        )
+    # The analytic gradient now composes the short-range damping factor
+    # (dmp_factor / dmp_factor_prime above), so the damped-gCP gradient is
+    # available. It is validated against a central finite difference of the
+    # damped energy in tests/test_gcp.py.
 
     atoms = list(mol.atoms)
     n = len(atoms)
@@ -673,16 +669,29 @@ def compute_gcp(
             pair_contrib = (
                 params.sigma * attenuation * e_mis_a / denom
             )
+            # Damped gCP (gcp.f90 damp=.true. path): scale the pair
+            # contribution by 1 - 1/(1 + dmp_scal.(R/r0ab)^dmp_exp).
+            # This is ~0 for short bonds (R << r0ab) and ~1 at long
+            # range, so it strips the spurious bonded-pair gCP and keeps
+            # only genuine intermolecular BSSE. Used by pbeh-3c / hse-3c /
+            # r2scan-3c (audit F1.5). The factor and its radial derivative
+            # feed both the energy and the gradient below so the two stay
+            # the derivative of each other.
+            dmp_factor = 1.0
+            dmp_factor_prime = 0.0
             if damping is not None:
-                # Damped gCP (gcp.f90 damp=.true. path): scale the pair
-                # contribution by 1 - 1/(1 + dmp_scal.(R/r0ab)^dmp_exp).
-                # This is ~0 for short bonds (R << r0ab) and ~1 at long
-                # range, so it strips the spurious bonded-pair gCP and
-                # keeps only genuine intermolecular BSSE. Used by
-                # pbeh-3c / hse-3c / r2scan-3c (audit F1.5).
                 dmp_scal, dmp_exp = damping
-                rs = R / _r0ab(za, zb)
-                pair_contrib *= 1.0 - 1.0 / (1.0 + dmp_scal * rs ** dmp_exp)
+                r0ab_ab = _r0ab(za, zb)
+                rs = R / r0ab_ab
+                u = dmp_scal * rs ** dmp_exp
+                dmp_factor = 1.0 - 1.0 / (1.0 + u)
+                # dmp_factor = 1 - (1+u)^-1, u = dmp_scal.(R/r0ab)^dmp_exp,
+                # so d(dmp_factor)/dR = u'/(1+u)^2 with
+                # u' = dmp_scal . dmp_exp . (R/r0ab)^(dmp_exp-1) / r0ab.
+                dmp_factor_prime = (
+                    dmp_scal * dmp_exp * rs ** (dmp_exp - 1.0) / r0ab_ab
+                ) / (1.0 + u) ** 2
+            pair_contrib *= dmp_factor
             energy += pair_contrib
 
             if with_gradient:
@@ -709,11 +718,23 @@ def compute_gcp(
                 dg_dR = (-params.alpha * params.beta
                          * R ** (params.beta - 1.0)
                          * attenuation)
-                d_pair_dR = (
+                # Radial derivative of the *undamped* pair, s . e_a .
+                # g(R) / sqrt(N_b . S(R)).
+                d_undamped_dR = (
                     params.sigma * e_mis_a / np.sqrt(n_virt_b) * (
                         dg_dR / np.sqrt(S_safe)
                         - 0.5 * attenuation * S_safe ** (-1.5) * dS_dR
                     )
+                )
+                # The pair that actually entered the total is
+                # undamped_pair . dmp_factor(R), so the radial derivative is
+                # d(undamped_pair)/dR . dmp_factor + undamped_pair .
+                # dmp_factor'. With no damping dmp_factor = 1 and this
+                # reduces exactly to the undamped form above.
+                undamped_pair = params.sigma * attenuation * e_mis_a / denom
+                d_pair_dR = (
+                    d_undamped_dR * dmp_factor
+                    + undamped_pair * dmp_factor_prime
                 )
                 # Project radial derivative onto Cartesian: dR/dR_a =
                 # (R_a - R_b)/R = dvec/R; dR/dR_b is the negative.

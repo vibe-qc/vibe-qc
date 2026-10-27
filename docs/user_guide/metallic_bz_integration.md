@@ -13,16 +13,19 @@ second net. Unlike [smearing](smearing.md) it carries **no width parameter** to
 converge or extrapolate. It lives in `vibeqc.bz_integration`, where the
 occupation kernel itself is engine-agnostic.
 
-```{admonition} Which J/K backends accept `bz_integration="gilat"`
-:class: important
+```{admonition} Status: production on BIPOLE, GDF and RIJCOSX; gated on GPW and GAPW
+:class: caution
 
 On `run_periodic_job` the flag is honoured by **`bipole`, `gdf` and
-`rijcosx`**. It **fails closed on `gpw` and `gapw`** (2026-08-02): those
-drivers do not thread it into their occupation logic, and they previously
-accepted it, ran Fermi-Dirac, and still cited Gilat-Raubenheimer in the
-`.references` sidecar. Refusing is the honest behaviour until the
-occupations are wired; use `jk_method="gdf"`/`"bipole"`/`"rijcosx"` for GR,
-or drop `bz_integration` on the GPW/GAPW routes.
+`rijcosx`**. On **`gpw` and `gapw`** it is recognised but fails closed
+(since 2026-08-02) with `NotImplementedError: run_periodic_job:
+bz_integration='gilat' is not implemented ...`: those drivers do not thread
+the flag into their occupation logic, and before the gate they accepted it,
+ran Fermi-Dirac, and still cited Gilat-Raubenheimer in the `.references`
+sidecar. The missing term is the GR occupation step inside the GPW/GAPW SCF
+loops. Use `jk_method="gdf"`, `"bipole"` or `"rijcosx"` for GR, or drop
+`bz_integration` on the GPW/GAPW routes. The label vocabulary is defined in
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels).
 ```
 
 GR and smearing are the two ways vibe-qc resolves the metallic Fermi-surface
@@ -33,6 +36,83 @@ integration, and they are complementary:
 | Parameter | width *T* (converge / extrapolate *T* → 0) | none |
 | Drives a metal SCF? | **yes** (smooth occupation map) | **no**, post-SCF only |
 | Best for | converging the SCF; forces | parameter-free DOS / Fermi level / final integration |
+
+## Theory
+
+The Brillouin-zone integral behind every occupation, Fermi level and density
+of states is, per band $n$ and with spin degeneracy $g$,
+
+$$
+N = g\sum_n \int_{\mathrm{BZ}} \frac{V\,\mathrm d^3k}{(2\pi)^3}\,
+\theta\!\left(E_F - \varepsilon_n(\mathbf k)\right),
+\qquad
+D(E) = g\sum_n \int_{\mathrm{BZ}} \frac{V\,\mathrm d^3k}{(2\pi)^3}\,
+\delta\!\left(E - \varepsilon_n(\mathbf k)\right)
+= \frac{gV}{(2\pi)^3}\sum_n \int_{S_n(E)} \frac{\mathrm dS}{|\nabla_{\mathbf k}\varepsilon_n|},
+$$
+
+where $S_n(E)$ is the constant-energy surface of band $n$ and $V$ the cell
+volume. On a finite mesh the step function is the problem: counting each
+mesh point as fully occupied or empty makes $N(E_F)$ a staircase, and the
+Fermi surface is resolved only as well as the mesh spacing.
+
+The Gilat-Raubenheimer net ({vibeqc-cite}`gilat_raubenheimer_1966`,
+{vibeqc-cite}`gilat_spectral_1972`) partitions the zone into one
+parallelepiped microcell per regular-mesh point $\mathbf k_0$ and linearises
+each band inside its cell,
+
+$$
+\varepsilon_n(\mathbf k_0 + \delta\mathbf k) \approx \varepsilon_n(\mathbf k_0)
++ \mathbf v_n(\mathbf k_0)\cdot\delta\mathbf k,
+\qquad
+\varepsilon - \varepsilon_0 = \sum_{i=1}^{3} g_i\,t_i,
+\qquad
+g_i = \mathbf v_n\cdot\frac{\mathbf b_i}{N_i},
+$$
+
+with $t_i \in [-\tfrac12, \tfrac12]$ the offset in the cell's fractional
+coordinates, $\mathbf b_i$ the reciprocal-lattice vectors and $N_i$ the mesh
+sizes. vibe-qc takes each directional slope $g_i$ as the periodic central
+difference of the eigenvalue grid along mesh axis $i$
+(`grid_band_slopes`), so the eigenvalues alone fix the geometry and a
+non-orthogonal reciprocal cell needs no special treatment: the cell Jacobian
+is constant and cancels in the occupied *fraction*. That fraction is the
+volume of the unit box below a plane,
+
+$$
+f_{n\mathbf k_0}(E_F) = \mathrm{Vol}\Big\{\,t\in[-\tfrac12,\tfrac12]^3 :
+\sum_i g_i t_i < E_F - \varepsilon_n(\mathbf k_0)\Big\}
+= \frac{1}{6A_1A_2A_3}\sum_{S\subseteq\{1,2,3\}} (-1)^{|S|}\,
+\mathrm{relu}\Big(y - \sum_{i\in S}A_i\Big)^{3},
+$$
+
+with $A_i = |g_i|$ and $y = E_F - \varepsilon_0 + \tfrac12(A_1 + A_2 + A_3)$,
+the cumulative distribution of a weighted sum of three uniform variables
+(`occupied_fraction`; directions with a negligible slope fall back to the
+two-, one- or zero-dimensional box formula to avoid cancellation). The
+occupation at the grid point is $g f_{n\mathbf k_0}$, uniform mesh weights
+$1/N_k$ reproduce the zone integral, and $E_F$ is found by bisecting
+$N(E_F) = g\sum_{n,\mathbf k_0} f_{n\mathbf k_0}/N_k$ to the electron count
+(`gilat_raubenheimer_occupations`). The density of states is the energy
+derivative of the same object, $D(E) = g\sum_{n,\mathbf k_0}
+\partial f_{n\mathbf k_0}(E)/\partial E\,/N_k$: for a linear band the area of
+the plane $\varepsilon = E$ inside the microcell divided by $|\nabla_{\mathbf
+k}\varepsilon_n|$, which is exactly the Fermi-surface area weight in the
+surface integral above, evaluated analytically per cell (`gilat_dos`).
+
+Smearing answers the same integral by replacing the step with a smooth
+function, $f = [1 + e^{(\varepsilon-\mu)/T}]^{-1}$ for Fermi-Dirac, and by
+minimising the Mermin free energy $F = E - TS$ instead of $E$; it introduces a
+width $T$ that has to be converged or extrapolated, and it produces an
+entropy. GR introduces neither: it is a $T = 0$ quadrature whose only
+approximation is the linear band inside each microcell, so its error falls
+with the mesh spacing rather than with a broadening parameter. The price is
+the one stated below: the resulting occupation map is discontinuous in the
+density, so it can analyse a converged metal but cannot drive its SCF.
+Which approximation enters, then, is the piecewise-linear band; where it
+helps is the parameter-free Fermi level, occupations and DOS of a converged
+spectrum, and where it fails is inside the metallic SCF loop and in force
+expressions, which need the smooth occupations of smearing.
 
 ## Quick start
 
@@ -154,8 +234,11 @@ post-SCF call on an IBZ result, expand first with
 
 Cite **Gilat, G. & Raubenheimer, L. J.** *Accurate Numerical Method for
 Calculating Frequency-Distribution Functions in Solids.* Phys. Rev. **144**, 390
-(1966) whenever you use the Gilat net (`bz_integration="gilat"` or the
-`vibeqc.bz_integration` post-SCF helpers).
+(1966), {vibeqc-cite}`gilat_raubenheimer_1966`, whenever you use the Gilat net
+(`bz_integration="gilat"` or the `vibeqc.bz_integration` post-SCF helpers),
+and Gilat's 1972 analysis of the method, {vibeqc-cite}`gilat_spectral_1972`,
+for the DOS helper. The runner registers both automatically on the routes
+that honour the flag.
 
 ## See also
 

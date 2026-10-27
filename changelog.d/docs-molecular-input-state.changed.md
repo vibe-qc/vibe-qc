@@ -1,0 +1,1 @@
+- Correct the molecular electron-count/multiplicity rule, replace a missing XYZ input with a complete example, and clarify units, file parsing and convergence checks in the molecules guide.

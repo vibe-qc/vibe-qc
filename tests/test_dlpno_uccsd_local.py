@@ -1,8 +1,13 @@
-"""Local-domain open-shell DLPNO-UCCSD correctness ratchets.
+"""Local-domain open-shell DLPNO-UCCSD correctness ratchets ("union" route).
 
 The dense O(N^6) pilot is the independent oracle.  At full PNO and occupied
 domains the local solver must reproduce it while obtaining every residual
 from the caller-supplied native local-domain kernel.
+
+These ratchets pin ``residual_domain="union"``, the route whose PNO spaces are
+diagonalised over the combined spin-virtual space and whose PNO, TNO and
+singles counts they assert. The compiled PNO-space route that is now the
+default is covered by ``tests/test_dlpno_uccsd_pno.py``.
 """
 
 from __future__ import annotations
@@ -14,6 +19,7 @@ import pytest
 from vibeqc import BasisSet, UHFOptions, run_uhf
 from vibeqc._vibeqc_core import Atom, Molecule
 from vibeqc.density_fitting import DensityFitting
+from vibeqc.dlpno.thresholds import options_from_dlpno_thresholds
 from vibeqc.dlpno.uccsd import (
     DLPNOUCCSDPilotOptions as _DLPNOUCCSDPilotOptions,
     run_dlpno_uccsd_pilot,
@@ -40,6 +46,13 @@ LocalUCCSDOptions = partial(
     tcut_pno=1e-7,
     tcut_pairs=0.0,
     tcut_mkn=0.0,
+    # The ratchets compare against the dense pilot's one-sided PNOs and
+    # predate the open-shell PNO correction (#190).
+    pno_density="one-sided",
+    pno_correction=False,
+    # Counts asserted here are those of the union route's combined PNO
+    # construction; the compiled route has its own module.
+    residual_domain="union",
 )
 OH = [
     (8, [0.0, 0.0, 0.0]),
@@ -453,6 +466,111 @@ def test_t1_full_domain_matches_dense_pilot_triples(oh_sto3g, localise):
     assert local.e_t == pytest.approx(pilot.e_t, abs=1e-11)
     assert local.n_triples == math.comb(no, 3)
     assert local.avg_tno == pytest.approx(nv)
+
+
+def _previous_occupied_rotation(fock, n_alpha, **_metadata):
+    """Pre-migration independent NumPy boundary, retained as a test oracle."""
+    import numpy as np
+    rotation = np.zeros_like(fock)
+    energies = np.zeros(fock.shape[0])
+    for block in (slice(0, n_alpha), slice(n_alpha, fock.shape[0])):
+        f_spin = fock[block, block]
+        energies[block], rotation[block, block] = np.linalg.eigh(
+            0.5 * (f_spin + f_spin.T)
+        )
+    return energies, rotation
+
+
+@pytest.mark.parametrize("sizes", [(0, 0), (3, 0), (0, 2), (1, 1), (4, 3)])
+@pytest.mark.parametrize("degenerate", [False, True])
+def test_occupied_triples_shared_fock_boundary(monkeypatch, sizes, degenerate):
+    import numpy as np
+    from vibeqc.dlpno import uccsd_local_solver as local
+
+    rng = np.random.default_rng(580)
+    na, nb = sizes
+    fock = np.zeros((na + nb, na + nb))
+    for block, n in ((slice(0, na), na), (slice(na, na + nb), nb)):
+        q, _ = np.linalg.qr(rng.normal(size=(n, n)))
+        values = np.full(n, -0.7) if degenerate else -np.arange(1., n + 1.)
+        fock[block, block] = (q * values) @ q.T
+    fock = fock.T  # Non-contiguous caller input is not modified.
+    saved = fock.copy()
+    calls = []
+    shared = local.solve_dense_fock
+
+    def record(matrix, **metadata):
+        result = shared(matrix, **metadata)
+        calls.append((matrix.shape, metadata, result))
+        return result
+
+    monkeypatch.setattr(local, "solve_dense_fock", record)
+    eps, rotation = local._occupied_triples_rotation(
+        fock, na, source_identity="accepted-source", n_frozen=2,
+    )
+    old_eps, old_rotation = _previous_occupied_rotation(fock, na)
+    np.testing.assert_array_equal(eps, old_eps)
+    np.testing.assert_array_equal(rotation, old_rotation)
+    np.testing.assert_array_equal(fock, saved)
+    np.testing.assert_array_equal(rotation[:na, na:], 0.)
+    np.testing.assert_array_equal(rotation[na:, :na], 0.)
+    np.testing.assert_allclose(rotation.T @ rotation, np.eye(na + nb), atol=2e-14)
+    np.testing.assert_allclose(fock @ rotation, rotation * eps, atol=2e-14)
+    assert [(shape, m["spin"]) for shape, m, _ in calls] == [
+        ((n, n), spin) for n, spin in ((na, "alpha"), (nb, "beta")) if n
+    ]
+    for _, metadata, result in calls:
+        assert metadata["basis_id"] == (
+            "dlpno-uccsd:accepted-source:frozen=2:active-occupied:" + metadata["spin"]
+        )
+        assert result.converged and result.residual_frame == "orthogonal"
+        assert max(result.residuals) < 2e-14
+
+
+@pytest.mark.parametrize("bad_value", [float("nan"), float("inf")])
+def test_occupied_triples_fock_refuses_nonfinite_data(bad_value):
+    import numpy as np
+    from vibeqc.dlpno.uccsd_local_solver import _occupied_triples_rotation
+    fock = np.diag([-1., bad_value])
+    with pytest.raises(ValueError, match="finite"):
+        _occupied_triples_rotation(fock, 1, source_identity="source", n_frozen=0)
+
+
+@pytest.mark.parametrize("n_frozen", [0, 1])
+@pytest.mark.parametrize("route", ["pno", "union"])
+def test_occupied_triples_rotation_preserves_frozen_calculation(
+    oh_sto3g, monkeypatch, n_frozen, route, record_property,
+):
+    from vibeqc.dlpno import uccsd_local_solver as local
+    molecule, basis, uhf, df = oh_sto3g
+    options = LocalUCCSDOptions(
+        n_frozen=n_frozen, residual_domain=route, localise="boys",
+        tcut_pno=0., tcut_pairs=0., tcut_mkn=0., tcut_pno_singles=0.,
+        coupling_radius=0., tcut_tno=0., compute_triples=True, triples_mode="t1",
+        conv_tol_residual=1e-11, conv_tol_energy=1e-13,
+    )
+    actual = run_local_dlpno_uccsd(molecule, basis, uhf, df, options)
+    with monkeypatch.context() as patch:
+        patch.setattr(local, "_occupied_triples_rotation", _previous_occupied_rotation)
+        previous = run_local_dlpno_uccsd(molecule, basis, uhf, df, options)
+    canonical = run_dlpno_uccsd_pilot(molecule, basis, uhf, df,
+        DLPNOUCCSDPilotOptions(n_frozen=n_frozen, localise="none", tcut_pno=0.,
+            compute_triples=True, conv_tol_residual=1e-11, conv_tol_energy=1e-13))
+    assert actual.converged and previous.converged and canonical.converged
+    assert actual.triples_executed and abs(actual.e_t) > 1e-8
+    assert actual.n_frozen == previous.n_frozen == n_frozen
+    assert actual.e_corr == previous.e_corr
+    assert actual.e_t == previous.e_t
+    assert actual.trace == previous.trace
+    assert actual.trace[-1]["r_norm"] < 1e-11
+    assert abs(actual.trace[-1]["delta_e"]) < 1e-13
+    assert actual.e_corr == pytest.approx(canonical.e_corr, abs=1e-8)
+    assert actual.e_t == pytest.approx(canonical.e_t, abs=1e-11)
+    record_property("correlation_Eh", actual.e_corr)
+    record_property("triples_Eh", actual.e_t)
+    record_property("canonical_correlation_error_Eh", abs(actual.e_corr-canonical.e_corr))
+    record_property("canonical_triples_error_Eh", abs(actual.e_t-canonical.e_t))
+    record_property("final_iteration", actual.trace[-1])
 
 
 def test_t1_tno_truncation_reduces_domain(oh_sto3g):
@@ -997,7 +1115,16 @@ def test_singles_pnos_preserve_separated_radical(separated_oh_h2_sto3g):
     )
 
 
-def test_empty_pao_atom_domain_fails_closed(separated_h_h2_sto3g):
+@pytest.mark.parametrize(
+    "criterion,cuts",
+    [
+        # No Mulliken population exceeds 2.
+        ("mulliken", dict(tcut_mkn=2.0)),
+        # Nor does any differential overlap reach 1e6.
+        ("doi", dict(tcut_mkn=1e-3, tcut_do=1e6)),
+    ],
+)
+def test_empty_pao_atom_domain_fails_closed(separated_h_h2_sto3g, criterion, cuts):
     molecule, basis, uhf, df = separated_h_h2_sto3g
     with pytest.raises(ValueError, match="empty PAO atom domain"):
         run_local_dlpno_uccsd(
@@ -1005,7 +1132,7 @@ def test_empty_pao_atom_domain_fails_closed(separated_h_h2_sto3g):
             basis,
             uhf,
             df,
-            LocalUCCSDOptions(tcut_mkn=2.0),
+            LocalUCCSDOptions(domain_criterion=criterion, **cuts),
         )
 
 
@@ -1203,3 +1330,112 @@ def test_unknown_triples_mode_still_rejected(oh_sto3g):
             molecule, basis, uhf, df,
             LocalUCCSDOptions(triples_mode="t2-iterative"),
         )
+
+
+# --- appended by the #190 open-shell change -------------------------------
+
+
+def test_compact_residuals_are_contracted_once_per_group(oh_sto3g):
+    """With every occupied coupled (``coupling_radius=0``) and untruncated
+    singles spaces, every pair shares one contraction domain and every
+    singles residual shares the full spin-virtual space: two contractions per
+    iteration instead of one per pair and per occupied (the open-shell
+    counterpart of #689). The energy is the per-target one, which the
+    full-domain pilot ratchets above pin."""
+    molecule, basis, uhf, df = oh_sto3g
+    result = run_local_dlpno_uccsd(
+        molecule, basis, uhf, df, LocalUCCSDOptions(localise="boys")
+    )
+    assert result.converged
+    assert result.n_pairs > 2
+    assert result.n_residual_groups == 2
+
+
+def test_pno_correction_is_zero_without_truncation_and_reduces_it():
+    """The semicanonical MP2 correction for the PNO truncation of the
+    iterated pairs (the open-shell counterpart of #222): identically zero at
+    ``tcut_pno=0``, and it reduces the isolated PNO truncation error with
+    the domains and pair list held fixed."""
+    molecule = Molecule(
+        [Atom(z, position) for z, position in OH], charge=0, multiplicity=2
+    )
+    basis = BasisSet(molecule, "def2-svp")
+    scf_options = UHFOptions()
+    scf_options.max_iter = 300
+    uhf = run_uhf(molecule, basis, scf_options)
+    assert uhf.converged
+    df = DensityFitting(basis, BasisSet(molecule, AUX), aux_basis_name=AUX)
+    common = dict(localise="boys", tcut_pairs=0.0, tcut_mkn=0.0)
+    oracle = run_local_dlpno_uccsd(
+        molecule, basis, uhf, df,
+        LocalUCCSDOptions(tcut_pno=0.0, pno_correction=True, **common),
+    )
+    assert oracle.e_pno_correction == pytest.approx(0.0, abs=1e-14)
+    on = run_local_dlpno_uccsd(
+        molecule, basis, uhf, df,
+        LocalUCCSDOptions(tcut_pno=1e-5, pno_correction=True, **common),
+    )
+    off = run_local_dlpno_uccsd(
+        molecule, basis, uhf, df,
+        LocalUCCSDOptions(tcut_pno=1e-5, pno_correction=False, **common),
+    )
+    assert oracle.converged and on.converged and off.converged
+    assert on.e_pno_correction < 0.0
+    assert on.e_corr - off.e_corr == pytest.approx(on.e_pno_correction, abs=1e-12)
+    assert abs(on.e_corr - oracle.e_corr) < abs(off.e_corr - oracle.e_corr)
+
+
+def test_two_sided_pno_density_makes_a_singlet_agree_with_the_closed_shell_route():
+    """A closed-shell molecule run through this spin-orbital solver must mean
+    by NormalPNO what the closed-shell route means by it.
+
+    The one-sided spin-orbital density (the antisymmetrised amplitude's
+    T T^T + T^T T) keeps each opposite-spin pair's virtual directions for
+    one occupied index only, and a same-spin pair's T - T^T vanishes wherever
+    the MP2 amplitude is locally symmetric; at NormalPNO that left singlet
+    H2O/cc-pVDZ 0.27 kcal/mol from the closed-shell solver. The two-sided
+    density brings it within 0.01 kcal/mol."""
+    import numpy as np
+    from vibeqc import RHFOptions, run_rhf
+    from vibeqc.dlpno.ccsd_local_solver import (
+        LocalCCSDOptions as ClosedOptions,
+        run_local_dlpno_ccsd,
+    )
+
+    atoms = [
+        (8, [0.0, 0.0, 0.0]),
+        (1, [0.0, 0.757 * ANGSTROM_TO_BOHR, 0.587 * ANGSTROM_TO_BOHR]),
+        (1, [0.0, -0.757 * ANGSTROM_TO_BOHR, 0.587 * ANGSTROM_TO_BOHR]),
+    ]
+    molecule = Molecule([Atom(z, p) for z, p in atoms], charge=0, multiplicity=1)
+    basis = BasisSet(molecule, "cc-pvdz")
+    df = DensityFitting(basis, BasisSet(molecule, "cc-pvdz-ri"), aux_basis_name="cc-pvdz-ri")
+    rhf = run_rhf(molecule, basis, RHFOptions())
+    scf_options = UHFOptions()
+    scf_options.max_iter = 300
+    uhf = run_uhf(molecule, basis, scf_options)
+    assert abs(uhf.energy - rhf.energy) < 1e-8
+
+    closed = run_local_dlpno_ccsd(
+        molecule, basis, rhf, df,
+        options_from_dlpno_thresholds(ClosedOptions, "normal", compute_triples=False),
+    )
+
+    def open_shell(density):
+        r = run_local_dlpno_uccsd(
+            molecule, basis, uhf, df,
+            options_from_dlpno_thresholds(
+                _LocalUCCSDOptions, "normal", compute_triples=False,
+                pno_density=density,
+            ),
+        )
+        assert r.converged
+        return r
+
+    two = open_shell("two-sided")
+    one = open_shell("one-sided")
+    assert closed.converged
+    assert abs(two.e_corr - closed.e_corr) < 2.0e-5
+    assert abs(one.e_corr - closed.e_corr) > 3.0e-4
+    assert two.avg_pno > one.avg_pno
+    assert np.isfinite(two.e_corr)

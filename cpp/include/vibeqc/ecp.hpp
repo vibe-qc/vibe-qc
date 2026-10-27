@@ -20,6 +20,7 @@
 
 #include <Eigen/Dense>
 #include <array>
+#include <cstdint>
 #include <map>
 #include <string>
 #include <utility>
@@ -229,13 +230,19 @@ Eigen::MatrixXd compute_ecp_matrix_from_primitives(
     const std::vector<double>& center_xyz,
     const std::vector<ECPPrimitiveBlock>& primitives);
 
-// Lattice-summed V_ECP for periodic SCF.
+// Lattice-summed short-range scalar V_ECP for periodic SCF. Coulomb attraction
+// with Z_eff and the corresponding ionic Ewald energy are separate operators.
+// The default preserves the historical translation-ball projector support.
+// Explicit physical support requires pair_complete_1e and a 3D cell: retain
+// each AO pair by its actual separation and projector images by distance from
+// the AO midpoint. V(g) is not symmetrized; Bloch folding supplies the ket phase.
 LatticeMatrixSet compute_ecp_lattice_from_primitives(
     const BasisSet& basis,
     const PeriodicSystem& system,
     const LatticeSumOptions& opts,
     const std::vector<std::array<double, 3>>& home_ecp_centers,
-    const std::vector<ECPPrimitiveBlock>& home_primitives);
+    const std::vector<ECPPrimitiveBlock>& home_primitives,
+    bool physical_pair_support = false);
 
 // Fixed-density derivative of exactly the same AO/projector image domain.
 // Each translated shell and ECP projector moves with its owning home atom.
@@ -245,6 +252,56 @@ Eigen::MatrixXd ecp_lattice_gradient_contribution_from_primitives(
     const LatticeMatrixSet& density,
     const LatticeSumOptions& opts,
     const std::vector<std::array<double, 3>>& home_ecp_centers,
-    const std::vector<ECPPrimitiveBlock>& home_primitives);
+    const std::vector<ECPPrimitiveBlock>& home_primitives,
+    bool physical_pair_support = false);
+
+// ---- Radial-quadrature report of the most recent ECP operator build -------
+//
+// The vendored libecpint records, per thread, every radial integral whose
+// quadrature did not meet its convergence test (it used to print "Quadrature
+// failed" / "Failed to converge" and carry on, vibe-qc #392). Every ECP
+// builder in this file collects those records, publishes one report per
+// build here and, when anything failed, writes one summary line through
+// ``vibeqc::diagnostic("ecp", ...)`` -- never to a stream. Since #650 libecpint
+// recomputes such an integral on a larger grid (integrate_small: 2047 instead
+// of 127 points; type 1 and type 2: 4x the big grid) and uses the retry's
+// value. ``retried`` / ``resolved`` count those retries and the ones that
+// converged, with the largest |I(retry) - I(first)| and |I(retry)| there.
+// ``failures`` counts integrals that missed the test on the retry grid as
+// well, and a build with any of them is refused (std::runtime_error). A Bessel
+// table request beyond its tabulated angular momentum leaves channels unset,
+// so that one refuses too.
+//
+// Sites: 0 = integrate_small (analytic-path fallback, 128-point table),
+// 1 = type 1 quadrature, 2 = type 2 after libecpint's big-grid stage.
+// ``failures[site][l]`` is indexed by the ECP angular channel (type 1: the
+// local channel). Lattice builders also report their screening: of
+// ``candidates`` (shell pair, projector image, ECP centre) evaluations,
+// ``skipped`` were ones libecpint's own screen returns as exact zeros (#382).
+struct EcpQuadratureReport {
+    std::string builder;
+    std::vector<std::vector<std::uint64_t>> failures;
+    std::vector<double> max_change;    // largest final refinement change per site
+    std::vector<double> value_at_max;  // |integral| where that change occurred
+    std::vector<std::uint64_t> retried;   // per site, recomputed on the retry grid
+    std::vector<std::uint64_t> resolved;  // per site, retries that converged
+    std::vector<double> max_retry_change;    // largest |I(retry) - I(first)| per site
+    std::vector<double> value_at_max_retry;  // |I(retry)| where that change occurred
+    std::vector<std::uint64_t> failures_by_center;  // per ECP centre, when known
+    std::uint64_t bessel_lmax_exceeded = 0;
+    std::uint64_t candidates = 0;
+    std::uint64_t skipped = 0;
+    std::uint64_t total_failures() const;
+    std::uint64_t total_retried() const;
+    std::uint64_t total_resolved() const;
+};
+
+// Report of the most recent ECP operator build in this process.
+EcpQuadratureReport last_ecp_quadrature_report();
+
+// Switch libecpint's larger-grid retry (#650) on or off for the process and
+// return the previous setting. Off reproduces the single-grid integrals, so
+// an unconverged one is refused; it exists for tests of that refusal.
+bool set_ecp_quadrature_retry_enabled(bool enabled);
 
 }  // namespace vibeqc

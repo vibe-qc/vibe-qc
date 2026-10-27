@@ -54,8 +54,8 @@ assert bse.name == bse2.name
 | BSE JSON | `from_bse_file()`, `from_bse_json()` | Basis Set Exchange format |
 | CRYSTAL atom | `from_crystal_atom()`, `from_crystal_file()` | CRYSTAL basis-set input |
 | Gaussian 94 | `from_g94()`, `from_g94_file()` | Legacy `.g94` format |
-| ORCA | `from_orca()`, `from_orca_file()` | ORCA basis-block format |
-| NWChem | `from_nwchem()`, `from_nwchem_file()` | NWChem basis format |
+| ORCA | `from_orca()`, `from_orca_file()` | `%basis` with `NewGTO` and `NewECP` blocks; element symbol or atomic number |
+| NWChem | `from_nwchem()`, `from_nwchem_file()` | `basis` block and `ECP` block |
 | QVF (JSON / packed) | `load_qvf()`, `load_any()` | QVF-Basis container |
 
 ### Export formats
@@ -63,8 +63,9 @@ assert bse.name == bse2.name
 | Format | Function | Notes |
 |---|---|---|
 | Gaussian 94 | `to_g94()`, `to_g94_file()` | With loss report via `loss_report_g94()` |
-| ORCA | `to_orca()`, `to_orca_file()` | With loss report via `loss_report_orca()` |
-| NWChem | `to_nwchem()`, `to_nwchem_file()` | With loss report via `loss_report_nwchem()` |
+| ORCA | `to_orca()`, `to_orca_file()` | Shells and ECPs (`NewGTO` / `NewECP`); loss report via `loss_report_orca()` |
+| NWChem | `to_nwchem()`, `to_nwchem_file()` | Shells and the `ECP` block; loss report via `loss_report_nwchem()` |
+| CRYSTAL | `to_crystal()`, `to_crystal_file()` | Basis-set input blocks with `INPUT` ECPs and assigned CHE; loss report via `loss_report_crystal()` |
 | QVF JSON | `to_qvf_json()`, `save_qvf_json()` | Human-readable text mode |
 | QVF packed | `to_qvf_bytes()`, `save_qvf()` | Binary-safe package for distribution |
 | libint bridge | `to_libint_basis()` | Converts to vibe-qc's native C++ `BasisSet` |
@@ -84,6 +85,50 @@ next release. See
 for affected surfaces and workarounds. Named bases were never affected.
 ```
 
+### A record for an ORCA, NWChem or CRYSTAL reference run
+
+The ORCA and NWChem writers carry the whole record: every shell and every
+effective core potential, each number at full precision (the shortest
+decimal that reads back as the same double). A reference calculation in
+either program therefore uses exactly the basis set and pseudopotential
+vibe-qc used:
+
+```sh
+vibe-qc-basis convert python/vibeqc/basis_library/qvf/pob-tzvp-rev2.qvf.json -o agcl.basis -f orca
+```
+
+Paste the `%basis ... end` block into the ORCA input with no basis keyword
+on the `!` line. Each program gets its own conventions: ORCA labels shells
+`s p d f g h i k` and writes l of 8 or more as a number, NWChem uses
+`S P D F G H I K L` with no `J`, and ORCA primitive rows count from 1 (ORCA
+6.1 manual, section 2.7). ECP rows keep the Gaussian-format radial power n
+of `r^(n-2)`; ORCA's `lmax` and NWChem's `ul` name the local channel. Both
+writers read back to the identical record, and PySCF reading the NWChem
+text reproduces an independent silver ECP reference
+(`tests/test_basis_formats_ecp.py`).
+
+The CRYSTAL writer gives the per-element blocks that follow the geometry's
+`END` (CRYSTAL23 manual, basis set input and effective core
+pseudo-potentials), closed by ` 99 0`; add the basis block's own `END`.
+An atom with an ECP is written as `200+Z` with its `INPUT` block, the
+radial power as CRYSTAL's literal `NKL = n - 2`. CRYSTAL needs a formal
+charge CHE per shell and counts a cell's electrons as their sum, so the
+writer assigns the neutral ground state (the per-l table the SAD guess
+uses) to the shells of each l in record order; pass
+`to_crystal(record, ["Ag", "Cl"], occupancies={...})` for anything else.
+Pass the elements of the structure as the second argument. What CRYSTAL
+cannot read is refused: atomic numbers above 98, shells above g, more than
+10 primitives in an s or p shell or 6 in a d shell, an ECP projector above
+g. For an energy comparison add `NOBIPOLA` to the SCF block: CRYSTAL's
+default bipolar expansion of the two-electron integrals moved an AgCl
+pob-TZVP-rev2 energy by 5.8e-4 Ha.
+
+```python
+from vibeqc.basis_toolkit import library, to_crystal
+
+basis_block = to_crystal(library.load_record("def2-svp"), ["Ag", "Cl"])
+```
+
 ### Canonical model
 
 The `BasisSetData` object carries a format-neutral representation:
@@ -93,7 +138,7 @@ The `BasisSetData` object carries a format-neutral representation:
 - `Shell` / `Primitive` / `HarmonicType` -- angular-momentum encoding
 - `ECPEntry` / `ECPPotential` / `ECPTerm` -- effective core potentials
 - `Provenance` / `Reference` -- source and citation tracking
-- `BasisRole` -- `orbital`, `jkfit`, `mp2fit`, `ecp`
+- `BasisRole` -- `orbital`, `auxiliary`, `fitting`, `ecp`
 
 ### Validation
 
@@ -110,6 +155,22 @@ The validator checks structural completeness, angular-momentum
 consistency, primitive ordering, ECP coherency, and metadata
 completeness.
 
+### The bundled library as a record store
+
+`vibeqc.basis_toolkit.library` is the bundled library seen as records:
+`stems()`, `load_record(name)`, `save_record(data, path)`,
+`render_record(data)` (the `.g94` and `.ecp` text of one record),
+`render_library(target)` and `check_library()`. The committed
+`basis_library/basis/` directory is what `render_library` writes and
+`check_library` verifies; `scripts/render_basis_library.py` exposes both
+without importing `vibeqc`, so the install scripts can render the runtime
+overlay before the native core exists.
+
+`BasisSetData.content_sha256()` is the record's content identity, the
+SHA-256 of its elements and ECPs in canonical JSON; `Provenance`
+(schema 1.1.0) carries `kind`, `upstream`, `retrieval_date`,
+`content_sha256` and per-range `citations`.
+
 ## `vibeqc.basis_toolkit` -- CLI
 
 ```bash
@@ -125,9 +186,24 @@ python -m vibeqc.basis_toolkit.cli convert sto-3g.bse.json -o sto-3g.g94 -f g94
 # Show loss report for a conversion
 python -m vibeqc.basis_toolkit.cli loss -f g94 sto-3g.bse.json
 
-# Inspect a basis set (summary)
+# Inspect a basis set (summary, references, provenance)
 python -m vibeqc.basis_toolkit.cli inspect sto-3g.qvf.json
+
+# Render the bundled records into libint's text, or verify the rendering
+vibe-qc-basis render --target build/basis_library/basis
+vibe-qc-basis check
+
+# Your own basis sets: into the user store, where BasisSet resolves them by name
+vibe-qc-basis import my-basis.g94 --kind hand-written --cite some_key
+vibe-qc-basis list
+vibe-qc-basis resolve my-basis def2-svp
+vibe-qc-basis remove my-basis
 ```
+
+`vibeqc.basis_store` is the Python face of the same thing: `import_record`,
+`list_records`, `remove_record`, `resolve`, and the content-addressed fetch
+cache (`cache_put`, `cache_get`). The resolution order it implements is in
+[basis_sets](basis_sets.md) § "Where a basis name resolves".
 
 ## `vibe-basis` -- basis-set optimisation
 

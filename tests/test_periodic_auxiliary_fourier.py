@@ -386,5 +386,8 @@ def test_production_source_has_no_shell_inventory_or_vector_staging() -> None:
     assert "basis.shells()" not in source
     assert "AuxiliaryFourierVectorView" in header
     assert "src/periodic_auxiliary_fourier.cpp" in cmake
-    assert '#include "periodic_auxiliary_fourier_bindings.cpp"' in bindings
+    # The registration unit compiles separately (GitLab #651); the module
+    # body still declares and calls it in the original order.
+    assert "src/periodic_auxiliary_fourier_bindings.cpp" in cmake
+    assert "void bind_periodic_auxiliary_fourier(py::module_& m);" in bindings
     assert "bind_periodic_auxiliary_fourier(m);" in bindings

@@ -23,6 +23,61 @@ def _h2o() -> vq.Molecule:
     ])
 
 
+@pytest.fixture(params=[1, 2, 6], ids=lambda n: f"runtime{n}")
+def runtime_workers(request):
+    """Run a test at a given runtime OpenMP worker count, then restore it.
+
+    A byte pin must hold whatever worker count the host happens to run with
+    (#298). For H2O/STO-3G the per-worker molecular XC batch term overtakes
+    the gradient phase from three workers on, so six exercises that branch.
+    """
+    previous = vq.get_num_threads()
+    vq.set_num_threads(request.param)
+    try:
+        yield request.param
+    finally:
+        vq.set_num_threads(previous)
+
+
+@pytest.fixture(autouse=True)
+def _no_ambient_memory_limits(monkeypatch):
+    """Start every test outside any declared memory budget.
+
+    A test run inside a vq job inherits ``VQ_MEM_MB``, and a user may export
+    ``VIBEQC_MEMORY_LIMIT_BYTES`` or ``VIBEQC_MEMORY_HEADROOM``. Each would
+    bound or scale the probes and estimates these tests pin, so they are
+    cleared here; a test that exercises one sets it itself (#298 follow-up:
+    measured on a batch-scheduler host).
+    """
+    for name in ("VQ_MEM_MB", "VIBEQC_MEMORY_LIMIT_BYTES", "VIBEQC_MEMORY_HEADROOM"):
+        monkeypatch.delenv(name, raising=False)
+
+
+def _ignore_host_cgroup(monkeypatch):
+    """Keep a real Linux cgroup allowance out of an orchestrator-limit test."""
+    import vibeqc.memory as memory_module
+
+    monkeypatch.setattr(
+        memory_module, "_linux_cgroup_available_memory_bytes", lambda: None
+    )
+
+
+@pytest.fixture(params=[None, "1024", "8192"], ids=lambda v: f"VQ_MEM_MB={v}")
+def job_allocation(request, monkeypatch):
+    """Run a test outside any vq job, or inside one with this allocation.
+
+    A test of a memory probe or limit must give the same answer inside a
+    scheduler job, which exports its allocation as ``VQ_MEM_MB`` (#298
+    follow-up: on a batch-scheduler host two nodes read the job's 8 GiB
+    instead of their own set-up limits).
+    """
+    if request.param is None:
+        monkeypatch.delenv("VQ_MEM_MB", raising=False)
+    else:
+        monkeypatch.setenv("VQ_MEM_MB", request.param)
+    return request.param
+
+
 def _cr_co6() -> vq.Molecule:
     """Cr(CO)6 atom inventory; geometry is immaterial to memory sizing."""
     cr_c = 1.916
@@ -2599,9 +2654,13 @@ def test_dlpno_ccsd_prices_python_df_transform_lifetimes(
                 retained + scratch + output,
             )
             retained += output
-        combined = n_aux * (
-            n_occ * n_occ + n_occ * n_vir + n_vir * n_vir
-        ) * 8
+        # The compiled "pno" CCSD reads the spin blocks directly; only the
+        # "union" route and the triples pack the combined spin-orbital blocks.
+        combined = (
+            n_aux * (n_occ * n_occ + n_occ * n_vir + n_vir * n_vir) * 8
+            if options.residual_domain == "union" or options.compute_triples
+            else 0
+        )
         global_factors = retained + combined
         transform_peak = max(transform_peak, global_factors)
     else:
@@ -3803,14 +3862,15 @@ def test_dlpno_ccsd_estimate_fails_closed_outside_profiled_local_envelope(
     assert untruncated_pnos.dims["avg_pno"] == untruncated_pnos.dims["n_vir"]
 
 
-def test_estimate_memory_rks_includes_grid():
+def test_estimate_memory_rks_includes_grid(runtime_workers):
     """RKS grid storage uses the native batch bound for AO tables."""
     from vibeqc import _vibeqc_core as core
 
     mol = _h2o()
     basis = vq.BasisSet(mol, "sto-3g")
-    rhf = vq.estimate_memory(mol, basis, method="rhf")
-    rks = vq.estimate_memory(mol, basis, method="rks")
+    # One worker: the pin below is the single-worker peak (#298).
+    rhf = vq.estimate_memory(mol, basis, method="rhf", n_threads=1)
+    rks = vq.estimate_memory(mol, basis, method="rks", n_threads=1)
     assert "DFT grid + chi" not in rhf.by_category
     assert "DFT grid + chi" in rks.by_category
     assert rks.by_category["DFT grid + chi"] > 0
@@ -3830,6 +3890,60 @@ def test_estimate_memory_rks_includes_grid():
     )
     assert rks.by_category["DFT grid + chi"] == expected
     assert rks.by_category["DFT grid + chi"] < 8 * n_pts * basis.nbasis * 8
+
+
+def test_molecular_dft_estimate_takes_an_explicit_worker_count(
+    runtime_workers,
+):
+    """An explicit worker count fixes the estimate whatever the host runs.
+
+    #298: the first-order SCF XC phase holds one batch table set per
+    concurrent worker, so the RKS estimate is
+    ``globals + max(workers * scf_worker_peak, gradient_peak)``. For
+    H2O/STO-3G the worker term overtakes the gradient phase at three
+    workers: 10,079,632 bytes at one or two workers, 17,342,448 at six.
+    """
+    from vibeqc import _vibeqc_core as core
+
+    mol = _h2o()
+    basis = vq.BasisSet(mol, "sto-3g")
+    nbf = basis.nbasis
+    n_pts = len(mol.atoms) * 75 * 17 * 36
+    n_batch = min(n_pts, core.MOLECULAR_XC_GRID_BATCH_SIZE)
+    batches = -(-n_pts // n_batch)
+    global_bytes = 4 * n_pts * 8 + n_pts * 4 + 4 * 75 * 17 * 36 * 8
+    gradient_peak = (
+        13 * n_batch * nbf * 8 + 16 * n_batch * 8 + n_batch * (4 * 8 + 4)
+    )
+    scf_worker_peak = (
+        5 * n_batch * nbf * 8
+        + 16 * n_batch * 8
+        + 2 * nbf * nbf * 8
+        + n_batch * (4 * 8 + 4)
+    )
+    grid_bytes = {}
+    for workers in (1, 2, 6):
+        rks = vq.estimate_memory(mol, basis, method="rks", n_threads=workers)
+        active = min(workers, batches, core.MOLECULAR_XC_GRID_MAX_WORKERS)
+        grid_bytes[workers] = rks.by_category["DFT grid + chi"]
+        assert grid_bytes[workers] == global_bytes + max(
+            active * scf_worker_peak, gradient_peak
+        )
+    assert grid_bytes == {1: 10_079_632, 2: 10_079_632, 6: 17_342_448}
+
+    # The default still follows the runtime, so the runner's .out preflight
+    # describes the threads the job actually uses. Every molecular site that
+    # sizes per-worker scratch honours the explicit count the same way.
+    for method in ("rks", "uks", "mp2", "ump2", "ccsd(t)", "dlpno-ccsd"):
+        default = vq.estimate_memory(mol, basis, method=method)
+        explicit = vq.estimate_memory(
+            mol, basis, method=method, n_threads=runtime_workers
+        )
+        assert default.by_category == explicit.by_category, method
+
+    for bad in (0, -1, True, 1.5, "2"):
+        with pytest.raises(ValueError, match="n_threads"):
+            vq.estimate_memory(mol, basis, method="rks", n_threads=bad)
 
 
 def test_skala_memory_chunking_packs_only_complete_atom_grids():
@@ -4189,7 +4303,7 @@ def test_uks_xc_estimate_charges_parallel_scf_and_stability_waves(
 
 
 def test_molecular_dft_ao_table_estimate_plateaus_at_native_batch_size(
-    monkeypatch,
+    monkeypatch, runtime_workers,
 ):
     """Past one native batch only O(n_pts) scalar/grid vectors may grow."""
     from vibeqc import _vibeqc_core as core
@@ -4207,23 +4321,28 @@ def test_molecular_dft_ao_table_estimate_plateaus_at_native_batch_size(
 
     low_points = 2 * batch
     high_points = 5 * batch
-    low = memory_module._dft_xc_estimate(
-        mol,
-        basis,
-        {"functional": "PBE", "n_points": low_points},
-    )
-    high = memory_module._dft_xc_estimate(
-        mol,
-        basis,
-        {"functional": "PBE", "n_points": high_points},
-    )
+    # One worker (#298): with more, the concurrent batch count itself grows
+    # from two to five between these grids and is charged per worker.
+    with memory_module._explicit_workers(1):
+        low = memory_module._dft_xc_estimate(
+            mol,
+            basis,
+            {"functional": "PBE", "n_points": low_points},
+        )
+        high = memory_module._dft_xc_estimate(
+            mol,
+            basis,
+            {"functional": "PBE", "n_points": high_points},
+        )
 
     # Only one weight, three coordinate vectors, and one 32-bit owner index
     # grow over the full grid. Batch-local peers are unchanged.
     assert high - low == (high_points - low_points) * (4 * 8 + 4)
 
 
-def test_molecular_vv10_estimate_retains_only_global_scalar_state(monkeypatch):
+def test_molecular_vv10_estimate_retains_only_global_scalar_state(
+    monkeypatch, runtime_workers,
+):
     """VV10 keeps its double-grid fields global, but never dense AO tables."""
     from vibeqc import _vibeqc_core as core
     import vibeqc.memory as memory_module
@@ -4242,16 +4361,18 @@ def test_molecular_vv10_estimate_retains_only_global_scalar_state(monkeypatch):
     # batch AO projection peak for this small basis.
     low_points = 8 * batch
     high_points = 12 * batch
-    low = memory_module._dft_xc_estimate(
-        mol,
-        basis,
-        {"functional": "wb97x-v", "n_points": low_points},
-    )
-    high = memory_module._dft_xc_estimate(
-        mol,
-        basis,
-        {"functional": "wb97x-v", "n_points": high_points},
-    )
+    # One worker (#298), as in the plateau test above.
+    with memory_module._explicit_workers(1):
+        low = memory_module._dft_xc_estimate(
+            mol,
+            basis,
+            {"functional": "wb97x-v", "n_points": low_points},
+        )
+        high = memory_module._dft_xc_estimate(
+            mol,
+            basis,
+            {"functional": "wb97x-v", "n_points": high_points},
+        )
 
     # The VV10 kernel phase dominates here: sixteen conservative fields/
     # active-point slots plus four immutable-grid vectors and the owner index
@@ -4629,7 +4750,9 @@ def test_available_memory_bytes_respects_parent_cgroup_limit(monkeypatch):
     assert vq.available_memory_bytes() == 5 * gib
 
 
-def test_available_memory_bytes_ignores_unlimited_cgroup(monkeypatch):
+def test_available_memory_bytes_ignores_unlimited_cgroup(
+    monkeypatch, job_allocation,
+):
     """The cgroup-v2 `max` marker leaves the host probe unchanged."""
     import builtins
     import io
@@ -4659,6 +4782,10 @@ def test_available_memory_bytes_ignores_unlimited_cgroup(monkeypatch):
     monkeypatch.setitem(sys.modules, "psutil", fake_psutil)
     monkeypatch.setattr(memory_module.sys, "platform", "linux")
     monkeypatch.setattr(builtins, "open", fake_open)
+    # The host probe is under test, not an orchestrator's declared budget,
+    # which would take precedence (a vq job exports VQ_MEM_MB).
+    monkeypatch.delenv("VQ_MEM_MB", raising=False)
+    monkeypatch.delenv("VIBEQC_MEMORY_LIMIT_BYTES", raising=False)
 
     assert vq.available_memory_bytes() == 4 * gib
 
@@ -4754,6 +4881,7 @@ def test_run_job_memory_override_allows_implausibly_large_estimate(monkeypatch):
 
 def test_available_memory_bytes_respects_env_override(monkeypatch):
     """VIBEQC_MEMORY_LIMIT_BYTES takes priority over every probe."""
+    _ignore_host_cgroup(monkeypatch)
     monkeypatch.setenv("VIBEQC_MEMORY_LIMIT_BYTES", str(4 * 1024**3))
     # The override returns exactly the declared limit.
     assert vq.available_memory_bytes() == 4 * 1024**3
@@ -4810,9 +4938,15 @@ def test_check_memory_aborts_with_env_override_limit(monkeypatch):
         vq.check_memory(est)
 
 
-def test_check_memory_passes_when_estimate_fits_env_limit(monkeypatch):
+def test_check_memory_passes_when_estimate_fits_env_limit(
+    monkeypatch, job_allocation,
+):
     """When VIBEQC_MEMORY_LIMIT_BYTES declares 16 GB and the estimate
     is 8 GB, the job proceeds."""
+    # Only the declared 16 GB limit is under test, not the job allocation
+    # (VQ_MEM_MB) or the host's cgroup, which would otherwise bound it.
+    monkeypatch.delenv("VQ_MEM_MB", raising=False)
+    _ignore_host_cgroup(monkeypatch)
     monkeypatch.setenv("VIBEQC_MEMORY_LIMIT_BYTES", str(16 * 1024**3))
     est = vq.MemoryEstimate(by_category={"test": 8 * 1024**3})
     vq.check_memory(est)  # must not raise
@@ -4874,6 +5008,7 @@ def test_check_memory_aborts_with_vq_mem_mb_limit(monkeypatch):
 def test_check_memory_passes_when_estimate_fits_vq_mem_mb(monkeypatch):
     """When VQ_MEM_MB declares 16 GB and the estimate is 8 GB,
     the job proceeds."""
+    _ignore_host_cgroup(monkeypatch)
     monkeypatch.setenv("VQ_MEM_MB", "16384")
     est = vq.MemoryEstimate(by_category={"test": 8 * 1024**3})
     vq.check_memory(est)  # must not raise
@@ -4891,6 +5026,7 @@ def test_format_memory_report_aborts_with_vq_mem_mb(monkeypatch):
 
 def test_format_memory_report_shows_proceeding_when_fits_vq_mem_mb(monkeypatch):
     """When the estimate fits within VQ_MEM_MB, the report says Proceeding."""
+    _ignore_host_cgroup(monkeypatch)
     monkeypatch.setenv("VQ_MEM_MB", "16384")
     est = vq.MemoryEstimate(by_category={"test": 8 * 1024**3})
     report = vq.format_memory_report(est, override_requested=False)
@@ -6108,3 +6244,116 @@ def test_molecular_lebedev_point_count_rejects_an_unbundled_order():
     opts.lebedev_order = 9  # a standard Lebedev order that is not bundled
     with pytest.raises(ValueError, match="unsupported molecular Lebedev order 9"):
         vq_memory._molecular_lebedev_point_count(opts)
+
+
+@pytest.mark.parametrize("route", ["CONVENTIONAL", "DIRECT", "DF"])
+@pytest.mark.parametrize("method", ["rhf", "uhf"])
+def test_analytical_allocation_terms_monotonic(route, method, monkeypatch):
+    """Exercise the allocation producers, not a second copy of their formulas."""
+    import json
+    from vibeqc import aux_basis
+
+    previous = {}
+    for count in (2, 4, 8):
+        monkeypatch.setattr(aux_basis, "make_aux_basis_set",
+                            lambda *a, **k: SimpleNamespace(nbasis=count * 2))
+        basis = SimpleNamespace(nbasis=count, nshells=count, name="resolved")
+        molecule = SimpleNamespace(n_electrons=lambda: 2, multiplicity=1)
+        options = SimpleNamespace(scf_mode=route, density_fit=route == "DF",
+                                  aux_basis="resolved", diis_subspace_size=4)
+        estimate = vq_memory.estimate_memory(molecule, basis, method=method,
+                                             options=options, n_threads=2)
+        model = estimate.analytical_memory
+        assert model["complete"] is False
+        assert "raw_peak_bytes" not in model and "estimated_peak_bytes" not in model
+        assert estimate.resolved_features["threads_per_rank"] == 2
+        terms = json.loads(model["terms_json"])
+        assert terms
+        for term in terms:
+            assert term["scope"] == "rank" and term["units"] == "bytes"
+            assert term["value_bytes"] == estimate.by_category[term["name"]]
+            assert set(term["valid_domain"]) == set(term["inputs"])
+            for key, value in term["inputs"].items():
+                assert value >= term["valid_domain"][key]["min"]
+            assert term["value_bytes"] >= previous.get(term["name"], 0)
+            previous[term["name"]] = term["value_bytes"]
+
+
+def test_analytical_same_nbf_route_and_unresolved_aux(monkeypatch):
+    import json
+    from vibeqc import aux_basis
+
+    basis = SimpleNamespace(nbasis=20, nshells=8, name="resolved")
+    molecule = SimpleNamespace(n_electrons=lambda: 2)
+    results = []
+    for route in ("CONVENTIONAL", "DIRECT"):
+        estimate = vq_memory.estimate_memory(molecule, basis, method="rhf",
+                  options=SimpleNamespace(scf_mode=route), n_threads=1)
+        results.append(json.loads(estimate.analytical_memory["terms_json"])[0])
+    assert results[0]["route"] != results[1]["route"]
+    assert results[0]["value_bytes"] != results[1]["value_bytes"]
+    def unavailable(*args, **kwargs):
+        raise ValueError("auxiliary basis unresolved")
+    monkeypatch.setattr(aux_basis, "make_aux_basis_set", unavailable)
+    estimate = vq_memory.estimate_memory(molecule, basis, method="rhf",
+               options=SimpleNamespace(density_fit=True, aux_basis="missing"), n_threads=1)
+    assert "naux" not in estimate.resolved_features
+    model = estimate.analytical_memory
+    assert "unresolved auxiliary basis dimension" in json.loads(model["unknown_json"])
+    assert all("naux" not in term["inputs"] for term in json.loads(model["terms_json"]))
+
+
+@pytest.mark.parametrize("response", ["tda", "casida"])
+def test_analytical_response_terms_and_resolved_roots(response):
+    import json
+
+    previous = {}
+    for count in (2, 4, 8):
+        estimate = vq_memory.estimate_memory(
+            SimpleNamespace(n_electrons=lambda: 2),
+            SimpleNamespace(nbasis=count, nshells=count, name="resolved"),
+            method="rhf", n_threads=1,
+            options={"tddft": True, "tddft_type": response, "tddft_n_states": 3},
+        )
+        assert estimate.resolved_features["roots"] == min(3, count - 1)
+        assert estimate.resolved_features["occupied"] == 1
+        assert estimate.resolved_features["virtual"] == count - 1
+        for term in json.loads(estimate.analytical_memory["terms_json"]):
+            assert term["value_bytes"] >= previous.get(term["name"], 0)
+            previous[term["name"]] = term["value_bytes"]
+
+
+def test_rhf_model_unqualified_baseline_is_unknown(monkeypatch):
+    import json
+
+    monkeypatch.setenv("VIBEQC_MEMORY_HEADROOM", "2.0")
+    for route in ("CONVENTIONAL", "DIRECT"):
+        previous_by_diis = {}
+        for count in (2, 4, 8):
+            previous_by_name = {}
+            for diis in (1, 4, 8):
+                estimate = vq_memory.estimate_memory(
+                    SimpleNamespace(n_electrons=lambda: 2),
+                    SimpleNamespace(nbasis=count, nshells=count, name="resolved"),
+                    method="rhf", n_threads=1,
+                    options=SimpleNamespace(scf_mode=route, diis_subspace_size=diis),
+                )
+                model = estimate.analytical_memory
+                terms = json.loads(model["terms_json"])
+                assert model["complete"] is False
+                assert "unqualified process runtime baseline: runtime/import domain absent" in json.loads(model["unknown_json"])
+                assert "raw_peak_bytes" not in model
+                assert "estimated_peak_bytes" not in model
+                assert {term["name"] for term in terms} == set(estimate.by_category)
+                assert estimate.raw_total_bytes == sum(t["value_bytes"] for t in terms)
+                assert estimate.total_bytes == 2 * estimate.raw_total_bytes
+                assert model["headroom_factor"] == 2.0
+                baseline = next(t for t in terms if t["route"] == "assumed_python_runtime_baseline")
+                assert baseline["inputs"] == {"processes": 1}
+                assert baseline["valid_domain"] == {"processes": {"min": 1, "max": 1}}
+                for term in terms:
+                    name = term["name"]
+                    assert term["value_bytes"] >= previous_by_name.get(name, 0)
+                    assert term["value_bytes"] >= previous_by_diis.get((diis, name), 0)
+                    previous_by_name[name] = term["value_bytes"]
+                    previous_by_diis[diis, name] = term["value_bytes"]

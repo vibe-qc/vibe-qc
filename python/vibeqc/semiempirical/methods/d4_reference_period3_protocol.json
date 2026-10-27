@@ -1,0 +1,744 @@
+{
+ "elements": [
+  11,
+  12,
+  13,
+  14,
+  15,
+  16,
+  17,
+  18
+ ],
+ "functional": "pbe38",
+ "basis": "aug-cc-pvtz",
+ "grid_level": "orca-defgrid3",
+ "frequency_grid": {
+  "points": 23,
+  "omega_scale": 0.5
+ },
+ "references": [
+  {
+   "label": "Na/NaH",
+   "atoms_angstrom": [
+    [
+     11,
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     1,
+     0.0,
+     0.0,
+     1.8874
+    ]
+   ],
+   "target_index": 0,
+   "charge": 0,
+   "multiplicity": 1,
+   "nominal_cn": 1.0,
+   "method": "RKS and coupled CPKS",
+   "energy_tolerance": 1e-10,
+   "gradient_tolerance": 1e-06,
+   "geometry_source": "NIST CCCBDB, experimental equilibrium geometry"
+  },
+  {
+   "label": "Na/Na2",
+   "atoms_angstrom": [
+    [
+     11,
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     11,
+     0.0,
+     0.0,
+     3.0789
+    ]
+   ],
+   "target_index": 0,
+   "charge": 0,
+   "multiplicity": 1,
+   "nominal_cn": 1.0,
+   "method": "RKS and coupled CPKS",
+   "energy_tolerance": 1e-10,
+   "gradient_tolerance": 1e-06,
+   "geometry_source": "NIST CCCBDB, experimental equilibrium geometry"
+  },
+  {
+   "label": "Na/NaF",
+   "atoms_angstrom": [
+    [
+     11,
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     9,
+     0.0,
+     0.0,
+     1.926
+    ]
+   ],
+   "target_index": 0,
+   "charge": 0,
+   "multiplicity": 1,
+   "nominal_cn": 1.0,
+   "method": "RKS and coupled CPKS",
+   "energy_tolerance": 1e-10,
+   "gradient_tolerance": 1e-06,
+   "geometry_source": "NIST CCCBDB, experimental equilibrium geometry"
+  },
+  {
+   "label": "Mg/atom",
+   "atoms_angstrom": [
+    [
+     12,
+     0.0,
+     0.0,
+     0.0
+    ]
+   ],
+   "target_index": 0,
+   "charge": 0,
+   "multiplicity": 1,
+   "nominal_cn": 0.0,
+   "method": "RKS and coupled CPKS",
+   "energy_tolerance": 1e-10,
+   "gradient_tolerance": 1e-06,
+   "geometry_source": "free atom"
+  },
+  {
+   "label": "Mg/MgH2",
+   "atoms_angstrom": [
+    [
+     12,
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     1,
+     0.0,
+     0.0,
+     1.7033
+    ],
+    [
+     1,
+     0.0,
+     0.0,
+     -1.7033
+    ]
+   ],
+   "target_index": 0,
+   "charge": 0,
+   "multiplicity": 1,
+   "nominal_cn": 2.0,
+   "method": "RKS and coupled CPKS",
+   "energy_tolerance": 1e-10,
+   "gradient_tolerance": 1e-06,
+   "geometry_source": "NIST CCCBDB, experimental equilibrium geometry"
+  },
+  {
+   "label": "Mg/MgF2",
+   "atoms_angstrom": [
+    [
+     12,
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     9,
+     0.0,
+     0.0,
+     1.771
+    ],
+    [
+     9,
+     0.0,
+     0.0,
+     -1.771
+    ]
+   ],
+   "target_index": 0,
+   "charge": 0,
+   "multiplicity": 1,
+   "nominal_cn": 2.0,
+   "method": "RKS and coupled CPKS",
+   "energy_tolerance": 1e-10,
+   "gradient_tolerance": 1e-06,
+   "geometry_source": "NIST CCCBDB, experimental equilibrium geometry"
+  },
+  {
+   "label": "Al/AlH3-sp2",
+   "atoms_angstrom": [
+    [
+     13,
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     1,
+     1.586,
+     0.0,
+     0.0
+    ],
+    [
+     1,
+     -0.7929999999999998,
+     1.3735162904021199,
+     0.0
+    ],
+    [
+     1,
+     -0.7930000000000007,
+     -1.3735162904021194,
+     0.0
+    ]
+   ],
+   "target_index": 0,
+   "charge": 0,
+   "multiplicity": 1,
+   "nominal_cn": 3.0,
+   "method": "RKS and coupled CPKS",
+   "energy_tolerance": 1e-10,
+   "gradient_tolerance": 1e-06,
+   "geometry_source": "NIST CCCBDB, computed equilibrium geometry (no gas-phase experiment)"
+  },
+  {
+   "label": "Al/AlF3-sp2",
+   "atoms_angstrom": [
+    [
+     13,
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     9,
+     1.633,
+     0.0,
+     0.0
+    ],
+    [
+     9,
+     -0.8164999999999998,
+     1.4142194843799885,
+     0.0
+    ],
+    [
+     9,
+     -0.8165000000000008,
+     -1.4142194843799878,
+     0.0
+    ]
+   ],
+   "target_index": 0,
+   "charge": 0,
+   "multiplicity": 1,
+   "nominal_cn": 3.0,
+   "method": "RKS and coupled CPKS",
+   "energy_tolerance": 1e-10,
+   "gradient_tolerance": 1e-06,
+   "geometry_source": "NIST CCCBDB, experimental equilibrium geometry"
+  },
+  {
+   "label": "Al/AlH",
+   "atoms_angstrom": [
+    [
+     13,
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     1,
+     0.0,
+     0.0,
+     1.6478
+    ]
+   ],
+   "target_index": 0,
+   "charge": 0,
+   "multiplicity": 1,
+   "nominal_cn": 1.0,
+   "method": "RKS and coupled CPKS",
+   "energy_tolerance": 1e-10,
+   "gradient_tolerance": 1e-06,
+   "geometry_source": "NIST CCCBDB, experimental equilibrium geometry"
+  },
+  {
+   "label": "Si/SiH4-sp3",
+   "atoms_angstrom": [
+    [
+     14,
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     1,
+     0.8543629283468083,
+     0.8543629283468083,
+     0.8543629283468083
+    ],
+    [
+     1,
+     -0.8543629283468083,
+     -0.8543629283468083,
+     0.8543629283468083
+    ],
+    [
+     1,
+     -0.8543629283468083,
+     0.8543629283468083,
+     -0.8543629283468083
+    ],
+    [
+     1,
+     0.8543629283468083,
+     -0.8543629283468083,
+     -0.8543629283468083
+    ]
+   ],
+   "target_index": 0,
+   "charge": 0,
+   "multiplicity": 1,
+   "nominal_cn": 4.0,
+   "method": "RKS and coupled CPKS",
+   "energy_tolerance": 1e-10,
+   "gradient_tolerance": 1e-06,
+   "geometry_source": "NIST CCCBDB, experimental equilibrium geometry"
+  },
+  {
+   "label": "Si/Si2H6-sp3",
+   "atoms_angstrom": [
+    [
+     14,
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     14,
+     0.0,
+     0.0,
+     2.331
+    ],
+    [
+     1,
+     1.3993302904409515,
+     0.0,
+     -0.5176279921472976
+    ],
+    [
+     1,
+     -0.6996651452204755,
+     1.2118555798069208,
+     -0.5176279921472976
+    ],
+    [
+     1,
+     -0.6996651452204764,
+     -1.2118555798069204,
+     -0.5176279921472976
+    ],
+    [
+     1,
+     0.6996651452204758,
+     1.2118555798069208,
+     2.8486279921472977
+    ],
+    [
+     1,
+     -1.3993302904409515,
+     1.7136853611384473e-16,
+     2.8486279921472977
+    ],
+    [
+     1,
+     0.6996651452204748,
+     -1.2118555798069213,
+     2.8486279921472977
+    ]
+   ],
+   "target_index": 0,
+   "charge": 0,
+   "multiplicity": 1,
+   "nominal_cn": 4.0,
+   "method": "RKS and coupled CPKS",
+   "energy_tolerance": 1e-10,
+   "gradient_tolerance": 1e-06,
+   "geometry_source": "NIST CCCBDB, experimental equilibrium geometry"
+  },
+  {
+   "label": "Si/SiH2-singlet",
+   "atoms_angstrom": [
+    [
+     14,
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     1,
+     1.0898144262776603,
+     0.0,
+     1.0509521950484209
+    ],
+    [
+     1,
+     -1.0898144262776603,
+     0.0,
+     1.0509521950484209
+    ]
+   ],
+   "target_index": 0,
+   "charge": 0,
+   "multiplicity": 1,
+   "nominal_cn": 2.0,
+   "method": "RKS and coupled CPKS",
+   "energy_tolerance": 1e-10,
+   "gradient_tolerance": 1e-06,
+   "geometry_source": "NIST CCCBDB, experimental equilibrium geometry"
+  },
+  {
+   "label": "Si/SiO",
+   "atoms_angstrom": [
+    [
+     14,
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     8,
+     0.0,
+     0.0,
+     1.5097
+    ]
+   ],
+   "target_index": 0,
+   "charge": 0,
+   "multiplicity": 1,
+   "nominal_cn": 1.0,
+   "method": "RKS and coupled CPKS",
+   "energy_tolerance": 1e-10,
+   "gradient_tolerance": 1e-06,
+   "geometry_source": "NIST CCCBDB, experimental equilibrium geometry"
+  },
+  {
+   "label": "P/PH3-sp3",
+   "atoms_angstrom": [
+    [
+     15,
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     1,
+     1.1927707571949706,
+     0.0,
+     -0.7705179561700923
+    ],
+    [
+     1,
+     -0.5963853785974851,
+     1.0329697766220451,
+     -0.7705179561700923
+    ],
+    [
+     1,
+     -0.5963853785974859,
+     -1.0329697766220447,
+     -0.7705179561700923
+    ]
+   ],
+   "target_index": 0,
+   "charge": 0,
+   "multiplicity": 1,
+   "nominal_cn": 3.0,
+   "method": "RKS and coupled CPKS",
+   "energy_tolerance": 1e-10,
+   "gradient_tolerance": 1e-06,
+   "geometry_source": "NIST CCCBDB, experimental equilibrium geometry"
+  },
+  {
+   "label": "P/P2",
+   "atoms_angstrom": [
+    [
+     15,
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     15,
+     0.0,
+     0.0,
+     1.8934
+    ]
+   ],
+   "target_index": 0,
+   "charge": 0,
+   "multiplicity": 1,
+   "nominal_cn": 1.0,
+   "method": "RKS and coupled CPKS",
+   "energy_tolerance": 1e-10,
+   "gradient_tolerance": 1e-06,
+   "geometry_source": "NIST CCCBDB, experimental equilibrium geometry"
+  },
+  {
+   "label": "P/PN",
+   "atoms_angstrom": [
+    [
+     15,
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     7,
+     0.0,
+     0.0,
+     1.4909
+    ]
+   ],
+   "target_index": 0,
+   "charge": 0,
+   "multiplicity": 1,
+   "nominal_cn": 1.0,
+   "method": "RKS and coupled CPKS",
+   "energy_tolerance": 1e-10,
+   "gradient_tolerance": 1e-06,
+   "geometry_source": "NIST CCCBDB, experimental equilibrium geometry"
+  },
+  {
+   "label": "S/H2S",
+   "atoms_angstrom": [
+    [
+     16,
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     1,
+     0.9616404049011908,
+     0.0,
+     0.9268630382432312
+    ],
+    [
+     1,
+     -0.9616404049011908,
+     0.0,
+     0.9268630382432312
+    ]
+   ],
+   "target_index": 0,
+   "charge": 0,
+   "multiplicity": 1,
+   "nominal_cn": 2.0,
+   "method": "RKS and coupled CPKS",
+   "energy_tolerance": 1e-10,
+   "gradient_tolerance": 1e-06,
+   "geometry_source": "NIST CCCBDB, experimental equilibrium geometry"
+  },
+  {
+   "label": "S/SO2",
+   "atoms_angstrom": [
+    [
+     16,
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     8,
+     1.2349051530946782,
+     0.0,
+     0.7226326195655782
+    ],
+    [
+     8,
+     -1.2349051530946782,
+     0.0,
+     0.7226326195655782
+    ]
+   ],
+   "target_index": 0,
+   "charge": 0,
+   "multiplicity": 1,
+   "nominal_cn": 2.0,
+   "method": "RKS and coupled CPKS",
+   "energy_tolerance": 1e-10,
+   "gradient_tolerance": 1e-06,
+   "geometry_source": "NIST CCCBDB, experimental equilibrium geometry"
+  },
+  {
+   "label": "S/CS",
+   "atoms_angstrom": [
+    [
+     16,
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     6,
+     0.0,
+     0.0,
+     1.5349
+    ]
+   ],
+   "target_index": 0,
+   "charge": 0,
+   "multiplicity": 1,
+   "nominal_cn": 1.0,
+   "method": "RKS and coupled CPKS",
+   "energy_tolerance": 1e-10,
+   "gradient_tolerance": 1e-06,
+   "geometry_source": "NIST CCCBDB, experimental equilibrium geometry"
+  },
+  {
+   "label": "Cl/HCl",
+   "atoms_angstrom": [
+    [
+     1,
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     17,
+     0.0,
+     0.0,
+     1.2746
+    ]
+   ],
+   "target_index": 1,
+   "charge": 0,
+   "multiplicity": 1,
+   "nominal_cn": 1.0,
+   "method": "RKS and coupled CPKS",
+   "energy_tolerance": 1e-10,
+   "gradient_tolerance": 1e-06,
+   "geometry_source": "NIST CCCBDB, experimental equilibrium geometry"
+  },
+  {
+   "label": "Cl/Cl2",
+   "atoms_angstrom": [
+    [
+     17,
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     17,
+     0.0,
+     0.0,
+     1.9879
+    ]
+   ],
+   "target_index": 0,
+   "charge": 0,
+   "multiplicity": 1,
+   "nominal_cn": 1.0,
+   "method": "RKS and coupled CPKS",
+   "energy_tolerance": 1e-10,
+   "gradient_tolerance": 1e-06,
+   "geometry_source": "NIST CCCBDB, experimental equilibrium geometry"
+  },
+  {
+   "label": "Cl/ClF",
+   "atoms_angstrom": [
+    [
+     17,
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     9,
+     0.0,
+     0.0,
+     1.6283
+    ]
+   ],
+   "target_index": 0,
+   "charge": 0,
+   "multiplicity": 1,
+   "nominal_cn": 1.0,
+   "method": "RKS and coupled CPKS",
+   "energy_tolerance": 1e-10,
+   "gradient_tolerance": 1e-06,
+   "geometry_source": "NIST CCCBDB, experimental equilibrium geometry"
+  },
+  {
+   "label": "Ar/atom",
+   "atoms_angstrom": [
+    [
+     18,
+     0.0,
+     0.0,
+     0.0
+    ]
+   ],
+   "target_index": 0,
+   "charge": 0,
+   "multiplicity": 1,
+   "nominal_cn": 0.0,
+   "method": "RKS and coupled CPKS",
+   "energy_tolerance": 1e-10,
+   "gradient_tolerance": 1e-06,
+   "geometry_source": "free atom"
+  }
+ ],
+ "partner_references": "H from H2, B-F from their pure hydrides, Ne from the free atom: the bundled period-2 catalogue, recomputed in the same run for the partner subtraction only; the frozen period-2 and Cu records are kept unchanged.",
+ "extraction": "Caldeweyher et al., JCP 150, 154122 (2019), Eq. 5; each host's coupled a(iw) minus the charge-scaled canonical spectra of its partners, divided by the number of equivalent target atoms.",
+ "charge_model": "native EEQ for reference charges and partner scaling",
+ "cross_coefficients": "Casimir-Polder quadrature on the shared 23-point grid: period-3 x period-3 from this run, period-3 x frozen (H-Ne, Cu) against the frozen spectra.",
+ "source": "Independent vibe-qc RKS/UKS and coupled response; no external polarizability table or charge values included.",
+ "scope": "Period 3 (Na-Ar) added to the native post-SCF GFN2 D4 reference data from closed-shell hosts only (23 stored records; the Na/NaH record is withheld, see withheld_records); the SiH3, PH2 and SH doublet records wait for the UKS hybrid reference SCF to pass the Hermitian operator guard (issue #672). Period 4 and below, the transition metals other than Cu, and self-consistent GFN2 dispersion remain open.",
+ "dataset_sha256": "f5652055fd0b309c687e9d46de926a122a317bfb35ce98162ef42d3c15a06c57",
+ "withheld_records": [
+  {
+   "label": "Na/NaH",
+   "nominal_cn": 1.0,
+   "reference_eeq_charge": 0.37910326121161225,
+   "reason": "The Eq.-5 subtraction of the zeta-scaled hydride partner over-corrects the high-frequency tail of the sodium polarizability (alpha(iw) < 0 from the 13th grid point on, down to -0.42 bohr^3, alpha(0) = 31.0 bohr^3). dftd4 floors such tails at zero; vibe-qc keeps every stored spectrum strictly positive, so this record is withheld. NaH stays in the catalogue as sodium's canonical reference host; the stored sodium records are Na2 (q = 0) and NaF (q = +0.69).",
+   "extracted_alpha_iw_bohr3": [
+    31.011980760411866,
+    30.940288650033743,
+    30.558909029315654,
+    29.43900221579702,
+    27.077940319552276,
+    23.214966614458465,
+    18.17366600775924,
+    12.802936169187587,
+    7.995231451718382,
+    4.287225794646574,
+    1.8033227444880149,
+    0.386655066761195,
+    -0.25283948598746164,
+    -0.4211267526263365,
+    -0.3639613017229637,
+    -0.2398837871530075,
+    -0.12961562943408178,
+    -0.058859858437460943,
+    -0.022841555206930902,
+    -0.007554767671208142,
+    -0.001960828196116385,
+    -0.00029944976169329245,
+    -1.0104751986577212e-05
+   ]
+  }
+ ]
+}

@@ -248,6 +248,47 @@ class TestOptimizeMoleculeFD:
         ratio = g_fci[1, 2] / g_rhf[1, 2]
         assert 0.2 < ratio < 3.0
 
+    @pytest.mark.parametrize("method", ["nevpt2", "caspt2", "mrci"])
+    def test_multireference_pt2_ci_dispatches_through_fd(self, method, monkeypatch):
+        """nevpt2/caspt2/mrci reach the same generic FD machinery as fci
+        (GitLab #357): _evaluate_energy / _gradient_via_central_difference
+        forward the method string to _run_single_point unchanged, with no
+        method-specific carve-out that would (silently) substitute a
+        mean-field surface. A stub keeps this fast -- a real single point
+        for these methods costs 0.2-1.6 s each and a full FD gradient
+        4.6-27.2 s (measured on H2O/STO-3G CAS(4,4), see #357)."""
+        from vibeqc import BasisSet
+        from vibeqc.molecular_optimize import _gradient_via_central_difference
+        from vibeqc.solvers import CASCIOptions
+
+        seen = []
+
+        def _stub(m, mol, basis, **kwargs):
+            seen.append(m)
+
+            class _Fake:
+                energy = -1.0
+
+            return _Fake()
+
+        import vibeqc.runner as runner_module
+
+        monkeypatch.setattr(runner_module, "_run_single_point", _stub)
+
+        mol = _h2_stretched()
+        grad = _gradient_via_central_difference(
+            mol,
+            "sto-3g",
+            method,
+            active_space=(2, 2),
+            casci_options=CASCIOptions(),
+            step_bohr=0.005,
+        )
+        assert grad.shape == (2, 3)
+        # 2 atoms x 3 components x 2 (+/-) displacements.
+        assert len(seen) == 12
+        assert all(m == method for m in seen)
+
 
 class TestOptimizeMoleculeImports:
     """Verify public API exports."""

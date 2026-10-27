@@ -27,7 +27,7 @@ def test_gfn2_acceptance_matrix_reflects_native_d4_scope():
     joined = " ".join(issues)
 
     assert "Self-consistent GFN2-D4 dispersion not implemented" not in joined
-    assert "Native post-SCF D4 is limited to H, He, B, C, N, O, F, Ne" in joined
+    assert "Native post-SCF D4 is limited to H-Ar and Cu" in joined
     assert "GFN2D4UnsupportedWarning" in joined
     assert "Periodic AES image-cell multipole Ewald still pending" in issues
 

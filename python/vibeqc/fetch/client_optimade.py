@@ -22,7 +22,7 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
 
-from examples.regression.core.spec import (
+from vibeqc_spec import (
     AtomFrac,
     PeriodicSpec,
     Provenance,
@@ -258,7 +258,7 @@ def _attrs_to_periodic_spec(
     # vibe-qc EWALD_3D requires an orthorhombic cell; many providers
     # (notably MP) ship the primitive -- for rocksalts that's
     # rhombohedral, for diamond it's also rhombohedral. Sec. 11 of the
-    # handover marks conventional-cell expansion as "step 5+ work" and
+    # historical design record marks conventional-cell expansion as "step 5+ work" and
     # prefers refusal at v1, but Sec. 12's canonical-set round-trip test
     # depends on MgO / NaCl / LiH / Si / C diamond all running through
     # the same code path -- the conventional 8-atom cell is what the

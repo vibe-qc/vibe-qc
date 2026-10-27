@@ -50,6 +50,12 @@ specific to vibe-qc is a summary with a link, not a second copy.
 (when-to-use-vq)=
 (when-not-to-use-vq)=
 
+For HTTPS submission without client SSH access, the optional
+[gateway and `vq remote` client](https://vibe-qc.com/vibe-queue/docs/gateway.html)
+provide resumable uploads, status, logs, cancellation and verified result
+downloads. Relay mode connects a broker through outbound requests. These
+routes require operator configuration; the SSH examples below remain valid.
+
 ## When to reach for the queue
 
 * **The laptop runs out of cores or RAM.** Supercells, dense k-meshes,
@@ -85,7 +91,7 @@ cd vibe-queue
 
 You need it on the laptop you submit from and on the machine that runs the
 work. It needs Python 3.12 or newer, and it installs nothing on the remote
-host but itself: the entire transport is SSH, so if you can `ssh` to a
+host but itself. Direct remote submission uses SSH, so if you can `ssh` to a
 machine, vq can queue work on it.
 
 For how the four toolset installs relate, including what each uninstall

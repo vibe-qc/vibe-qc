@@ -79,6 +79,8 @@ def optimize_nlopt(
     initial_step: Optional[float] = None,
     rho_begin: Optional[float] = None,
     record_history: bool = True,
+    ftol_abs: Optional[float] = None,
+    xtol_abs: Optional[float] = None,
 ) -> OptResult:
     """Minimize *objective* with NLopt BOBYQA.
 
@@ -99,7 +101,16 @@ def optimize_nlopt(
     bounds
         List of (lower, upper) pairs per parameter.  Must be finite.
     tol
-        Convergence tolerance on the objective gradient norm.
+        Relative tolerance on the objective (NLopt ``ftol_rel``); 0
+        disables it. Relative to the objective's size, so it suits a
+        normalised objective but not a total energy: on a -275 Ha cell
+        the default 1e-4 stops at changes of 0.03 Ha.
+    ftol_abs
+        Absolute tolerance on the objective, in its own units. ``None``
+        leaves it off.
+    xtol_abs
+        Absolute tolerance on every parameter, in optimizer space (for a
+        log exponent, 0.005 is a 0.5 % change). ``None`` leaves it off.
     max_eval
         Maximum number of objective evaluations.
     initial_step
@@ -151,6 +162,10 @@ def optimize_nlopt(
     opt.set_lower_bounds([float(lo) for lo, _ in bounds])
     opt.set_upper_bounds([float(hi) for _, hi in bounds])
     opt.set_ftol_rel(tol)
+    if ftol_abs is not None:
+        opt.set_ftol_abs(ftol_abs)
+    if xtol_abs is not None:
+        opt.set_xtol_abs(xtol_abs)
     opt.set_maxeval(max_eval)
 
     step = initial_step or rho_begin
@@ -173,8 +188,14 @@ def optimize_nlopt(
     except nlopt.RoundoffLimited:
         success = True
         msg = "NLopt: roundoff-limited"
-        f_best = opt.last_optimum_value()
-        x_out = np.asarray(x0, dtype=float)
+        # The exception carries no point, and last_optimum_value() belongs
+        # to the best point, not to x0: report the best evaluation seen.
+        finite = [(v, x) for x, v in _history if np.isfinite(v)]
+        if finite:
+            f_best, x_out = min(finite, key=lambda row: row[0])
+        else:
+            f_best = opt.last_optimum_value()
+            x_out = np.asarray(x0, dtype=float)
     except RuntimeError as e:
         success = False
         msg = f"NLopt error: {e}"

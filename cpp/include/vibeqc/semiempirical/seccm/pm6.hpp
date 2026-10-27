@@ -8,8 +8,11 @@
 // (a -> b image) contribution is computed at d = R_a - (R_b + T) = -disp.
 //
 // The molecular limit (one replica, zero-translation images only) reproduces
-// nddo::run_pm6 on the same molecule. Neutral closed-shell clusters only; no
-// Madelung embedding (neutral cells do not need it).
+// nddo::run_pm6 on the same molecule. Neutral closed-shell clusters only. The
+// opt-in Madelung embedding (madelung=true; 1-D and 2-D, 3-D refused) adds
+// the MSINDO CCM point-charge field to the Fock diagonal; without it a
+// nontrivial cyclic topology needs the truncated-electrostatics
+// acknowledgement, because the WS-truncated monopole sum is not quantitative.
 
 #pragma once
 
@@ -59,8 +62,8 @@ struct PM6SECCMOptions {
     // Jug, JCP 116, 8994 (2002)). Restores the Coulomb tail beyond the
     // Wigner-Seitz cell that a finite cyclic cluster otherwise drops.
     // Validated for 1-D and 2-D; 3-D fails closed because the
-    // WS-folded remainder has no thermodynamic limit (issues #211,
-    // #425, #444).
+    // WS-folded remainder has no thermodynamic limit (former-tracker issues 211,
+    // 425 and 444).
     bool madelung = false;
     // Acknowledge that a nontrivial cyclic run without the embedding
     // omits the long-range Coulomb tail and is not quantitative. The

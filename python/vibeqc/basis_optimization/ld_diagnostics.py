@@ -90,7 +90,7 @@ def compute_overlap_diagnostics(
     except ImportError:
         raise RuntimeError("LD diagnostics require vibe-qc") from None
 
-    from vibeqc.basis_crystal import emit_g94, parse_crystal_atom_basis
+    from vibeqc.basis_crystal import emit_g94
 
     # Parse inline basis back to CrystalAtomBasis -> emit .g94.
     # (The inline text is already in CRYSTAL format; parse then re-emit.)
@@ -104,8 +104,9 @@ def compute_overlap_diagnostics(
     tmp = Path(tempfile.mkdtemp(prefix="vbld_"))
     basis_dir = tmp / "basis"
     basis_dir.mkdir()
-    name = f"ldcheck_{uuid.uuid4().hex[:8]}"
-    (basis_dir / f"{name}.g94").write_text(g94)
+    from vibeqc.basis_registry import write_basis_file
+
+    name = write_basis_file(basis_dir, f"ldcheck_{uuid.uuid4().hex[:8]}", g94)
 
     # Override LIBINT_DATA_PATH so vibe-qc finds our basis.
     import os
@@ -476,36 +477,16 @@ def cond_penalty_from_atom(
 
 
 def _parse_inline_text(basis_text: str, Z: int):
-    """Parse CRYSTAL inline basis text to CrystalAtomBasis."""
-    from vibeqc.basis_crystal import CrystalAtomBasis, CrystalShell
+    """The element-*Z* block of a CRYSTAL inline basis text.
 
-    lines = basis_text.strip().splitlines()
-    parts = lines[0].split()
-    nshell = int(parts[1])
-    atom = CrystalAtomBasis(Z=Z, has_ecp=False)
-    i = 1
-    for _ in range(nshell):
-        header = lines[i].split()
-        lat = int(header[1])
-        npg = int(header[2])
-        occ = float(header[3])
-        scale = float(header[4])
-        i += 1
-        lat_map = {0: "S", 1: "SP", 2: "P", 3: "D", 4: "F", 5: "G"}
-        shell = CrystalShell(
-            shell_type=lat_map.get(lat, "S"),
-            occupancy=occ,
-            scale_factor=scale,
-        )
-        for _ in range(npg):
-            prim = lines[i].split()
-            i += 1
-            shell.exponents.append(float(prim[0]))
-            shell.coefficients.append(float(prim[1]))
-            if lat == 1 and len(prim) >= 3:
-                shell.coefficients_p.append(float(prim[2]))
-        atom.shells.append(shell)
-    return atom
+    :func:`vibeqc.basis_crystal.parse_crystal_inline_element`, the reader
+    the optimizer engines use, so every block is framed (ECP ``INPUT``
+    blocks included) and ``SCAL`` follows CRYSTAL's rule. The line reader
+    this replaced took the first block whatever *Z* was asked for.
+    """
+    from vibeqc.basis_crystal import parse_crystal_inline_element
+
+    return parse_crystal_inline_element(basis_text, Z, source="<LD basis_text>")
 
 
 def _atomic_multiplicity(Z: int) -> int:

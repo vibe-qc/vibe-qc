@@ -2,8 +2,10 @@
 //
 // An iterative eigensolver for interior eigenvalues of large sparse
 // Hermitian matrices, designed for quantum chemistry applications.
-// Uses harmonic Ritz extraction with a shift-and-project strategy
-// and block preconditioned iteration.
+// Experimental GPLHR-derived solver using harmonic Ritz extraction and
+// signed shifted-diagonal block preconditioning. The growing/restarted
+// search space is a harmonic-Davidson variant, not the full locally
+// harmonic recurrence with residual-like and previous-direction blocks.
 //
 // Reference
 // ---------
@@ -31,7 +33,8 @@ struct GPLHROptions {
     // Number of eigenvalues to extract.
     int n_eig = 1;
 
-    // Block size for the subspace. 0 = auto (2 * n_eig).
+    // Number of candidates expanded, including guard roots.
+    // 0 = auto (max(2 * n_eig, 4)), capped at the matrix dimension.
     int block_size = 0;
 
     // Convergence threshold on residual norm.
@@ -41,9 +44,9 @@ struct GPLHROptions {
     int max_iter = 200;
 
     // Maximum subspace size before restart.
-    int max_subspace = 0;  // 0 = auto (min(6 * n_eig + 10, n))
+    int max_subspace = 0;  // 0 = auto (min(6 * block_size + 10, n))
 
-    // Preconditioner diagonal shift.
+    // Minimum magnitude of the signed preconditioner denominator.
     double preshift = 1.0e-6;
 
     // Verbosity.
@@ -59,7 +62,8 @@ struct GPLHRResult {
 };
 
 // Solve Ax = lambda x for the ``opts.n_eig`` eigenvalues nearest to
-// ``opts.sigma`` using the GPLHR method.
+// ``opts.sigma`` using the experimental GPLHR-derived method. An unconverged
+// result contains the last tested approximations, never uninitialized data.
 GPLHRResult gplhr_solve(const Eigen::MatrixXd& A,
                         const GPLHROptions& opts);
 

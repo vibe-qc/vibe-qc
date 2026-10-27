@@ -21,7 +21,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional, Tuple
 
+from . import input_identity
 from .case import CodeRow
+from .periodic_matrix import periodic_state_request
 from .spec import MethodSpec, MoleculeSpec, PeriodicSpec
 
 
@@ -95,6 +97,75 @@ def make_periodic_mf(method, cell, kmesh, pbc_dft, pbc_scf):
     return mf.density_fit()
 
 
+def scalar_ecp_identity(cell):
+    """Extract the actual integral arrays, including atom-specific operators.
+
+    PySCF's ANG_OF=-1 denotes local U_L; RADI_POWER includes r^2 from
+    radial integration. This matches Shaw-Hill (2017), Eqs. (1)-(3),
+    DOI:10.1063/1.4986887 after subtracting two from RADI_POWER.
+    """
+    from pyscf.gto import mole
+    if any(int(b[mole.SO_TYPE_OF]) != 0 for b in cell._ecpbas):
+        return {"unverified": "spin-orbit ECP terms are outside scalar comparison"}
+    terms = {str(i): [] for i in range(cell.natm)}
+    for b in cell._ecpbas:
+        atom, l, n = int(b[mole.ATOM_OF]), int(b[mole.ANG_OF]), int(b[mole.RADI_POWER])
+        count, ep, cp = int(b[mole.NPRIM_OF]), int(b[mole.PTR_EXP]), int(b[mole.PTR_COEFF])
+        terms[str(atom)].extend([l, n - 2, float(e), float(c)] for e, c in
+                               zip(cell._env[ep:ep + count], cell._env[cp:cp + count]))
+    return {"core_electrons": {str(i): int(cell.atom_nelec_core(i)) for i in range(cell.natm)},
+            "scalar_terms": terms, "source": "PySCF resolved _ecpbas/_env integral arrays"}
+
+
+def input_identity(cell, method, sample):
+    """Raw resolved inputs; the parent reduces them (core/input_identity.py)."""
+    import numpy as np
+    from pyscf.dft import libxc
+
+    shells = []
+    for ib in range(cell.nbas):
+        l = int(cell.bas_angular(ib))
+        # bas_ctr_coeff: contraction coefficients over normalized primitives.
+        coeff = np.asarray(cell.bas_ctr_coeff(ib), dtype=float)
+        shells.append([int(cell.bas_atom(ib)), l, not cell.cart,
+                       [float(e) for e in cell.bas_exp(ib)],
+                       [coeff[:, j].tolist() for j in range(coeff.shape[1])]])
+    atoms = [[int(cell.atom_charge(i) + cell.atom_nelec_core(i)),
+              *map(float, cell.atom_coord(i))] for i in range(cell.natm)]
+    record = {
+        "lattice_rows_bohr": np.asarray(cell.lattice_vectors()).tolist(),
+        "atoms": atoms,
+        "shells": shells,
+        "ecp": scalar_ecp_identity(cell),
+    }
+    if method["scf"] in ("rhf", "uhf"):
+        record["xc"] = {"kind": "hf", "hf_fraction": 1.0, "omega": 0.0}
+        return record
+    xc = pyscf_xc(method.get("xc"))
+    kind = libxc.xc_type(xc)
+    rho = np.asarray(sample["rho"], dtype=float)
+    sigma = np.asarray(sample["sigma"], dtype=float)
+    if kind == "LDA":
+        exc, vxc = libxc.eval_xc(xc, rho, spin=0, deriv=1)[:2]
+        vsigma = None
+    elif kind in ("GGA", "HYB"):
+        grad = np.zeros((3, rho.size))
+        grad[0] = np.sqrt(sigma)
+        exc, vxc = libxc.eval_xc(xc, np.vstack([rho, grad]), spin=0, deriv=1)[:2]
+        vsigma = np.asarray(vxc[1]).tolist()
+        kind = "gga"
+    else:
+        record["xc"] = {"unverified": f"{kind} functional {xc!r}: tau is not sampled"}
+        return record
+    record["xc"] = {
+        "kind": kind.lower(), "hf_fraction": float(libxc.hybrid_coeff(xc)),
+        "omega": float(libxc.rsh_coeff(xc)[0]),
+        "exc_per_volume": (rho * np.asarray(exc)).tolist(),
+        "vrho": np.asarray(vxc[0]).tolist(), "vsigma": vsigma,
+    }
+    return record
+
+
 def run_periodic(payload):
     import numpy as np
     pyscf = importlib.import_module("pyscf")
@@ -106,7 +177,8 @@ def run_periodic(payload):
     atom_lines = []
     for atom in payload["atoms"]:
         frac = np.asarray(atom["frac"], dtype=float)
-        xyz = lattice_ang @ frac
+        # Rows of lattice_ang are the lattice vectors, as in cell.a below.
+        xyz = frac @ lattice_ang
         atom_lines.append(
             f"{atom['symbol']} {xyz[0]:.10f} {xyz[1]:.10f} {xyz[2]:.10f}"
         )
@@ -117,6 +189,18 @@ def run_periodic(payload):
         unit="A",
         verbose=0,
     )
+    # A valence basis needs its ECP on the elements it ships one for, as in
+    # vibe-qc; the input identity compares core counts and scalar operators.
+    from pyscf.gto.basis import load_ecp
+    ecp = {}
+    for symbol in sorted({atom["symbol"] for atom in payload["atoms"]}):
+        try:
+            if load_ecp(payload["basis"], symbol):
+                ecp[symbol] = payload["basis"]
+        except Exception:
+            pass
+    if ecp:
+        cell_kwargs["ecp"] = ecp
     # Set spin for open-shell: PySCF periodic uses cell.spin = n_alpha - n_beta
     # (not multiplicity).  For multi-k open-shell, override mf.nelec in the
     # caller to pin the correct per-cell occupation; see the OPEN-SHELL TRAP
@@ -143,9 +227,33 @@ def run_periodic(payload):
     mf = make_periodic_mf(
         payload["method"], cell, payload["kmesh"], pbc_dft, pbc_scf
     )
+    nelec_per_cell = payload.get("nelec_per_cell")
+    if nelec_per_cell is not None:
+        # The request counts all electrons; an ECP removes paired core
+        # electrons, so each spin loses half of them.
+        n_core = sum(int(cell.atom_nelec_core(i)) for i in range(cell.natm))
+        n_alpha, n_beta = (int(n) - n_core // 2 for n in nelec_per_cell)
+        if n_core % 2 or n_alpha + n_beta != cell.nelectron or n_beta < 0:
+            raise RuntimeError(f"cell has {cell.nelectron} valence electrons "
+                               f"({n_core} in ECP cores), request {nelec_per_cell}")
+        if payload["method"]["scf"] in ("uhf", "uks"):
+            # Pin the uniform per-cell state. K-point classes count electrons
+            # over the whole Born-von Karman supercell; cell.spin alone fills
+            # a mixed state there (the OPEN-SHELL TRAP above).
+            gamma = tuple(int(x) for x in payload["kmesh"]) == (1, 1, 1)
+            n_k = 1 if gamma else len(mf.kpts)
+            mf.nelec = (n_alpha * n_k, n_beta * n_k)
+            if tuple(int(n) for n in mf.nelec) != (n_alpha * n_k, n_beta * n_k):
+                raise RuntimeError(f"PySCF kept nelec {mf.nelec}, not the per-cell state")
     mf.conv_tol = float(payload["conv_tol_energy"])
     mf.max_cycle = int(payload["max_iter"])
     mf.verbose = int(payload.get("verbose", 3))
+    identity = (input_identity(cell, payload["method"], payload["xc_sample"])
+                if payload.get("xc_sample") is not None else None)
+    if payload.get("identity_only"):
+        emit({"status": "identity", "code_version": pyscf.__version__,
+              "identity": identity})
+        return
 
     t0 = time.perf_counter()
     e_scf = float(mf.kernel())
@@ -183,6 +291,8 @@ def run_periodic(payload):
         "n_basis_functions": int(cell.nao_nr()),
         "n_basis_shells": int(cell.nbas),
         "n_electrons": int(cell.nelectron),
+        "nelec_per_cell": nelec_per_cell,
+        "identity": identity,
         "wall_s": wall,
         "converged": bool(getattr(mf, "converged", False)),
         "n_iter": int(getattr(mf, "cycles", 0)) or None,
@@ -439,6 +549,42 @@ def _apply_result(row: CodeRow, result: dict[str, Any], n_atoms: int) -> CodeRow
     return row
 
 
+def _periodic_payload(spec: PeriodicSpec, basis_name: str, method: MethodSpec,
+                      kmesh, state: dict, conv_tol_energy: float,
+                      max_iter: int) -> dict[str, Any]:
+    return {
+        "kind": "periodic",
+        "lattice_ang": spec.lattice_ang,
+        "atoms": [
+            {"symbol": at.symbol, "frac": at.frac}
+            for at in spec.atoms
+        ],
+        "basis": basis_name,
+        "method": _method_payload(method),
+        "kmesh": kmesh,
+        "multiplicity": state["multiplicity"],
+        "nelec_per_cell": [state["n_alpha"], state["n_beta"]],
+        "conv_tol_energy": conv_tol_energy,
+        "max_iter": max_iter,
+        "verbose": 3,
+        "xc_sample": input_identity.XC_SAMPLE,
+    }
+
+
+def resolve_periodic_identity(*, spec: PeriodicSpec, basis_name: str,
+                              method: MethodSpec, kmesh: Tuple[int, int, int],
+                              log_path: Path) -> dict:
+    """PySCF's resolved inputs for one case, without running the SCF (#648)."""
+    state = periodic_state_request(spec, method, code="pyscf")
+    payload = {**_periodic_payload(spec, basis_name, method, kmesh, state,
+                                   spec.default_conv_tol_energy, spec.default_max_iter),
+               "identity_only": True}
+    result = _run_external_pyscf(payload, log_path)
+    if result.get("status") != "identity":
+        raise RuntimeError(f"PySCF identity failed: {result.get('note')}")
+    return input_identity.from_raw(result["identity"])
+
+
 def run_periodic_case(
     *, run_id: str, target: str, spec: PeriodicSpec, basis_name: str,
     method: MethodSpec, kmesh: Tuple[int, int, int],
@@ -471,22 +617,22 @@ def run_periodic_case(
     )
     _append_log(log_path, "=" * 78)
 
-    payload = {
-        "kind": "periodic",
-        "lattice_ang": spec.lattice_ang,
-        "atoms": [
-            {"symbol": at.symbol, "frac": at.frac}
-            for at in spec.atoms
-        ],
-        "basis": basis_name,
-        "method": _method_payload(method),
-        "kmesh": kmesh,
-        "conv_tol_energy": conv_tol_energy,
-        "max_iter": max_iter,
-        "verbose": 3,
-    }
+    try:
+        state = periodic_state_request(spec, method, code="pyscf")
+    except ValueError as exc:
+        row.status = "unavailable"
+        row.note = f"pyscf: state refused before execution: {exc}"
+        _append_log(log_path, f"  {row.status}: {row.note}")
+        return row
+    payload = _periodic_payload(spec, basis_name, method, kmesh, state,
+                                conv_tol_energy, max_iter)
     result = _run_external_pyscf(payload, log_path, artifact_dir=artifact_dir)
     row = _apply_result(row, result, len(spec.atoms))
+    if result.get("nelec_per_cell") is not None:
+        row.n_alpha, row.n_beta = (int(n) for n in result["nelec_per_cell"])
+    if artifact_dir is not None and result.get("identity") is not None:
+        _write_json(artifact_dir / "input_identity.json",
+                    input_identity.from_raw(result["identity"]))
     if row.energy_ha is not None:
         _append_log(
             log_path,

@@ -398,6 +398,13 @@ def compute_hessian_rks_analytic(
             "compute_hessian_rks_analytic requires basis_name explicitly")
     if functional is None:
         functional = rks_result.functional
+    # #665: the skeleton differentiates the analytic gradient and the response
+    # uses the global exact-exchange fraction only, so a functional whose
+    # gradient omits terms (range-separated exchange, VV10) has no analytic
+    # Hessian here (nor an FD one: compute_hessian_fd refuses it too).
+    from .gradient_terms import require_complete_analytic_gradient
+
+    require_complete_analytic_gradient(functional, route="compute_hessian_rks_analytic", spin=1)
     if hessian_options is None:
         hessian_options = HessianFDOptions()
     if grid_options is None:

@@ -127,4 +127,46 @@ def copy_ecp_fields(gradient_options, scf_options) -> None:
         gradient_options.ecp_total_ncore = 0
 
 
-__all__ = ["copy_ecp_fields", "gradient_options_from_scf"]
+def gradient_options_from_result_ecp(scf_result) -> GradientOptions:
+    """A ``GradientOptions`` that repeats the ECP provenance an SCF *result*
+    recorded, for a caller that has the result but not the options it ran with.
+
+    Results name the XML route ``ecp_xml_centers`` / ``ecp_xml_library`` where
+    the options say ``ecp_centers`` / ``ecp_library``; the inline route is
+    named alike on both. The gradient's own contract check
+    (:func:`vibeqc.ecp_metadata.validate_gradient_ecp_contract`) still compares
+    the result with these fields exactly, so copying them from the result can
+    only reproduce the Hamiltonian the SCF solved, never substitute another.
+    """
+    from types import SimpleNamespace
+
+    from ._vibeqc_core import ECPCenter
+
+    centers = [
+        ECPCenter(Z=int(c.Z), xyz=[float(x) for x in c.xyz])
+        for c in (getattr(scf_result, "ecp_xml_centers", None) or [])
+    ]
+    mirror = SimpleNamespace(
+        ecp_centers=centers,
+        ecp_library=str(getattr(scf_result, "ecp_xml_library", "") or ""),
+        ecp_primitive_blocks=list(
+            getattr(scf_result, "ecp_primitive_blocks", None) or []
+        ),
+        ecp_primitive_centers=[
+            list(c) for c in (getattr(scf_result, "ecp_primitive_centers", None) or [])
+        ],
+        ecp_effective_charges=list(
+            getattr(scf_result, "ecp_effective_charges", None) or []
+        ),
+        ecp_total_ncore=int(getattr(scf_result, "ecp_total_ncore", 0) or 0),
+    )
+    grad_opts = GradientOptions()
+    copy_ecp_fields(grad_opts, mirror)
+    return grad_opts
+
+
+__all__ = [
+    "copy_ecp_fields",
+    "gradient_options_from_result_ecp",
+    "gradient_options_from_scf",
+]

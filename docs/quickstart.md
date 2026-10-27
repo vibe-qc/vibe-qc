@@ -1,7 +1,8 @@
 # Quickstart, your first 30 minutes
 
-This page gets you from a working install to four working
-calculations in under a minute of wall time. Open
+This page takes you from a working installation through four small example
+calculations. Installation time is separate; calculation timings depend on
+your machine, native build and thread count. Open
 [`examples/quickstart.py`](https://github.com/vibe-qc/vibe-qc/blob/main/examples/quickstart.py)
 in another window and follow along, it's the runnable script for
 exactly what's on this page. For a wider tour of the API surface
@@ -17,16 +18,22 @@ after completing this quickstart.
 ## 0. Install
 
 vibe-qc is **not on PyPI yet**, there is no `pip install vibe-qc`.
-The install is "clone the repo, install your platform's build
-prerequisites (compiler, CMake, Ninja, headers, a BLAS), run
-`./scripts/setup_native_deps.sh` to fetch + build the vendored
-native libraries (libint, libxc, spglib, FFTW3, libecpint), then
-`pip install -e .` in a virtualenv". The one-liner per platform
-(macOS Homebrew, Arch / Manjaro, Debian / Ubuntu) and full
-troubleshooting live in [installation](installation.md), read
-that first.
+Install your platform's build prerequisites (compiler, CMake, Ninja, headers
+and BLAS) from the [installation guide](installation.md), then clone and run
+the managed installer:
 
-Once `pip install -e .` succeeds, the package ships with every
+```sh
+git clone https://github.com/vibe-qc/vibe-qc.git
+cd vibe-qc
+./scripts/install.sh --dev
+```
+
+This selects development `main`, builds the native libraries and creates
+`.venv`. For a stable version, omit `--dev` to select the origin's `release`
+branch, or its newest stable version tag when that branch is absent. See
+[clone and version selection](installation.md#clone-the-source) for details.
+
+After installation, the package ships with every
 basis set vibe-qc supports, ~90 standard libint sets (sto-3g,
 6-31G\*, cc-pVxZ, def2-\*, ANO-RCC, …) plus the CRYSTAL pob-TZVP
 / pob-DZVP-rev2 / pob-TZVP-rev2 sets for periodic crystals. No
@@ -101,13 +108,15 @@ E(SCF)  = -76.006678 Ha
 gap     = 19.67 eV
 ```
 
-10 SCF iterations, ~6 ms. Atomic positions are in **bohr** (vibe-qc's
-internal unit), pass Ångström values via `from_xyz()` if you'd
-rather work in those.
+The displayed values are example output, not a timing or iteration-count
+guarantee. Check `result.converged` before interpreting orbital energies.
+Atomic positions are in **bohr** (vibe-qc's internal unit); use `from_xyz()`
+for an XYZ geometry expressed in angstroms. Do not paste angstrom coordinates
+unchanged into the low-level `Atom` constructor.
 
 ### What a full vibe-qc output looks like
 
-The bare-API call above just prints the four lines you asked for.
+The explicit `print` calls above report the energy and orbital summary.
 If you'd rather have vibe-qc's full **banner + SCF trace + orbital
 table + properties block** written to a file (the format you'd paste
 into a paper's SI), use [`run_job`](tour.md).
@@ -119,10 +128,9 @@ result = vq.run_job(mol, basis="6-31g*", method="rhf")
 
 # For large basis sets, pick an iterative solver:
 result = vq.run_job(mol, basis="def2-svp", method="rhf", solver="davidson")
-# solver="lobpcg" is the fastest iterative option for periodic
-# drivers and ROHF; for molecular RHF/UHF/RKS/UKS it falls back
-# to the Davidson path. See the solver framework guide for the
-# full matrix.
+# run_job accepts solver="dense" or "davidson". It rejects "lobpcg";
+# explicit LOBPCG eigenproblems use the separate vibeqc.solvers API.
+# See the solver framework guide for supported problems and controls.
 ```
 
 That's what the
@@ -371,12 +379,17 @@ with the wheel**, and **no environment variables**. Quick, clean, reproducible.
   classic-QC-program input-file experience), the ASE Calculator,
   Python `logging` integration, dropping in custom basis sets, and
   how to run the test suite.
+- **Which method, and how far can you trust it**,
+  [Methods: theory and status](methods.md) walks every method family with
+  its equations, its `run_job` spelling and its production, preview,
+  experimental or gated label.
 - **Theory + variants for what you just did**, work through the
-  numbered tutorials. [Molecular Hartree-Fock](tutorial/molecular_hf.md)
+  tutorials. [Molecular Hartree-Fock](tutorial/molecular_hf.md)
   through [Submitting a job to a remote machine with `vq`](tutorial/vq_queue_remote_job.md),
-  grouped by topic in [the tutorial index](tutorial/index.md).
-  New: [non-mean-field solvers](tutorial/non_hf_solvers.md),
-  Selected-CI, DMRG, v2RDM, and transcorrelated methods.
+  grouped by topic and by learning path in
+  [the tutorial index](tutorial/index.md), including
+  [non-mean-field solvers](tutorial/non_hf_solvers.md) (selected CI,
+  v2RDM, transcorrelated methods and the experimental DMRG toy solver).
 - **API reference**, [api/index](api/index.md) lists every
   exported symbol with its full signature.
 - **Topic-focused user guides**, [basis sets](user_guide/basis_sets.md),

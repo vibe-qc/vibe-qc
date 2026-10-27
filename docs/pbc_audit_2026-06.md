@@ -118,7 +118,7 @@ default;, = absent; ✗ = explicitly rejected):
 
 * The BIPOLE MgO absolute-parity bug (+2.5/+4.4 Ha vs PySCF at matched
   mesh; spheropole-dominant), escalated, see
-  `handovers/HANDOVER_BIPOLE_PRODUCTION.md` §0a 2026-06-10 and
+  the 2026-06-10 investigation and
   `docs/troubleshooting.md`.
 * Γ-only compcell GDF on tight ionic cells (documented +576 Ha
   non-physical guard; multi-k GDF is the production route there).

@@ -53,10 +53,78 @@ add_library(vibeqc_core STATIC
     src/init.cpp
     src/molecule.cpp
     src/basis.cpp
+    src/product_auxiliary.cpp
+    src/degenerate_frontier.cpp
     src/integrals.cpp
+    src/manta.cpp
+    src/manta_md.cpp
+    src/manta_shells.cpp
+    src/manta_provider.cpp
+    src/manta_molecular_source.cpp
+    src/manta_one_electron.cpp
+    src/manta_metric_enclosure.cpp
+    src/manta_fitting.cpp
+    src/manta_fourier.cpp
+    src/manta_bloch_fourier.cpp
+    src/manta_bloch_one_electron.cpp
+    src/manta_periodic_hartree.cpp
+    src/manta_periodic_nuclear.cpp
+    src/manta_periodic_nuclear_bounds.cpp
+    src/manta_periodic_support_selection.cpp
+    src/manta_periodic_exchange.cpp
+    src/manta_periodic_semilocal_xc.cpp
+    src/manta_periodic_local_exchange.cpp
+    src/manta_periodic_fock.cpp
+    src/manta_periodic_rhf.cpp
+    src/manta_periodic_quadrature.cpp
+    src/manta_periodic_ks_grid.cpp
+    src/manta_periodic_xc_refinement.cpp
+    src/manta_periodic_ks_domains.cpp
+    src/manta_periodic_ks.cpp
+    src/manta_periodic_uhf.cpp
+    src/manta_periodic_domains.cpp
+    src/manta_ri.cpp
+    src/manta_ri_metric.cpp
+  src/manta_ri_spectral_bounds.cpp
+  src/manta_ri_inverse_action.cpp
+    src/manta_ri_gradient.cpp
+    src/manta_derivatives.cpp
+    src/manta_gradient.cpp
+    src/manta_scf.cpp
+    src/manta_extents.cpp
+    src/manta_multipole.cpp
+    src/manta_lattice_tail.cpp
+    src/manta_lattice_errors.cpp
+    src/manta_periodic_pairs.cpp
+    src/manta_periodic_bubbles.cpp
+    src/manta_periodic_ewald.cpp
+    src/manta_periodic_ewald_batch.cpp
+    src/manta_periodic_bupo.cpp
+    src/manta_pair_image_bounds.cpp
+    src/manta_periodic_bupo_hf.cpp
+    src/manta_periodic_bupo_domains.cpp
+    src/manta_periodic_bupo_preparation.cpp
+    src/manta_periodic_one_electron_bounds.cpp
+    src/manta_periodic_overlap_rank.cpp
+    src/manta_periodic_exchange_bounds.cpp
+    src/manta_periodic_electrostatic.cpp
+    src/manta_bubbles.cpp
+    src/manta_moments.cpp
+    src/manta_bupo_errors.cpp
+    src/manta_bupo.cpp
+    src/manta_bupo_fitting.cpp
+    src/manta_bupo_ri.cpp
     src/df.cpp
     src/aux_eri.cpp
     src/periodic_gdf_short_range.cpp
+    src/manta_periodic_ri.cpp
+    src/manta_periodic_ri_fitting_bounds.cpp
+    src/manta_periodic_ri_reference_selection.cpp
+    src/manta_periodic_ri_domain_selection.cpp
+    src/manta_periodic_gdf_domains.cpp
+    src/manta_periodic_ri_fock.cpp
+    src/manta_periodic_ri_exchange_bounds.cpp
+    src/manta_periodic_ri_hf.cpp
     src/aopair_ft.cpp
     src/cosx.cpp
     src/cosx_cell_pair.cpp
@@ -103,6 +171,9 @@ add_library(vibeqc_core STATIC
     src/adjoined_pair_moments.cpp
     src/kmesh_address.cpp
     src/symmetry_shared.cpp
+    src/symmetry_quartets.cpp
+    src/symmetry_quartets_source.cpp
+    src/symmetry_ri.cpp
     src/periodic_ao_bloch_transport.cpp
     src/periodic_orbital_sewing.cpp
     src/bipole_ewald_gram.cpp
@@ -163,6 +234,8 @@ add_library(vibeqc_core STATIC
     src/periodic_gaussian_nuclear.cpp
     src/periodic_gaussian_fock.cpp
     src/bounded_periodic_rhf_solver.cpp
+    src/bounded_periodic_uhf_solver.cpp
+    src/bounded_periodic_functional_solver.cpp
     src/periodic_gaussian_rhf.cpp
     src/periodic_gaussian_local_orbital_factors.cpp
     src/periodic_gaussian_density_gram.cpp
@@ -235,6 +308,7 @@ add_library(vibeqc_core STATIC
     src/semiempirical/core/method_registry.cpp
     src/semiempirical/methods/xtb/gfn2_parameters.cpp
     src/semiempirical/methods/xtb/gfn2_driver.cpp
+    src/semiempirical/methods/xtb/gfn2_dispersion.cpp
     src/semiempirical/methods/xtb/gfn2_multipole.cpp
     src/semiempirical/methods/xtb/gfn2_aes.cpp
     src/semiempirical/methods/xtb/periodic_gfn2.cpp
@@ -245,6 +319,7 @@ add_library(vibeqc_core STATIC
     src/semiempirical/methods/nddo/periodic_omx.cpp
     src/semiempirical/methods/nddo/periodic_fd_batch.cpp
     src/semiempirical/methods/nddo/omx_fock.cpp
+    src/semiempirical/methods/nddo/omx_gaussian_pair.cpp
     src/semiempirical/methods/nddo/omx_parameters.cpp
     src/semiempirical/core/hamiltonian_builders.cpp
     src/semiempirical/core/charge_mixer.cpp
@@ -254,12 +329,15 @@ add_library(vibeqc_core STATIC
     src/linear_dependence.cpp
     src/brent.cpp
     src/davidson.cpp
+    src/hermitian_operator.cpp
     src/jd.cpp
     src/gplhr.cpp
     src/geomopt_kernels.cpp
     src/lobpcg.cpp
     src/ecp.cpp
     src/quadratic_scf.cpp
+    src/opentrustregion.cpp
+    src/orbital_objective.cpp
     src/newton.cpp
     src/casci.cpp
     src/coop_cohp.cpp
@@ -269,7 +347,16 @@ add_library(vibeqc_core STATIC
     src/pt2_transform.cpp
     src/ccsd_triples.cpp
     src/dlpno_mp2.cpp
+    src/translation_mp2.cpp
+    src/dlpno_ccsd.cpp
+    src/dlpno_uccsd.cpp
 )
+
+if(VIBEQC_ENABLE_OPENTRUSTREGION)
+    target_link_libraries(vibeqc_core PUBLIC OpenTrustRegion::opentrustregion)
+    set_source_files_properties(src/opentrustregion.cpp PROPERTIES
+        COMPILE_DEFINITIONS VIBEQC_HAS_OPENTRUSTREGION=1)
+endif()
 
 target_include_directories(vibeqc_core PUBLIC include)
 
@@ -505,6 +592,46 @@ foreach(_tgt IN LISTS _VIBEQC_THIRDPARTY_TARGETS)
 endforeach()
 unset(_VIBEQC_THIRDPARTY_TARGETS)
 
+# Search the vendored include directories before every other third-party
+# one. Imported targets contribute include directories in link order, and a
+# broad prefix that arrives early can hold another copy of a vendored
+# header. On macOS, libint's installed package links Boost::headers, whose
+# include directory is the whole Homebrew prefix (/opt/homebrew/include).
+# It came ahead of libxc, spglib, fftw and libecpint, so <xc.h> and
+# <libecpint/ecpint.hpp> resolved to Homebrew's copies while the vendored
+# libraries were linked (vibe-qc #461). The compiler searches -isystem
+# directories in command-line order, and an -I cannot take precedence
+# instead because it is dropped when it repeats an -isystem directory, so
+# the vendored directories are prepended as -isystem, here and on the
+# Python module below. A CPATH entry or an -I in CXXFLAGS that names some
+# other directory still precedes them all, so the checks described next
+# fail the build if a header resolves elsewhere.
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/VendoredIncludeDirectories.cmake")
+vibeqc_vendored_include_directories(_VIBEQC_VENDORED_INCLUDE_DIRS
+    Libint2::cxx Libxc::xc Spglib::symspg FFTW3::fftw3 ECPINT::ecpint)
+if(_VIBEQC_VENDORED_INCLUDE_DIRS)
+    target_include_directories(vibeqc_core SYSTEM BEFORE PUBLIC
+        ${_VIBEQC_VENDORED_INCLUDE_DIRS})
+endif()
+
+# The headers must be those of the libraries linked. libxc and libint carry
+# version macros, which src/xc.cpp and src/basis.cpp compare with the
+# versions of the packages CMake selected. src/ecp.cpp checks libecpint's
+# patched API, since the vendored copy keeps upstream's version number.
+# spglib and FFTW have no version macro and rely on the order above.
+if(Libxc_VERSION_COUNT GREATER_EQUAL 3)
+    target_compile_definitions(vibeqc_core PRIVATE
+        VIBEQC_LINKED_LIBXC_VERSION_MAJOR=${Libxc_VERSION_MAJOR}
+        VIBEQC_LINKED_LIBXC_VERSION_MINOR=${Libxc_VERSION_MINOR}
+        VIBEQC_LINKED_LIBXC_VERSION_PATCH=${Libxc_VERSION_PATCH})
+endif()
+if(Libint2_VERSION_COUNT GREATER_EQUAL 3)
+    target_compile_definitions(vibeqc_core PRIVATE
+        VIBEQC_LINKED_LIBINT_VERSION_MAJOR=${Libint2_VERSION_MAJOR}
+        VIBEQC_LINKED_LIBINT_VERSION_MINOR=${Libint2_VERSION_MINOR}
+        VIBEQC_LINKED_LIBINT_VERSION_PATCH=${Libint2_VERSION_PATCH})
+endif()
+
 # Bake the path to libecpint's XML basis library (Stuttgart-Köln
 # ecpNNmdf, LANL2DZ) so ``compute_ecp_matrix`` can find it without
 # the user passing share_dir explicitly. Resolution order:
@@ -548,6 +675,16 @@ target_compile_definitions(vibeqc_core PRIVATE
     HAS_PUGIXML=1
 )
 
+# Installed Python wheels select their bundled basis/ECP data at runtime.
+# A distributable build must not retain fallback paths from the build host.
+option(VIBEQC_RELOCATABLE_RUNTIME "Omit build-host basis and ECP fallback paths" OFF)
+if(VIBEQC_RELOCATABLE_RUNTIME)
+    set_property(SOURCE src/basis.cpp src/guess.cpp APPEND PROPERTY
+        COMPILE_OPTIONS "-ULIBINT_DATADIR" "-DLIBINT_DATADIR=\"\"")
+    set_property(SOURCE src/ecp.cpp APPEND PROPERTY COMPILE_OPTIONS
+        "-UVIBEQC_LIBECPINT_SHARE_DIR" "-DVIBEQC_LIBECPINT_SHARE_DIR=\"\"")
+endif()
+
 # -fPIC so the static lib can be linked into the shared pybind11 module.
 set_target_properties(vibeqc_core PROPERTIES
     POSITION_INDEPENDENT_CODE ON
@@ -557,13 +694,158 @@ set_target_properties(vibeqc_core PROPERTIES
 # pybind11 module: _vibeqc_core
 # -----------------------------------------------------------------------------
 pybind11_add_module(_vibeqc_core MODULE
+    src/opentrustregion_bindings.cpp
+    src/manta_bindings.cpp
+    src/manta_molecular_source_bindings.cpp
+    src/symmetry_quartets_bindings.cpp
+    src/symmetry_ri_bindings.cpp
+    src/manta_bloch_fourier_bindings.cpp
+    src/manta_bloch_one_electron_bindings.cpp
+    src/manta_periodic_hartree_bindings.cpp
+    src/manta_periodic_fitting_bindings.cpp
+    src/manta_periodic_ri_bindings.cpp
+    src/manta_periodic_ri_fitting_bounds_bindings.cpp
+    src/manta_periodic_ri_fock_bindings.cpp
+    src/manta_periodic_ri_uhf_bindings.cpp
+    src/manta_periodic_ri_rhf_bindings.cpp
+    src/manta_periodic_nuclear_bindings.cpp
+    src/manta_periodic_support_selection_bindings.cpp
+    src/manta_periodic_exchange_bindings.cpp
+    src/manta_periodic_semilocal_xc_bindings.cpp
+    src/manta_periodic_local_exchange_bindings.cpp
+    src/manta_periodic_fock_bindings.cpp
+    src/manta_periodic_rhf_bindings.cpp
+    src/manta_periodic_ks_bindings.cpp
+    src/manta_periodic_uhf_bindings.cpp
+    src/manta_ri_bindings.cpp
+    src/manta_ri_gradient_bindings.cpp
+    src/manta_gradient_bindings.cpp
+    src/manta_scf_bindings.cpp
+    src/manta_extents_bindings.cpp
+    src/manta_multipole_bindings.cpp
+    src/manta_lattice_tail_bindings.cpp
+    src/manta_lattice_errors_bindings.cpp
+    src/manta_periodic_pairs_bindings.cpp
+    src/manta_periodic_bubbles_bindings.cpp
+    src/manta_periodic_ewald_bindings.cpp
+    src/manta_periodic_bupo_bindings.cpp
+    src/manta_periodic_bupo_hf_bindings.cpp
+    src/manta_periodic_bupo_preparation_bindings.cpp
+    src/manta_periodic_one_electron_bounds_bindings.cpp
+    src/manta_periodic_exchange_bounds_bindings.cpp
+    src/manta_periodic_electrostatic_bindings.cpp
+    src/manta_bubbles_bindings.cpp
+    src/manta_moments_bindings.cpp
+    src/manta_bupo_errors_bindings.cpp
+    src/manta_bupo_bindings.cpp
+    src/manta_bupo_fitting_bindings.cpp
+    src/manta_bupo_ri_bindings.cpp
+    src/manta_tiles_bindings.cpp
+    src/symmetry_shared_bindings.cpp
+    src/periodic_ao_bloch_transport_bindings.cpp
+    src/periodic_orbital_sewing_bindings.cpp
+    src/bipole_ewald_gram_bindings.cpp
+    src/aiccm2026dev_b_kernels_bindings.cpp
+    src/periodic_correlation_admitted_reference_bindings.cpp
+    src/periodic_correlation_factor_build_admission_bindings.cpp
+    src/periodic_correlation_factor_stream_bindings.cpp
+    src/periodic_correlation_reciprocal_metric_bindings.cpp
+    src/periodic_correlation_metric_factorization_bindings.cpp
+    src/periodic_correlation_three_center_bindings.cpp
+    src/periodic_correlation_factor_store_bindings.cpp
+    src/periodic_correlation_wannier_bindings.cpp
+    src/periodic_correlation_diabatic_seed_bindings.cpp
+    src/periodic_correlation_bloch_iao_bindings.cpp
+    src/periodic_correlation_iao_pm_bindings.cpp
+    src/periodic_correlation_iao_optimizer_bindings.cpp
+    src/periodic_correlation_occupied_fock_bindings.cpp
+    src/periodic_correlation_pao_domain_bindings.cpp
+    src/periodic_correlation_pao_space_bindings.cpp
+    src/periodic_correlation_real_pao_space_bindings.cpp
+    src/periodic_correlation_real_pao_embedding_bindings.cpp
+    src/periodic_correlation_occupied_pao_domain_bindings.cpp
+    src/periodic_correlation_pair_pao_domain_bindings.cpp
+    src/periodic_correlation_local_factors_bindings.cpp
+    src/periodic_correlation_density_factors_bindings.cpp
+    src/periodic_correlation_local_orbital_factors_bindings.cpp
+    src/periodic_correlation_real_local_basis_bindings.cpp
+    src/periodic_correlation_real_local_provider_bindings.cpp
+    src/periodic_gaussian_source_context_bindings.cpp
+    src/periodic_gaussian_reciprocal_source_bindings.cpp
+    src/periodic_gaussian_metric_bindings.cpp
+    src/periodic_gaussian_three_center_bindings.cpp
+    src/periodic_gaussian_bloch_iao_bindings.cpp
+    src/periodic_gaussian_localization_bindings.cpp
+    src/periodic_gaussian_occupied_pao_domain_bindings.cpp
+    src/periodic_gaussian_pair_pao_domain_bindings.cpp
+    src/periodic_gaussian_pair_domain_builder_bindings.cpp
+    src/periodic_gaussian_one_electron_bindings.cpp
+    src/periodic_gaussian_nuclear_bindings.cpp
+    src/periodic_gaussian_fock_bindings.cpp
+    src/bounded_periodic_rhf_solver_bindings.cpp
+    src/bounded_periodic_uhf_solver_bindings.cpp
+    src/bounded_periodic_functional_solver_bindings.cpp
+    src/periodic_gaussian_rhf_bindings.cpp
+    src/periodic_gaussian_local_orbital_factors_bindings.cpp
+    src/periodic_gaussian_density_gram_bindings.cpp
+    src/periodic_gaussian_mixed_pair_factors_bindings.cpp
+    src/periodic_gaussian_pair_interaction_bindings.cpp
+    src/periodic_gaussian_pair_particle_hole_bindings.cpp
+    src/periodic_gaussian_pair_ccsd_physical_particle_hole_bindings.cpp
+    src/periodic_gaussian_real_local_provider_bindings.cpp
+    src/periodic_gaussian_selected_local_ccsd_t_bindings.cpp
+    src/periodic_gaussian_pair_pnos_bindings.cpp
+    src/periodic_gaussian_embedded_pair_pnos_bindings.cpp
+    src/periodic_gaussian_pair_space_bindings.cpp
+    src/periodic_gaussian_gram_pair_pnos_bindings.cpp
+    src/bounded_restricted_pair_mp2_solver_bindings.cpp
+    src/translation_mp2_bindings.cpp
+    src/bounded_restricted_ccsd_energy_bindings.cpp
+    src/bounded_restricted_pair_ccsd_solver_bindings.cpp
+    src/bounded_restricted_pair_ccsd_interaction_bindings.cpp
+    src/bounded_restricted_pair_ccsd_particle_hole_bindings.cpp
+    src/periodic_gaussian_pair_mp2_bindings.cpp
+    src/periodic_gaussian_domain_pair_mp2_bindings.cpp
+    src/periodic_gaussian_pair_ccsd_bindings.cpp
+    src/periodic_gaussian_triple_spaces_bindings.cpp
+    src/periodic_gaussian_local_triples_bindings.cpp
+    src/periodic_correlation_pao_overlap_bindings.cpp
+    src/periodic_correlation_pair_integrals_bindings.cpp
+    src/periodic_correlation_pair_residual_bindings.cpp
+    src/bounded_restricted_ccsd_target_bindings.cpp
+    src/bounded_restricted_ccsd_solver_bindings.cpp
+    src/bounded_restricted_triples_target_bindings.cpp
+    src/bounded_restricted_triples_moments_bindings.cpp
+    src/bounded_restricted_triples_solver_bindings.cpp
+    src/bounded_restricted_local_triples_solver_bindings.cpp
+    src/bounded_restricted_triple_natural_orbitals_bindings.cpp
+    src/periodic_correlation_real_local_ccsd_t_bindings.cpp
+    src/periodic_aopair_fourier_bindings.cpp
+    src/periodic_aopair_cross_fourier_bindings.cpp
+    src/hermitian_jacobi_bindings.cpp
+    src/pair_natural_orbitals_bindings.cpp
+    src/periodic_correlation_pair_topology_bindings.cpp
+    src/periodic_correlation_resource_bindings.cpp
+    src/periodic_auxiliary_fourier_bindings.cpp
+    src/periodic_gdf_short_range_bindings.cpp
+    src/periodic_mean_field_state_bindings.cpp
+    src/periodic_rhf_state_capture_bindings.cpp
     src/bindings.cpp
+    src/product_auxiliary_bindings.cpp
 )
 
 target_link_libraries(_vibeqc_core PRIVATE
     vibeqc_core
     Libint2::cxx          # brings header path for libint2/util/configuration.h
 )
+
+# pybind11 and Python precede vibeqc_core in this module's link order. Keep
+# the vendored headers ahead of their include directories too (see the
+# matching block for ``vibeqc_core`` above).
+if(_VIBEQC_VENDORED_INCLUDE_DIRS)
+    target_include_directories(_vibeqc_core SYSTEM BEFORE PRIVATE
+        ${_VIBEQC_VENDORED_INCLUDE_DIRS})
+endif()
 
 target_compile_options(_vibeqc_core PRIVATE
     -Wall -Wextra -Wpedantic

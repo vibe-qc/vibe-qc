@@ -21,8 +21,7 @@ gracefully*:
 * F4 -- ``optimize_molecule(method="rks", functional=None)`` raised a
   ``TypeError`` from an operator-precedence bug in the SCF dispatch.
 
-CI on this repo runs ``pytest --collect-only`` (no execution), so these
-must be run locally; see the audit handover for the de-hook harness.
+Collection-only checks do not execute these process-control tests.
 """
 
 from __future__ import annotations
@@ -302,9 +301,9 @@ def test_neb_h3_exchange_barrier_uhf_sto3g():
     free saddle, not the constrained R=2.2 midpoint.
 
     Settings mirror ``test_neb_driver.TestCIClimbingImage`` (proven to
-    converge to the saddle). ``n_jobs=1`` because the joblib process
-    backend can't pickle the C++ Molecule/options (all NEB tests run
-    serial).
+    converge to the saddle). ``n_jobs=1`` because the native
+    ``UHFOptions`` do not pickle, so a process-parallel request would
+    warn and run serially anyway (#564).
     """
     reactant = _stretched_h3_doublet(1.4, 4.4)
     product = _stretched_h3_doublet(3.0, 4.4)

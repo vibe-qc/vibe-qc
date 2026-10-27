@@ -1,8 +1,8 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
-  "role": "orbital",
+  "schema_version": "1.1.0",
+  "name": "aug-cc-pvdz-cabs",
+  "description": "",
+  "role": "fitting",
   "elements": {
     "H": {
       "element": "H",
@@ -2787,7 +2787,40 @@
       ]
     }
   },
+  "basis_family": "dunning",
+  "references": [
+    {
+      "key": "kendall_dunning_harrison_1992",
+      "description": "R. A. Kendall, T. H. Dunning, R. J. Harrison, Journal of Chemical Physics 96, 6796-6806 (1992)",
+      "doi": "10.1063/1.462569"
+    },
+    {
+      "key": "yousaf_peterson_cabs_2008",
+      "description": "K. E. Yousaf, K. A. Peterson, Journal of Chemical Physics 129, 184108 (2008)",
+      "doi": "10.1063/1.3009271"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "vendor",
+    "upstream": [
+      {
+        "name": "libint",
+        "version": "2.13.1",
+        "identifier": "aug-cc-pvdz-cabs",
+        "detail": "byte-identical to libint's bundled file"
+      }
+    ],
+    "retrieval_date": "2026-09-08",
+    "content_sha256": "2f6f427de4891abe5ba89c8ed0d4f2cfec2e916ff9979822c9c7ae307543a322",
+    "citations": [
+      {
+        "keys": [
+          "kendall_dunning_harrison_1992",
+          "yousaf_peterson_cabs_2008"
+        ]
+      }
+    ],
+    "notes": "The date is when the file entered this repository's history; the import date was not recorded."
   }
 }

@@ -45,29 +45,29 @@ def _he_system(L: float = 16.0):
     return sys
 
 
-def _call(method: str):
+def _call(method: str, tmp_path):
     """Trip the method gate without running any physics.
 
     The system-type check runs first, so a real cell is required; the gate
     then runs before anything expensive. ``basis=None`` is enough — a
     supported method gets past the method gate and dies on the basis check.
     """
-    return vq.run_periodic_job(_he_system(), None, method=method)
+    return vq.run_periodic_job(_he_system(), None, method=method, output=tmp_path / "refused")
 
 
 @pytest.mark.parametrize("method", SUPPORTED)
-def test_supported_methods_pass_the_method_gate(method):
+def test_supported_methods_pass_the_method_gate(method, tmp_path):
     # Not NotImplementedError: these must fall through to the basis check.
     with pytest.raises(Exception) as exc:
-        _call(method)
+        _call(method, tmp_path)
     assert "not supported" not in str(exc.value)
 
 
 @pytest.mark.parametrize("method", SUPPORTED)
-def test_k_prefixed_spelling_names_the_replacement(method):
+def test_k_prefixed_spelling_names_the_replacement(method, tmp_path):
     kmethod = "K" + method
     with pytest.raises(NotImplementedError) as exc:
-        _call(kmethod)
+        _call(kmethod, tmp_path)
     msg = str(exc.value)
     # The un-prefixed method must be named as the replacement, and the user
     # must be told where k-point sampling actually lives.
@@ -75,26 +75,26 @@ def test_k_prefixed_spelling_names_the_replacement(method):
     assert "kpoints" in msg
 
 
-def test_k_prefix_advice_is_case_insensitive():
+def test_k_prefix_advice_is_case_insensitive(tmp_path):
     with pytest.raises(NotImplementedError) as exc:
-        _call("krhf")
+        _call("krhf", tmp_path)
     assert "'RHF'" in str(exc.value)
     assert "kpoints" in str(exc.value)
 
 
-def test_unknown_method_keeps_the_plain_unsupported_message():
+def test_unknown_method_keeps_the_plain_unsupported_message(tmp_path):
     with pytest.raises(NotImplementedError) as exc:
-        _call("CCSD")
+        _call("CCSD", tmp_path)
     msg = str(exc.value)
     assert "not supported" in msg
     # No k-point advice for a method that has nothing to do with k-points.
     assert "kpoints" not in msg
 
 
-def test_k_prefix_advice_does_not_fire_on_unrelated_k_names():
+def test_k_prefix_advice_does_not_fire_on_unrelated_k_names(tmp_path):
     """``KS`` is not ``K`` + a supported method; it must not get the advice."""
     with pytest.raises(NotImplementedError) as exc:
-        _call("KS")
+        _call("KS", tmp_path)
     assert "kpoints" not in str(exc.value)
 
 
@@ -166,23 +166,31 @@ _HCORE_ONLY_AICCM_ROUTES = (
 )
 
 
-@pytest.mark.parametrize(
-    "initial_guess",
-    [
-        core.InitialGuess.SAD,
-        core.InitialGuess.SAP,
-        core.InitialGuess.PATOM,
-        core.InitialGuess.HUECKEL,
-        core.InitialGuess.MINAO,
-        core.InitialGuess.READ,
-        core.InitialGuess.FRAGMO,
-    ],
-    ids=lambda guess: guess.name.lower(),
+_NON_HCORE_GUESSES = (
+    core.InitialGuess.SAD,
+    core.InitialGuess.SAP,
+    core.InitialGuess.PATOM,
+    core.InitialGuess.HUECKEL,
+    core.InitialGuess.MINAO,
+    core.InitialGuess.READ,
+    core.InitialGuess.FRAGMO,
 )
+# real-gamma takes a prepared READ density (#442) and an explicit SAD (#519);
+# tests/test_periodic_ccm_real_gamma_adapter.py covers both admissions.
+_REAL_GAMMA_GUESSES = (core.InitialGuess.SAD, core.InitialGuess.READ)
+_REFUSED_AICCM_GUESSES = [
+    pytest.param(variant, module_name, driver_name, guess,
+                 id=f"{variant}-{guess.name.lower()}")
+    for variant, module_name, driver_name in _HCORE_ONLY_AICCM_ROUTES
+    for guess in _NON_HCORE_GUESSES
+    if not (variant == "real-gamma" and guess in _REAL_GAMMA_GUESSES)
+]
+_AICCM_GUESS_REFUSAL = r"does not implement initial_guess=.*fails before SCF"
+
+
 @pytest.mark.parametrize(
-    ("variant", "module_name", "driver_name"),
-    _HCORE_ONLY_AICCM_ROUTES,
-    ids=("real-gamma", "four-center"),
+    ("variant", "module_name", "driver_name", "initial_guess"),
+    _REFUSED_AICCM_GUESSES,
 )
 def test_aiccm_supercell_gamma_routes_reject_every_non_hcore_guess(
     monkeypatch,
@@ -192,7 +200,7 @@ def test_aiccm_supercell_gamma_routes_reject_every_non_hcore_guess(
     module_name,
     driver_name,
 ):
-    """A route that hard-codes HCORE must reject every other selector."""
+    """Every selector a supercell-Gamma route cannot build fails before SCF."""
 
     def unexpected_driver(*_args, **_kwargs):
         pytest.fail(f"{variant} accepted {initial_guess.name} before SCF")
@@ -207,7 +215,7 @@ def test_aiccm_supercell_gamma_routes_reject_every_non_hcore_guess(
 
     with pytest.raises(
         NotImplementedError,
-        match=r"only initial_guess='HCORE'.*fails before SCF",
+        match=_AICCM_GUESS_REFUSAL,
     ) as exc:
         vq.run_periodic_job(
             system,
@@ -216,6 +224,7 @@ def test_aiccm_supercell_gamma_routes_reject_every_non_hcore_guess(
             variant=variant,
             aiccm_lattice_extension=(1, 1, 1),
             initial_guess=initial_guess,
+            fragments=[[0]] if initial_guess == core.InitialGuess.FRAGMO else None,
             **_quiet_output_options(
                 tmp_path,
                 f"{variant}-{initial_guess.name.lower()}",
@@ -309,13 +318,74 @@ def test_aiccm_option_routes_forward_sap_instead_of_being_globally_blocked(
         )
 
 
-@pytest.mark.parametrize("initial_guess", ["FRAGMO"])
-def test_rohf_gdf_rejects_unsupported_source_before_driver(
+@pytest.mark.parametrize(
+    "fragments",
+    [None, [], [[7]], [[0], [0]]],
+    ids=["missing", "empty", "out-of-range", "overlapping"],
+)
+@pytest.mark.parametrize(
+    ("variant", "module_name", "driver_name"),
+    _HCORE_ONLY_AICCM_ROUTES,
+    ids=("real-gamma", "four-center"),
+)
+def test_aiccm_supercell_gamma_routes_reject_fragmo_before_validating_it(
     monkeypatch,
     tmp_path,
-    initial_guess,
+    fragments,
+    variant,
+    module_name,
+    driver_name,
 ):
-    """The Hcore-only Roothaan GDF route cannot relabel another seed."""
+    """An HCORE-only route refuses FRAGMO whatever the partition looks like.
+
+    Regression for #325: FRAGMO's ``fragments=`` validation used to run ahead
+    of every route capability gate, so asking one of these routes for FRAGMO
+    without a partition answered ``FRAGMO requires fragments=...``. That names
+    the wrong remedy -- supplying the list changes nothing, because the route
+    cannot execute FRAGMO at all. The route gate must speak first, and the
+    partition must never decide which error the caller sees.
+    """
+
+    def unexpected_driver(*_args, **_kwargs):
+        pytest.fail(f"{variant} accepted FRAGMO before SCF")
+
+    monkeypatch.setattr(
+        importlib.import_module(module_name),
+        driver_name,
+        unexpected_driver,
+    )
+    system = _he_system(12.0)
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+
+    with pytest.raises(
+        NotImplementedError,
+        match=_AICCM_GUESS_REFUSAL,
+    ) as exc:
+        vq.run_periodic_job(
+            system,
+            basis,
+            method="aiccm",
+            variant=variant,
+            aiccm_lattice_extension=(1, 1, 1),
+            initial_guess="FRAGMO",
+            fragments=fragments,
+            **_quiet_output_options(tmp_path, f"{variant}-fragmo-gate"),
+        )
+    message = str(exc.value)
+    assert f"variant='{variant}'" in message
+    # The requested selector, not the READ transport it is relabelled to.
+    # (The remedy text names "a prepared READ density" for real-gamma.)
+    assert "initial_guess='FRAGMO'" in message
+    assert "initial_guess='READ'" not in message
+
+
+@pytest.mark.parametrize("fragments", [None, []], ids=["missing", "empty"])
+def test_rohf_gdf_fragmo_requires_fragments_before_driver(
+    monkeypatch,
+    tmp_path,
+    fragments,
+):
+    """FRAGMO requires a valid partition before constructing any density."""
     import vibeqc.periodic_runner as runner_module
 
     def unexpected_driver(*_args, **_kwargs):
@@ -332,19 +402,70 @@ def test_rohf_gdf_rejects_unsupported_source_before_driver(
     basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
 
     with pytest.raises(
-        NotImplementedError,
-        match=r"initial_guess=FRAGMO.*is not implemented by this route",
+        ValueError,
+        match=r"FRAGMO requires fragments",
     ):
         vq.run_periodic_job(
             system,
             basis,
             method="ROHF",
             jk_method="gdf",
-            initial_guess=initial_guess,
+            initial_guess="FRAGMO",
+            fragments=fragments,
             **_quiet_output_options(
                 tmp_path,
-                f"rohf-gdf-{initial_guess.lower()}",
+                "rohf-gdf-fragmo",
             ),
+        )
+
+
+@pytest.mark.parametrize(
+    ("fragments", "extra", "message"),
+    [
+        ([[7]], {}, r"outside the molecule's 1 atoms"),
+        ([[0], [0]], {}, r"disjoint partition"),
+        ([[0]], {"reduce_to_primitive": True}, r"requires the input cell"),
+    ],
+    ids=["out-of-range", "overlapping", "primitive-reduction"],
+)
+def test_rohf_gdf_fragmo_partition_is_validated_before_the_driver(
+    monkeypatch,
+    tmp_path,
+    fragments,
+    extra,
+    message,
+):
+    """Deferring FRAGMO validation past the route gate must not disable it.
+
+    Companion to the #325 gate tests: on a route that *does* implement
+    FRAGMO there is no capability refusal to take precedence, so a malformed
+    partition still fails on its own terms, and still before any SCF driver.
+    """
+    import vibeqc.periodic_runner as runner_module
+
+    def unexpected_driver(*_args, **_kwargs):
+        pytest.fail("ROHF/GDF reached the driver with an invalid FRAGMO partition")
+
+    monkeypatch.setattr(
+        runner_module,
+        "run_krohf_periodic_gdf",
+        unexpected_driver,
+    )
+    system = _he_system(12.0)
+    system.unit_cell = [core.Atom(1, [6.0, 6.0, 6.0])]
+    system.multiplicity = 2
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+
+    with pytest.raises(ValueError, match=message):
+        vq.run_periodic_job(
+            system,
+            basis,
+            method="ROHF",
+            jk_method="gdf",
+            initial_guess="FRAGMO",
+            fragments=fragments,
+            **extra,
+            **_quiet_output_options(tmp_path, "rohf-gdf-fragmo-partition"),
         )
 
 
@@ -387,22 +508,23 @@ def test_periodic_sap_rejects_atomic_spins_before_scf(monkeypatch, tmp_path):
             "RKS",
             "gpw",
             (2, 1, 1),
-            "restart_from currently supplies one Gamma density",
+            "restart_from currently supplies one Gamma state",
         ),
         (
-            "ROHF",
+            # GPW ROHF/ROKS consume a Gamma restart since c199a65c (#602).
+            "UHF",
             "gpw",
             None,
-            "restart_from currently supplies one Gamma density",
+            "restart_from currently supplies one Gamma state",
         ),
         (
             "UHF",
             "gapw",
             None,
-            "restart_from currently supplies one Gamma density",
+            "restart_from currently supplies one Gamma state",
         ),
     ],
-    ids=["gdf", "gpw-multik", "gpw-rohf", "gapw-uhf"],
+    ids=["gdf", "gpw-multik", "gpw-uhf", "gapw-uhf"],
 )
 def test_restart_from_rejects_routes_that_cannot_consume_it(
     tmp_path,
@@ -469,4 +591,37 @@ def test_aiccm_auto_hcore_rejects_atomic_spin_seed(tmp_path, variant):
             atomic_spins=[1],
             aiccm_lattice_extension=(1, 1, 1),
             **_quiet_output_options(tmp_path, variant),
+        )
+
+
+def test_rohf_gdf_valid_fragmo_reaches_source_preparation(monkeypatch, tmp_path):
+    """Valid FRAGMO passes route admission; stop before fragment SCF."""
+    import vibeqc.guess_fragmo as fragmo_module
+    import vibeqc.periodic_runner as runner_module
+
+    class SourcePreparationReached(Exception):
+        pass
+
+    def source_boundary(opts, system, basis, kmesh, fragments):
+        assert opts.initial_guess == core.InitialGuess.READ
+        assert len(fragments) == 1
+        assert tuple(fragments[0].atoms) == (0,)
+        assert fragments[0].multiplicity == 2
+        raise SourcePreparationReached
+
+    def unexpected_driver(*args, **kwargs):
+        pytest.fail("Numerical driver must not run in source-admission test")
+
+    monkeypatch.setattr(fragmo_module, "resolve_periodic_fragmo_source", source_boundary)
+    monkeypatch.setattr(runner_module, "run_krohf_periodic_gdf", unexpected_driver)
+    system = _he_system(12.0)
+    system.unit_cell = [core.Atom(1, [6.0, 6.0, 6.0])]
+    system.multiplicity = 2
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    with pytest.raises(SourcePreparationReached):
+        vq.run_periodic_job(
+            system, basis, method="ROHF", jk_method="gdf",
+            initial_guess="FRAGMO",
+            fragments=[fragmo_module.Fragment(atoms=[0], multiplicity=2)],
+            **_quiet_output_options(tmp_path, "rohf-gdf-valid-fragmo"),
         )

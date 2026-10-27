@@ -999,8 +999,13 @@ def _h2o_periodic_in_box(box: float = 50.0, *, center: bool = False):
     return sysp, basis, h2o
 
 
-def _tight_periodic_rhf_opts():
+def _tight_periodic_rhf_opts(*, molecular_limit=False):
     opts = vq.PeriodicRHFOptions()
+    # Issue #133: the 50-bohr-box callers below rely on the default 15-bohr
+    # cutoff leaving only g = 0 -- that IS the molecular-limit regime this
+    # section compares against. run_rhf_periodic_gamma now refuses such a cell
+    # list unless the caller declares it, so they declare it. It changes no sum.
+    opts.lattice_opts.gamma_only_0 = molecular_limit
     opts.conv_tol_energy = 1e-12
     opts.conv_tol_grad = 1e-10
     return opts
@@ -1008,9 +1013,12 @@ def _tight_periodic_rhf_opts():
 
 def test_run_rhf_periodic_gamma_no_dft_plus_u_unchanged():
     sysp, basis, _ = _h2o_periodic_in_box()
-    r_a = vq.run_rhf_periodic_gamma(sysp, basis, _tight_periodic_rhf_opts())
+    r_a = vq.run_rhf_periodic_gamma(
+        sysp, basis, _tight_periodic_rhf_opts(molecular_limit=True),
+    )
     r_b = vq.run_rhf_periodic_gamma(
-        sysp, basis, _tight_periodic_rhf_opts(), dft_plus_u=[],
+        sysp, basis, _tight_periodic_rhf_opts(molecular_limit=True),
+        dft_plus_u=[],
     )
     assert r_a.converged and r_b.converged
     assert r_a.energy == pytest.approx(r_b.energy, rel=0.0, abs=1e-14)
@@ -1020,9 +1028,11 @@ def test_run_rhf_periodic_gamma_no_dft_plus_u_unchanged():
 
 def test_run_rhf_periodic_gamma_dft_plus_u_zero_U_is_no_op():
     sysp, basis, _ = _h2o_periodic_in_box()
-    baseline = vq.run_rhf_periodic_gamma(sysp, basis, _tight_periodic_rhf_opts())
+    baseline = vq.run_rhf_periodic_gamma(
+        sysp, basis, _tight_periodic_rhf_opts(molecular_limit=True),
+    )
     with_zero = vq.run_rhf_periodic_gamma(
-        sysp, basis, _tight_periodic_rhf_opts(),
+        sysp, basis, _tight_periodic_rhf_opts(molecular_limit=True),
         dft_plus_u=[vq.HubbardSite(0, 1, U_ev=4.0, J_ev=4.0)],
     )
     assert with_zero.converged
@@ -1041,7 +1051,8 @@ def test_run_rhf_periodic_gamma_dft_plus_u_matches_molecular_rhf():
     sysp, basis, h2o_atoms = _h2o_periodic_in_box()
     sites = [vq.HubbardSite(0, 1, U_ev=4.0)]  # O's p-channel
     p_result = vq.run_rhf_periodic_gamma(
-        sysp, basis, _tight_periodic_rhf_opts(), dft_plus_u=sites,
+        sysp, basis, _tight_periodic_rhf_opts(molecular_limit=True),
+        dft_plus_u=sites,
     )
     # Molecular reference at the same geometry + basis.
     mol = vq.Molecule(h2o_atoms, 0, 1)
@@ -1067,9 +1078,11 @@ def test_run_rhf_periodic_gamma_dft_plus_u_positive_shift():
     """+U on H2O/sto-3g's O p-channel gives a strictly positive
     Dudarev contribution and shifts the total cell energy upward."""
     sysp, basis, _ = _h2o_periodic_in_box()
-    baseline = vq.run_rhf_periodic_gamma(sysp, basis, _tight_periodic_rhf_opts())
+    baseline = vq.run_rhf_periodic_gamma(
+        sysp, basis, _tight_periodic_rhf_opts(molecular_limit=True),
+    )
     plus_u = vq.run_rhf_periodic_gamma(
-        sysp, basis, _tight_periodic_rhf_opts(),
+        sysp, basis, _tight_periodic_rhf_opts(molecular_limit=True),
         dft_plus_u=[vq.HubbardSite(0, 1, U_ev=4.0)],
     )
     assert plus_u.converged
@@ -1087,9 +1100,12 @@ def test_run_rhf_periodic_gamma_dft_plus_u_positive_shift():
 # ---------------------------------------------------------------------------
 
 
-def _tight_periodic_ks_opts(functional: str = "lda"):
+def _tight_periodic_ks_opts(functional: str = "lda", *, molecular_limit=False):
     opts = vq.PeriodicKSOptions()
     opts.functional = functional
+    # Issue #133: same 50-bohr molecular-limit box as the RHF section above;
+    # run_rks_periodic refuses the collapsed cell list unless it is declared.
+    opts.lattice_opts.gamma_only_0 = molecular_limit
     opts.conv_tol_energy = 1e-12
     opts.conv_tol_grad = 1e-10
     return opts
@@ -1102,9 +1118,11 @@ def _gamma_kmesh(sysp):
 def test_run_rks_periodic_gamma_dft_plus_u_zero_U_is_no_op():
     sysp, basis, _ = _h2o_periodic_in_box()
     kmesh = _gamma_kmesh(sysp)
-    baseline = vq.run_rks_periodic(sysp, basis, kmesh, _tight_periodic_ks_opts())
+    baseline = vq.run_rks_periodic(
+        sysp, basis, kmesh, _tight_periodic_ks_opts(molecular_limit=True),
+    )
     with_zero = vq.run_rks_periodic(
-        sysp, basis, kmesh, _tight_periodic_ks_opts(),
+        sysp, basis, kmesh, _tight_periodic_ks_opts(molecular_limit=True),
         dft_plus_u=[vq.HubbardSite(0, 1, U_ev=4.0, J_ev=4.0)],
     )
     assert with_zero.converged
@@ -1120,7 +1138,9 @@ def test_run_rks_periodic_gamma_dft_plus_u_matches_molecular_rks():
     kmesh = _gamma_kmesh(sysp)
     sites = [vq.HubbardSite(0, 1, U_ev=4.0)]
     p_result = vq.run_rks_periodic(
-        sysp, basis, kmesh, _tight_periodic_ks_opts("lda"), dft_plus_u=sites,
+        sysp, basis, kmesh,
+        _tight_periodic_ks_opts("lda", molecular_limit=True),
+        dft_plus_u=sites,
     )
     mol = vq.Molecule(h2o_atoms, 0, 1)
     mbasis = vq.BasisSet(mol, "sto-3g")
@@ -1144,9 +1164,11 @@ def test_run_rks_periodic_gamma_dft_plus_u_matches_molecular_rks():
 def test_run_rks_periodic_gamma_dft_plus_u_positive_shift():
     sysp, basis, _ = _h2o_periodic_in_box()
     kmesh = _gamma_kmesh(sysp)
-    baseline = vq.run_rks_periodic(sysp, basis, kmesh, _tight_periodic_ks_opts())
+    baseline = vq.run_rks_periodic(
+        sysp, basis, kmesh, _tight_periodic_ks_opts(molecular_limit=True),
+    )
     plus_u = vq.run_rks_periodic(
-        sysp, basis, kmesh, _tight_periodic_ks_opts(),
+        sysp, basis, kmesh, _tight_periodic_ks_opts(molecular_limit=True),
         dft_plus_u=[vq.HubbardSite(0, 1, U_ev=4.0)],
     )
     assert plus_u.converged
@@ -1165,11 +1187,12 @@ def test_run_rks_periodic_multi_k_dft_plus_u_runs():
     kmesh_multi = vq.KPoints.monkhorst_pack(sysp, (2, 1, 1))
     sites = [vq.HubbardSite(0, 1, U_ev=4.0)]
     r_g = vq.run_rks_periodic(
-        sysp, basis, kmesh_g, _tight_periodic_ks_opts(),
+        sysp, basis, kmesh_g, _tight_periodic_ks_opts(molecular_limit=True),
         dft_plus_u=sites,
     )
     r_mk = vq.run_rks_periodic(
-        sysp, basis, kmesh_multi, _tight_periodic_ks_opts(),
+        sysp, basis, kmesh_multi,
+        _tight_periodic_ks_opts(molecular_limit=True),
         dft_plus_u=sites,
     )
     assert r_g.converged and r_mk.converged
@@ -1636,6 +1659,9 @@ def test_compute_gradient_periodic_rhf_gamma_dft_plus_u_matches_molecular():
     optsp.conv_tol_energy = 1e-12
     optsp.lattice_opts.cutoff_bohr = 25.0
     optsp.lattice_opts.nuclear_cutoff_bohr = 25.0
+    # 37.8-bohr box, 25-bohr cutoff: only g = 0, the intended molecular
+    # limit, so it is declared (#133).
+    optsp.lattice_opts.gamma_only_0 = True
     rp = vq.run_rhf_periodic_gamma(sysp, basisp, optsp, dft_plus_u=sites)
     g_p = vq.compute_gradient_periodic_rhf_gamma(
         sysp, basisp, rp, lattice_opts=optsp.lattice_opts,
@@ -1680,6 +1706,7 @@ def test_compute_gradient_periodic_rks_gamma_dft_plus_u_matches_molecular():
     ks_opts.conv_tol_energy = 1e-12
     ks_opts.lattice_opts.cutoff_bohr = 25.0
     ks_opts.lattice_opts.nuclear_cutoff_bohr = 25.0
+    ks_opts.lattice_opts.gamma_only_0 = True  # same 37.8-bohr box (#133)
     kmesh = vq.monkhorst_pack(sysp, [1, 1, 1])
     rp = vq.run_rks_periodic(sysp, basisp, kmesh, ks_opts, dft_plus_u=sites)
     g_p = vq.compute_gradient_periodic_rks_gamma(
@@ -1777,11 +1804,14 @@ def test_compute_bipole_gradient_uhf_dft_plus_u_contribution_matches_molecular()
 
     # Legacy Γ-local gauge and pre-M5 traversal pinned explicitly: the
     # analytic BIPOLE gradient implements those historical domains only.
+    # Physical BIPOLE support is the default since #316 and refuses the legacy
+    # 3D gauge, so the historical replay is selected by name.
     rp_u = run_pbc_bipole_uhf(
         sysp, basisp, km, opts, ewald_precision=1e-8, dft_plus_u=sites,
         use_exchange_ewald_split=False,
         sr_image_precision=None,
         use_fock_symmetry_reduce=False,
+        historical_domain=True,
     )
     assert rp_u.converged
     g_p_u = np.asarray(vq.compute_bipole_gradient_uhf(
@@ -1793,6 +1823,7 @@ def test_compute_bipole_gradient_uhf_dft_plus_u_contribution_matches_molecular()
         use_exchange_ewald_split=False,
         sr_image_precision=None,
         use_fock_symmetry_reduce=False,
+        historical_domain=True,
     )
     assert rp_0.converged
     g_p_0 = np.asarray(vq.compute_bipole_gradient_uhf(
@@ -1857,6 +1888,7 @@ def test_compute_bipole_gradient_uks_dft_plus_u_contribution_matches_molecular()
         use_exchange_ewald_split=False,
         sr_image_precision=None,
         use_fock_symmetry_reduce=False,
+        historical_domain=True,
     )
     assert rp_u.converged
     g_p_u = np.asarray(vq.compute_bipole_gradient_uks(
@@ -1868,6 +1900,7 @@ def test_compute_bipole_gradient_uks_dft_plus_u_contribution_matches_molecular()
         use_exchange_ewald_split=False,
         sr_image_precision=None,
         use_fock_symmetry_reduce=False,
+        historical_domain=True,
     )
     assert rp_0.converged
     g_p_0 = np.asarray(vq.compute_bipole_gradient_uks(
@@ -1953,3 +1986,30 @@ def test_run_pbc_bipole_rks_dft_plus_u_runs():
     )
     assert r.converged
     assert r.e_dft_plus_u > 0.0
+
+
+def test_run_job_optimisation_walks_the_hubbard_surface(tmp_path):
+    """The optimiser's SCF and gradient carry the Hubbard sites: the final
+    geometry is stationary on the +U surface, not on the plain one, and the
+    reported energy is a +U single point there."""
+    import numpy as np
+    from vibeqc.runner import run_job
+
+    mol = vq.Molecule([vq.Atom(1, [0.0, 0.0, 0.0]), vq.Atom(1, [0.2, -0.1, 1.8])], 0, 1)
+    opts = vq.RHFOptions()
+    opts.conv_tol_energy, opts.conv_tol_grad, opts.stability_check = 1e-12, 1e-9, False
+    site = vq.HubbardSite(atom_index=0, l=0, U_ev=4.0)
+    result = run_job(mol, method="rhf", basis="sto-3g", output=tmp_path / "h2u", dft_plus_u=[site],
+                     optimize=True, geom_opt="bfgs", geom_conv_gmax=1e-6, max_opt_steps=50, rhf_options=opts,
+                     name_molecule=False, progress=False, record_hostname=False, crash_dump=False)
+    assert result.converged and abs(result.e_dft_plus_u) > 1e-4
+    lines = (tmp_path / "h2u.xyz").read_text().splitlines()
+    bohr = 1 / 0.529177210903
+    final = vq.Molecule([vq.Atom(a.Z, [float(x) * bohr for x in line.split()[1:4]])
+                         for a, line in zip(mol.atoms, lines[2:4])], 0, 1)
+    basis = vq.BasisSet(final, "sto-3g")
+    at_final = vq.run_rhf(final, basis, opts, dft_plus_u=[site])
+    assert at_final.energy == pytest.approx(result.energy, abs=1e-8)
+    hubbard = np.asarray(vq.compute_gradient(final, basis, at_final, dft_plus_u=[site]))
+    plain = np.asarray(vq.compute_gradient(final, basis, vq.run_rhf(final, basis, opts)))
+    assert np.abs(hubbard).max() < 1e-5 and np.abs(plain).max() > 1e-3

@@ -17,7 +17,7 @@ drivers, so the conventions cannot drift:
   its shared-q batched build;
 * Hartree ``J`` from the BZ-summed total density ``S_j w_j D_t(k_j)``,
   with **no** conjugate on the diagonal cderi (the 2026-06-18 ``E_J``
-  fix -- see ``handovers/HANDOVER_GDF_OUTSTANDING.md`` Sec. 9 item 3);
+  fix);
 * the ``exxdiv='ewald'`` BvK-supercell Madelung K-shift, applied once
   per spin channel (:func:`vibeqc.madelung.apply_exxdiv_ewald_to_K`);
 * the converged Ewald nuclear repulsion for ``dim == 3``.
@@ -35,7 +35,7 @@ Efficiency + parallelism over the k-points
 *Setup.* The ``rsgdf`` cderi cache is built by
 :func:`vibeqc.periodic_k_gdf._build_rsgdf_lpq_cache_shared_q`, whose
 per-momentum-transfer group loop is the existing MPI seam
-(``handovers/HANDOVER_MPI.md`` step 4): whole q-groups are farmed across
+(the original investigation step 4): whole q-groups are farmed across
 ranks via :class:`vibeqc.mpi.KPointPartition` and reassembled with one
 ordered gather. This driver reuses that path unchanged, so its dominant
 setup cost is already distributed -- and byte-identical on one rank.
@@ -122,6 +122,7 @@ from .periodic_k_gdf import (
     _options_or_default,
     _preflight_gdf_lpq_memory,
     _reject_slab_dim,
+    _resolve_rsgdf_ke_cutoff,
     _warn_multik_dense_core_gdf_parity_hold,
 )
 from .periodic_rhf_multi_k_ewald import (
@@ -281,7 +282,7 @@ def run_krohf_periodic_gdf(
     gdf_method: str = "rsgdf",
     rsgdf_omega: float = 0.4,
     rsgdf_g_precision: float = 1e-10,
-    rsgdf_ke_cutoff: float = 200.0,
+    rsgdf_ke_cutoff: Optional[float] = None,
     rsgdf_tail_ke_cutoff: Optional[float] = None,
     fit_screen_threshold: float = 0.0,
     mdf_ke_cutoff: float = 40.0,
@@ -354,8 +355,15 @@ def run_krohf_periodic_gdf(
 
     plog = resolve_progress(progress, verbose=verbose)
     opts = _options_or_default(options, is_ks=False)
-    from .pbc_gdf import _refuse_ecp_options
-    _refuse_ecp_options(opts, "run_krohf_periodic_gdf", system=system)
+    # ECP cells run here since #35 with the three pieces of the closed- and
+    # open-shell k-point GDF drivers: the Z_eff nuclear frame for V_ne and
+    # the ionic energy, the Bloch-summed lattice V_ECP in every Hcore(k),
+    # and the valence fill. Orphan metadata is refused by the same
+    # validators those drivers use.
+    from .periodic_k_gdf import _ecp_lattice_blocks, _periodic_ecp_context
+    _ecp_ctx = _periodic_ecp_context(opts, system, "run_krohf_periodic_gdf")
+    _ecp_ncore = _ecp_ctx[3] if _ecp_ctx is not None else 0
+    _system_v = _ecp_ctx[4] if _ecp_ctx is not None else system
     lat_opts: LatticeSumOptions = opts.lattice_opts
 
     if str(getattr(opts, "functional", "") or ""):
@@ -372,12 +380,17 @@ def run_krohf_periodic_gdf(
         driver="run_krohf_periodic_gdf",
         supported=ROHF_GDF_GUESSES, restart_supplied=initial_density_k is not None,
     )
-    from .guess import select_initial_guess
+    from .guess import guess_ecp_context, select_initial_guess, validate_guess_ecp
+    _guess_mol = system.unit_cell_molecule()
+    _guess_ecp = validate_guess_ecp(
+        guess, guess_ecp_context(opts, molecule=_guess_mol), _guess_mol
+    )
     select_initial_guess(
-        system.unit_cell_molecule(), opts.initial_guess,
+        _guess_mol, opts.initial_guess,
         is_periodic=True, is_open_shell=True,
         atomic_spins=getattr(opts, "atomic_spins", None),
         restart_supplied=initial_density_k is not None,
+        ecp_context=_guess_ecp,
     )
 
 
@@ -418,7 +431,7 @@ def run_krohf_periodic_gdf(
         )
 
 
-    n_elec = system.n_electrons()
+    n_elec = system.n_electrons() - _ecp_ncore
     mult = int(system.multiplicity)
     if mult < 1:
         raise ValueError(
@@ -428,6 +441,7 @@ def run_krohf_periodic_gdf(
         raise ValueError(
             f"run_krohf_periodic_gdf: n_electrons={n_elec} and multiplicity="
             f"{mult} cannot be split into integer a/b occupations."
+            + (f" ({_ecp_ncore} ECP core electrons removed)" if _ecp_ncore else "")
         )
     n_alpha = (n_elec + mult - 1) // 2
     n_beta = (n_elec - mult + 1) // 2
@@ -453,6 +467,7 @@ def run_krohf_periodic_gdf(
             DeprecationWarning, stacklevel=2,
         )
         rsgdf_tail_ke_cutoff = None
+    _rsgdf_ke_request, rsgdf_ke_cutoff = _resolve_rsgdf_ke_cutoff(rsgdf_ke_cutoff)
     dense_core_parity_held = not bulk_sr and _warn_multik_dense_core_gdf_parity_hold(
         system,
         gdf_method,
@@ -465,13 +480,24 @@ def run_krohf_periodic_gdf(
         f"ROHF multi-k GDF / aux={aux_name}, n_alpha={n_alpha}, "
         f"n_beta={n_beta} (mult={mult}), {n_alpha - n_beta} open shell(s)"
     )
+    if _ecp_ctx is not None:
+        plog.info(
+            f"periodic ECP: {_ecp_ncore} core electrons replaced on "
+            f"{len(_ecp_ctx[0])} centre(s); V_ne and E_nuc on the Z_eff frame"
+        )
 
     # ---- One-electron integrals (Ewald-3D gauge for V_ne / e_nuc) -----
     oneel_lat_opts = _oneel_lattice_opts(
         system, basis, lat_opts,
         rcut_strategy=rcut_strategy, k_points_cart=kpoints_cart, plog=plog,
+        admit=lambda bound_opts: _preflight_gdf_oneel_memory(
+            system, basis, bound_opts, n_kpoints=n_k,
+            ecp_active=_ecp_ctx is not None),
     )
-    _preflight_gdf_oneel_memory(system, basis, oneel_lat_opts, n_kpoints=n_k)
+    _preflight_gdf_oneel_memory(
+        system, basis, oneel_lat_opts, n_kpoints=n_k,
+        ecp_active=_ecp_ctx is not None,
+    )
     with plog.stage(
         "integrals_lattice",
         detail=f"S/T cutoff {oneel_lat_opts.cutoff_bohr:.2f}, "
@@ -480,7 +506,10 @@ def run_krohf_periodic_gdf(
         S_lat = compute_overlap_lattice(basis, system, oneel_lat_opts)
         T_lat = compute_kinetic_lattice(basis, system, oneel_lat_opts)
         gauge_lat_opts = _gauge_lat_opts_for_v_ne_and_e_nuc(oneel_lat_opts, system)
-        V_lat = compute_nuclear_lattice_dispatch(basis, system, gauge_lat_opts)
+        V_lat = compute_nuclear_lattice_dispatch(basis, _system_v, gauge_lat_opts)
+        V_ecp_lat = (
+            _ecp_lattice_blocks(basis, system, oneel_lat_opts, _ecp_ctx)
+            if _ecp_ctx is not None else None)
 
     S_k: List[np.ndarray] = []
     Hcore_k: List[np.ndarray] = []
@@ -492,6 +521,8 @@ def run_krohf_periodic_gdf(
         Sk = np.asarray(bloch_sum(S_lat, k_arr))
         Tk = np.asarray(bloch_sum(T_lat, k_arr))
         Vk = np.asarray(bloch_sum(V_lat, k_arr))
+        if V_ecp_lat is not None:
+            Vk = Vk + np.asarray(bloch_sum(V_ecp_lat, k_arr))
         Sk = 0.5 * (Sk + Sk.conj().T)
         Hk = 0.5 * ((Tk + Vk) + (Tk + Vk).conj().T)
         _gdf_overlap_preflight(Sk, plog=plog, label=f"S(k={k_idx})", basis=basis)
@@ -515,9 +546,9 @@ def run_krohf_periodic_gdf(
         # Converged Ewald nuclear energy -- the truncated direct sum is
         # unconverged at the 1e-5 Ha level on dense ionic cells and
         # carries a spurious geometry dependence (2026-07-29 finding).
-        e_nuc = float(ewald_nuclear_repulsion(system))
+        e_nuc = float(ewald_nuclear_repulsion(_system_v))
     else:
-        e_nuc = float(nuclear_repulsion_per_cell(system, gauge_lat_opts))
+        e_nuc = float(nuclear_repulsion_per_cell(_system_v, gauge_lat_opts))
 
     # ---- Per-(k_i,k_j) Lpq cderi cache (spin-independent) -------------
     mol = system.unit_cell_molecule()
@@ -566,11 +597,11 @@ def run_krohf_periodic_gdf(
                 lpq_cache = _build_scf_range_separated_lpq_cache(
                     system, basis, aux, kpoints_cart, True,
                     omega=rsgdf_omega, raw_integral_error=rsgdf_g_precision,
-                    ke_cutoff=rsgdf_ke_cutoff, linear_dep_thr=gdf_linear_dep_threshold,
+                    ke_cutoff=_rsgdf_ke_request, linear_dep_thr=gdf_linear_dep_threshold,
                     lat_opts=lat_opts, fit_screen_threshold=fit_screen_threshold,
                     options=opts, open_shell=True, progress=plog,
                     pair_cache_builder=_lpq_cache_builder,
-                    bra_rows=None, oneel_lattices=(S_lat, T_lat, V_lat),
+                    bra_rows=None, oneel_lattices=(S_lat, T_lat, V_lat, V_ecp_lat),
                     density_return_bytes=getattr(
                         getattr(_finish_density_return, '__self__', None),
                         'reserved_peak_bytes', 0,
@@ -616,6 +647,7 @@ def run_krohf_periodic_gdf(
     guess_fock = periodic_fock_guess_k(
         system, basis, kpoints_cart, guess, lattice_opts=oneel_lat_opts,
         overlap_lattice=S_lat, kinetic_lattice=T_lat,
+        ecp_context=_guess_ecp,
     )
     # Fock-mode guesses use the same restricted-open occupation convention
     # as the SCF; density-mode guesses replace both densities and factors.
@@ -655,6 +687,7 @@ def run_krohf_periodic_gdf(
             periodic_system=system, lattice_opts=oneel_lat_opts,
             overlap=S_k, weights=weights,
             atomic_spins=getattr(opts, "atomic_spins", None),
+            ecp_context=_guess_ecp,
         )
         D_a_k = [np.asarray(da, dtype=complex).copy() for _ in range(n_k)]
         D_b_k = [np.asarray(db, dtype=complex).copy() for _ in range(n_k)]

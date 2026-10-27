@@ -2,6 +2,7 @@
 // current-snapshot diagnostic borrows numerical trial T in exact warm frames.
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 #include <array>
 #include <cstring>
 #include "vibeqc/periodic_gaussian_pair_particle_hole.hpp"

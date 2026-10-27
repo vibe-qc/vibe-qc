@@ -1,0 +1,1 @@
+- Route cached molecular DLPNO-UCCSD spin-PAO Fock blocks through the shared residual-checked eigensolver with source, frozen, atom-domain and spin coordinates. Preserve overlap rank selection, projection tails, empty-space behavior and cache reuse without retaining solver snapshots.

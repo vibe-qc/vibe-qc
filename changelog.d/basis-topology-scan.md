@@ -1,0 +1,8 @@
+### Added
+
+- `vibeqc.basis_optimization.recipes.topology_scan.run_topology_scan` scans how many functions of one angular momentum an element carries in a crystal (the M3 gate, #225). It starts from a bundled pob record and runs `vibe_basis.topology.greedy_scan`. Every candidate's uncontracted exponents of the scanned type are relaxed in log space with BOBYQA, with the rev2 lower bound of 0.15. The relaxed exponents seed the next round. Each candidate is scored on total energy per cell (kJ/mol), primitive count and overlap conditioning. Energies are journalled, so a restarted scan reuses every finished point. A point lost in transit is retried, and when every retry fails the scan stops (`TransportUnavailable`) so a restart resumes from the journal; only a failed SCF reaches BOBYQA, as a finite penalty. `crystal23_engine_factory` runs each point on CRYSTAL23 through `vq`. The run record, `scan_record.json`, holds every candidate with its move, exponents and energies, and reports how far the shipped topology trails the Pareto front.
+- vibe-basis 0.13.0: `greedy_scan` carries a relaxed topology forward when the evaluator returns `Relaxed`, keeps one record per candidate in `ScanResult.candidates`, evaluates a round through an injected map (a thread pool's, for concurrent candidates) and no longer evaluates the baseline twice. `front_gap` gives the distance behind the front. `optimize_nlopt` takes `ftol_abs` and `xtol_abs`.
+
+### Fixed
+
+- `vibe_basis.optimize.optimize_nlopt` returned the starting point, paired with the best value, when NLopt stopped roundoff-limited; it now returns the best evaluated point. Its relative `tol` alone stopped a total-energy objective early (1e-4 of a -275 Ha cell is 0.03 Ha), which the new absolute tolerances avoid.

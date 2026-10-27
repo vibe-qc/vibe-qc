@@ -11,7 +11,7 @@ through the Bloch phase ``exp(+i k.R)`` -- so the batch must agree with
 per-pair single builds to floating-point rounding while running the
 dominant pair-FT pass once per unique q instead of once per pair
 (``n_k^2 -> n_k`` on a regular full mesh; the open perf item in
-``handovers/HANDOVER_OPEN_BUGS_V015.md``, production-k-sampling
+the original investigation, production-k-sampling
 follow-ups).
 """
 
@@ -178,6 +178,46 @@ def _range_separated_fit_options():
     )
 
 
+@pytest.mark.parametrize('fraction', [0., .23, .5])
+def test_classic_precision_preserves_complete_support_and_conjugate_operator(fraction):
+    pytest.importorskip('mpmath')
+    import json
+    from vibeqc import _vibeqc_core as core
+    system, basis, auxiliary = _range_separated_fit_fixture()
+    shells = list(auxiliary.shells())
+    auxiliary = core.BasisSet(system.unit_cell_molecule(), shells+[shells[0]],
+                              'duplicate-auxiliary', coefficients_pre_normalized=True)
+    reciprocal = np.asarray(system.reciprocal_lattice())
+    q = reciprocal[:, 0]*fraction
+    bras = np.array([[0., 0., 0.], [.13, -.04, .07]])
+    lat = LatticeSumOptions(); lat.cutoff_bohr = 6.; lat.pair_complete_1e = True
+    opts = dict(ke_cutoff=3., lat_opts=lat, linear_dep_thr=1e-9,
+                canonical_auxiliary_basis=True, support_policy='physical_pairs',
+                memory_byte_cap=256*2**20, image_candidate_cap=10000, tail_chunk_g=64)
+    records = []
+    baseline = build_lpq_bloch_native_fft_shared_q(system,basis,auxiliary,bras,q,
+        _support_recorder=records.append, **opts)
+    cache = {}
+    precise = build_lpq_bloch_native_fft_shared_q(system,basis,auxiliary,bras,q,
+        metric_precision_digits=35, _q_metric_cache=cache, _support_recorder=records.append, **opts)
+    old, new = map(json.loads, records)
+    for key in ('reciprocal_base','reciprocal_tail','cell_enclosure_cart_bohr','metric_keep','rank'):
+        assert new[key] == old[key]
+    assert new['spectral_construction']['original_double_rank_preserved']
+    for a,b in zip(baseline,precise):
+        np.testing.assert_allclose(a.reshape(len(a),-1).conj().T@a.reshape(len(a),-1),
+                                   b.reshape(len(b),-1).conj().T@b.reshape(len(b),-1),atol=2e-11,rtol=0)
+    opposite = build_lpq_bloch_native_fft_shared_q(system,basis,auxiliary,-bras,-q,
+        metric_precision_digits=35, **opts)
+    np.testing.assert_allclose(precise, np.conj(opposite), atol=1e-10, rtol=0)
+    reordered = build_lpq_bloch_native_fft_shared_q(system,basis,auxiliary,bras[::-1],q,
+        metric_precision_digits=35, _q_metric_cache=cache, **opts)
+    np.testing.assert_array_equal(reordered, precise[::-1])
+    with pytest.raises(ValueError, match='different source'):
+        build_lpq_bloch_native_fft_shared_q(system,basis,auxiliary,bras,q,
+            metric_precision_digits=45, _q_metric_cache=cache, **opts)
+
+
 def test_range_separated_canonical_frame_preserves_gram_and_auxiliary_covariance():
     from vibeqc import _vibeqc_core as core
     from vibeqc.aux_basis import _build_lpq_range_separated_shared_q
@@ -263,6 +303,106 @@ def test_range_separated_cutoff_plan_converges_all_raw_source_terms(q):
     assert tighter.pair_cutoff > plan.pair_cutoff
     assert tighter.auxiliary_cutoff > plan.auxiliary_cutoff
     assert tighter.ke_cutoff > plan.ke_cutoff
+
+
+@pytest.mark.parametrize('q', [np.zeros(3), np.array([.13, -.09, .07])])
+def test_range_separated_shell_pair_radii_keep_the_raw_source_bound(q):
+    """GitLab IID 543: per-shell-pair reciprocal radii, same per-element bound.
+
+    A compact and a diffuse s shell per atom: the compact pairs' image
+    radius shrinks well below the global (diffuse-pair) cutoff, the
+    largest radius reproduces it, and raw M/T stay within the planner's
+    error of a 1.2x-converged unscreened reference, at every ket in a tile.
+    """
+    from vibeqc import _vibeqc_core as core
+    from vibeqc.aux_basis import (
+        _plan_range_separated_gdf_cutoffs, _plan_range_separated_shell_pair_cutoffs,
+        _rsgdf_bounded_reciprocal_sphere,
+    )
+
+    system, _, auxiliary = _range_separated_fit_fixture()
+    mol = system.unit_cell_molecule()
+    centers = [[.2, .3, .4], [1.6, .3, .4]]
+    basis = core.BasisSet(mol, [
+        core.ShellInfo(i, 0, True, [a], [1.0], r)
+        for i, r in enumerate(centers) for a in (.25, 6.0)
+    ], "rsgdf-pair-radius-test", coefficients_pre_normalized=False)
+    error, omega = 1e-7, .7
+    plan = _plan_range_separated_gdf_cutoffs(
+        system, basis, auxiliary, q, omega=omega, raw_integral_error=error,
+    )
+    radii = _plan_range_separated_shell_pair_cutoffs(
+        system, basis, auxiliary, q, omega=omega,
+        integral_screen_error=plan.integral_screen_error, pair_cutoff=plan.pair_cutoff,
+    )
+    assert radii.shape == (4, 4)
+    assert radii.max() == plan.pair_cutoff
+    assert radii[1, 1] < 0.6 * plan.pair_cutoff   # compact-compact pair
+    kets = np.array([[.1, -.2, .3], [0., 0., 0.], [-.3, .1, .2]])
+
+    def raw(scale, screen, shell_radii):
+        vectors = _rsgdf_bounded_reciprocal_sphere(
+            system, q, plan.ke_cutoff * scale, output_byte_cap=2**24,
+            workspace_byte_cap=2**20, candidate_cap=10**7,
+        )
+        return core.compute_gdf_range_separated_integrals(
+            basis, auxiliary, system, q, kets, vectors,
+            omega, plan.pair_cutoff * scale, plan.auxiliary_cutoff * scale,
+            2**24, 2**20, 10**7, screen, shell_pair_cutoffs=shell_radii,
+        )
+    actual = raw(1., plan.integral_screen_error, radii)
+    reference = raw(1.2, 0., None)
+    np.testing.assert_allclose(actual[0], reference[0], rtol=0, atol=error)
+    np.testing.assert_allclose(actual[1], reference[1], rtol=0, atol=error)
+    # Uniform radii equal to the global cutoff reproduce the old domain bitwise.
+    uniform = np.full_like(radii, plan.pair_cutoff)
+    np.testing.assert_array_equal(
+        raw(1., plan.integral_screen_error, uniform)[1],
+        raw(1., plan.integral_screen_error, None)[1],
+    )
+    with pytest.raises(ValueError, match="shell-pair cutoffs"):
+        raw(1., plan.integral_screen_error, radii[:3])
+
+
+@pytest.mark.parametrize("kernel,omega_screen", [("coulomb", 0.), ("erfc", .4), ("erf", .4)])
+@pytest.mark.parametrize("q", [np.zeros(3), np.array([.13, -.09, .07])])
+def test_range_separated_k_tiles_preserve_scalar_sources_and_budget_fallback(kernel, omega_screen, q):
+    """Cross the eight-k tile and reciprocal panel boundaries on signed p shells."""
+    from vibeqc import _vibeqc_core as core
+
+    system, _, auxiliary = _range_separated_fit_fixture()
+    system = vq.PeriodicSystem(3,
+        np.array([[5., .3, .2], [0., 5.2, .4], [0., 0., 5.4]]),
+        [vq.Atom(1, [.2, .3, .4]), vq.Atom(1, [1.6, .3, .4])])
+    molecule = system.unit_cell_molecule()
+    basis = core.BasisSet(molecule, [
+        core.ShellInfo(0, 1, True, [.7, 1.8], [.8, -.21], [.2, .3, .4]),
+        core.ShellInfo(1, 0, True, [.6, 2.1], [1., 0.], [1.6, .3, .4]),
+    ], "ket-tiles", coefficients_pre_normalized=False)
+    ket = np.array([[.13*k, .017*(k % 3), -.037*k] for k in range(9)])
+    vectors = np.array([[.13*g-.31, .07*(g % 4)-.2, -.11*(g % 7)+.09]
+                        for g in range(129)])
+    vectors[0] = 0.
+
+    def build(kpoints, budget):
+        return core.compute_gdf_range_separated_integrals(
+            basis, auxiliary, system, q, kpoints, vectors,
+            .5, 3., 3., 2**22, budget, 10**6, 0., True, kernel, omega_screen,
+        )
+
+    combined = build(ket, 2**20)
+    if kernel == "erf":
+        # This pure reciprocal source needs no separate Libint engine pool.
+        # The budget fits scalar Fourier workspace, but not a batch frame.
+        constrained = build(ket, 80000)
+        np.testing.assert_array_equal(combined[0], constrained[0])
+        np.testing.assert_array_equal(combined[1], constrained[1])
+        assert combined[2] == constrained[2]
+    for k in range(len(ket)):
+        scalar = build(ket[k:k+1], 2**20)
+        np.testing.assert_array_equal(combined[0], scalar[0])
+        np.testing.assert_array_equal(combined[1][k:k+1], scalar[1])
+        assert combined[2] == scalar[2]
 
 
 def test_range_separated_cutoff_mesh_does_not_follow_steepest_exponent():
@@ -1544,8 +1684,8 @@ def test_aux_ft_cache_budget_handles_a_bad_env_value(monkeypatch):
 # the fit screen). Those were single-threaded passes over the largest
 # array in the cderi build, and they anti-scaled against the threads the
 # kernel itself uses -- 0.537 s at one thread against 0.671 s at sixteen
-# (measured 2026-08-05; see handovers/HANDOVER_GDF_OUTSTANDING.md, which
-# also records that the profile's larger 4.428 s figure is the whole of
+# (measured 2026-08-05; the profile's larger 4.428 s figure is the whole of
+#
 # `_accumulate_chunk`'s own time, NOT these passes). The kernel now
 # applies the weight as it stores, so neither pass exists.
 #
@@ -1840,9 +1980,12 @@ def test_production_gamma_and_general_spin_paths_share_sr_lr_source(monkeypatch)
     options.lattice_opts.nuclear_cutoff_bohr = 18.0
     energies = []
     for omega in (.45, .7):
+        # No rsgdf_ke_cutoff: each omega runs at the planner's cutoff for
+        # rsgdf_g_precision (21.28 / 51.55 Ha), which is what the former 20 Ha
+        # floor executed. An explicit value is now used exactly (GitLab IID 206).
         controls = dict(options=options, gdf_method='rsgdf', aux_basis='test',
                         rsgdf_omega=omega, rsgdf_g_precision=1e-10,
-                        rsgdf_ke_cutoff=20.0, progress=False)
+                        progress=False)
         gamma = gamma_module.run_pbc_gdf_rhf(system, basis, **controls)
         restricted = k_module.run_krhf_periodic_gdf(system, basis, **controls)
         unrestricted = k_module.run_kuhf_periodic_gdf(system, basis, **controls)
@@ -1961,3 +2104,40 @@ def test_range_separated_cache_retries_only_batch_dependent_reservations(
         )
     assert caught.value is failure
     assert calls == expected
+
+
+def test_range_separated_cache_shares_sr_sources_across_q_without_changing_factors(monkeypatch):
+    """GitLab IID 543: the multi-q SR pre-build reproduces the per-q cache."""
+    import vibeqc.periodic_k_gdf as pkg
+
+    system, basis, auxiliary = _range_separated_fit_fixture()
+    reciprocal = np.asarray(system.reciprocal_lattice())
+    kpoints = np.array([[0., 0., 0.], [.5, 0., 0.], [0., .5, 0.], [.5, .5, 0.]]) @ reciprocal.T
+    options = _range_separated_fit_options()
+    calls = []
+    original = pkg._build_sr_three_center_for_groups
+
+    def spy(*args, **kwargs):
+        calls.append(len(args[5]))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(pkg, "_build_sr_three_center_for_groups", spy)
+    kwargs = dict(
+        omega=options["omega"], pair_cutoff=options["pair_cutoff"],
+        auxiliary_cutoff=options["auxiliary_cutoff"], ke_cutoff=options["ke_cutoff"],
+        linear_dep_thr=options["linear_dep_thr"], memory_byte_cap=256 * 2**20,
+        native_workspace_byte_cap=options["native_workspace_byte_cap"],
+        image_candidate_cap=options["image_candidate_cap"],
+        reciprocal_candidate_cap=options["reciprocal_candidate_cap"],
+        integral_screen_error=1e-12,
+    )
+    shared = pkg._build_range_separated_lpq_cache(
+        system, basis, auxiliary, kpoints, True, **kwargs)
+    assert calls and max(calls) > 1
+    monkeypatch.setattr(pkg, "_build_sr_three_center_for_groups",
+                        lambda *a, **k: {})
+    single = pkg._build_range_separated_lpq_cache(
+        system, basis, auxiliary, kpoints, True, **kwargs)
+    assert set(shared.factors) == set(single.factors)
+    for pair in single.factors:
+        np.testing.assert_array_equal(shared.factors[pair], single.factors[pair])

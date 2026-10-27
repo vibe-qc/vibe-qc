@@ -132,6 +132,8 @@ class TestMolecularNEBQVF:
         assert report["valid"], report["errors"]
         with zipfile.ZipFile(path) as zf:
             mf = json.loads(zf.read("manifest.json"))
+            assert mf["provenance"]["scf_converged"] is True
+            assert mf["provenance"].get("scf_applicable") is not False
             kinds = {s["kind"] for s in mf["sections"]}
             assert kinds == {"structure", "reaction.path", "citations"}
             # Molecular NEB → v1 archive (no lattice on the

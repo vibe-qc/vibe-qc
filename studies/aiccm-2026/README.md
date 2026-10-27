@@ -292,7 +292,151 @@ Reference: Peintinger & Bredow, *J. Comput. Chem.* **35**, 839 (2014),
 doi:10.1002/jcc.23550; AICCM theory in `AICCM_ALGORITHM.md` §13; method docs in
 `docs/aiccm2026dev_a.md`.
 
+## Real-Gamma ladder parity against PySCF and CRYSTAL23 (RG-13)
+
+The real-Gamma producer (`run_ccm_rhf_direct`) evaluates the neutral
+fitted-torus Hamiltonian on the `nrep` supercell at Gamma. By band folding
+that is the unit cell's periodic HF on the Gamma-centred `nrep` k-mesh, and
+the real-Gamma and neutral-Bloch producers agree to 1e-10 Ha/cell in the test
+suite. These results are evidence on that neutral control for the production
+ledger (`docs/aiccm2026dev_a_production.md`, RG-13), not a Gamma-CCM result in
+the sense of the section above.
+
+* `ladder_pyscf.py` compares the real-Gamma energy per cell with PySCF's KRHF
+  on the same mesh. Both codes use vibe-qc's AO and auxiliary shells
+  (def2-svp-jk for STO-3G), transported to PySCF shell by shell, and
+  `exxdiv='ewald'`. The real-Gamma SCF starts from SAD and is checked for an
+  RHF internal instability. vibe-qc's SR/LR fit (`fit_source="sr"`) is
+  compared with PySCF's range-separated GDF (`rs_density_fit`); both implement
+  Ye and Berkelbach, J. Chem. Phys. 154, 131104 (2021). The classic fit is
+  compared with PySCF's GDF (`density_fit`) where its tail is affordable.
+* `ladder_crystal.py` runs CRYSTAL23 at converged meshes with the same STO-3G
+  shells written into the input. At a finite mesh CRYSTAL's real-space
+  exchange is not the torus exchange, so only the converged limits compare.
+
+```sh
+python ladder_pyscf.py                                   # diamond, LiH, MgO, fcc Be, MgO pob-DZVP-rev2
+python ladder_pyscf.py --cases c-diamond lih-rocksalt --meshes 3,3,3 --no-sr --merge
+python ladder_pyscf.py --cases c-diamond lih-rocksalt mgo --no-vibeqc --pyscf-meshes 3,3,3 4,4,4 --merge
+python ladder_pyscf.py --cases lih-rocksalt --no-vibeqc --no-classic --pyscf-meshes 5,5,5 6,6,6 --merge
+python ladder_crystal.py --crystal Pcrystal --mpi 3      # CRYSTAL23 at SHRINK 8
+```
+
+The results are in `results_ladder_pyscf.json` and `results_ladder_crystal.json`
+(source identity in each row). Measured on 2026-10-14 with PySCF 2.14.0 and
+CRYSTAL23 1.0.1, energies per primitive cell in Ha, differences vibe-qc minus
+PySCF in uHa/cell, STO-3G unless named:
+
+| cell | mesh | vibe-qc SR | PySCF RSGDF | SR difference | classic difference | PySCF GDF minus RSGDF | lowest RHF Hessian eigenvalue |
+|---|---|---|---|---|---|---|---|
+| diamond | 1x1x1 | -74.00247768 | -74.00248187 | +4.2 | +214.9 | +1.8 | -0.107 |
+| diamond | 2x2x2 | -74.81479108 | -74.81480276 | +11.7 | +129.9 | +22.7 | +0.126 |
+| LiH | 1x1x1 | -8.33518581 | -8.33518431 | -1.5 | +139.5 | +1.1 | +0.595 |
+| LiH | 2x2x2 | -7.92203512 | -7.92201709 | -18.0 | +53.8 | +13.8 | +0.088 |
+| MgO | 1x1x1 | -271.04835882 | -271.04836575 | +6.9 | not run |  | -0.117 |
+| MgO | 2x2x2 | -271.20999469 | -271.20999781 | +3.1 | not run |  | +0.181 |
+| fcc Be | 1x1x1 | -15.20310890 | -15.20310890 | -0.0 | +39.1 | +1.2 | +1.046 |
+| fcc Be | 2x1x1 | -14.85599679 | -14.85599910 | +2.3 | +32.5 | +8.8 | +0.137 |
+| fcc Be | 2x2x2 | -14.37762717 | -14.37763022 | +3.1 | +35.6 | +24.6 | -0.254 |
+| MgO pob-DZVP-rev2 | 1x1x1 | -274.39053514 | -274.39053580 | +0.7 | not run |  | -0.004 |
+
+Reading the table:
+
+* The SR route agrees with PySCF's range-separated GDF to 0.0 to 18 uHa/cell on
+  every rung. That is the size of PySCF's own spread between its two fits on
+  the same cells (1.1 to 24.6 uHa/cell), so the parity is at the fitting
+  floor of the two codes, not of the construction. On fcc Be (2,1,1) the PySCF
+  run reproduces the independent anchor of
+  `tests/test_ccm_neutral_tail_parity.py` (-14.855999005825) to 0.09 uHa.
+* The Madelung constants of the exchange `q = 0` term (vibe-qc
+  `ccm_exchange_q0_madelung`, PySCF `tools.pbc.madelung`) agree to 5e-16 on
+  every rung: the exchange convention is the same.
+* The classic fit sits 32 to 215 uHa/cell above PySCF's GDF. This is the
+  documented dense-core truncation floor of the classic all-reciprocal fit
+  (`vibeqc.pbc_gdf`), and the reason the SR route exists.
+* Both codes converge to the same stationary point on every rung. The flagged
+  states at (1,1,1) (diamond, MgO, MgO pob-DZVP-rev2) are singlet-stable RHF
+  minima with an RHF-to-UHF (triplet) instability; fcc Be (2,2,2) has a
+  negative singlet eigenvalue too, whose mode breaks the primitive translation
+  symmetry, which a k-mesh KRHF cannot follow.
+* Cost, not accuracy, is the open problem of the SR route at `N_c > 1`: on
+  diamond, LiH and MgO (2,2,2) it takes 1374, 2815 and 2380 s against PySCF's
+  29, 50 and 17 s, because the shared SR builder recomputes its real-space
+  integrals for every transfer `q` and its reciprocal AO-pair transforms for
+  every ket (vibe-qc issue 543). The classic fit takes 235 and 25 s on diamond
+  and LiH (2,2,2).
+
+**The CRYSTAL23 limit.** CRYSTAL23 at SHRINK 8 (`TOLINTEG 8 8 8 8 16`, the
+transported STO-3G, `results_ladder_crystal.json`) gives -74.8771217 (diamond),
+-7.9381931 (LiH) and -271.2148222 Ha/cell (MgO). Diamond at SHRINK 12 settles
+within 1 uHa per cycle at -74.877128, 6 uHa lower, so CRYSTAL's own mesh is
+converged; LiH equals the CRYSTAL14 internal-STO-3G baseline of
+`examples/regression/crystal_parity/baseline_sto3g` (-7.93816810) to 0.02 mHa,
+which checks the basis transport. PySCF's KRHF on the same Hamiltonian family
+(the real-Gamma producer equals it rung by rung, above) then gives, as PySCF
+minus CRYSTAL23 in mHa/cell:
+
+| mesh | diamond | LiH | MgO |
+|---|---|---|---|
+| (2,2,2) | +62.3 | +16.2 | +4.8 |
+| (3,3,3) | -1.1 | -10.2 | -8.1 |
+| (4,4,4) | -5.1 | -2.3 | -4.4 |
+| (5,5,5) | -3.7 | -1.8 | -2.5 |
+| (6,6,6) | -2.5 | -1.0 | not run |
+
+From (4,4,4) on every sequence approaches the CRYSTAL23 value from below, and at
+the largest mesh run the gap is 2.5, 1.0 and 2.5 mHa/cell. The torus exchange
+of these two-atom cells converges slowly and not yet in a single power law
+(the diamond steps are 1.36 and 1.24 mHa), so no extrapolated limit is quoted:
+the limits agree at the few-mHa level the meshes resolve, and the same-mesh
+PySCF table above is the parity evidence. On LiH (3,3,3) the classic fit sits
+142 uHa/cell below PySCF's RSGDF at its default 15-bohr cell list and 18 uHa/cell
+above it at 25 and 35 bohr: the origin-ball pair domain of the classic fit
+(vibe-qc issue 466) truncates the diffuse Li 2sp pairs once the torus resolves
+them.
+
 ---
+
+## The per-cell spin sector against PySCF (RG-14)
+
+`CCMSystem(..., spin_state=)` names the spin sector of the torus (user guide,
+"The spin sector of the torus"). Under the default `"legacy"` the real-Gamma
+producer pairs a doublet cell by supercell parity while the Bloch producer
+replicates the cell's counts, so a doublet cell on `(2,1,1)` runs two sectors
+of one operator; `"per-cell"` makes both run the aligned uniform sector,
+which is also what PySCF's k-point UHF runs when `nelec` is pinned to
+`(N_k n_alpha, N_k n_beta)`.
+
+* `spin_state_pyscf.py` runs the Li doublet cube (STO-3G, 7 bohr) at
+  `(2,1,1)` in the per-cell sector on both producers and on PySCF KUHF and
+  KUKS/PBE with pinned `nelec`, `exxdiv='ewald'` and the transported shells,
+  SR fit against `rs_density_fit` and classic fit against `density_fit`.
+* `spin_state_vq_job.py` is the vq job for the same rows through
+  `run_periodic_job(method="aiccm", aiccm_spin_state="per-cell")`, UHF and
+  UKS on both variants, refusing a runtime that predates the contract.
+
+Measured on 2026-10-26 (source 12aed222 plus the RG-14 change, PySCF 2.14.0,
+both Madelung constants 0.2579774015; energies per primitive cell in Ha,
+differences in uHa/cell):
+
+| row | real-Gamma | neutral-Bloch | PySCF | real-Gamma minus PySCF | real-Gamma minus Bloch |
+|---|---|---|---|---|---|
+| UHF, SR fit / RSGDF | -7.4055425896 | -7.4055425896 | -7.4055425896 | 0.000 | 2.6e-13 Ha |
+| UKS PBE, SR fit / RSGDF | -7.4090022073 | -7.4090022073 | -7.4091926480 | 190.4 | 2.5e-13 Ha |
+| UHF, classic fit / GDF | -7.4058450937 | -7.4058450937 | -7.4055425896 | -302.5 | -4.1e-14 Ha |
+| UKS PBE, classic fit / GDF | -7.4087302147 | -7.4087302147 | -7.4091926480 | 462.4 | -1.1e-13 Ha |
+
+All four PySCF runs converged with integer occupations, 4 alpha and 2 beta
+electrons on the torus and `<S^2>` 2.000 for UHF. The UHF/SR row is the
+matched comparison: fit, exchange zero mode, basis, mesh and sector agree
+and the energies agree to below 1 nHa/cell. Unmatched approximations,
+reported separately: the classic fit is a different fitted operator
+(reciprocal support and tail; the ladder above measures its class), and the
+KUKS rows use each code's own XC quadrature (PySCF's uniform FFT grid against
+vibe-qc's periodic Becke grid), which the 190 uHa/cell of the SR row
+measures. For the record, the legacy pair on the same cell and mesh is 4.83
+mHa/cell apart (supercell singlet 3/3 against per-cell doublet 4/2, classic
+fit) and is refused by `assert_compatible_spin_state`.
 
 ## Molecular benchmark batch (methods × basis × RIJCOSX/GridX × convergers)
 

@@ -2,9 +2,19 @@
 """GFN2-xTB geometry optimization.
 
 Mirrors the xtb workshop § "GeoOpt". Demonstrates:
-  1. run_job with optimize=True
-  2. ASE-based optimization with SemiempiricalCalculator
+  1. run_job(method="gfn2_xtb", optimize=True): the high-level route, which
+     drives the optimisation through ASE and writes the usual output family
+  2. The native geomopt framework: ``run_geomopt`` with
+     ``SemiempiricalProvider("gfn2-xtb")``, no ASE in the loop
   3. Gradient validation (analytic vs finite-difference)
+
+Success criterion: both optimisers shorten the stretched O-H bond from
+2.20 bohr to 1.83 bohr and agree on the minimum energy, E = -5.070026 Ha,
+to 1e-6 Ha (vibe-qc 0.17.10 development build); the analytic gradient
+agrees with the central finite difference to better than 1e-6 Ha/bohr
+(observed 3e-8).
+
+GFN2-xTB is an experimental route in vibe-qc (``GFN2ExperimentalWarning``).
 
 Run:
     .venv/bin/python examples/semiempirical/32_gfn2_geometry_optimization.py
@@ -44,48 +54,29 @@ run_job(
 
 print(f"   -> see {HERE / 'output-h2o-gfn2-opt.out'}")
 
-# ── ASE optimization ────────────────────────────────────────────────────
+# ── Native geometry optimiser through the semiempirical provider ─────
 print("\n" + "=" * 72)
-print("2. ASE geometry optimization")
-try:
-    from ase import Atoms
-    from ase.optimize import BFGS
-    from ase.units import Bohr
-    from vibeqc.semiempirical.ase import SemiempiricalCalculator
+print("2. Native geomopt framework with SemiempiricalProvider")
+from vibeqc.geomopt import run_geomopt
+from vibeqc.geomopt.semiempirical_provider import SemiempiricalProvider
 
-    # Build ASE Atoms (positions in Å)
-    atoms = Atoms('OH2', positions=np.array([
-        [0.0, 0.0, 0.0],
-        [r_oh * np.sin(theta), r_oh * np.cos(theta), 0.0],
-        [-r_oh * np.sin(theta), r_oh * np.cos(theta), 0.0],
-    ]) / Bohr * Bohr)  # already in bohr, convert to Å for ASE
-    # Actually, our Molecule uses bohr. Convert to Å for ASE.
-    atoms_ase = Atoms('OH2', positions=np.array([
-        [0.0, 0.0, 0.0],
-        [r_oh * np.sin(theta) * Bohr, r_oh * np.cos(theta) * Bohr, 0.0],
-        [-r_oh * np.sin(theta) * Bohr, r_oh * np.cos(theta) * Bohr, 0.0],
-    ]))
+# SemiempiricalProvider wraps the unified semiempirical dispatcher as an
+# EnergyGradientProvider, so every optimiser in vibeqc.geomopt (sd, cg,
+# bfgs, lbfgs, rfo, ...) can relax a GFN2-xTB geometry without ASE.
+provider = SemiempiricalProvider("gfn2-xtb")
+opt = run_geomopt(mol, provider, geom_opt="bfgs", geom_max_iter=100)
 
-    # Build GFN2Model and wrap as ASE Calculator
-    calc = SemiempiricalCalculator(model_start)
-    atoms_ase.calc = calc
-
-    print(f"   Starting ASE energy: {atoms_ase.get_potential_energy():.6f} eV")
-    print(f"   Starting forces |F|_max: {np.abs(atoms_ase.get_forces()).max():.4f} eV/Å")
-
-    opt = BFGS(atoms_ase)
-    opt.run(fmax=0.02)
-
-    final_pos_ang = atoms_ase.get_positions()
-    print(f"\n   Optimised positions (Å):")
-    for i, pos in enumerate(final_pos_ang):
-        print(f"      {atoms_ase.get_chemical_symbols()[i]}: {pos}")
-    r_oh_opt = np.linalg.norm(final_pos_ang[0] - final_pos_ang[1])
-    print(f"   Optimised O-H: {r_oh_opt:.3f} Å = {r_oh_opt / Bohr:.3f} bohr")
-    print(f"   Optimised energy: {atoms_ase.get_potential_energy():.6f} eV")
-
-except ImportError:
-    print("   ASE not installed — skipping")
+final = opt.system
+print(f"   Converged: {opt.converged} after {opt.n_iter} BFGS steps "
+      f"({opt.n_energy_evals} energy+gradient evaluations)")
+print("   Optimised geometry (bohr):")
+for at in final.atoms:
+    x, y, z = at.xyz
+    print(f"      Z={at.Z:2d}: {x:10.5f} {y:10.5f} {z:10.5f}")
+r_oh_opt = float(np.linalg.norm(
+    np.asarray(final.atoms[0].xyz) - np.asarray(final.atoms[1].xyz)))
+print(f"   Optimised O-H: {r_oh_opt:.3f} bohr (started at {r_oh:.3f})")
+print(f"   Optimised energy: {opt.energy:.8f} Ha")
 
 # ── Gradient validation ─────────────────────────────────────────────────
 print("\n" + "=" * 72)

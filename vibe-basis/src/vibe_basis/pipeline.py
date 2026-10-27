@@ -331,7 +331,8 @@ class CohesivePipeline:
     ) -> tuple[EngineEnergy, bool]:
         host_name = getattr(host, "name", None) if host is not None else None
         key = atom_key(
-            self.engine.name, Z, basis_text, method, host=host_name
+            self.engine.name, Z, basis_text, method, host=host_name,
+            **self.engine.atom_cache_settings(host=host),
         )
         hit = self.cache.get(key)
         if hit is not None:

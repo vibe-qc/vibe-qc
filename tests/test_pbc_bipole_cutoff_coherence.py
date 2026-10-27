@@ -67,11 +67,14 @@ def _ks_opts():
 def test_all_four_drivers_share_one_nuclear_cutoff():
     """Every direct driver resolves the same clamped nuclear cutoff.
 
-    The clamp mutates the caller's ``opts.lattice_opts`` in place (the
-    pybind options expose the struct by reference), so the resolved
-    cutoff is directly observable per driver. Pre-centralisation this
-    fails for RHF, UHF, and UKS: they leave the unclamped 25-bohr
-    nuclear Ewald set while RKS clamps to the 15-bohr electronic set.
+    Pre-centralisation this failed for RHF, UHF, and UKS: they left the
+    unclamped 25-bohr nuclear Ewald set while RKS clamped to the 15-bohr
+    electronic set. The clamp used to mutate the caller's
+    ``opts.lattice_opts`` in place, which is what this test observed;
+    since 19cda20b (#316) every driver resolves its domain on a detached
+    copy and records it, so the observable is the result's
+    ``resolved_domain`` and the caller's options must stay untouched
+    (#503).
 
     (Do not assert single-iteration energy parity across drivers here:
     non-converged trajectories legitimately differ per driver — guess
@@ -85,21 +88,37 @@ def test_all_four_drivers_share_one_nuclear_cutoff():
     kmesh = _gamma(system)
 
     opts = {"rhf": _hf_opts(), "uhf": _hf_opts(), "rks": _ks_opts(), "uks": _ks_opts()}
-    vq.run_pbc_bipole_rhf(system, basis, kmesh, opts["rhf"], progress=False)
-    vq.run_pbc_bipole_rks(system, basis, kmesh, opts["rks"], progress=False)
-    vq.run_pbc_bipole_uhf(system, basis, kmesh, opts["uhf"], progress=False)
-    vq.run_pbc_bipole_uks(system, basis, kmesh, opts["uks"], progress=False)
-
+    runners = {
+        "rhf": vq.run_pbc_bipole_rhf,
+        "rks": vq.run_pbc_bipole_rks,
+        "uhf": vq.run_pbc_bipole_uhf,
+        "uks": vq.run_pbc_bipole_uks,
+    }
+    resolved = {}
     for name, o in opts.items():
-        assert o.lattice_opts.nuclear_cutoff_bohr == pytest.approx(
-            o.lattice_opts.cutoff_bohr
-        ), (
-            f"{name}: nuclear_cutoff_bohr was not clamped to the "
-            f"electronic cutoff ({o.lattice_opts.nuclear_cutoff_bohr} vs "
-            f"{o.lattice_opts.cutoff_bohr}); the driver is resolving its "
-            "own nuclear/Ewald cutoff instead of the shared "
-            "clamp_bipole_nuclear_cutoff"
+        result = runners[name](system, basis, kmesh, o, progress=False)
+        domain = result.resolved_domain
+        one_electron = dict(domain.lattice_1e.values)
+        two_electron = dict(domain.lattice_2e.values)
+        resolved[name] = (
+            one_electron["nuclear_cutoff_bohr"],
+            two_electron["cutoff_bohr"],
+            domain.ewald_real_cutoff_bohr,
         )
+        # The driver works on a detached copy: the caller's options keep
+        # the unclamped 25-bohr nuclear default.
+        assert o.lattice_opts.nuclear_cutoff_bohr == pytest.approx(25.0)
+        assert o.lattice_opts.cutoff_bohr == pytest.approx(15.0)
+
+    for name, (nuclear, electronic, ewald_real) in resolved.items():
+        assert nuclear == pytest.approx(electronic), (
+            f"{name}: the recorded nuclear_cutoff_bohr was not clamped to "
+            f"the electronic cutoff ({nuclear} vs {electronic}); the driver "
+            "is resolving its own nuclear/Ewald cutoff instead of the "
+            "shared clamp_bipole_nuclear_cutoff"
+        )
+        assert ewald_real == pytest.approx(electronic)
+    assert len({tuple(v) for v in resolved.values()}) == 1, resolved
 
 
 def test_converged_closed_shell_uks_reduces_to_rks_at_default_cutoffs():

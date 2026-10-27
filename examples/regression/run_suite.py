@@ -16,6 +16,9 @@ Current scope:
 Each new (system, basis, method) cell requires:
   * a `systems/<periodic|molecules>/<id>.py` exporting `SPEC`
   * (optionally) `expected/<system_id>__<basis>__<method_id>.json`
+
+``--periodic-matrix`` supplies explicit periodic method/mesh/reference rows
+and acceptance targets instead of the legacy curated list and expected files.
 """
 
 from __future__ import annotations
@@ -28,7 +31,7 @@ import os
 import subprocess
 import sys
 import time
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
 
@@ -38,7 +41,7 @@ from .core.case import (
     write_csv,
     write_env_json,
 )
-from .core.compare import annotate_against_reference
+from .core.compare import annotate_against_reference, apply_input_qualification
 from .core.output_paths import (
     DEFAULT_OUTPUT_ROOT,
     RUNS_DIR_ENV,
@@ -46,7 +49,16 @@ from .core.output_paths import (
     resolve_output_root,
 )
 from .core.report import render_summary
+from .core.input_identity import (
+    crystal_deck_identity, crystal_output_identity, qualify_case,
+    unverified as input_identity_unverified,
+)
 from .core.spec import ExpectedRef, MethodSpec, MoleculeSpec, PeriodicSpec
+from .core.periodic_matrix import (
+    PeriodicCaseRequest, apply_state_overrides, load_periodic_matrix, periodic_state_request,
+    apply_lattice_cutoffs, case_tag, lattice_overrides,
+    state_overrides, validated_kmesh, validated_reference_version,
+)
 from .methods.catalog import METHODS
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -54,8 +66,8 @@ REGRESSION_ROOT = Path(__file__).resolve().parent
 EXPECTED_DIR = REGRESSION_ROOT / "expected"
 
 
-# Wave-1 enabled cases. Adding a (system, basis, method) tuple here is
-# the one place to extend coverage as new systems / bases come online.
+# Legacy wave-1 cases. Explicit periodic matrices extend coverage without
+# editing these default lists.
 #
 # Order matters: cheap / easy cases first, so a sanity-check run fails
 # fast on the easy stuff before burning wall on the harder ones.
@@ -189,9 +201,11 @@ def _case_id(
     basis: str,
     method_id: str,
     kmesh: Tuple[int, int, int],
+    tag: str = "",
 ) -> str:
     km = "mol" if kmesh == (0, 0, 0) else "x".join(str(k) for k in kmesh)
-    return f"{system_id}__{basis}__{method_id}__{km}"
+    label = f"{system_id}__{basis}__{method_id}__{km}"
+    return f"{label}__{tag}" if tag else label
 
 
 def _write_json(path: Path, payload: object) -> None:
@@ -237,10 +251,11 @@ def _write_manifest(
     run_id: str,
     env: dict,
     molecule_triples: List[Tuple[str, str, str]],
-    periodic_triples: List[Tuple[str, str, str]],
+    periodic_cases: List[PeriodicCaseRequest],
     cases: Optional[List[CaseRecord]] = None,
     status: str = "running",
     dry_run: bool = False,
+    periodic_jk_method: str = "gdf",
 ) -> None:
     planned = [
         {
@@ -253,16 +268,18 @@ def _write_manifest(
         }
         for s, b, m in molecule_triples
     ]
-    for s, b, m in periodic_triples:
-        spec = _load_periodic_spec(s)
+    for request in periodic_cases:
+        s, b, m = request.system_id, request.basis, request.method_id
         planned.append(
             {
-                "case_id": _case_id(s, b, m, spec.default_kmesh),
+                **asdict(request),
+                "case_id": _case_id(s, b, m, request.kmesh, request.tag()),
                 "kind": "periodic",
+                "jk_method": periodic_jk_method,
                 "system_id": s,
                 "basis": b,
                 "method_id": m,
-                "kmesh": "x".join(str(k) for k in spec.default_kmesh),
+                "kmesh": "x".join(str(k) for k in request.kmesh),
             }
         )
 
@@ -429,6 +446,7 @@ def _isolated_runner_call(
     timeout_s: float = 7200.0,
     rsgdf_tail_ke_cutoff: Optional[float] = None,
     write_qvf_artifact: bool = False,
+    periodic_jk_method: str = "gdf",
 ) -> "CodeRow":
     """Run one (case, code) pair in a subprocess via _isolated_runner.
 
@@ -468,15 +486,22 @@ def _isolated_runner_call(
         cmd.append(str(artifact_dir) if artifact_dir is not None else "-")
         cmd.append("1" if write_qvf_artifact else "0")
     child_env = None
-    if (
-        rsgdf_tail_ke_cutoff is not None
-        and spec_kind == "periodic"
-        and code == "vibeqc"
-    ):
+    if spec_kind == "periodic":
         child_env = os.environ.copy()
-        child_env["VIBEQC_REGRESSION_RSGDF_TAIL_KE_CUTOFF"] = str(
-            float(rsgdf_tail_ke_cutoff)
-        )
+        child_env["VIBEQC_REGRESSION_KMESH"] = json.dumps(validated_kmesh(spec.default_kmesh))
+        # The child reloads SPEC from its module; always send the state so
+        # an override is not lost and an inherited value cannot leak in.
+        child_env["VIBEQC_REGRESSION_PERIODIC_STATE"] = json.dumps(state_overrides(spec))
+        child_env["VIBEQC_REGRESSION_LATTICE_CUTOFFS"] = json.dumps(lattice_overrides(spec))
+    if spec_kind == "periodic" and code == "vibeqc":
+        # Always set the selected route; inherited environment must not
+        # silently redirect a run or attach a stale GDF-only control.
+        child_env["VIBEQC_REGRESSION_PERIODIC_JK_METHOD"] = periodic_jk_method
+        child_env.pop("VIBEQC_REGRESSION_RSGDF_TAIL_KE_CUTOFF", None)
+        if rsgdf_tail_ke_cutoff is not None:
+            child_env["VIBEQC_REGRESSION_RSGDF_TAIL_KE_CUTOFF"] = str(
+                float(rsgdf_tail_ke_cutoff)
+            )
 
     try:
         result = subprocess.run(
@@ -669,6 +694,14 @@ def run_one_periodic_case_dev(
     include_cp2k: bool = False,
     rsgdf_tail_ke_cutoff: Optional[float] = None,
     output_qvf: bool = False,
+    periodic_jk_method: str = "gdf",
+    kmesh: Optional[Tuple[int, int, int]] = None,
+    tolerance_ha: Optional[float] = None,
+    tolerance_rationale: str = "",
+    reference_code: str = "pyscf",
+    reference_version: Optional[str] = None,
+    state: Optional[dict] = None,
+    lattice_cutoffs: Optional[dict] = None,
 ) -> CaseRecord:
     """Run one periodic (system, basis, method) case against the dev target.
 
@@ -688,10 +721,33 @@ def run_one_periodic_case_dev(
     ``vq submit``, so it's invoked directly without an additional
     isolation layer.
     """
+    enabled_references = {"pyscf"}
+    if include_crystal:
+        enabled_references.add("crystal")
+    if include_cp2k:
+        enabled_references.add("cp2k")
+    if reference_code not in enabled_references:
+        raise ValueError(f"requested reference {reference_code!r} is not enabled")
+    validated_reference_version(reference_code, reference_version)
     spec = _load_periodic_spec(system_id)
+    if kmesh is not None:
+        spec = replace(spec, default_kmesh=validated_kmesh(kmesh))
+    spec = apply_state_overrides(spec, state or {})
+    spec = apply_lattice_cutoffs(spec, lattice_cutoffs or {})
     method = _resolve_method(method_id)
+    # Refuse an impossible or unsupported state before any runner starts;
+    # a secondary PySCF row that cannot represent it reports unavailable.
+    for code in {"vibeqc", reference_code}:
+        periodic_state_request(spec, method, code=code)
     kmesh = spec.default_kmesh
-    expected = _load_expected(system_id, basis, method_id, kmesh)
+    expected = (
+        _load_expected(system_id, basis, method_id, kmesh)
+        if tolerance_ha is None else ExpectedRef(
+            system_id=system_id, basis=basis, method_id=method_id, kmesh=kmesh,
+            primary_source=f"{reference_code}_at_runtime", tolerance_ha=tolerance_ha,
+            tolerance_rationale=tolerance_rationale,
+        )
+    )
 
     case = CaseRecord(
         system_id=system_id,
@@ -699,6 +755,7 @@ def run_one_periodic_case_dev(
         basis=basis,
         method_id=method_id,
         kmesh=kmesh,
+        state_tag=case_tag(state or {}, lattice_cutoffs or {}),
     )
     log_path = run_dir / "verbose" / f"{case.label}.log"
     case.verbose_log_path = log_path
@@ -722,6 +779,7 @@ def run_one_periodic_case_dev(
             target=target,
             code_version=_vibeqc_code_version(env),
             rsgdf_tail_ke_cutoff=rsgdf_tail_ke_cutoff,
+            periodic_jk_method=periodic_jk_method,
             write_qvf_artifact=output_qvf,
         )
     )
@@ -751,6 +809,7 @@ def run_one_periodic_case_dev(
             basis_name=basis,
             method=method,
             kmesh=kmesh,
+            expected_version=reference_version,
             log_path=log_path,
             workdir=case_dir / "reference" / "crystal",
         )
@@ -773,7 +832,11 @@ def run_one_periodic_case_dev(
         case.rows.append(cp2k_row)
         _write_row_artifact(case_dir / "reference" / "cp2k", cp2k_row)
 
-    annotate_against_reference(case.rows, ref_code="pyscf", expected=expected)
+    annotate_against_reference(case.rows, ref_code=reference_code, expected=expected)
+    qualification = qualify_case(
+        _periodic_input_identities(case, case_dir, spec, basis, method), reference_code)
+    _write_json(case_dir / "input_qualification.json", qualification)
+    apply_input_qualification(case.rows, qualification)
     for row in case.rows:
         target_dir = (
             case_dir / "vibeqc"
@@ -783,6 +846,30 @@ def run_one_periodic_case_dev(
         _write_row_artifact(target_dir, row)
     _write_case_notes(case_dir, case)
     return case
+
+
+def _periodic_input_identities(case, case_dir: Path, spec, basis: str, method) -> dict:
+    """Each code's resolved physical inputs, from what it built or was given."""
+    identities = {}
+    for row in case.rows:
+        if row.code == "crystal":
+            workdir = case_dir / "reference" / "crystal" / f"{spec.id}__{basis}__{method.id}"
+            deck = workdir / "INPUT.d12"
+            identity = crystal_deck_identity(deck.read_text()) if deck.is_file() else None
+            # What the run reports it used outranks what the deck requested.
+            outputs = sorted((workdir / "fetched").glob("**/INPUT.out"))
+            if identity is not None and len(outputs) == 1:
+                try:
+                    identity.update(crystal_output_identity(outputs[0].read_text(errors="replace")))
+                except (StopIteration, ValueError, IndexError, KeyError) as exc:
+                    identity["basis"] = input_identity_unverified(
+                        f"CRYSTAL output not parsed: {type(exc).__name__}")
+            identities["crystal"] = identity
+            continue
+        path = (case_dir / "vibeqc" if row.code == "vibeqc"
+                else case_dir / "reference" / row.code) / "input_identity.json"
+        identities[row.code] = json.loads(path.read_text()) if path.is_file() else None
+    return identities
 
 
 def run_one_molecule_case_dev(
@@ -893,35 +980,38 @@ def _write_dry_run_summary(
     run_id: str,
     run_dir: Path,
     mol_triples: List[Tuple[str, str, str]],
-    per_triples: List[Tuple[str, str, str]],
+    per_cases: List[PeriodicCaseRequest],
 ) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
         f"# vibe-qc regression dry run `{run_id}`",
         "",
         f"- output: `{run_dir}`",
-        f"- planned cases: {len(mol_triples) + len(per_triples)}",
+        f"- planned cases: {len(mol_triples) + len(per_cases)}",
         "",
         "## Planned cases",
         "",
     ]
     for s, b, m in mol_triples:
         lines.append(f"- molecule `{s}` / `{b}` / `{m}`")
-    for s, b, m in per_triples:
-        lines.append(f"- periodic `{s}` / `{b}` / `{m}`")
+    for request in per_cases:
+        lines.append(f"- periodic `{request.system_id}` / `{request.basis}` / "
+                     f"`{request.method_id}` / mesh `{request.kmesh}` / reference "
+                     f"`{request.reference_code}`")
     lines.extend(["", "## Action items", "", "(dry run only; no cases executed)", ""])
     out_path.write_text("\n".join(lines), encoding="utf-8")
 
 
 def _print_case_list(
     mol_triples: List[Tuple[str, str, str]],
-    per_triples: List[Tuple[str, str, str]],
+    per_cases: List[PeriodicCaseRequest],
 ) -> None:
-    print("kind,system_id,basis,method_id")
+    print("kind,system_id,basis,method_id,kmesh")
     for s, b, m in mol_triples:
-        print(f"molecule,{s},{b},{m}")
-    for s, b, m in per_triples:
-        print(f"periodic,{s},{b},{m}")
+        print(f"molecule,{s},{b},{m},mol")
+    for request in per_cases:
+        mesh = "x".join(map(str, request.kmesh))
+        print(f"periodic,{request.system_id},{request.basis},{request.method_id},{mesh}")
 
 
 def _error_case_record(
@@ -1083,6 +1173,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         "Cached after first fetch — see vibeqc.fetch.references.",
     )
     p.add_argument(
+        "--periodic-matrix",
+        type=Path,
+        help="Versioned JSON periodic case matrix; replaces the curated case list.",
+    )
+    p.add_argument(
+        "--periodic-jk-method",
+        choices=("gdf", "bipole"),
+        default=None,
+        help="Periodic vibe-qc route (default: matrix route, otherwise gdf).",
+    )
+    p.add_argument(
         "--rsgdf-tail-ke-cutoff",
         type=float,
         default=None,
@@ -1100,18 +1201,40 @@ def main(argv: Optional[List[str]] = None) -> int:
             "use --target dev for wave 1."
         )
 
-    mol_triples, per_triples = _selected_triples(
-        systems=args.systems,
-        bases=args.bases,
-        methods=args.methods,
-        smoke=bool(args.smoke),
-    )
-    if not mol_triples and not per_triples:
+    if args.periodic_matrix:
+        if args.smoke or any(x != "all" for x in (args.systems, args.bases, args.methods)):
+            p.error("--periodic-matrix cannot be combined with case filters or --smoke")
+        try:
+            route, per_cases = load_periodic_matrix(args.periodic_matrix,
+                                                    load_system=_load_periodic_spec)
+        except (ValueError, OSError, ImportError, RuntimeError) as exc:
+            p.error(str(exc))
+        if args.periodic_jk_method is not None and args.periodic_jk_method != route:
+            p.error("--periodic-jk-method conflicts with the matrix route")
+        args.periodic_jk_method = route
+        mol_triples = []
+    else:
+        mol_triples, legacy_periodic = _selected_triples(
+            systems=args.systems, bases=args.bases, methods=args.methods,
+            smoke=bool(args.smoke),
+        )
+        per_cases = [PeriodicCaseRequest(s, b, m, _load_periodic_spec(s).default_kmesh)
+                       for s, b, m in legacy_periodic]
+        args.periodic_jk_method = args.periodic_jk_method or "gdf"
+    if args.periodic_jk_method != "gdf" and args.rsgdf_tail_ke_cutoff is not None:
+        p.error("--rsgdf-tail-ke-cutoff requires --periodic-jk-method=gdf")
+    if not (args.dry_run or args.list_cases):
+        for request in per_cases:
+            if request.reference_code == "crystal" and not args.include_crystal:
+                p.error("matrix reference crystal requires --include-crystal for execution")
+            if request.reference_code == "cp2k" and not args.include_cp2k:
+                p.error("matrix reference cp2k requires --include-cp2k for execution")
+    if not mol_triples and not per_cases:
         raise SystemExit(
             "no cases selected after filtering — check --systems / --bases / --methods."
         )
     if args.list_cases:
-        _print_case_list(mol_triples, per_triples)
+        _print_case_list(mol_triples, per_cases)
         return 0
 
     run_id = args.run_id or make_run_id()
@@ -1128,16 +1251,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         run_id=run_id,
         env=env,
         molecule_triples=mol_triples,
-        periodic_triples=per_triples,
+        periodic_cases=per_cases,
         cases=[],
         status="dry_run" if args.dry_run else "running",
         dry_run=bool(args.dry_run),
+        periodic_jk_method=args.periodic_jk_method,
     )
 
     print(f"[regression] run_id={run_id}")
     print(
-        f"[regression] cases  = {len(mol_triples) + len(per_triples)} "
-        f"({len(mol_triples)} molecule + {len(per_triples)} periodic)"
+        f"[regression] cases  = {len(mol_triples) + len(per_cases)} "
+        f"({len(mol_triples)} molecule + {len(per_cases)} periodic)"
     )
     print(f"[regression] output = {run_dir}")
     if args.output_qvf:
@@ -1150,7 +1274,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             run_id=run_id,
             run_dir=run_dir,
             mol_triples=mol_triples,
-            per_triples=per_triples,
+            per_cases=per_cases,
         )
         _write_manifest(
             run_dir=run_dir,
@@ -1158,10 +1282,11 @@ def main(argv: Optional[List[str]] = None) -> int:
             run_id=run_id,
             env=env,
             molecule_triples=mol_triples,
-            periodic_triples=per_triples,
+            periodic_cases=per_cases,
             cases=[],
             status="dry_run",
             dry_run=True,
+            periodic_jk_method=args.periodic_jk_method,
         )
         print("[regression] dry run complete; no cases executed")
         return 0
@@ -1212,10 +1337,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         for r in case.rows:
             _print_row_progress(r)
 
-    for s, b, m in per_triples:
-        print(f"[regression]   running periodic {s} / {b} / {m} ...")
+    for request in per_cases:
+        s, b, m = request.system_id, request.basis, request.method_id
+        print(f"[regression]   running periodic {s} / {b} / {m} / {request.kmesh} ...")
         try:
-            spec_for_dir = _load_periodic_spec(s)
             case = run_one_periodic_case_dev(
                 run_id=run_id,
                 system_id=s,
@@ -1225,11 +1350,19 @@ def main(argv: Optional[List[str]] = None) -> int:
                 env=env,
                 run_dir=run_dir,
                 case_dir=run_dir / "cases" / _case_id(
-                    s, b, m, spec_for_dir.default_kmesh,
+                    s, b, m, request.kmesh, request.tag(),
                 ),
+                kmesh=request.kmesh,
+                state=request.state(),
+                lattice_cutoffs=request.lattice(),
+                tolerance_ha=request.tolerance_ha,
+                tolerance_rationale=request.tolerance_rationale,
+                reference_code=request.reference_code,
+                reference_version=request.reference_version,
                 include_crystal=args.include_crystal,
                 include_cp2k=args.include_cp2k,
                 rsgdf_tail_ke_cutoff=args.rsgdf_tail_ke_cutoff,
+                periodic_jk_method=args.periodic_jk_method,
                 output_qvf=args.output_qvf,
             )
         except Exception as exc:
@@ -1241,9 +1374,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                 basis=b,
                 method_id=m,
                 family="periodic",
-                kmesh=(1, 1, 1),
+                kmesh=request.kmesh,
                 note=f"{type(exc).__name__}: {exc}",
             )
+            case.state_tag = request.tag()
             case_dir = run_dir / "cases" / case.label
             _write_case_notes(case_dir, case)
         cases.append(case)
@@ -1267,10 +1401,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         run_id=run_id,
         env=env,
         molecule_triples=mol_triples,
-        periodic_triples=per_triples,
+        periodic_cases=per_cases,
         cases=cases,
         status="complete",
         dry_run=False,
+        periodic_jk_method=args.periodic_jk_method,
     )
 
     t_total = time.perf_counter() - t_total0

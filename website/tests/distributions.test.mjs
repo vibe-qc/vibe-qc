@@ -11,7 +11,7 @@ const SHA256 = /^[a-f0-9]{64}$/;
 
 test('candidate artifacts retain the supplied filenames and checksums', () => {
   assert.deepEqual(
-    distributionMatrix.desktop.map(({ filename, sha256 }) => ({ filename, sha256 })),
+    distributionMatrix.desktop.filter(a => a.status === 'preview').map(({ filename, sha256 }) => ({ filename, sha256 })),
     [
       {
         filename: 'vibe-view-2.9.0-macos-arm64-standalone.dmg',
@@ -23,7 +23,7 @@ test('candidate artifacts retain the supplied filenames and checksums', () => {
       },
     ],
   );
-  for (const artifact of distributionMatrix.desktop) {
+  for (const artifact of distributionMatrix.desktop.filter(a => a.status !== 'available')) {
     assert.match(artifact.sha256, SHA256);
   }
 });
@@ -76,7 +76,7 @@ test('unqualified candidates cannot produce public links or coordinates', () => 
   for (const image of distributionMatrix.oci.images) {
     assert.equal(publicOciImage(image), null);
   }
-  for (const artifact of distributionMatrix.desktop) {
+  for (const artifact of distributionMatrix.desktop.filter(a => a.status !== 'available')) {
     assert.equal(publicDownloadUrl(artifact), null);
   }
 });

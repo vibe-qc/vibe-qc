@@ -1,6 +1,6 @@
 """Phase 17a-1 -- molecular finite-difference Hessian + harmonic frequencies.
 
-Two-sided finite differences on the analytic atomic gradient give the
+Two-sided finite differences on the atomic gradient give the
 3N x 3N nuclear Hessian in Hartree/bohr^2. Diagonalizing the mass-
 weighted Hessian (with translation + rotation modes projected out)
 returns the 3N - 6 (or 3N - 5 for linear molecules) harmonic
@@ -28,7 +28,14 @@ For DFT methods, pass ``scf_options`` carrying the functional plus
 
 Cost
 ----
-6N gradient evaluations (one ± displacement per Cartesian DOF). Each
+6N gradient evaluations (one ± displacement per Cartesian DOF). OM2/OM3
+use the existing checked native energy differences inside this outer stencil.
+The initial inner step is 0.001 bohr; the native guard may refine individual
+components by factors of 0.1 up to three times. Actual accepted inner steps
+are not exposed by the gradient API. Their cost is quadratic in Cartesian degrees of
+freedom times the SCF cost; IR intensities are unavailable. These Hessians
+describe the implemented OMx approximations, not published-method parity.
+For Gaussian methods, each
 evaluation = SCF + analytic gradient -- typically a few seconds for
 small molecules and order N^3 in basis size for the SCF itself. Phase
 17b (analytic CPHF) replaces this with a single linear-response solve
@@ -42,10 +49,10 @@ Convention notes
   ``i * |ν|``; the negative-real encoding is just convenient for
   sorting and plotting.
 
-* Trans / rot projection is "exact zero" -- when
-  ``project_trans_rot=True`` (default) the 6 (or 5 for linear) lowest
-  modes are replaced with literal zeros so the user can rely on
-  ``frequencies_cm1[6:]`` (or ``[5:]``) being the vibrational subset.
+* Trans / rot projection inserts exact zeros when
+  ``project_trans_rot=True`` (default). Negative vibrational frequencies
+  sort before these rigid-body zeros; do not discard the first six
+  frequencies to select vibrations at a saddle point.
 
 * Mass weighting uses standard atomic masses (the same table used by
   :func:`vibeqc.center_of_mass`). For isotope effects, edit
@@ -104,7 +111,9 @@ from .ecp_metadata import (
     ecp_centre_atom_indices,
     ecp_centres_follow_atoms,
     effective_nuclear_charges,
+    options_carry_ecp,
 )
+from .density_fitting import resolve_default_jk_aux
 from .gradient_options import gradient_options_from_scf
 from .properties import _ATOMIC_MASSES, _total_density, center_of_mass
 
@@ -223,7 +232,9 @@ class HessianResult:
         ``normal_modes[3i:3i+3, k] / sqrt(M_i)``.
 
     imaginary_count
-        Number of modes with w^2 < 0 after trans/rot projection.
+        Number of modes with w^2 < -1e-10 (atomic units), the existing
+        summary threshold. The full signed frequencies retain smaller
+        negative values too; the count is not a stability certificate.
 
     n_displacements
         ``6 * n_atoms`` for centered FD.
@@ -255,6 +266,12 @@ class HessianResult:
     matching the ``3M`` rows/columns. Stored so :func:`ir_intensities`
     and downstream thermochemistry can stay self-contained without
     re-deriving masses from the molecule."""
+    solvent: Optional[str] = None
+    """``None`` for a gas-phase Hessian. For a Hessian of the in-solvent
+    surface, the label of the medium (for example ``"CPCM water (eps = 78.39)"``):
+    the displaced gradients were the solvated analytic gradients, with the
+    apparent surface charges re-converged at every displacement, so the
+    frequencies are those of the *equilibrium*-solvation surface."""
     unfrozen_indices: Optional[np.ndarray] = None
     """``None`` for a full Hessian. When ``HessianFDOptions.frozen_indices``
     was set, the ``(M,)`` array of *unfrozen* atom indices this partial
@@ -342,9 +359,11 @@ def _scf_and_gradient_at(
     gradient_options=None,
     *,
     reference_mol: Optional[Molecule] = None,
+    energy_only: bool = False,
+    solvent=None,
 ):
     """Run SCF + analytic gradient at ``mol``. Returns
-    ``(basis, result, gradient)`` so the caller can reuse the
+    ``(basis, result, gradient)`` (gradient is None for energy_only) so the caller can reuse the
     converged result (e.g. to compute the dipole moment) without a
     redundant SCF.
 
@@ -370,6 +389,10 @@ def _scf_and_gradient_at(
         scf_options, reference_mol, mol, gradient_options
     ):
         if gradient_options is None:
+            # The displaced SCFs below call the bare drivers, so give a
+            # fitted request its default JK aux first (#362); the gradient
+            # options derived next then mirror the resolved name.
+            resolve_default_jk_aux(scf_options, basis_name)
             gradient_options = gradient_options_from_scf(scf_options)
         # Preloaded READ matrices belong to the reference geometry. Project
         # from that fixed basis at every displacement and restore them after
@@ -392,12 +415,69 @@ def _scf_and_gradient_at(
         try:
             return _scf_and_gradient_at_impl(
                 mol, basis_name, method, scf_options, grid_options,
-                gradient_options,
+                gradient_options, energy_only=energy_only, solvent=solvent,
             )
         finally:
             for name, value in restored.items():
                 setattr(scf_options, name, value)
 
+
+
+def _solvated_scf_and_gradient_at(
+    mol, basis, basis_name, method, scf_options, grid_options,
+    gradient_options, solvent, energy_only,
+):
+    """The in-solvent counterpart of the gas-phase body of
+    :func:`_scf_and_gradient_at_impl`: ``(basis, result, gradient)`` on the
+    surface the solvated job reports.
+
+    A Hessian that finite-differences the gas-phase gradient after a solvated
+    SCF describes the wrong surface and says nothing: every number is smooth
+    and plausible (#359 was the same defect for optimizations). So each
+    displaced geometry gets its own :func:`run_cpcm_scf`, whose converged charges
+    the matching :func:`cpcm_gradient` differentiates.
+    """
+    from .solvation import cpcm_gradient, run_cpcm_scf
+    from .solvation.driver import _solvent_aware_scf_result
+
+    lower = method.lower()
+    if lower not in ("rhf", "uhf", "rks", "uks"):
+        raise NotImplementedError(
+            f"FD Hessian in solvent: method {method!r} has no solvated analytic "
+            "gradient (RHF, UHF, RKS and UKS do)."
+        )
+    sol = run_cpcm_scf(mol, basis, method=lower, solvent=solvent, options=scf_options)
+    if not sol.converged:
+        raise RuntimeError(
+            f"FD Hessian: the solvated SCF ({method}, {sol.solvent_name}) failed "
+            "to converge at a displaced geometry. Try tighter scf_options or a "
+            "smaller step."
+        )
+    result = _solvent_aware_scf_result(sol)
+    if not np.isfinite(float(sol.energy)):
+        raise ValueError("FD Hessian: non-finite in-solvent energy at a displacement.")
+    if energy_only:
+        return basis, result, None
+    if lower in ("rks", "uks"):
+        from .gradient_terms import functional_gradient_terms_missing
+
+        if functional_gradient_terms_missing(
+            scf_options.functional, spin=1 if lower == "rks" else 2
+        ):
+            g = _full_energy_ks_gradient(
+                mol, basis_name, method, scf_options, grid_options,
+                gradient_options, solvent=solvent,
+            )
+        else:
+            g = cpcm_gradient(
+                sol.scf, mol, basis, sol, method=lower,
+                options=gradient_options, grid_options=grid_options,
+            )
+    else:
+        g = cpcm_gradient(
+            sol.scf, mol, basis, sol, method=lower, options=gradient_options,
+        )
+    return basis, result, np.asarray(g, dtype=np.float64)
 
 
 def _scf_and_gradient_at_impl(
@@ -407,13 +487,27 @@ def _scf_and_gradient_at_impl(
     scf_options,
     grid_options,
     gradient_options,
+    *,
+    energy_only: bool = False,
+    solvent=None,
 ):
     """Body of :func:`_scf_and_gradient_at`; ``gradient_options`` is a
-    concrete ``GradientOptions`` already matched to ``scf_options``."""
+    concrete ``GradientOptions`` already matched to ``scf_options``.
+
+    A resolved ``solvent`` (:class:`vibeqc.SolventModel`) puts the evaluation on
+    the in-solvent surface: the SCF is :func:`~vibeqc.solvation.run_cpcm_scf`
+    and the gradient :func:`~vibeqc.solvation.cpcm_gradient`, both at this
+    displaced geometry, with the apparent charges re-converged there.
+    """
     # Public wrappers apply selector validation and project file-backed READ
     # sources onto each displaced geometry before entering the native driver.
     from . import run_rhf, run_uhf, run_rks, run_uks
     basis = BasisSet(mol, basis_name)
+    if solvent is not None:
+        return _solvated_scf_and_gradient_at(
+            mol, basis, basis_name, method, scf_options, grid_options,
+            gradient_options, solvent, energy_only,
+        )
     if method == "RHF":
         result = run_rhf(mol, basis, scf_options)
         if not result.converged:
@@ -437,8 +531,18 @@ def _scf_and_gradient_at_impl(
                 "FD Hessian: RKS SCF failed to converge at a displaced "
                 "geometry."
             )
-        g = compute_gradient_rks(mol, basis, result, grid_options,
-                                 gradient_options)
+        if energy_only:
+            if not np.isfinite(result.energy):
+                raise ValueError("FD Hessian: non-finite full-energy displacement.")
+            return basis, result, None
+        from .gradient_terms import functional_gradient_terms_missing
+        if functional_gradient_terms_missing(scf_options.functional, spin=1):
+            g = _full_energy_ks_gradient(
+                mol, basis_name, method, scf_options, grid_options, gradient_options,
+            )
+        else:
+            g = compute_gradient_rks(mol, basis, result, grid_options,
+                                     gradient_options)
     elif method == "UKS":
         result = run_uks(mol, basis, scf_options)
         if not result.converged:
@@ -446,8 +550,18 @@ def _scf_and_gradient_at_impl(
                 "FD Hessian: UKS SCF failed to converge at a displaced "
                 "geometry."
             )
-        g = compute_gradient_uks(mol, basis, result, grid_options,
-                                 gradient_options)
+        if energy_only:
+            if not np.isfinite(result.energy):
+                raise ValueError("FD Hessian: non-finite full-energy displacement.")
+            return basis, result, None
+        from .gradient_terms import functional_gradient_terms_missing
+        if functional_gradient_terms_missing(scf_options.functional, spin=2):
+            g = _full_energy_ks_gradient(
+                mol, basis_name, method, scf_options, grid_options, gradient_options,
+            )
+        else:
+            g = compute_gradient_uks(mol, basis, result, grid_options,
+                                     gradient_options)
     elif method == "ROHF":
         # Restricted open-shell HF: analytic gradient with the ROHF
         # energy-weighted density (vibeqc.rohf.compute_rohf_gradient).
@@ -470,6 +584,62 @@ def _scf_and_gradient_at_impl(
             "Expected one of {'RHF', 'UHF', 'RKS', 'UKS', 'ROHF'}."
         )
     return basis, result, np.asarray(g, dtype=np.float64)
+
+
+# Inner central-energy step follows the reported nested-FD Hessian convention.
+_KS_ENERGY_GRADIENT_STEP_BOHR = 1e-3
+
+
+def _full_energy_ks_gradient(mol, basis_name, method, scf_options, grid_options,
+                             gradient_options, solvent=None):
+    """Differentiate the complete SCF energy, preserving ECP/READ transport.
+
+    Larsen et al., J. Phys.: Condens. Matter 29, 273002 (2017), sec.8.1:
+    the outer Hessian differentiates gradients; here each missing analytic
+    gradient is itself a two-sided energy difference. No incomplete kernel is
+    called, and every inner SCF must converge on the same requested surface.
+    """
+    step = _KS_ENERGY_GRADIENT_STEP_BOHR
+    gradient = np.zeros((len(mol.atoms), 3), dtype=np.float64)
+    for atom in range(len(mol.atoms)):
+        for axis in range(3):
+            energies = []
+            for sign in (-1, 1):
+                moved = _displaced_molecule(mol, atom, axis, sign * step)
+                # ``solvent`` is passed only when there is one, so the gas-phase
+                # call is exactly the one it was (tests pin its keywords).
+                _, result, _ = _scf_and_gradient_at(
+                    moved, basis_name, method, scf_options, grid_options,
+                    gradient_options, reference_mol=mol, energy_only=True,
+                    **({} if solvent is None else {"solvent": solvent}),
+                )
+                energies.append(float(result.energy))
+            gradient[atom, axis] = (energies[1] - energies[0]) / (2 * step)
+    return gradient
+
+
+def _omx_and_gradient_at(mol: Molecule, method: str):
+    """Evaluate the implemented OM2/OM3 surface, without a Gaussian basis.
+
+    The dispatcher retains the native energy/parameter snapshot used by
+    its checked numerical gradient. Inner displaced SCF failures propagate;
+    this is a nested finite difference, not an analytic OMx derivative.
+    """
+    from .semiempirical.runner import run_semiempirical
+
+    result = run_semiempirical(method.lower(), mol)
+    if not bool(result.converged):
+        raise RuntimeError(
+            f"FD Hessian: {method} SCF failed at a displaced geometry."
+        )
+    if not np.isfinite(result.energy):
+        raise ValueError("FD Hessian: non-finite OMx energy.")
+    gradient = np.asarray(result.gradient(), dtype=np.float64)
+    if gradient.shape != (len(mol.atoms), 3):
+        raise ValueError("FD Hessian: OMx gradient must have shape (n_atoms, 3).")
+    if not np.all(np.isfinite(gradient)):
+        raise ValueError("FD Hessian: non-finite OMx gradient.")
+    return None, result, gradient
 
 
 def _resolve_masses(mol: Molecule,
@@ -605,9 +775,12 @@ def compute_hessian_fd(
     grid_level: str = "orca-defgrid3",
     gradient_options=None,
     hessian_options: Optional[HessianFDOptions] = None,
+    dispersion_params=None,
+    source=None,
+    solvent=None,
 ) -> HessianResult:
     """Build the 3N x 3N nuclear Hessian by central differences on the
-    analytic atomic gradient and return mass-weighted normal-mode
+    atomic gradient and return mass-weighted normal-mode
     frequencies.
 
     See module docstring for API examples and convention notes.
@@ -621,10 +794,14 @@ def compute_hessian_fd(
         non-equilibrium force constants can be evaluated too.
     basis_name :
         Basis-set name. Re-built per displacement so basis-center
-        derivative pieces are absorbed into the FD.
+        derivative pieces are absorbed into the FD. Use an empty string
+        for basis-free OM2/OM3.
     method :
         One of ``"RHF"``, ``"UHF"``, ``"ROHF"``, ``"RKS"``, ``"UKS"``
-        (case-insensitive).
+        or molecular ``"OM2"`` / ``"OM3"`` (case-insensitive). OMx uses
+        the run_job dispatcher defaults and retained-result numerical
+        gradients; Gaussian SCF/grid/gradient options and dipole derivatives
+        are refused. Charge, multiplicity and element gates are unchanged.
     scf_options :
         Per-method options struct. Default-initialises a fresh
         ``RHFOptions`` / ``UHFOptions`` / ``ROHFOptions`` /
@@ -652,57 +829,167 @@ def compute_hessian_fd(
         no atom of ``mol`` is refused up front (``ValueError``).
     hessian_options :
         Step size + projection knobs.
+    dispersion_params :
+        A :class:`~vibeqc.dispersion.D3BJParams` or
+        :class:`~vibeqc.dispersion.D4DispersionSpec`. Its analytic gradient is
+        recomputed at every displaced geometry and added to the SCF gradient,
+        so the Hessian differentiates the complete dispersion-corrected
+        gradient (#548). ``None`` (default) differentiates the bare SCF
+        surface. Refused for OM2/OM3.
+    source :
+        An energy/gradient source such as
+        :class:`vibeqc.manta_geometry.MolecularHFGeometrySource`: a callable
+        ``source(molecule) -> (energy, gradient)`` exposing ``last_result``
+        and ``last_basis`` for the geometry it just evaluated, and
+        ``options`` (its SCF options). The displaced gradients come from
+        the source instead of the legacy SCF/gradient drivers, so a
+        selected integral engine's frequencies differentiate the same
+        analytic gradient its optimizer walks; the source owns the ECP
+        centre following and any dispersion fold, so ``gradient_options``,
+        ``grid_options`` and ``dispersion_params`` are refused with it.
+        ``scf_options`` defaults to ``source.options``.
+    solvent :
+        Anything :func:`vibeqc.solvation.resolve_solvent` accepts (a preset
+        name, a dielectric constant, a :class:`vibeqc.SolventModel`). ``None``
+        or the gas phase is the ordinary gas-phase Hessian. Otherwise the
+        displaced gradients are the in-solvent analytic gradients
+        (:func:`~vibeqc.solvation.cpcm_gradient`), each at its own re-converged
+        apparent charges, so the frequencies are those of the
+        *equilibrium*-solvation surface: the solvent follows every displacement
+        (no non-equilibrium or dynamic response). The geometry should be a
+        stationary point of that same surface, so optimize in the solvent
+        first. Supported for ``RHF``, ``UHF``, ``RKS`` and ``UKS``; a
+        Direct COSMO-RS model is refused, because its energy has a cusp at a
+        symmetric geometry that a Hessian from gradient differences would
+        straddle (see the user guide, "Symmetric solutes"). Dipole derivatives,
+        when requested, are the solute's dipole at the in-solvent density,
+        without the solvent's polarization response or a local-field
+        correction.
     """
     if hessian_options is None:
         hessian_options = HessianFDOptions()
 
     method_norm = method.upper()
-    if method_norm not in {"RHF", "UHF", "ROHF", "RKS", "UKS"}:
+    from .output.formats.vibrational import FD_HESSIAN_SURFACES
+
+    if method_norm.lower() not in FD_HESSIAN_SURFACES:
         raise ValueError(
             f"FD Hessian: unknown method {method!r}. "
-            "Expected one of 'RHF', 'UHF', 'ROHF', 'RKS', 'UKS'."
+            "Expected one of 'RHF', 'UHF', 'ROHF', 'RKS', 'UKS', 'OM2', 'OM3'."
+        )
+    is_omx = method_norm in {"OM2", "OM3"}
+    solvent_model = None
+    if solvent is not None:
+        from .solvation.driver import resolve_solvent
+
+        solvent_model = resolve_solvent(solvent)
+        if solvent_model is not None and solvent_model.is_gas_phase:
+            solvent_model = None  # a vacuum "solvent" is the gas-phase Hessian
+    if solvent_model is not None:
+        if method_norm not in {"RHF", "UHF", "RKS", "UKS"}:
+            raise NotImplementedError(
+                f"FD Hessian in solvent: method {method!r} has no solvated "
+                "analytic gradient; RHF, UHF, RKS and UKS do. Computing it on "
+                "the gas-phase surface would describe a different molecule "
+                "than the solvated job reports."
+            )
+        if source is not None:
+            raise ValueError(
+                "FD Hessian: a gradient source (selected integral engine) and "
+                "a solvent do not compose; the solvated gradient is evaluated "
+                "by the solvation driver."
+            )
+        if solvent_model.variant == "dcosmo-rs":
+            raise NotImplementedError(
+                "FD Hessian in solvent: Direct COSMO-RS (variant='dcosmo-rs') "
+                "is refused. Its energy has a cusp at a symmetric geometry (the "
+                "COSMO FINE cavity's molecule-fixed frame ties there), so a "
+                "Hessian from gradient differences straddles it: a measured "
+                "slope change of 1.4e-3 Ha/bohr across a 0.01 bohr stencil is "
+                "an error of the order of 0.14 Ha/bohr^2 (1.4e-3/0.01) on a "
+                "curvature of about 0.4. Use variant='cpcm' or 'cosmo' for "
+                "frequencies."
+            )
+        _warn_if_frame_tie(solvent_model, mol, hessian_options.step_bohr)
+    if source is not None:
+        if is_omx:
+            raise ValueError("FD Hessian: a gradient source applies to Gaussian-basis SCF surfaces, not to OM2/OM3.")
+        if gradient_options is not None or grid_options is not None:
+            raise ValueError("FD Hessian: the gradient source owns its gradient; gradient_options and grid_options do not apply.")
+        if dispersion_params is not None:
+            raise ValueError("FD Hessian: fold dispersion into the gradient source (dispersion_params=) instead of passing it here.")
+        if scf_options is None:
+            scf_options = getattr(source, "options", None)
+    if is_omx and dispersion_params is not None:
+        raise ValueError(
+            "FD Hessian: dispersion_params applies to Gaussian-basis SCF "
+            "surfaces, not to OM2/OM3."
+        )
+    if is_omx:
+        if basis_name or any(
+            value is not None for value in (scf_options, grid_options, gradient_options)
+        ):
+            raise ValueError(
+                "FD Hessian: OM2/OM3 require an empty basis name and use the "
+                "molecular dispatcher defaults, without Gaussian options."
+            )
+        if hessian_options.include_dipole_derivatives:
+            raise NotImplementedError("FD Hessian: OM2/OM3 dipole derivatives are unavailable.")
+    else:
+        if scf_options is None:
+            if method_norm == "ROHF":
+                from .rohf import ROHFOptions
+
+                scf_options = ROHFOptions()
+            else:
+                scf_options = {
+                    "RHF": RHFOptions(),
+                    "UHF": UHFOptions(),
+                    "RKS": RKSOptions(),
+                    "UKS": UKSOptions(),
+                }[method_norm]
+        if method_norm in {"RKS", "UKS"}:
+            from .runner import apply_ks_grid_default
+            if grid_options is not None:
+                scf_options.grid = grid_options
+            else:
+                apply_ks_grid_default(scf_options, grid_level)
+            grid_options = scf_options.grid
+        elif grid_options is None:
+            grid_options = GridOptions()
+
+        # A direct caller commonly supplies only an ECP-paired basis name. Attach
+        # that sidecar before deriving GradientOptions or entering the displacement
+        # loop; otherwise the first displaced SCF would discover the ECP too late
+        # and its gradient would still describe the all-electron defaults.
+        attach_inline_ecp_options_from_basis_sidecar(
+            scf_options, mol, BasisSet(mol, basis_name)
         )
 
-    if scf_options is None:
-        if method_norm == "ROHF":
-            from .rohf import ROHFOptions
+        # ECP centres are absolute coordinates on the SCF options. Refuse a
+        # set that does not sit on the atoms of ``mol`` before spending any
+        # SCF on it: such an SCF is already inconsistent (bare Z on the atom,
+        # V_ECP still acting), and the displaced-geometry loop below relies on
+        # this mapping to move each centre with its atom (#576).
+        ecp_centre_atom_indices(scf_options, mol)
+        # Nuclear charges for the dipole-derivative rows: Z - n_core on ECP
+        # atoms (both routes), bare Z otherwise. Resolved once here -- the
+        # displaced geometries carry the same ECP assignment (#642).
+        _dipole_nuclear_charges = effective_nuclear_charges(mol, scf_options)
 
-            scf_options = ROHFOptions()
-        else:
-            scf_options = {
-                "RHF": RHFOptions(),
-                "UHF": UHFOptions(),
-                "RKS": RKSOptions(),
-                "UKS": UKSOptions(),
-            }[method_norm]
-    if method_norm in {"RKS", "UKS"}:
-        from .runner import apply_ks_grid_default
-        if grid_options is not None:
-            scf_options.grid = grid_options
-        else:
-            apply_ks_grid_default(scf_options, grid_level)
-        grid_options = scf_options.grid
-    elif grid_options is None:
-        grid_options = GridOptions()
-
-    # A direct caller commonly supplies only an ECP-paired basis name. Attach
-    # that sidecar before deriving GradientOptions or entering the displacement
-    # loop; otherwise the first displaced SCF would discover the ECP too late
-    # and its gradient would still describe the all-electron defaults.
-    attach_inline_ecp_options_from_basis_sidecar(
-        scf_options, mol, BasisSet(mol, basis_name)
-    )
-
-    # ECP centres are absolute coordinates on the SCF options. Refuse a
-    # set that does not sit on the atoms of ``mol`` before spending any
-    # SCF on it: such an SCF is already inconsistent (bare Z on the atom,
-    # V_ECP still acting), and the displaced-geometry loop below relies on
-    # this mapping to move each centre with its atom (#576).
-    ecp_centre_atom_indices(scf_options, mol)
-    # Nuclear charges for the dipole-derivative rows: Z - n_core on ECP
-    # atoms (both routes), bare Z otherwise. Resolved once here -- the
-    # displaced geometries carry the same ECP assignment (#642).
-    _dipole_nuclear_charges = effective_nuclear_charges(mol, scf_options)
+        if source is None and method_norm in {"RKS", "UKS"}:
+            from .gradient_terms import functional_gradient_terms_missing
+            missing = functional_gradient_terms_missing(
+                scf_options.functional, spin=1 if method_norm == "RKS" else 2,
+            )
+            if missing:
+                from .output import write
+                write(
+                    f"  Note: FD Hessian for {method_norm} functional "
+                    f"{scf_options.functional!r} uses full-energy central-difference "
+                    f"gradients (inner step {_KS_ENERGY_GRADIENT_STEP_BOHR:g} bohr); "
+                    f"the analytic gradient omits {'; '.join(missing)}.\n"
+                )
 
     # ---- Build the Hessian via centered FD ---------------------------------
     n_atoms = len(mol.atoms)
@@ -711,8 +998,8 @@ def compute_hessian_fd(
     n_dof = 3 * n_atoms
     H = np.zeros((n_dof, n_dof), dtype=np.float64)
     delta = float(hessian_options.step_bohr)
-    if delta <= 0:
-        raise ValueError("FD Hessian: step_bohr must be positive")
+    if not np.isfinite(delta) or delta <= 0:
+        raise ValueError("FD Hessian: step_bohr must be finite and positive")
 
     # Partial-Hessian (frozen atoms): displace only the unfrozen atoms;
     # the result is the (3M, 3M) sub-block over them (see HessianFDOptions
@@ -746,23 +1033,64 @@ def compute_hessian_fd(
         dipole_derivs = None
 
     n_disp = 0
+    omx_parameter_snapshot = None
     for i in range(n_atoms):
         if i in frozen_set:
             continue  # frozen atom: not displaced (partial Hessian)
         for cart in range(3):
             mol_plus = _displaced_molecule(mol, i, cart, +delta)
             mol_minus = _displaced_molecule(mol, i, cart, -delta)
-            basis_p, res_p, g_plus = _scf_and_gradient_at(
-                mol_plus, basis_name, method_norm,
-                scf_options, grid_options, gradient_options,
-                reference_mol=mol,
-            )
-            basis_m, res_m, g_minus = _scf_and_gradient_at(
-                mol_minus, basis_name, method_norm,
-                scf_options, grid_options, gradient_options,
-                reference_mol=mol,
-            )
+            if is_omx:
+                basis_p, res_p, g_plus = _omx_and_gradient_at(mol_plus, method_norm)
+                basis_m, res_m, g_minus = _omx_and_gradient_at(mol_minus, method_norm)
+                for displaced_result in (res_p, res_m):
+                    snapshot = (
+                        displaced_result.parameter_identity,
+                        displaced_result.parameter_sha256,
+                    )
+                    if not all(snapshot):
+                        raise RuntimeError("FD Hessian: missing OMx parameter identity.")
+                    if omx_parameter_snapshot is None:
+                        omx_parameter_snapshot = snapshot
+                    elif snapshot != omx_parameter_snapshot:
+                        raise RuntimeError(
+                            "FD Hessian: OMx parameters changed across displacements."
+                        )
+            elif source is not None:
+                # The source evaluates its own SCF and analytic gradient at
+                # each displaced geometry (ECP centres and dispersion included).
+                _, g_plus = source(mol_plus)
+                basis_p, res_p = source.last_basis, source.last_result
+                _, g_minus = source(mol_minus)
+                basis_m, res_m = source.last_basis, source.last_result
+                g_plus = np.asarray(g_plus, dtype=float).reshape(n_atoms, 3)
+                g_minus = np.asarray(g_minus, dtype=float).reshape(n_atoms, 3)
+            else:
+                _solvent_kw = {} if solvent_model is None else {"solvent": solvent_model}
+                basis_p, res_p, g_plus = _scf_and_gradient_at(
+                    mol_plus, basis_name, method_norm,
+                    scf_options, grid_options, gradient_options,
+                    reference_mol=mol, **_solvent_kw,
+                )
+                basis_m, res_m, g_minus = _scf_and_gradient_at(
+                    mol_minus, basis_name, method_norm,
+                    scf_options, grid_options, gradient_options,
+                    reference_mol=mol, **_solvent_kw,
+                )
+                if dispersion_params is not None:
+                    # The dispersion gradient at each displaced geometry, so the
+                    # Hessian differentiates the complete gradient (#548).
+                    from .dispersion import compute_dispersion
+
+                    g_plus = g_plus + np.asarray(compute_dispersion(
+                        mol_plus, dispersion_params, with_gradient=True,
+                    ).gradient, dtype=float).reshape(np.shape(g_plus))
+                    g_minus = g_minus + np.asarray(compute_dispersion(
+                        mol_minus, dispersion_params, with_gradient=True,
+                    ).gradient, dtype=float).reshape(np.shape(g_minus))
             n_disp += 2
+            # Larsen et al., J. Phys.: Condens. Matter 29, 273002 (2017),
+            # sec. 8.1, eq. (3): H = -dF/dR = dg/dR (g is not force).
             # Column 3i+cart of H = (g(+d) - g(-d)) / (2d), flattened.
             col = (g_plus - g_minus).reshape(-1) / (2.0 * delta)
             H[:, 3 * i + cart] = col
@@ -836,7 +1164,69 @@ def compute_hessian_fd(
         masses_amu=masses_amu,
         unfrozen_indices=(np.asarray(unfrozen, dtype=int)
                           if is_partial else None),
+        solvent=(solvent_label(solvent_model) if solvent_model is not None else None),
     )
+
+
+def _warn_if_frame_tie(model, mol, step_bohr: float) -> bool:
+    """Warn when a solvated Hessian would straddle the COSMO FINE cavity's frame tie.
+
+    In the molecule-fixed frame a symmetric solute's frame picks one of several
+    symmetry-equivalent atoms, so the energy has a cusp at the symmetric
+    geometry (#535). A Hessian differences gradients at displaced geometries,
+    which sit on opposite branches of that cusp whenever the solute is symmetric
+    to within the step, and the antisymmetric modes inherit the jump. Measured on
+    symmetric water, RHF/STO-3G, fine cavity at 0.35 A: the asymmetric stretch is
+    4381 cm^-1 against 4426 on the default Lebedev cavity and 4424 on the fine
+    cavity in the lab frame, an error of 45 cm^-1 that nothing else announces.
+    The gradient projection of #535 cannot help: the displaced geometries are far
+    outside its tolerance.
+
+    Returns whether it warned.
+    """
+    import warnings
+
+    if getattr(model, "cavity", "lebedev") != "fine" or getattr(model, "fine_frame", "") != "molecular":
+        return False
+    from .solvation.point_group import symmetry_operations
+
+    atoms = list(mol.atoms)
+    ops = symmetry_operations(
+        [int(a.Z) for a in atoms],
+        np.array([list(a.xyz) for a in atoms], dtype=np.float64),
+        max(2.0 * float(step_bohr), 1e-3),
+    )
+    # An operation that moves no atom (a planar solute's own plane) cannot tie the
+    # frame's selections; only one that permutes atoms can.
+    n_atoms = len(atoms)
+    moving = [op for op in ops if not np.array_equal(op[1], np.arange(n_atoms))]
+    if not moving:
+        return False
+    warnings.warn(
+        "FD Hessian in solvent on the COSMO FINE cavity in the molecule-fixed "
+        "frame, at a geometry with point-group symmetry (%d operations that "
+        "permute atoms, within the displacement): the frame ties here, the "
+        "energy has a cusp, and the "
+        "displaced gradients straddle it, so modes that break the symmetry are "
+        "wrong (measured: 45 cm^-1 on water's asymmetric stretch). Use "
+        "SolventModel(cavity='fine', fine_frame='lab') or the default Lebedev "
+        "cavity for frequencies." % len(moving),
+        UserWarning,
+        stacklevel=3,
+    )
+    return True
+
+
+def solvent_label(model) -> str:
+    """A short description of a resolved solvent model for output and manifests,
+    for example ``"CPCM water (eps = 78.39)"``."""
+    family = {"cpcm": "CPCM", "cosmo": "COSMO", "dcosmo-rs": "Direct COSMO-RS"}.get(
+        str(model.variant), str(model.variant)
+    )
+    eps = float(model.epsilon)
+    eps_text = "inf" if eps == float("inf") else f"{eps:g}"
+    cavity = "" if str(getattr(model, "cavity", "lebedev")) == "lebedev" else ", fine cavity"
+    return f"{family} {model.name} (eps = {eps_text}{cavity})"
 
 
 def ir_intensities(result: HessianResult) -> np.ndarray:

@@ -4,14 +4,43 @@ These tutorials double as a **course** in computational quantum chemistry.
 If you are new to vibe-qc or to the field, start with the
 [Introduction](introduction.md) for the background, the molecular/periodic
 split, and the learning path; otherwise work down from wherever you like.
-Each page is a complete worked example you can paste straight into a Python
-interpreter.
+Nearly every page is a complete worked example you can paste straight into a
+Python interpreter; the few conceptual pages say so in their first paragraph.
+Every method page states the status label of what it runs (production,
+preview, experimental or gated) in the vocabulary of
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+
+## Before running a worked example
+
+Use a working engine installation and the interpreter from that environment;
+see [Running vibe-qc](../running.md). Save inputs in a separate run directory
+so calculation files stay beside the input rather than in the source checkout.
+
+- Run a page's setup block first. Later blocks may reuse its molecule, basis,
+  options or results; the page should identify these continuations explicitly.
+- Check coordinate units before replacing a geometry. Low-level `Atom`
+  coordinates are in bohr; XYZ inputs use the file reader's documented units.
+- Keep a unique output stem or directory for every trial. Preserve the input,
+  actual settings and runtime identity with results you intend to compare.
+- Check convergence before tabulating energies, computing properties or fitting
+  a trend. File creation alone does not establish success; see
+  [result inspection](../user_guide/output_files.md#inspect-a-manifest-before-analysis).
+- Treat displayed tables as recorded or illustrative results, according to the
+  page's provenance. They are not new measurements from your installation.
+  Iteration counts and timings can change with runtime and settings.
+
+The first calculation in each lesson is the starting point. Optional plotting
+requires Matplotlib in the same environment; a figure is not needed to inspect
+the tabulated values. Reuse computed results when plotting, and keep an
+unmodified baseline before exploring the suggested variations.
 
 ## Choose a learning path
 
 You do not have to read all of the tutorials. Pick the path that matches the
 calculation you want to perform, and use the user guide when you need a
-reference table rather than a lesson.
+reference table rather than a lesson. If you are choosing between methods,
+[Methods: theory and status](../methods.md) summarises every family with its
+equations and its status label, and links back to the tutorial that derives it.
 
 | Path | Read in order | You will finish able to... |
 |---|---|---|
@@ -19,7 +48,12 @@ reference table rather than a lesson.
 | Molecular structure and properties | [Molecular HF](molecular_hf.md) -> [Geometry optimization](geometry_optimization.md) -> [Vibrations](vibrational_frequencies.md) -> [Thermodynamics](thermodynamics.md) | move from an electronic energy to an optimized, characterized structure |
 | Correlated molecular energies | [Basis convergence](basis_convergence.md) -> [RI-MP2](ri_mp2_aux_verification.md) -> [CCSD(T)](coupled_cluster_ccsd_t.md) -> [DLPNO](dlpno_local_correlation.md) | choose a correlation hierarchy and track its cost and approximations |
 | Periodic materials | [Periodic HF](periodic_hf.md) -> [Bloch and k-points](kpoints_brillouin_bloch.md) -> [Periodic DFT](periodic_dft.md) -> [Method routes](periodic_methods_compared.md) | construct a crystal calculation and converge its sampling and Coulomb route |
+| Converging a calculation | [DFT grid convergence](dft_grid_convergence.md) -> [Lattice-cutoff convergence](periodic_lattice_cutoff_convergence.md) -> [Symmetry-reduced k meshes](symmetry_reduced_k_mesh.md) | know which numerical knob limits a molecular or periodic energy and how far to push it |
+| Correlation on crystals | [DLPNO](dlpno_local_correlation.md) -> [Bloch and k-points](kpoints_brillouin_bloch.md) -> [DLPNO-CCSD(T) on a crystal](periodic_dlpno_ccsd_t.md) | run coupled-cluster correlation per cell and read its finite-size behaviour |
+| Inside the SCF | [Second-order SCF](second_order_scf.md) -> [Eigensolvers and operators](eigensolver_operators.md) | understand the eigensolvers, their diagnostics and their refusals |
 | Results and visualization | [QVF format](qvf_file_format.md) -> [vibe-view setup](vibe_view_getting_started.md) -> [Viewer walkthrough](vibe_view_walkthrough.md) | inspect, compare, export, and archive results |
+| Portable molecular inputs and results | [Molecular HF](molecular_hf.md) -> [QCSchema interchange](qcschema_interchange.md) | exchange a molecule and calculation result as JSON and check it against a literature energy |
+| Wavefunction exchange | [TREXIO molecular exchange](trexio_exchange.md) -> [CI and periodic TREXIO](trexio_correlated_periodic.md) | export, inspect, convert and restart wavefunctions while retaining default QVF output |
 | Remote operation | [Parallel execution](parallel_execution.md) -> [vq remote jobs](vq_queue_remote_job.md) -> [Reference outputs](reference_outputs.md) | submit, monitor, fetch, and preserve remote calculations |
 
 (molecular-path)=
@@ -69,6 +103,8 @@ planning_a_calculation
 molecular_hf
 direct_scf_memory_tradeoff
 molecular_dft
+dft_grid_convergence
+qcschema_interchange
 open_shell
 initial_guess_walkthrough
 ```
@@ -79,11 +115,14 @@ initial_guess_walkthrough
 
 post_scf_properties
 orbital_visualization
+qtaim_topology
+eda_and_entanglement
 geometry_optimization
 vibrational_frequencies
 thermodynamics
 molecular_dynamics
 neb_reaction_path
+irc_from_transition_state
 relaxed_pes_scan
 solvation_water
 ```
@@ -104,6 +143,9 @@ rijcosx_glycine
 ediis_diis_hybrid
 adaptive_diis
 second_order_scf
+eigensolver_operators
+opentrustregion
+opentrustregion_stability
 excited_states_tddft
 ```
 
@@ -114,7 +156,10 @@ excited_states_tddft
 natural_orbitals
 ri_mp2_aux_verification
 coupled_cluster_ccsd_t
+coupled_cluster_family
+ovgf_ionization
 dlpno_local_correlation
+periodic_dlpno_ccsd_t
 non_hf_solvers
 casscf_multireference
 msindo
@@ -154,6 +199,7 @@ equidistant_h_chain
 :caption: Periodic: methods
 
 periodic_methods_compared
+bipole_physical_domain
 periodic_gpw
 periodic_gapw
 ```
@@ -164,7 +210,10 @@ periodic_gapw
 
 band_structure
 lih_multi_k
+symmetry_reduced_k_mesh
+periodic_lattice_cutoff_convergence
 pdos
+coop_cohp_bonding
 fermi_dirac_smearing
 gilat_net_metals
 dft_plus_u
@@ -200,6 +249,8 @@ xsf_bxsf_visualization
 :maxdepth: 1
 :caption: Operations
 
+trexio_exchange
+trexio_correlated_periodic
 parallel_execution
 vq_queue_remote_job
 external_data_fetcher

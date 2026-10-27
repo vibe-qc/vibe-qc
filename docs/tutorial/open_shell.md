@@ -10,7 +10,17 @@ orbitals spin-restricted. The choice carries across the whole method stack
 (UHF/ROHF, UKS/ROKS, UMP2/ROMP2, and onward to coupled cluster). This page
 walks the foundational ones on the doublet OH radical.
 
-We start with UHF:
+## Run the UHF reference
+
+Use the installed engine environment and a run directory outside the checkout.
+The first block is standalone; the UKS, UMP2 and ROHF blocks continue in the
+same script. Coordinates passed to `Atom` are in bohr and energies are in
+hartree. This fixed OH geometry is illustrative, not an optimized structure.
+
+Neutral OH has nine electrons. `multiplicity=2` gives five alpha and four
+beta electrons; `charge=-1, multiplicity=1` would describe hydroxide instead.
+See [Molecular charge and spin](../user_guide/molecules.md#configuring-open-shell-systems)
+for the electron-count checks.
 
 ```python
 from vibeqc import Atom, Molecule, BasisSet, UHFOptions, run_uhf
@@ -25,17 +35,20 @@ basis = BasisSet(mol, "6-31g*")
 opts = UHFOptions()
 opts.conv_tol_energy = 1e-10
 opts.conv_tol_grad = 1e-8
-opts.max_iter = 200            # OH/6-31G* UHF needs ~120 iterations to settle
-result = run_uhf(mol, basis, opts)
+opts.max_iter = 200            # iteration budget, not a convergence guarantee
+result_uhf = run_uhf(mol, basis, opts)
+if not result_uhf.converged:
+    raise RuntimeError("OH UHF did not converge; inspect result_uhf.scf_trace")
 
-print(f"E_UHF  = {result.energy:.10f}")
-print(f"<S^2>  = {result.s_squared:.6f}  (doublet, ideal 0.75)")
+print(f"E_UHF  = {result_uhf.energy:.10f}")
+print(f"<S^2>  = {result_uhf.s_squared:.6f}")
+print(f"Ideal  = {result_uhf.s_squared_ideal:.6f}")
 ```
 
-```text
-E_UHF  = -75.3809427974
-<S^2>  = 0.755290          # mildly spin-contaminated (ideal 0.75)
-```
+Keep this result as `result_uhf`: UMP2 below needs its UHF orbitals and
+orbital energies. A converged flag establishes SCF convergence, not the
+correct electronic state. Inspect the spin diagnostic and occupations as
+well as the energy; see [SCF convergence](../user_guide/scf_convergence.md).
 
 ## UKS, open-shell DFT
 
@@ -45,14 +58,23 @@ place of exact exchange. `run_uks` takes a `UKSOptions` carrying the
 functional name:
 
 ```python
+# doc-audit: skip - continues with mol and basis from the UHF block
 from vibeqc import UKSOptions, run_uks
 
 opts = UKSOptions()
 opts.functional = "PBE"
-result = run_uks(mol, basis, opts)
+result_uks = run_uks(mol, basis, opts)
+if not result_uks.converged:
+    raise RuntimeError("OH PBE UKS did not converge; inspect result_uks.scf_trace")
+print(f"E_UKS = {result_uks.energy:.10f}")
 ```
 
-Same functional library as RKS.
+UKS uses the same functional interface as RKS. Here the supplied
+`UKSOptions` keeps its default legacy product grid. The grid selection rules
+for supplied options differ from `run_job`; see
+[Molecular integration grids](../user_guide/functionals.md#molecular-integration-grids).
+The separate result name prevents the UKS reference from replacing the UHF
+reference needed for the next step.
 
 ## UMP2, second-order correlation on a UHF reference
 
@@ -61,9 +83,12 @@ Møller-Plesset correlation on top, split into the same-spin (αα, ββ) and
 opposite-spin (αβ) channels:
 
 ```python
-from vibeqc import run_ump2
+# doc-audit: skip - continues with mol, basis and result_uhf from the UHF block
+from vibeqc import UMP2Options, run_ump2
 
-ump2 = run_ump2(mol, basis, result_uhf)   # pass a converged UHF result
+mp2_opts = UMP2Options()
+mp2_opts.n_frozen_core = 0  # explicitly correlate all electrons for this example
+ump2 = run_ump2(mol, basis, result_uhf, mp2_opts)
 print(f"E_UMP2 total  = {ump2.e_total:.10f}")
 print(f"E_correlation = {ump2.e_correlation:.10f}")
 print(f"  αα same-spin = {ump2.e_aa:.10f}")
@@ -71,7 +96,52 @@ print(f"  ββ same-spin = {ump2.e_bb:.10f}")
 print(f"  αβ opposite  = {ump2.e_ab:.10f}")
 ```
 
+Use the same geometry and basis that produced `result_uhf`. The driver
+rejects an unconverged UHF reference. It does not accept the UKS or ROHF
+result as a replacement for that reference.
+
+`UMP2Options.n_frozen_core` defaults to `-1`, selecting the published
+chemical-core policy; `0` explicitly selects all-electron correlation.
+Record this choice when comparing energies. At the default unscaled spin
+coefficients, `e_correlation = e_aa + e_bb + e_ab` and
+`e_total = e_hf + e_correlation`. The reported UHF spin diagnostic remains a
+property of the reference, not a newly computed UMP2 expectation value.
+See [MP2 and double hybrids](../user_guide/mp2_and_double_hybrids.md)
+for frozen-core, density-fitting and memory controls.
+
 Closed-shell MP2 on an RHF reference is `run_mp2`.
+
+### Write a complete MP2 job
+
+As an alternative to the low-level UHF/UMP2 calls above, let `run_job`
+compute the reference and correction together and record both in the output:
+
+```python
+# doc-audit: skip - reuses mol from the UHF block; alternative workflow
+from vibeqc import run_job
+
+job = run_job(
+    mol,
+    basis="6-31g*",
+    method="mp2",             # multiplicity=2 selects UMP2
+    mp2_reference="uhf",
+    frozen_core=0,             # match the all-electron example above
+    output="oh_ump2",
+    write_molden_file=True,
+)
+if not job.converged:
+    raise RuntimeError("OH MP2 reference did not converge; inspect oh_ump2.out")
+print(f"E_UHF        = {job.energy:.10f}")
+print(f"E_correlation = {job.mp2.e_correlation:.10f}")
+print(f"E_UMP2 total = {job.energy_total:.10f}")
+```
+
+`job.energy` remains the UHF energy; `job.energy_total` includes the MP2
+correction and `job.mp2` exposes the spin channels. This call runs a new job,
+so choose it instead of the preceding low-level calls when you only need
+one calculation with output files. The Molden file contains reference
+orbitals, not correlated natural orbitals. The complete script is
+[`examples/molecular/input-oh-ump2.py`](https://github.com/vibe-qc/vibe-qc/blob/main/examples/molecular/input-oh-ump2.py).
 
 ## ROHF: a spin-pure open shell
 
@@ -83,26 +153,24 @@ spin eigenstate** by construction. Ordinary radicals have a single SOMO.
 `run_rohf` takes the same molecule, basis, and options shape as `run_uhf`:
 
 ```python
+# doc-audit: skip - continues with mol and basis from the UHF block
 from vibeqc import ROHFOptions, run_rohf
 
 opts = ROHFOptions(conv_tol_energy=1e-10, conv_tol_grad=1e-8)
 rohf = run_rohf(mol, basis, opts)
+if not rohf.converged:
+    raise RuntimeError("OH ROHF did not converge; inspect rohf.scf_trace")
 
 print(f"E_ROHF = {rohf.energy:.10f}")
 print(f"<S^2>  = {rohf.s_squared:.6f}  (exact 0.75, by construction)")
 ```
 
-```text
-E_ROHF = -75.3770312007
-<S^2>  = 0.750000          # exactly 0.75, no contamination to correct
-```
-
-On this OH radical ROHF sits about 3.9 mHa *above* UHF: UHF's extra
-variational freedom always wins on raw energy. What ROHF gives back is exact
-spin purity, $\langle S^2\rangle = 0.75$ to every digit, with no
-contamination to diagnose. Reach for it when a clean spin state matters more
-than the last few mHa, or when you need a spin-pure reference for a
-correlated treatment.
+Compare ROHF and UHF only at the same geometry, basis and numerical
+settings. The UHF variational space contains the ROHF space, but an SCF
+iteration can stop at different stationary solutions; a single calculation
+does not guarantee the lowest energy in either space. ROHF supplies the
+spin-restricted reference used by its own correlated routes; see
+[ROHF and ROKS](../user_guide/rohf.md) for their supported combinations.
 
 Open-shell **DFT** has the matching spin-restricted form, `run_roks` with
 `ROKSOptions(functional=...)`, the spin-pure counterpart to `run_uks`.
@@ -129,22 +197,26 @@ breaks any system with an unpaired electron, radicals, odd-electron
 molecules, triplet states, transition-metal complexes with partially
 filled d shells.
 
-For $N_\alpha$ unpaired-spin-up and $N_\beta$ spin-down electrons
+For $N_\alpha$ alpha-spin and $N_\beta$ beta-spin electrons
 with $N_\alpha \neq N_\beta$, we need at least two paths forward:
 
 - **UHF (unrestricted HF).** Give α and β electrons *different*
-  spatial orbitals, $\phi^\alpha_i$ and $\phi^\beta_i$. Double the
+  spatial orbitals, $\phi^\alpha_i$ and $\phi^\beta_i$ (J. A. Pople
+  and R. K. Nesbet, *J. Chem. Phys.* **22**, 571 (1954),
+  doi:10.1063/1.1740120). Double the
   SCF unknowns, but now every electron has full variational freedom
   in its spatial part.
 - **ROHF (restricted open-shell HF).** Keep the doubly-occupied
   orbitals spin-restricted (same $\phi_i$ for α and β when both are
-  occupied), and let only the singly-occupied orbitals be separate.
+  occupied), and let only the singly-occupied orbitals be separate
+  ({vibeqc-cite}`roothaan_rohf_1960`).
   The determinant stays a pure spin eigenstate, at a small energy cost
   versus UHF. vibe-qc ships this as `run_rohf` (above).
 
 ### UHF equations
 
-UHF solves two coupled generalised eigenvalue problems:
+UHF solves two coupled generalised eigenvalue problems, the
+Pople-Nesbet equations:
 
 $$
 \mathbf{F}^\alpha \, \mathbf{C}^\alpha = \mathbf{S} \, \mathbf{C}^\alpha \, \boldsymbol{\varepsilon}^\alpha,
@@ -163,8 +235,8 @@ $$
 
 The Coulomb ($J$) term sees the *total* density; the exchange ($K$)
 term is **spin-diagonal**, α electrons only exchange with α, β with
-β. This is the physics of Fermi correlation that makes UHF give a
-lower energy than RHF for any open-shell reference.
+β. This is the physics of Fermi correlation that gives UHF an energy
+at or below ROHF's for any open-shell state.
 
 ### Spin contamination, the price you pay
 
@@ -181,25 +253,25 @@ $$
 $$
 
 and vibe-qc reports it as `result.s_squared` alongside the ideal
-value `result.s_squared_ideal`. Heuristic thresholds:
-
-| $\langle S^2 \rangle - S(S+1)$ | Interpretation |
-| --- | --- |
-| $< 0.02$ | Clean open shell, trust UHF |
-| $0.02 - 0.10$ | Mild contamination, numbers still useful |
-| $> 0.10$ | Severe contamination, consider ROHF, CASSCF, or MP2/CCSD on top |
+value `result.s_squared_ideal`. Check the deviation from the target alongside
+the occupations, SCF residual and sensitivity to the starting guess.
+A small deviation alone does not validate the energy or the intended state.
+Adding a UMP2 correction is not a spin-purification step.
 
 Large spin contamination often signals the real problem, the
 reference determinant isn't a good starting point for a
 single-determinant method, and you need a multireference approach.
 Active-space FCI / selected-CI / DMRG and orbital-optimised CASSCF /
-CASPT2 / NEVPT2 all ship via `vibeqc.solvers`, with CASSCF also exposed
+CASPT2 / NEVPT2 ({vibeqc-cite}`white_dmrg_1992`,
+{vibeqc-cite}`roos_taylor_siegbahn_casci_1980`,
+{vibeqc-cite}`andersson_caspt2_1990`, {vibeqc-cite}`angeli_nevpt2_2001`)
+all ship via `vibeqc.solvers`, with CASSCF also exposed
 as `run_job(method="casscf", active_space=(...))`.
 
 ### UMP2
 
-Second-order Møller-Plesset perturbation theory on a UHF reference
-partitions correlation energy into **same-spin** and **opposite-spin**
+Second-order Møller-Plesset perturbation theory
+({vibeqc-cite}`moller_plesset_1934`) on a UHF reference partitions correlation energy into **same-spin** and **opposite-spin**
 channels:
 
 $$
@@ -209,23 +281,29 @@ $$
 with
 
 $$
-E_{\sigma\tau}^{(2)} = \sum_{ij \in \text{occ}} \sum_{ab \in \text{virt}}
-  \frac{\langle ij \| ab \rangle^2}{\varepsilon_i + \varepsilon_j - \varepsilon_a - \varepsilon_b}
+E_{\sigma\tau}^{(2)} = c_{\sigma\tau} \sum_{ij \in \text{occ}} \sum_{ab \in \text{virt}}
+  \frac{\langle ij \| ab \rangle^2}{\varepsilon_i + \varepsilon_j - \varepsilon_a - \varepsilon_b},
+\qquad c_{\sigma\sigma} = \tfrac14, \quad c_{\alpha\beta} = 1,
 $$
 
-summed over pairs where orbital $i$ has spin $\sigma$ and $j$ has
-$\tau$. The `ump2.e_aa`, `.e_bb`, and `.e_ab` fields surface this
+summed over orbitals where $i$ and $a$ have spin $\sigma$ and $j$ and
+$b$ have spin $\tau$. The factor ¼ removes the double counting of
+$i \leftrightarrow j$ and $a \leftrightarrow b$ in the same-spin sums;
+in the opposite-spin channel the exchange integral vanishes, so
+$\langle ij \| ab \rangle = \langle ij | ab \rangle$. The `ump2.e_aa`, `.e_bb`, and `.e_ab` fields surface this
 decomposition directly. The same-spin/opposite-spin split is the
 starting point for **spin-component-scaled MP2** (SCS-MP2,
-Grimme 2003), where the two channels get different empirical
-prefactors, roadmap item for the future.
+{vibeqc-cite}`grimme_scs_mp2_2003`), where the two channels get different empirical
+prefactors; it ships as `vibeqc.run_scs_mp2` (RHF reference) and
+`vibeqc.run_scs_ump2` (UHF reference).
 
 ## Resources
 
-~70 MB peak RAM, <0.1 s on one core (Apple M2 baseline) for the
-OH-radical / 6-31G\* example. UHF roughly doubles the cost of the
-matching closed-shell HF, separate α / β Fock builds and densities
-each iteration. Triplet O₂ at the same basis: ~150 MB, ~0.5 s.
+UHF builds separate alpha and beta densities and Fock matrices. Cost depends
+on the basis, integral mode, starting guess and convergence history. UMP2
+adds an integral transformation and correlation workspace beyond the SCF
+cost; use the [memory guide](../user_guide/memory.md) before scaling this
+small-molecule example. No current-build timing is implied by this recipe.
 
 ## References
 

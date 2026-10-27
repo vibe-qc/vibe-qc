@@ -8,7 +8,7 @@ name = "vibe-basis"
 # merge as the change that earns it, and keep in lockstep with
 # src/vibe_basis/__init__.py __version__ (pinned by
 # tests/test_versioning.py). Scheme + 1.0 criterion: VERSIONING.md.
-version = "0.12.0"
+version = "0.13.0"
 description = "Basis-set optimization driver — runs external SCF programs (CRYSTAL23, ORCA, Gaussian, …) under NLopt / iminuit"
 authors = [{name = "Michael F. Peintinger", email = "mpei@vibe-qc.com"}]
 license = "MPL-2.0"

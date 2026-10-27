@@ -1,12 +1,12 @@
 # MACE examples
 
 These scripts exercise vibe-qc's optional ACEsuit MACE interface. They
-require Python 3.13 or earlier and a source install with the `mace` extra:
+require the `mace` extra, which also works in the usual Python 3.14 environment:
 
 ```sh
-python3.13 -m venv .venv-mace
-.venv-mace/bin/pip install -e '.[mace]'
-.venv-mace/bin/python examples/mlip/00_runtime_healthcheck.py
+python3.14 -m venv .venv
+.venv/bin/pip install -e '.[mace]'
+.venv/bin/python examples/mlip/00_runtime_healthcheck.py
 ```
 
 The first model use downloads its weights into the user's MACE cache.
@@ -16,7 +16,7 @@ For a managed development runtime that should follow the latest clean
 `main`, strengthen the health check with both operational gates:
 
 ```sh
-.venv-mace/bin/python examples/mlip/00_runtime_healthcheck.py \
+.venv/bin/python examples/mlip/00_runtime_healthcheck.py \
     --require-main-current --require-asl-unset
 ```
 
@@ -58,7 +58,7 @@ silently change an already queued job.
 Run an example from the repository root:
 
 ```sh
-.venv-mace/bin/python examples/mlip/02_periodic_mace_silicon.py
+.venv/bin/python examples/mlip/02_periodic_mace_silicon.py
 ```
 
 ## Supported model scope

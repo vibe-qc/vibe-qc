@@ -1,6 +1,7 @@
 // Tiny actual-source diagnostics. No caller Fock/integral/amplitude arrays.
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 #include <cstring>
 #include "vibeqc/periodic_gaussian_pair_ccsd.hpp"
 #include "periodic_correlation_real_local_internal.hpp"

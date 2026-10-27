@@ -91,6 +91,7 @@ _ENV_VARS: Sequence[Tuple[str, str]] = (
         "live SCF progress logging in run_job (set to '0' to disable)",
     ),
     ("VIBEQC_NO_HOSTNAME", "redact hostname in run_job's .system manifest"),
+    ("VIBEQC_PORTABLE_MANIFEST", "write .system paths relative to the manifest directory"),
     (
         "VIBEQC_NO_CRASH_DUMP",
         "suppress automatic crash-dump files on unhandled failure",

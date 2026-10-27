@@ -1,0 +1,1 @@
+- Molecular DLPNO-UCCSD rotated-occupied T1 triples now use checked retained TNO Fock solves with explicit source, frozen and triple coordinates. TNO selection, frozen partitions, screening refusals and numerical gates are preserved.

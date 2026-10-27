@@ -439,6 +439,49 @@ def _aft_3c_gradient_term(
     )
 
 
+def _periodic_3c_gradient_terms(
+    system: PeriodicSystem,
+    ao_basis: BasisSet,
+    cache: _CompcellGradientCache,
+    W: np.ndarray,
+) -> np.ndarray:
+    """Weighted derivative of what the fit adds to the home-cell 3c tensor.
+
+    ``cache.T_fused`` carries the auxiliary images
+    (:func:`vibeqc.aux_basis.aux_image_3c`) and, with the AFT correction,
+    minus the G = 0 term ``Vbar_P S / Omega``
+    (:func:`vibeqc.aux_basis._compcell_g0_term`), #172. ``W`` has shape
+    ``(n_fused, n_orb * n_orb)``, as for the home-cell kernel.
+    """
+    from .aux_basis import (
+        _aux_image_3c_gradient_weighted,
+        _fused_g0_potential,
+        _g0_overlap_lattice_opts,
+    )
+
+    grad = _aux_image_3c_gradient_weighted(
+        system, ao_basis, cache.fused_basis, cache.lat_opts_3c, W,
+        precision=float(cache.rcut_precision),
+    )
+    if cache.apply_aft_correction:
+        volume = float(abs(np.linalg.det(np.asarray(system.lattice, dtype=float))))
+        n_orb = cache.n_orb
+        weight = -(_fused_g0_potential(cache.fused_basis) @ np.asarray(W)) / volume
+        weight = weight.reshape(n_orb, n_orb)
+        weight = 0.5 * (weight + weight.T)
+        opts = _g0_overlap_lattice_opts(cache.lat_opts_3c, system, ao_basis)
+        w_set = _fold_hermitian_k_matrices_to_lattice(
+            [weight], [1.0], np.zeros((1, 3)),
+            compute_overlap_lattice(ao_basis, system, opts),
+        )
+        # The kernel returns -sum_g W(g) . dS(g)/dR.
+        grad = grad - np.asarray(
+            overlap_lattice_gradient_contribution(ao_basis, system, w_set, opts),
+            dtype=np.float64,
+        )
+    return grad
+
+
 def _compute_j_gradient_compcell(
     system: PeriodicSystem,
     ao_basis: BasisSet,
@@ -511,7 +554,8 @@ def _compute_j_gradient_compcell(
         dtype=np.float64,
     )
 
-    grad = grad_2c + grad_3c
+    grad = grad_2c + grad_3c + _periodic_3c_gradient_terms(
+        system, ao_basis, cache, W)
     if cache.apply_aft_correction:
         grad = grad + _aft_2c_gradient_term(system, cache, omega_fused)
         grad = grad + _aft_3c_gradient_term(system, ao_basis, cache, W)
@@ -594,7 +638,8 @@ def _compute_k_gradient_compcell(
         dtype=np.float64,
     )
 
-    grad = grad_2c - 2.0 * alpha_hf * grad_3c
+    grad = grad_2c - 2.0 * alpha_hf * (
+        grad_3c + _periodic_3c_gradient_terms(system, ao_basis, cache, Y_flat))
     if cache.apply_aft_correction:
         grad = grad + _aft_2c_gradient_term(system, cache, omega_fused)
         grad = grad - 2.0 * alpha_hf * _aft_3c_gradient_term(
@@ -930,7 +975,7 @@ def rsgdf_fit_response_conditioning(cache: _RsgdfGradientCache) -> float:
     detector. Informational only: the historical ~2.5e-5 dense-core
     analytic-vs-FD discrepancy this once tried to explain was an e_nuc
     truncation artefact in the driver ENERGY, fixed 2026-07-29 (see the
-    RESOLVED dense-core entry, HANDOVER_OPEN_BUGS_V015.md); post-fix the
+    RESOLVED dense-core entry, the original investigation); post-fix the
     dense-core full-SCF FD gate passes at < 5e-9 Ha/bohr.
     """
     lam = np.asarray(cache.eigvals, dtype=np.float64)
@@ -980,6 +1025,8 @@ class _MultikRsgdfQGroup:
     # exactly zero — the J/K assemblies zero the corresponding weight
     # entries before the Bloch 3c derivative kernel.
     pair_keep_ao: Optional[np.ndarray]
+    g_mesh: Optional[np.ndarray] = None
+    kernel_weights: Optional[np.ndarray] = None
 
 
 @dataclass
@@ -1006,6 +1053,106 @@ class _MultikRsgdfGradientCache:
     n_aux: int
     n_orb: int
     fit_screen_threshold: float  # 0.0 = unscreened (exact) fit
+    support_policy: Optional[str] = None
+
+
+def _build_classic_gradient_cache_from_source(system, basis, auxiliary, source, lat_opts):
+    """Rebuild raw response tensors with the SCF's actual classic builder.
+
+    The immutable q-state descriptor checks geometry, basis, metric threshold,
+    support, tail and reciprocal enumeration. Every rebuilt factor must match
+    the converged source in its declared frame; row count alone is insufficient.
+    No alternate Hamiltonian or inferred canonical/eigenmode frame is admitted.
+    """
+    from .aux_basis import (
+        _canonical_reciprocal_transfer, build_lpq_bloch_native_fft_shared_q,
+    )
+
+    if source.frame not in ("canonical", "eigenmode"):
+        raise ValueError("classic gradient source has an unknown auxiliary frame")
+    if source.support_policy not in ("physical_pairs", "historical_index_ball"):
+        raise ValueError("classic gradient source has an unknown pair support")
+    if source.support_policy == "physical_pairs" and source.memory_byte_cap is None:
+        raise ValueError("classic physical gradient source lacks its executed memory budget")
+    kpts = np.asarray(source.kpoints_cart, dtype=float)
+    n_aux, n_orb = int(auxiliary.nbasis), int(basis.nbasis)
+    if (source.n_aux, source.n_ao) != (n_aux, n_orb):
+        raise ValueError("classic gradient source basis dimensions differ")
+    groups_meta = {}
+    expected = ({(i, j) for i in range(len(kpts)) for j in range(len(kpts))}
+                if source.need_k_pairs else {(i, i) for i in range(len(kpts))})
+    if set(source.pairs) != expected:
+        raise ValueError("classic gradient source has incomplete k-point pairs")
+    for i, j in sorted(source.pairs):
+        q = _canonical_reciprocal_transfer(system, kpts[j] - kpts[i])
+        key = tuple(float(v) for v in np.round(q, 14))
+        groups_meta.setdefault(key, (q, []))[1].append((i, j))
+    groups = {}
+    retained_bytes = 0
+    for key in sorted(groups_meta):
+        q, pairs = groups_meta[key]
+        if key not in source.q_metric:
+            raise ValueError("classic gradient source lacks the executed q metric")
+        state = {}
+        remaining = (None if source.memory_byte_cap is None else
+                     source.memory_byte_cap - retained_bytes)
+        # Reserve the response-specific arrays before the value builder admits
+        # its own transient workspace. Its final mesh census admits the exact
+        # retained total before allocating response mesh/M/Frechet arrays.
+        response_fixed = 16*len(pairs)*n_aux*n_orb*n_orb + 32*n_aux*n_aux + 8*n_aux
+        cap = None if remaining is None else remaining - response_fixed
+        if cap is not None and cap <= 0:
+            raise MemoryError("classic gradient response exceeds the source memory budget")
+        rebuilt = build_lpq_bloch_native_fft_shared_q(
+            system, basis, auxiliary, np.asarray([kpts[i] for i, _ in pairs]), q,
+            ke_cutoff=source.ke_cutoff, tail_ke_cutoff=source.tail_ke_cutoff,
+            lat_opts=lat_opts, linear_dep_thr=source.linear_dep_thr,
+            canonical_auxiliary_basis=source.frame == "canonical",
+            fit_screen_threshold=source.fit_screen_threshold,
+            _q_metric_cache={key: source.q_metric[key]},
+            support_policy=("physical_pairs" if source.support_policy == "physical_pairs" else None),
+            memory_byte_cap=cap, reciprocal_candidate_cap=source.reciprocal_candidate_cap,
+            _fit_response_state=state, _fit_response_byte_cap=remaining,
+        )
+        if len(rebuilt) != len(pairs):
+            raise RuntimeError("classic gradient rebuild returned incomplete factors")
+        for pair, factor in zip(pairs, rebuilt):
+            if not np.array_equal(np.asarray(source.pairs[pair]), factor):
+                raise RuntimeError(f"classic gradient rebuild differs from executed SCF factors at {pair}")
+        del rebuilt, factor
+        metric = state["metric"]
+        eigvals, U, keep = metric.eigvals, metric.eigvecs, metric.keep
+        threshold = float(source.linear_dep_thr)
+        if not np.array_equal(keep, eigvals > threshold) or not np.any(keep):
+            raise ValueError("classic gradient metric threshold differs from executed source")
+        spectral_tol = 128 * np.finfo(float).eps * max(1., float(np.max(abs(eigvals))))
+        if np.any(abs(eigvals - threshold) <= spectral_tol):
+            raise RuntimeError("classic gradient metric lies on the rank threshold")
+        inverse = np.zeros_like(eigvals)
+        inverse[keep] = 1. / eigvals[keep]
+        frechet = np.zeros((n_aux, n_aux), dtype=complex)
+        kept_pair = keep[:, None] & keep[None, :]
+        frechet[kept_pair] = -(inverse[:, None] * inverse[None, :])[kept_pair]
+        mixed = keep[:, None] ^ keep[None, :]
+        delta = eigvals[:, None] - eigvals[None, :]
+        if np.any(abs(delta[mixed]) <= spectral_tol):
+            raise RuntimeError("classic gradient retained/dropped metric modes are degenerate")
+        frechet[mixed] = (inverse[:, None] - inverse[None, :])[mixed] / delta[mixed]
+        mesh = state["reciprocal"]
+        kernel = 4 * np.pi / np.sum(mesh**2, axis=1) / abs(np.linalg.det(system.lattice))
+        groups[key] = _MultikRsgdfQGroup(
+            q=q, pairs=pairs, bra_k_indices=[i for i, _ in pairs],
+            M=(U * eigvals) @ U.conj().T, T_list=state["tensors"],
+            eigvals=eigvals, eigvecs=U, keep_mask=keep, inverse_eigvals=inverse,
+            inverse_frechet=frechet, n_fit=int(np.count_nonzero(keep)),
+            pair_keep_ao=metric.pair_keep_ao, g_mesh=mesh, kernel_weights=kernel,
+        )
+        retained_bytes += state["retained_bytes"]
+    return _MultikRsgdfGradientCache(
+        auxiliary, kpts, groups, source.linear_dep_thr, source.ke_cutoff,
+        source.tail_ke_cutoff, lat_opts, n_aux, n_orb, source.fit_screen_threshold,
+        source.support_policy,
+    )
 
 
 def _build_multik_rsgdf_gradient_cache(
@@ -1418,7 +1565,8 @@ def _compute_j_gradient_multik_rsgdf(
         ke_cutoff=cache.ke_cutoff,
         q_cart=group.q,
         weight=omega_aux,
-        tail_ke_cutoff=cache.tail_ke_cutoff,
+        tail_ke_cutoff=(cache.tail_ke_cutoff if getattr(group, "g_mesh", None) is None else None),
+        g_mesh=getattr(group, "g_mesh", None), kernel_weights=getattr(group, "kernel_weights", None),
     )
     for bra_pos, k_idx in enumerate(group.bra_k_indices):
         W3 = (w[k_idx] * np.outer(gamma.conj(), D_T_flat[k_idx])).reshape(
@@ -1443,7 +1591,9 @@ def _compute_j_gradient_multik_rsgdf(
             k_ket=kpts[k_idx] + group.q,
             q_cart=group.q,
             lat_opts=cache.lat_opts,
-            tail_ke_cutoff=cache.tail_ke_cutoff,
+            support_policy=getattr(cache, "support_policy", None),
+            tail_ke_cutoff=(cache.tail_ke_cutoff if getattr(group, "g_mesh", None) is None else None),
+            g_mesh=getattr(group, "g_mesh", None), kernel_weights=getattr(group, "kernel_weights", None),
         )
     return grad
 
@@ -1524,7 +1674,7 @@ def _compute_k_gradient_multik_rsgdf(
     dispatches); Hermiticity of Ω_K(q) making the 2c contraction
     real. No k <-> -k or q <-> -q mesh symmetry is used — every
     (i, j) pair contributes its own 3c term, so IBZ-style reductions
-    stay out of scope (cache guards, handover Item-4 rung 6).
+    stay out of scope (cache guards).
 
     Pure KRHF exchange: the ``-0.25`` SCF prefactor is baked in; the
     hybrid ``alpha_hf`` scaling is the caller's (rung-5) concern.
@@ -1598,7 +1748,8 @@ def _compute_k_gradient_multik_rsgdf(
             ke_cutoff=cache.ke_cutoff,
             q_cart=group.q,
             weight=omega_k,
-            tail_ke_cutoff=cache.tail_ke_cutoff,
+            tail_ke_cutoff=(cache.tail_ke_cutoff if getattr(group, "g_mesh", None) is None else None),
+            g_mesh=getattr(group, "g_mesh", None), kernel_weights=getattr(group, "kernel_weights", None),
         )
 
         # ---- 3c: one conjugate-pair-collapsed dispatch per pair ----
@@ -1628,21 +1779,51 @@ def _compute_k_gradient_multik_rsgdf(
                 k_ket=kpts[i] + group.q,
                 q_cart=group.q,
                 lat_opts=cache.lat_opts,
-                tail_ke_cutoff=cache.tail_ke_cutoff,
+                support_policy=getattr(cache, "support_policy", None),
+                tail_ke_cutoff=(cache.tail_ke_cutoff if getattr(group, "g_mesh", None) is None else None),
+                g_mesh=getattr(group, "g_mesh", None), kernel_weights=getattr(group, "kernel_weights", None),
             )
     return grad
 
 
 # ---------------------------------------------------------------------------
 # Slab (dim=2) truncated-Coulomb GDF gradient
-# (HANDOVER_GDF_GRADIENT_DEFERRED.md § 6, rung 4)
+# (the original investigation, rung 4)
 # ---------------------------------------------------------------------------
+
+
+def _record_range_separated_conditioning(diagnostics, batch):
+    """Record the retained-metric roundoff indicator of an executed batch.
+
+    This preserves the historical eps * lambda_max / lambda_min_kept
+    diagnostic, using the SR/LR eigensystem actually differentiated. It is
+    not a bound on the complete gradient: retained/dropped divided
+    differences also depend on spectral gaps (Higham, Functions of
+    Matrices, Chapter 3). No legacy reciprocal metric is rebuilt here.
+    """
+    if diagnostics is None:
+        return
+    state = batch.fit_state
+    if state is None:
+        raise ValueError("SR/LR conditioning requires the differentiated fit state")
+    eigenvalues = np.asarray(batch.metric_eigenvalues, dtype=float)
+    keep = np.asarray(state.keep, dtype=bool)
+    if (eigenvalues.ndim != 1 or keep.shape != eigenvalues.shape
+            or not np.isfinite(eigenvalues).all() or not np.any(keep)
+            or np.any(eigenvalues[keep] <= 0)):
+        raise ValueError("SR/LR conditioning requires finite retained positive modes")
+    estimate = float(np.finfo(float).eps * eigenvalues.max() / eigenvalues[keep].min())
+    diagnostics["metric_roundoff_indicator"] = max(
+        diagnostics.get("metric_roundoff_indicator", 0.0), estimate,
+    )
+    diagnostics["source"] = "sr-lr"
 
 
 def _compute_range_separated_cache_gradient(
     system, orbital, auxiliary, cache, densities, weights, *,
     memory_byte_cap: int, native_workspace_byte_cap: int,
     coulomb_scale: float = 1.0, exchange_scale: float = 1.0,
+    conditioning_diagnostics: Optional[dict] = None,
 ):
     """Differentiate a fitted cache with one live shared-q source batch.
 
@@ -1783,6 +1964,7 @@ def _compute_range_separated_cache_gradient(
                 exchange_scale=exchange_scale, coulomb_source=source,
                 include_coulomb_metric=first,
             )
+            _record_range_separated_conditioning(conditioning_diagnostics, batch)
             first = False
             del batch
     return result
@@ -1802,7 +1984,9 @@ def _compute_range_separated_jk_gradient(
     changes require a new fit. Borrowed source/factor/density storage is
     separate from this derivative-workspace cap.
     """
-    from .aux_basis import _range_separated_gdf_source_signature
+    from .aux_basis import (
+        _range_separated_gdf_source_signature, _rsgdf_reciprocal_shell_pair_cutoffs,
+    )
     from ._vibeqc_core import compute_gdf_range_separated_gradient_weighted
 
     state = batch.fit_state
@@ -1828,10 +2012,17 @@ def _compute_range_separated_jk_gradient(
         coulomb_source=coulomb_source,
         include_coulomb_metric=include_coulomb_metric,
     )
+    shell_pair_cutoffs = _rsgdf_reciprocal_shell_pair_cutoffs(
+        system, orbital, auxiliary, batch.transfer, omega=omega,
+        integral_screen_error=screen, pair_cutoff=pair_cutoff,
+    )
     return compute_gdf_range_separated_gradient_weighted(
         orbital, auxiliary, system, batch.transfer, state.ket_kpoints, state.vectors,
         omega, pair_cutoff, auxiliary_cutoff, metric_weight, tensor_weight,
         output_bytes, int(native_workspace_byte_cap), image_cap, screen,
+        # The energy source's own per-shell-pair reciprocal domain (#543).
+        **({} if shell_pair_cutoffs is None
+           else dict(shell_pair_cutoffs=shell_pair_cutoffs)),
     )
 
 
@@ -2803,10 +2994,13 @@ def _compute_v_ne_gradient_multik(
 
     Deliberate value-vs-derivative seam (documented, sub-gate): the
     value builder zeroes V_long(g) for cells whose overlap norm is
-    below ``screen_rel = 1e-12`` of the largest block; this derivative
-    keeps every cell (like the Gamma gradient). The induced FD
-    discrepancy is bounded by that relative screen and sits orders of
-    magnitude below the 1e-7 gates.
+    below ``screen_rel = 1e-12`` of the largest block, and since #196
+    leaves cells below ``domain_rel = 1e-16`` out of the V_short lattice
+    sum as well; this derivative keeps every cell (like the Gamma
+    gradient). The induced FD discrepancy is bounded by those relative
+    screens and sits orders of magnitude below the 1e-7 gates -- the
+    V_short limb measurably more so, its whole dropped tail summing to
+    3e-17 Ha against a 6 Ha matrix on LiH/STO-3G.
 
     ``ke_cutoff = None`` resolves like the dispatch: env
     ``VIBEQC_VNE_EWALD3D_KE``, else 200.0. ``ewald_options = None``
@@ -2926,12 +3120,26 @@ def _compute_v_ne_gradient_multik(
         "a,ag,g->g", nuclei_z, phases, kernel, optimize=True
     )
 
-    cells = direct_lattice_cells(system, float(gauge_lat_opts.cutoff_bohr))
-    cell_vectors = np.array(
-        [list(cell.r_cart) for cell in cells], dtype=np.float64
-    )
-    if cell_vectors.size == 0:
-        cell_vectors = np.zeros((1, 3), dtype=np.float64)
+    pair_support = {}
+    if gauge_lat_opts.pair_complete_1e:
+        # The value builder keeps the physical AO pairs of the pair-complete
+        # cells (#438). The density-contracted FT takes that filter natively;
+        # the derivative kernel runs once per group of cells sharing a
+        # supported pair set, with the other pairs' weights zeroed.
+        from .aux_basis import _physical_pair_cell_groups, _physical_pair_ft_cells
+
+        pair_cutoff = float(gauge_lat_opts.cutoff_bohr)
+        cell_vectors = _physical_pair_ft_cells(ao_basis, system, pair_cutoff)
+        pair_support = {"pair_cutoff_bohr": pair_cutoff}
+        groups = _physical_pair_cell_groups(ao_basis, cell_vectors, pair_cutoff)
+    else:
+        cells = direct_lattice_cells(system, float(gauge_lat_opts.cutoff_bohr))
+        cell_vectors = np.array(
+            [list(cell.r_cart) for cell in cells], dtype=np.float64
+        )
+        if cell_vectors.size == 0:
+            cell_vectors = np.zeros((1, 3), dtype=np.float64)
+        groups = [(cell_vectors, None)]
 
     ao_scales = _ao_scales_for_rsgdf(ao_basis)
     pair_scales = np.outer(ao_scales, ao_scales)
@@ -2956,7 +3164,7 @@ def _compute_v_ne_gradient_multik(
             #   d v_long(G)/dR_A = -Z_A kernel(G) (-iG) exp(-iG.R_A),
             # contracted with the density-weighted Bloch pair FT at -k.
             pair_ft = ao_pair_fourier_transform_bloch(
-                ao_basis, G_chunk, cell_vectors, k_cart=minus_k
+                ao_basis, G_chunk, cell_vectors, k_cart=minus_k, **pair_support
             )
             density_pair_ft = np.einsum(
                 "ab,abg->g", D_weight, pair_ft.conj(), optimize=True
@@ -2988,14 +3196,15 @@ def _compute_v_ne_gradient_multik(
                 * D_weight[:, :, None]
                 * v_long_chunk[None, None, :]
             )
-            gradient += ao_pair_fourier_transform_bloch_gradient_gweighted(
-                ao_basis,
-                G_chunk,
-                cell_vectors,
-                minus_k,
-                Q,
-                n_atoms,
-            )
+            for vectors, mask in groups:
+                gradient += ao_pair_fourier_transform_bloch_gradient_gweighted(
+                    ao_basis,
+                    G_chunk,
+                    vectors,
+                    minus_k,
+                    Q if mask is None else np.where(mask[:, :, None], Q, 0.0),
+                    n_atoms,
+                )
 
     return gradient
 
@@ -3033,7 +3242,7 @@ def _compute_oneel_w_gradient_multik(
     (S/T lattice sums; possibly a grown cutoff) and ``gauge_lat_opts``
     the SCF's ``_gauge_lat_opts_for_v_ne_and_e_nuc`` output (V_ne) —
     each term differentiates exactly the matrix build the multi-k SCF
-    energy used (the e_nuc gauge lesson, HANDOVER_OPEN_BUGS_V015.md
+    energy used (the e_nuc gauge lesson, the original investigation
     dense-core entry). e_nuc is the converged
     ``ewald_nuclear_repulsion``; its exact derivative partner is
     ``ewald_nuclear_repulsion_gradient``.
@@ -3069,9 +3278,12 @@ def _compute_oneel_w_gradient_multik(
             D_k_list, weights, k_cart_list,
             compute_overlap_lattice(ao_basis, system, ecp_lat_opts),
         )
+        from .periodic_k_gdf import _ecp_projector_options
         blocks, centers, *_ = ecp_context
+        projector_opts, physical = _ecp_projector_options(system, ecp_lat_opts)
         grad += np.asarray(ecp_lattice_gradient_contribution_from_primitives(
-            ao_basis, system, density, ecp_lat_opts, centers, blocks,
+            ao_basis, system, density, projector_opts, centers, blocks,
+            physical_pair_support=physical,
         ))
     return grad
 
@@ -4006,6 +4218,7 @@ def compute_gdf_gradient_rsgdf_rhf_gamma(
     madelung: float,
     v_ne_ke_cutoff: float,
     alpha_hf: float = 1.0,
+    conditioning_diagnostics: Optional[dict] = None,
 ) -> np.ndarray:
     """Analytic Γ-only rsgdf closed-shell atomic gradient assembly.
 
@@ -4077,6 +4290,7 @@ def compute_gdf_gradient_rsgdf_rhf_gamma(
             memory_byte_cap=cache.memory_byte_cap - cache.retained_cache_bytes,
             native_workspace_byte_cap=cache.native_workspace_byte_cap,
             coulomb_scale=1.0, exchange_scale=float(alpha_hf),
+            conditioning_diagnostics=conditioning_diagnostics,
         )
     else:
         grad += _compute_j_gradient_rsgdf(system, basis, D, cache)
@@ -4443,10 +4657,22 @@ def compute_gdf_gradient_rhf_gamma(
             "compute_gdf_gradient_rhf_gamma: lattice_opts cutoffs must "
             "match the converged SCF result"
         )
+    # The SCF evaluated S, T and V_ne on the resolved one-electron AO
+    # domain (pbc_gdf resolves it for every bulk fit since #172), not on
+    # the base cells the fit and the result record.
+    from .periodic_k_gdf import _oneel_lattice_opts
+
+    oneel_lat_opts = (
+        _oneel_lattice_opts(
+            system, basis, lattice_opts, rcut_strategy=result_rcut_strategy,
+            k_points_cart=np.zeros((1, 3)),
+        )
+        if int(system.dim) == 3 else lattice_opts
+    )
     if gauge_lat_opts is None:
         from .pbc_gdf import _gauge_lat_opts_ewald_3d
 
-        gauge_lat_opts = _gauge_lat_opts_ewald_3d(lattice_opts, system)
+        gauge_lat_opts = _gauge_lat_opts_ewald_3d(oneel_lat_opts, system)
     else:
         if gauge_lat_opts.coulomb_method != CoulombMethod.EWALD_3D:
             raise ValueError(
@@ -4456,7 +4682,7 @@ def compute_gdf_gradient_rhf_gamma(
         if not (
             np.isclose(
                 float(gauge_lat_opts.cutoff_bohr),
-                result_lattice_cutoff,
+                float(oneel_lat_opts.cutoff_bohr),
                 rtol=0.0,
                 atol=1e-14,
             )
@@ -4584,11 +4810,11 @@ def compute_gdf_gradient_rhf_gamma(
     # Γ the GDF Fock doesn't have the G=0 gauge issue of EWALD_3D).
 
     # Build the overlap lattice for the cell list.
-    S_lat = compute_overlap_lattice(basis, system, lattice_opts)
+    S_lat = compute_overlap_lattice(basis, system, oneel_lat_opts)
 
     # Lattice-resolved density: at Γ, D(g) = D_Γ for all images.
     D_gamma = np.asarray(D, dtype=np.float64)
-    D_set = compute_overlap_lattice(basis, system, lattice_opts)
+    D_set = compute_overlap_lattice(basis, system, oneel_lat_opts)
     # Homogeneous Γ density: D(g) = D_Γ for all image cells.
     # At Γ, k=0 Bloch phase is 1 in every cell, so the real-space
     # density is identical in all images. The SCF energy is built from
@@ -4610,7 +4836,7 @@ def compute_gdf_gradient_rhf_gamma(
     eps = np.asarray(result.mo_energies, dtype=np.float64)
     C = np.asarray(result.mo_coeffs, dtype=np.float64)
     W_gamma = 2.0 * (C[:, :n_occ] * eps[:n_occ][None, :]) @ C[:, :n_occ].T
-    W_set = compute_overlap_lattice(basis, system, lattice_opts)
+    W_set = compute_overlap_lattice(basis, system, oneel_lat_opts)
     for c_idx in range(len(W_set.cells)):
         idx = tuple(int(v) for v in np.asarray(W_set.cells[c_idx].index).reshape(3))
         W_set.set_block(
@@ -4637,12 +4863,12 @@ def compute_gdf_gradient_rhf_gamma(
 
     # Overlap Lagrangian: -tr(W dS/dR).
     grad += np.asarray(
-        overlap_lattice_gradient_contribution(basis, system, W_set, lattice_opts)
+        overlap_lattice_gradient_contribution(basis, system, W_set, oneel_lat_opts)
     )
 
     # Kinetic + nuclear-attraction Pulay: tr(D d(T+V)/dR).
     grad += np.asarray(
-        kinetic_lattice_gradient_contribution(basis, system, D_set, lattice_opts)
+        kinetic_lattice_gradient_contribution(basis, system, D_set, oneel_lat_opts)
     )
     # V_ne Hellmann-Feynman and AO-centre response in the exact
     # FT-based Ewald gauge used by the SCF.
@@ -4692,7 +4918,7 @@ def compute_gdf_gradient_rhf_gamma(
             S = np.asarray(result.overlap, dtype=np.float64)
             DSD = D @ S @ D
             W_exx_gamma = 0.5 * float(alpha_hf) * madelung * DSD
-            W_exx_set = compute_overlap_lattice(basis, system, lattice_opts)
+            W_exx_set = compute_overlap_lattice(basis, system, oneel_lat_opts)
             for c_idx in range(len(W_exx_set.cells)):
                 idx = tuple(
                     int(v) for v in np.asarray(W_exx_set.cells[c_idx].index).reshape(3)
@@ -4705,7 +4931,7 @@ def compute_gdf_gradient_rhf_gamma(
                 )
             grad += np.asarray(
                 overlap_lattice_gradient_contribution(
-                    basis, system, W_exx_set, lattice_opts
+                    basis, system, W_exx_set, oneel_lat_opts
                 )
             )
     else:
@@ -4745,7 +4971,11 @@ def compute_gdf_gradient_rks_gamma(
     (``use_periodic_becke=False``) or the periodic-Becke grid + Γ-torus
     density (``use_periodic_becke=True``) — so the three grid/density
     parameters below MUST match the converged SCF for the gradient to be
-    the derivative of its energy.
+    the derivative of its energy. On both grids the fixed-density XC
+    difference adds quadrature motion (points and weights) to the
+    fixed-grid AO derivative, using the SCF's own density domain.
+    This does not correct the separate compcell Coulomb derivative
+    residual on near-null kept fit modes of the molecular-grid route.
 
     The energy-weighted density uses the converged KS Fock eigenvalues
     directly: the GDF Fock includes ``V_xc``, so ``result.mo_energies``
@@ -4829,14 +5059,57 @@ def compute_gdf_gradient_rks_gamma(
     else:
         grid = build_grid(system.unit_cell_molecule(), grid_options)
         set_xc_density = _density_set_gamma
-    D = np.asarray(result.density, dtype=np.float64)
-    D_set = compute_overlap_lattice(basis, system, lattice_opts)
-    set_xc_density(D_set, D)
-    grad = grad + np.asarray(
-        xc_lattice_gradient_contribution(
-            basis, system, grid, func, D_set, lattice_opts
+    # The SCF grew the Γ-torus XC image domain past the base cutoff and
+    # recorded it on the result (#465); differentiate that domain.
+    xc_opts = lattice_opts
+    if bool(use_periodic_becke):
+        from .periodic_xc_domain import xc_lattice_opts_at
+
+        xc_opts = xc_lattice_opts_at(
+            basis, lattice_opts,
+            getattr(result, "gdf_xc_lattice_cutoff_bohr", None),
         )
+    D = np.asarray(result.density, dtype=np.float64)
+    D_set = compute_overlap_lattice(basis, system, xc_opts)
+    set_xc_density(D_set, D)
+    xc_fixed = np.asarray(
+        xc_lattice_gradient_contribution(
+            basis, system, grid, func, D_set, xc_opts
+        ),
+        dtype=np.float64,
     )
+    grad = grad + xc_fixed
+    if not bool(use_periodic_becke):
+        from ._vibeqc_core import PeriodicXCDensityDomain
+
+        # Becke, JCP 88, 2547 (1988), Eqs. (2), (22)-(24): atomic
+        # coordinates move both quadrature points and partition weights.
+        # Reuse the fixed-density difference, subtracting the AO term
+        # already included above, on the SCF's molecular home-cell density.
+        grad = grad + _gdf_xc_grid_motion_correction(
+            system, basis, [D_set], str(result.functional), xc_opts,
+            grid_options, False, float(becke_image_radius_bohr), xc_fixed,
+            density_domain=PeriodicXCDensityDomain.MOLECULAR_HOME,
+        )
+    else:
+        # The periodic-Becke points and weights move with the atoms; the
+        # fixed-grid term above misses that response (#459: 4.3e-5
+        # Ha/bohr on an overlapping H2 cube). Add the multi-k gradient's
+        # moving-quadrature correction on the SCF's own density domain.
+        from ._vibeqc_core import PeriodicXCDensityDomain
+
+        grad = grad + _gdf_xc_grid_motion_correction(
+            system,
+            basis,
+            [D_set],
+            str(result.functional),
+            xc_opts,
+            grid_options,
+            True,
+            float(becke_image_radius_bohr),
+            xc_fixed,
+            density_domain=PeriodicXCDensityDomain.AUTO,
+        )
     return grad, cache
 
 
@@ -5213,10 +5486,11 @@ def compute_gdf_gradient(
         caller="compute_gdf_gradient",
     )
 
-    from .pbc_gdf import _gauge_lat_opts_ewald_3d
     from .aux_basis import make_aux_basis_set
 
-    gauge_opts = _gauge_lat_opts_ewald_3d(lattice_opts, system)
+    # rhf/rks_gamma derive the V_ne gauge from the resolved one-electron
+    # domain the SCF used.
+    gauge_opts = None
     mol = system.unit_cell_molecule()
 
     if aux_basis is None:

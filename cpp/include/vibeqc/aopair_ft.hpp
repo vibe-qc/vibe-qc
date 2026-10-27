@@ -24,8 +24,7 @@
 // Memory. The C++ kernel performs the Bloch sum **streaming over
 // the cell index** so the per-cell intermediate
 // ``(n_cells, n_orb, n_orb, n_G)`` (which OOMs on MgO 8-atom
-// conventional rocksalt — see
-// ``handovers/HANDOVER_GDF_V0_11_2026_05_29.md``)
+// conventional rocksalt)
 // never materialises. The output extent is the bounded
 // ``(n_orb, n_orb, n_G)``.
 //
@@ -112,6 +111,12 @@ std::uint64_t ao_pair_fourier_fixed_numeric_workspace_bytes() noexcept;
 // All extents, lanes, shell conventions, and candidate counts are preflighted
 // before output allocation. The cap must be positive; empty panels are valid.
 // No approximate Gamma transpose/mirror shortcut is used.
+//
+// Optional shell_pair_cutoffs (n_bra_shells x n_ket_shells, libint shell
+// order, finite and nonnegative) narrow each AO pair's image radius to
+// min(image_cutoff_bohr, cutoffs(bra shell, ket shell)). A null pointer keeps
+// the single global radius. The caller owns the tail bound of each radius
+// (GitLab IID 543: the SR/LR planner's per-shell-pair bound).
 AOPairFourierPanel ao_pair_gaussian_fourier_panel(
     const BasisSet& basis,
     const PeriodicSystem& system,
@@ -121,7 +126,8 @@ AOPairFourierPanel ao_pair_gaussian_fourier_panel(
     std::uint64_t pair_count,
     double image_cutoff_bohr,
     std::uint64_t maximum_image_candidates,
-    std::uint64_t output_byte_cap);
+    std::uint64_t output_byte_cap,
+    const Eigen::MatrixXd* shell_pair_cutoffs = nullptr);
 
 // Rectangular two-basis overload with the identical finite-image arithmetic.
 // mu belongs to bra_basis and nu to ket_basis; flatten as mu*n_ket_basis+nu.
@@ -142,7 +148,29 @@ AOPairFourierPanel ao_pair_gaussian_fourier_panel(
     std::uint64_t pair_count,
     double image_cutoff_bohr,
     std::uint64_t maximum_image_candidates,
-    std::uint64_t output_byte_cap);
+    std::uint64_t output_byte_cap,
+    const Eigen::MatrixXd* shell_pair_cutoffs = nullptr);
+
+// A bounded group of ket phases over the identical physical image support.
+// Data are contiguous [k, pair, vector]. Image census is NOT multiplied by
+// n_kpoints; the image/primitive Fourier work is shared, then each ket applies
+// its own phase with the scalar panel's multiplication and summation order.
+// At most eight k points are accepted; callers tile larger meshes. There is
+// no image cache or full-mesh temporary. The fixed workspace includes all
+// eight sets of compensated vector sums and phases, even for a short tile.
+constexpr std::size_t ao_pair_fourier_k_tile = 8;
+struct AOPairFourierBatch : AOPairFourierPanel {
+    std::size_t n_kpoints = 0;
+};
+std::uint64_t ao_pair_fourier_batch_numeric_workspace_bytes() noexcept;
+AOPairFourierBatch ao_pair_gaussian_fourier_batch(
+    const BasisSet& basis, const PeriodicSystem& system,
+    AuxiliaryFourierVectorView vectors,
+    const Eigen::Ref<const Eigen::MatrixXd>& ket_kpoints,
+    std::uint64_t pair_begin, std::uint64_t pair_count,
+    double image_cutoff_bohr, std::uint64_t maximum_image_candidates,
+    std::uint64_t output_byte_cap,
+    const Eigen::MatrixXd* shell_pair_cutoffs = nullptr);
 
 // Explicit finite shared-cell support for the reciprocal Ewald arm. Integer
 // labels are tightly packed [cell_count,3]; the native original direct
@@ -214,7 +242,7 @@ AOPairFourierPanel ao_pair_gaussian_fourier_cell_panel(
 // basis
 //     AO basis. Currently REQUIRES all shells to have L=0; mixed-L
 //     bases throw. The general-L McMurchie-Davidson path lands in a
-//     subsequent milestone (Item 1b in the integrals-chat handover).
+//     subsequent milestone.
 // G_vectors
 //     ``(n_G, 3)``, Cartesian reciprocal-space samples (inverse bohr).
 // R_g_list
@@ -259,6 +287,12 @@ AOPairFTTensor ao_pair_fourier_transform_bloch_ss(
 // Throws ``std::invalid_argument`` on
 //   * a Cartesian-ordered shell with L > 0, or
 //   * any shell with L > ``vibeqc::cart_to_sph_data::kMaxL``.
+// pair_cutoff_bohr >= 0 applies the shared physical pair_in_range predicate
+// to each supplied candidate cell; -1 preserves historical unmasked support.
+// The caller must supply a complete candidate enclosure. Physical support
+// evaluates all ordered shell pairs without the legacy Gamma mirror shortcut.
+// radial_cache_bytes bounds call-local Gaussian reuse (maximum 64 MiB); zero
+// selects the scalar path. Cache admission failure also preserves scalar work.
 AOPairFTTensor ao_pair_fourier_transform_bloch(
     const BasisSet& basis,
     const Eigen::Ref<const Eigen::Matrix<double, Eigen::Dynamic, 3,
@@ -266,7 +300,9 @@ AOPairFTTensor ao_pair_fourier_transform_bloch(
     const Eigen::Ref<const Eigen::Matrix<double, Eigen::Dynamic, 3,
                                          Eigen::RowMajor>>& R_g_list,
     const Eigen::Vector3d& k_cart,
-    double screen_tol = 0.0);
+    double screen_tol = 0.0,
+    double pair_cutoff_bohr = -1.0,
+    std::size_t radial_cache_bytes = 64 * 1024 * 1024);
 
 // Per-cell reciprocal-weight-contracted AO-pair FT.
 //
@@ -288,7 +324,22 @@ AOPairFTTensor ao_pair_fourier_transform_bloch(
 // which starves the threads on a small basis with many image cells.
 //
 // Returns a ``(n_g, n_orb, n_orb)`` row-major real buffer. ``screen_tol``
-// has the same conservative shell-pair/cell meaning as above.
+// has the same conservative shell-pair/cell meaning as above. The optional
+// tables share exact primitive Gaussian damping and G-only Cartesian powers.
+// Their combined budget is the smaller of radial_cache_bytes and 64 MiB
+// (including descriptor allowances); Gaussian rows keep admission priority.
+// Zero disables both tables; entries that do not fit retain the original
+// scalar formula and reduction order.
+//
+// element_tol > 0 (GitLab IIDs 382, 226, 196) truncates each primitive
+// pair's G sum once the rigorous bound on its omitted tail,
+//   |c_a c_b| (pi/gamma)^1.5 e^{-ab/gamma |AB|^2} prod_axis sum_t |E_t|
+//   * max_m sum_a |C_ma| * max_n sum_b |C_nb|
+//   * sum_{k >= n} |w_k| e^{-G_k^2/(4 gamma)} max(1, |G_k|)^{l_a+l_b},
+// is at most element_tol / (n_prim_a n_prim_b), so every output element
+// omits at most element_tol (in the units of the returned buffer). It
+// requires G_vectors in ascending |G|^2 (otherwise no truncation is done)
+// and evaluates the tail sums on a fixed stride of the sorted mesh.
 std::vector<double> ao_pair_fourier_transform_weighted_per_cell(
     const BasisSet& basis,
     const Eigen::Ref<const Eigen::Matrix<double, Eigen::Dynamic, 3,
@@ -296,7 +347,9 @@ std::vector<double> ao_pair_fourier_transform_weighted_per_cell(
     const Eigen::Ref<const Eigen::Matrix<double, Eigen::Dynamic, 3,
                                          Eigen::RowMajor>>& R_g_list,
     const Eigen::Ref<const Eigen::VectorXcd>& reciprocal_weights,
-    double screen_tol = 0.0);
+    double screen_tol = 0.0,
+    std::size_t radial_cache_bytes = 64 * 1024 * 1024,
+    double element_tol = 0.0);
 
 // Multi-k batched general-L Bloch-summed AO-pair FT.
 //
@@ -308,8 +361,7 @@ std::vector<double> ao_pair_fourier_transform_weighted_per_cell(
 // n_k full passes. This is the exact work-sharing companion of the
 // RSGDF q-metric cache for the 3c side (multi-k GDF drivers batch the
 // pairs that share one momentum transfer q; see
-// ``vibeqc.aux_basis.build_lpq_bloch_native_fft`` and
-// handovers/HANDOVER_OPEN_BUGS_V015.md, production-k-sampling item).
+// ``vibeqc.aux_basis.build_lpq_bloch_native_fft``).
 //
 // Returns one tensor per row of ``k_carts``, each ``(n_orb, n_orb,
 // n_G)``. Agrees with n_k single-k calls to floating-point rounding
@@ -324,7 +376,7 @@ std::vector<double> ao_pair_fourier_transform_weighted_per_cell(
 // per-pair factor before contracting, and that scaling is a pass over
 // the LARGEST array in the build -- single-threaded in NumPy, and
 // measurably anti-scaling against the threads this kernel itself uses
-// (handovers/HANDOVER_GDF_OUTSTANDING.md, OpenMP profile 2026-08-05).
+// (the original investigation, OpenMP profile 2026-08-05).
 // Folding it into this store costs nothing: the store already touches
 // every element, and it happens inside the parallel region.
 //
@@ -348,7 +400,8 @@ std::vector<AOPairFTTensor> ao_pair_fourier_transform_bloch_multi(
     const Eigen::Ref<const Eigen::Matrix<double, Eigen::Dynamic, 3,
                                          Eigen::RowMajor>>& k_carts,
     double screen_tol = 0.0,
-    const std::vector<double>& pair_weights = {});
+    const std::vector<double>& pair_weights = {},
+    double pair_cutoff_bohr = -1.0);
 
 // Density- and reciprocal-kernel-weighted Gamma-point centre derivative.
 //
@@ -412,8 +465,7 @@ ao_pair_fourier_transform_gamma_gradient_gweighted(
     const std::complex<double>* pair_weights_g,
     std::size_t n_atoms);
 
-// Bloch-phased G-resolved-weight centre derivative
-// (handovers/HANDOVER_GDF_GRADIENT_DEFERRED.md § 4, rung 1).
+// Bloch-phased G-resolved-weight centre derivative.
 //
 // Evaluates
 //

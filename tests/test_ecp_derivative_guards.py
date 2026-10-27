@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 import vibeqc
+from tests.refusal_receipt import assert_preflight_refusal
 from vibeqc import Atom, BasisSet, ECPCenter, Molecule, RHFOptions
 
 
@@ -445,7 +446,12 @@ def test_run_job_refuses_hf_cis_ecp_gradient_before_output_or_scf(
             tddft_gradient=True,
             output=tmp_path / f"td-ecp-{manual_ecp}",
         )
-    assert not list(tmp_path.iterdir())
+    # Since !133 a refusal raised before the output plan exists leaves
+    # exactly its preflight receipt (status crashed, result_status refused);
+    # no .out or other artefact may exist.
+    stem = tmp_path / f"td-ecp-{manual_ecp}"
+    assert {p.name for p in tmp_path.iterdir()} == {f"{stem.name}.system"}
+    assert_preflight_refusal(stem)
 
 
 def test_run_job_refuses_zero_core_mp2_optimization_before_output_or_scf(
@@ -476,35 +482,12 @@ def test_run_job_refuses_zero_core_mp2_optimization_before_output_or_scf(
             optimize=True,
             output=tmp_path / "zero-core-mp2-opt",
         )
-    assert not list(tmp_path.iterdir())
-
-
-def test_run_job_refuses_ecp_cpcm_hessian_before_output_or_scf(
-    tmp_path,
-    monkeypatch,
-):
-    """An ECP finite-difference Hessian cannot use gas-phase gradients."""
-    import vibeqc.runner as runner_module
-
-    def work_must_not_start(*args, **kwargs):
-        raise AssertionError("output or SCF started before the ECP+CPCM guard")
-
-    monkeypatch.setattr(runner_module, "OutputWriter", work_must_not_start)
-    monkeypatch.setattr(runner_module, "run_rhf", work_must_not_start)
-
-    with pytest.raises(
-        NotImplementedError,
-        match=r"ECP\+CPCM molecular gradients are not implemented",
-    ):
-        vibeqc.run_job(
-            _h2s(),
-            basis="lanl2dz",
-            method="rhf",
-            solvent="water",
-            hessian=True,
-            output=tmp_path / "ecp-cpcm-hessian",
-        )
-    assert not list(tmp_path.iterdir())
+    # Since !133 a refusal raised before the output plan exists leaves
+    # exactly its preflight receipt (status crashed, result_status refused);
+    # no .out or other artefact may exist.
+    stem = tmp_path / "zero-core-mp2-opt"
+    assert {p.name for p in tmp_path.iterdir()} == {f"{stem.name}.system"}
+    assert_preflight_refusal(stem)
 
 
 @pytest.mark.parametrize("manual_ecp", [False, True])

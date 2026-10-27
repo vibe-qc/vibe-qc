@@ -9,21 +9,31 @@ the lattice matrix is always a full-rank 3×3.
   of vibe-qc's periodic-SCF kernels (BIPOLE, GDF, GPW/GAPW), a
   bonding-organised example gallery, and the end-to-end
   surface-reactions workflow.
-* [`crystal_lattices.md`](crystal_lattices.md) — the 14 Bravais
+* [`crystal_lattices.md`](crystal_lattices.md): the 14 Bravais
   lattices, with **visualisations + worked examples** for each
   common lattice (rocksalt, diamond, perovskite, HCP, wurtzite,
   rutile, corundum, α-quartz, graphene).
-* [`k_points.md`](k_points.md) — Monkhorst-Pack mesh generation
+* [`k_points.md`](k_points.md): Monkhorst-Pack mesh generation
   and Brillouin-zone sampling.
-* [`multi_k_scf.md`](multi_k_scf.md) — multi-k SCF: current ship
+* [`multi_k_scf.md`](multi_k_scf.md): multi-k SCF, current ship
   state (Γ-only native GDF), parity target, scope caveats.
-* [`ewald.md`](ewald.md) — Ewald summation for periodic Coulomb.
+* [`ewald.md`](ewald.md): Ewald summation for periodic Coulomb.
 ```
 
 ## Born-von Karman PBC contract
 
 The periodic stack follows the same lattice-general Born-von Karman
-boundary-condition model used by CRYSTAL-style Gaussian crystal codes:
+boundary-condition model used by CRYSTAL-style Gaussian crystal codes.
+Born-von Karman boundary conditions close a block of $N_1 \times N_2 \times
+N_3$ unit cells into a torus, so a one-electron state picks up only a phase
+when it is translated by a lattice vector, $\psi_{\mathbf k}(\mathbf r +
+\mathbf T) = e^{i\mathbf k\cdot\mathbf T}\,\psi_{\mathbf k}(\mathbf r)$
+(Bloch's theorem), and the allowed $\mathbf k$ form the discrete
+Monkhorst-Pack mesh that [`k_points.md`](k_points.md) builds; the
+[k-point tutorial](../tutorial/kpoints_brillouin_bloch.md) shows the phase
+at work. Every real-space lattice sum in vibe-qc is a sum over these image
+translations $\mathbf T$, and every multi-k driver assembles its Bloch
+matrices from the same blocks. The contract in detail:
 
 - The input lattice is an arbitrary full-rank matrix whose **columns**
   are the Cartesian direct-lattice vectors in bohr: `lattice[:, i]` is
@@ -59,6 +69,56 @@ boundary-condition model used by CRYSTAL-style Gaussian crystal codes:
     written in a reduced one. It used to scan a fixed shell over the basis
     as supplied, which is not sufficient in general and reported a distance
     too large on a sheared cell (#128).
+  * **Say what the cell is meant to be.** `vq.check_crystal_system(sysp,
+    "hexagonal")` refuses a lattice whose metric contradicts the declaration,
+    and `vq.lattice_from_vectors(a1, a2, a3, crystal_system="hexagonal",
+    dim=2)` declares at the point of construction. Nothing geometric can
+    reject a transpose on its own, because $L$ and $L^{T}$ are both valid
+    lattices; a declaration can. Read the next paragraph for what it does and
+    does not catch.
+  * **Or say what the structure is.** `vq.check_space_group(sysp, "Fd-3m")`
+    (a Hermann-Mauguin symbol or an International Tables number) hands the
+    lattice *and* the basis to spglib and refuses a structure whose detected
+    group is not the declared one. That is a different question from the
+    crystal system, and it catches what no metric can see: an atom on the
+    wrong site, a mistranscribed fractional coordinate, a basis that broke
+    the symmetry you believed the structure had. It takes `symprec=`, which
+    genuinely changes the answer, and needs a 3-D cell: for a slab spglib
+    would treat the synthesized vacuum axis as periodic and report a group
+    that depends on how much vacuum you chose.
+
+A declaration is not a blanket orientation check, and it is worth knowing
+where it bites:
+
+  * **Hexagonal and rhombohedral: caught.** Every instance recorded in #128
+    was a hexagonal sheet, and the row-fed h-BN cell misses $|a_1| = |a_2|$ by
+    22.5% and the nearer of $60°/120°$ by $3.43°$.
+  * **Cubic, tetragonal, orthorhombic: not an orientation check.** Written in
+    the usual Cartesian setting their matrices are symmetric, so the transpose
+    is a no-op, and a cubic metric is transpose-invariant in any frame at all.
+    Declaring them still catches a mistyped angle or a wrong $c/a$.
+  * **Monoclinic and triclinic: not caught.** The transpose changes the
+    crystal but stays inside the same system, so the declaration passes.
+    Compare the cell parameters against known values for those.
+
+Conditions are equalities only. The familiar $a \neq c$ of a tetragonal cell
+is a convention for *choosing* a cell, not a requirement on one, so a cubic
+cell declared orthorhombic is accepted rather than refused. A cubic
+declaration admits the conventional $90°$ cell and the face- and
+body-centred primitive settings ($60°$ and $109.4712°$), so a primitive cell
+straight from a structure database is not rejected.
+
+A space-group declaration is **complementary, not stronger**. On the same
+transposes, with the Cartesian atom positions held fixed: hexagonal goes
+`P-6m2` (187) to `Pm` (6) and is caught, while monoclinic `P2/m` and
+triclinic `P-1` keep their groups and are not. Neither check sees those.
+
+One trap worth naming: do **not** derive a crystal system from a detected
+space group and check the metric against it. The space group is lowered by
+the basis while the metric is not, so an exactly hexagonal lattice carrying a
+symmetry-breaking basis is reported `Pm`, and a metric check driven off that
+would refuse a perfectly good hexagonal cell. The two declarations answer
+different questions and are kept separate for that reason.
 - `sysp.reciprocal_lattice()` is generated automatically as
   $2\pi A^{-T}$, so $a_i \cdot b_j = 2\pi\delta_{ij}$ for triclinic
   cells just as for cubic cells.
@@ -85,7 +145,7 @@ metrics and on non-orthogonal 1D / 2D embedding cells.
 import numpy as np
 from vibeqc import Atom, PeriodicSystem
 
-# 1D chain — column 0 of lattice is the lattice vector, the other two
+# 1D chain: column 0 of lattice is the lattice vector, the other two
 # columns are implicit vacuum axes with enough separation to decouple
 # images.
 sysp_1d = PeriodicSystem(
@@ -105,7 +165,7 @@ sysp_2d = vq.slab_2d(
     [Atom(6, [0, 0, 0])],
 )
 
-# 3D bulk — all three columns are lattice vectors.
+# 3D bulk: all three columns are lattice vectors.
 sysp_3d = PeriodicSystem(
     dim=3,
     lattice=np.diag([5.4, 5.4, 5.4]),       # Si conventional cubic, bohr

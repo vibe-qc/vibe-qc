@@ -1,0 +1,1 @@
+- Molecular DLPNO-UCCSD default full union singles now reuse one checked Fock solve per calculation. Full-space ordering, independent singles amplitudes, frozen partitions and numerical gates are preserved while repeated identical preparation is removed.

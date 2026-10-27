@@ -6,10 +6,15 @@ vibe-qc actually solves under the hood, the theory section below
 spells out the Roothaan-Hall equations, the Fock matrix, and Pulay's
 DIIS acceleration.
 
+Use the installed engine environment and save the script in a run directory
+outside the checkout. Coordinates constructed with `Atom` are in bohr;
+energies below are in hartree. See [running a script](../running.md) if this
+is your first calculation.
+
 ```python
 from vibeqc import Atom, Molecule, BasisSet, run_rhf
 
-# Water, experimental geometry in bohr.
+# Water, illustrative fixed geometry in bohr (not an optimized structure).
 mol = Molecule([
     Atom(8, [0.0,  0.0,  0.0]),
     Atom(1, [0.0,  1.43, -0.98]),
@@ -22,27 +27,37 @@ print(f"E_RHF       = {result.energy:.10f}")
 print(f"converged   = {result.converged}")
 print(f"iterations  = {result.n_iter}")
 print(f"MO energies = {result.mo_energies}")
+if not result.converged:
+    raise RuntimeError("RHF did not converge; inspect result.scf_trace")
 ```
 
-Output:
+Illustrative output from an earlier build follows. Treat the iteration count
+and rounded orbital list as orientation, not a regression fixture for every
+current build or set of options. Compare energies only at identical geometry,
+basis and convergence settings:
 
 ```
-E_RHF       = -76.0107424867
+E_RHF       = -76.0066778869
 converged   = True
-iterations  = 8
-MO energies = [-20.55  -1.34  -0.71  -0.56  -0.50   0.21   0.31   ...]
+iterations  = 9
+MO energies = [-20.54  -1.36  -0.74  -0.56  -0.50   0.22   0.31   ...]
 ```
 
 ## What just happened
 
 1. **Building the basis.** `BasisSet(mol, "6-31g*")` looks up the
-   6-31G\* contraction in libint's built-in library, places its
-   shells on each atomic center, and records the resulting list of
-   atomic orbitals.
-2. **SCF with DIIS.** The driver diagonalises H_core for an initial
-   guess, builds the Fock matrix from the density, then iterates using
-   Pulay's DIIS extrapolation. Convergence tolerances default to
-   `conv_tol_energy = 1e-8 Ha` and `conv_tol_grad = 1e-6`.
+   6-31G\* contraction ({vibeqc-cite}`ditchfield_6_31g_1971`,
+   {vibeqc-cite}`hariharan_pople_1973`) through the
+   [bundled basis library](../user_guide/basis_sets.md). Libint
+   ({vibeqc-cite}`libint_valeev`) places its shells on each atomic center.
+2. **SCF from an AUTO seed.** `RHFOptions.initial_guess` defaults to `AUTO`.
+   For this ordinary closed-shell light molecule it selects PATOM, a SAD
+   density followed by an in-field repolarization step. The default
+   accelerator is `EDIIS_DIIS`, which switches from energy-DIIS to
+   commutator-DIIS near convergence; it is not plain Pulay DIIS throughout.
+   Convergence tolerances default to `conv_tol_energy = 1e-8 Ha` and
+   `conv_tol_grad = 1e-6`. See [initial guesses](../user_guide/initial_guess.md)
+   and [SCF convergence](../user_guide/scf_convergence.md).
 3. **Output.** The `RHFResult` carries the total energy, converged MO
    coefficients, orbital energies, density matrix, and the full SCF
    trace for post-analysis.
@@ -53,16 +68,24 @@ Most of the time the defaults are fine. For tight benchmarks you may
 want:
 
 ```python
-from vibeqc import RHFOptions
+# doc-audit: skip - continues with mol and basis from the first block
+from vibeqc import InitialGuess, RHFOptions
 
 opts = RHFOptions()
 opts.conv_tol_energy = 1e-12
 opts.conv_tol_grad = 1e-10
 opts.use_diis = True
-opts.initial_guess = vq.InitialGuess.SAD   # superposition of atomic densities
+opts.initial_guess = InitialGuess.AUTO  # retain the route-aware starting policy
 
 result = run_rhf(mol, basis, opts)
+if not result.converged:
+    raise RuntimeError("The tighter RHF calculation did not converge")
 ```
+
+Tightening the stopping tolerances does not remove basis-set or model error.
+If comparing guesses, change only `initial_guess` in a separate run and keep
+all other settings fixed. Convergence to a stationary solution alone does
+not establish the global electronic ground state.
 
 ## Computing gradients
 
@@ -70,13 +93,23 @@ For geometry optimization or force evaluation, vibe-qc exposes analytic
 HF gradients:
 
 ```python
+# doc-audit: skip - uses the converged result and matching mol/basis above
 from vibeqc import compute_gradient
 
+if not result.converged:
+    raise RuntimeError("Use a converged RHF result before computing its gradient")
 grad = compute_gradient(mol, basis, result)   # (n_atoms, 3), Hartree / bohr
 ```
 
-Gradients are analytic throughout; accuracy tracks the SCF convergence
-(better than 1e-8 Ha/bohr at default tolerances).
+`grad` is an energy derivative, not a force: forces are `-grad`. Keep the
+molecule and basis identical to those used for `result`; changing coordinates
+requires a new SCF calculation before evaluating its gradient.
+
+For this molecular RHF example the gradient is analytic; accuracy tracks
+SCF convergence
+(a few 1e-8 Ha/bohr at default tolerances: 3 to 4e-8 Ha/bohr against a
+tightly converged SCF for water at HF/6-31G\*, vibe-qc 0.17.17
+development build).
 
 ## Theory
 
@@ -89,7 +122,7 @@ single determinant.
 ### The variational ansatz
 
 Hartree-Fock approximates the electronic ground-state wavefunction
-as a single Slater determinant built from $N_\text{occ}$ orthonormal
+as a single Slater determinant built from $N$ orthonormal
 spin-orbitals $\phi_i(\mathbf{r}, \sigma)$. The antisymmetric product
 
 $$
@@ -98,10 +131,12 @@ $$
   \det\!\bigl[\phi_i(\mathbf{r}_j, \sigma_j)\bigr]
 $$
 
-encodes Pauli antisymmetry exactly and returns the lowest energy any
-single-determinant wavefunction can give, but it misses the
-electron-electron *correlation* energy, the ~1% of the total that
-methods like MP2, coupled cluster, and DFT try to recover.
+encodes Pauli antisymmetry exactly. Minimizing within the chosen determinant
+class and finite basis gives the Hartree-Fock variational problem; an SCF
+iteration can still reach a local stationary solution rather than its global
+minimum. RHF also restricts paired electrons to a common spatial orbital.
+Electron correlation beyond that determinant is missing; methods such as
+MP2 and coupled cluster address it explicitly.
 
 ### The Roothaan-Hall equations
 
@@ -115,7 +150,10 @@ $$
 The variational minimisation of the HF energy with respect to the
 $C_{\mu i}$ coefficients (subject to orthonormality $\mathbf{C}^\dagger
 \mathbf{S} \mathbf{C} = \mathbf{I}$) yields the **Roothaan-Hall
-equations**, a generalised eigenvalue problem in the AO basis:
+equations** (C. C. J. Roothaan, *Rev. Mod. Phys.* **23**, 69 (1951),
+doi:10.1103/RevModPhys.23.69; G. G. Hall, *Proc. R. Soc. Lond. A*
+**205**, 541 (1951), doi:10.1098/rspa.1951.0048), a generalised
+eigenvalue problem in the AO basis:
 
 $$
 \mathbf{F} \, \mathbf{C} = \mathbf{S} \, \mathbf{C} \, \boldsymbol{\varepsilon},
@@ -148,26 +186,28 @@ which is the eigenvector we're trying to find, so the equations are
 non-linear. The standard fix is the **self-consistent-field (SCF)**
 iteration:
 
-1. Guess an initial density $\mathbf{P}^{(0)}$ (vibe-qc defaults to
-   the superposition-of-atomic-densities (SAD) guess, with an
-   $H_\text{core}$ fallback).
+1. Construct an initial density $\mathbf{P}^{(0)}$ using the selected guess.
+   AUTO chooses PATOM for this example, built from SAD
+   ({vibeqc-cite}`vanlenthe_sad_2006`) plus an in-field step. Explicit
+   unsupported guesses are refused; they are not silently replaced by HCORE.
 2. Build $\mathbf{F}^{(n)}$ from $\mathbf{P}^{(n)}$.
 3. Solve the generalised eigenvalue problem for
    $\mathbf{C}^{(n+1)}$ and $\boldsymbol{\varepsilon}^{(n+1)}$.
 4. Form $\mathbf{P}^{(n+1)}$ from the occupied columns of
    $\mathbf{C}^{(n+1)}$.
 5. Stop when $|E^{(n+1)} - E^{(n)}| < \texttt{conv\_tol\_energy}$
-   *and* $\|[\mathbf{F}, \mathbf{P}\mathbf{S}]\|_\text{F} <
-   \texttt{conv\_tol\_grad}$. The commutator vanishes at
-   convergence: $[\mathbf{F}, \mathbf{P}\mathbf{S}] = 0$ iff
-   $\mathbf{F}$ and the density share an eigenbasis.
+   *and* $\|\mathbf{F}\mathbf{P}\mathbf{S} -
+   \mathbf{S}\mathbf{P}\mathbf{F}\|_\text{F} <
+   \texttt{conv\_tol\_grad}$. This is the AO stationarity residual used
+   by the driver. The overlap factors matter in a nonorthogonal basis.
 
 ### DIIS acceleration
 
 Fixed-point iteration of the above recipe typically oscillates and
 converges slowly. Pulay's **Direct Inversion in the Iterative
-Subspace (DIIS)** extrapolates the Fock matrix instead of using
-$\mathbf{F}^{(n)}$ directly:
+Subspace (DIIS)** ({vibeqc-cite}`pulay_diis_1980`,
+{vibeqc-cite}`pulay_diis_1982`) extrapolates the Fock matrix instead of
+using $\mathbf{F}^{(n)}$ directly:
 
 $$
 \mathbf{F}_\text{DIIS} = \sum_{i} c_i \, \mathbf{F}^{(i)},
@@ -176,9 +216,12 @@ $$
 \text{ subject to } \sum_i c_i = 1,
 $$
 
-where $\mathbf{e}^{(i)} = [\mathbf{F}^{(i)}, \mathbf{P}^{(i)}
-\mathbf{S}]$ is the commutator error vector at iteration $i$. Near
-the solution DIIS converges quadratically in practice; at default
+where $\mathbf{e}^{(i)} = \mathbf{F}^{(i)}\mathbf{P}^{(i)}\mathbf{S}
+- \mathbf{S}\mathbf{P}^{(i)}\mathbf{F}^{(i)}$ is the AO stationarity
+error matrix at iteration $i$, flattened for DIIS, the
+choice introduced in the 1982 paper. Near
+the solution DIIS converges rapidly in practice (superlinearly, not
+quadratically); at default
 settings vibe-qc takes 8-12 iterations on most closed-shell
 molecules, where naïve mixing would take dozens.
 
@@ -186,10 +229,14 @@ molecules, where naïve mixing would take dozens.
 
 HF is exact for one-electron systems (H, He⁺, Li²⁺, …) and is the
 starting point for the whole correlated-wavefunction hierarchy (MP2,
-CCSD, CCSD(T)). It has a hard ceiling on accuracy because the single
+{vibeqc-cite}`moller_plesset_1934`; CCSD,
+{vibeqc-cite}`purvis_bartlett_ccsd_1982`; CCSD(T),
+{vibeqc-cite}`raghavachari_ccsdt_1989`). It has a hard ceiling on accuracy because the single
 determinant cannot represent the instantaneous electron-electron
 correlation, *dynamic* correlation is missing entirely. For
-benchmark-quality numbers you graduate to Kohn-Sham DFT (see
+benchmark-quality numbers you graduate to Kohn-Sham DFT (W. Kohn and
+L. J. Sham, *Phys. Rev.* **140**, A1133 (1965),
+doi:10.1103/PhysRev.140.A1133; see
 [Molecular DFT (RKS)](molecular_dft.md)), MP2, or coupled cluster.
 
 ## Resources

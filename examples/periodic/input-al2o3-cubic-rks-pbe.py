@@ -1,27 +1,35 @@
-"""Al2O3 cubic stuffed-fluorite model — RKS-PBE / STO-3G / Γ-only Ewald-3D.
+"""Al2O3 cubic stuffed-fluorite model — RKS-PBE / STO-3G / Γ-only GDF.
 
 DFT counterpart of ``input-al2o3-cubic-rhf.py``. Same geometry and
 basis; switches to RKS with the PBE GGA functional.
 
-The vibe-qc half of the v0.7 PBE parity test against PySCF.pbc on
-an Al2O3-stoichiometry crystal. See
-``examples/debug/mgo_al2o3_parity.py`` for the side-by-side
-comparison and the |ΔE| verdict.
+The vibe-qc half of the PBE parity test against PySCF.pbc on an
+Al2O3-stoichiometry crystal. See ``examples/debug/mgo_al2o3_parity.py``
+for the side-by-side comparison and the |ΔE| verdict.
+
+This model has no PBE gap at the Γ point: with integer occupations the
+SCF does not converge (|dE| = 0.30 Ha after 60 cycles on vibe-qc
+0.17.15), and with 0.01 Ha of Fermi-Dirac smearing it converges in 16
+cycles with an electronic entropy of 5.2 k_B, i.e. with many partly
+filled levels. The example therefore smears. Compare the free energy
+(E - TS, printed in the ``.out``) against a reference run with the same
+smearing.
 
 Why a cubic *model* and not actual α-Al2O3 (corundum)
 -----------------------------------------------------
-α-Al2O3 (corundum) is rhombohedral / hexagonal — incompatible with
-vibe-qc's current FFT-Poisson solver, which is orthorhombic-only.
-We use a 5-atom cubic stuffed-fluorite Al2O3 model instead (see
-``input-al2o3-cubic-rhf.py`` for the longer rationale).
+It is a small, cheap parity target, not a real Al2O3 polymorph (see
+``input-al2o3-cubic-rhf.py``). vibe-qc's periodic routes are
+lattice-general; real hexagonal corundum belongs in the GDF parity
+suite.
 
 Run:
     .venv/bin/python examples/periodic/input-al2o3-cubic-rks-pbe.py
 
 Outputs (next to this script):
     input-al2o3-cubic-rks-pbe.out      — banner, SCF trace, energies
-    input-al2o3-cubic-rks-pbe.perf     — per-iteration wall-clock
     input-al2o3-cubic-rks-pbe.system   — host / build / runtime manifest
+    input-al2o3-cubic-rks-pbe.perf     — per-stage wall-clock
+    plus the runner's structure, orbital, citation and QVF files
 """
 
 from pathlib import Path
@@ -29,7 +37,7 @@ from pathlib import Path
 import numpy as np
 
 import vibeqc as vq
-from vibeqc import perf_log, write_system_manifest
+from vibeqc import perf_log
 
 HERE = Path(__file__).resolve().parent
 STEM = Path(__file__).stem  # → "input-al2o3-cubic-rks-pbe"
@@ -50,34 +58,18 @@ unit_cell = (
 sysp  = vq.PeriodicSystem(3, np.diag([A, A, A]), unit_cell)
 basis = vq.BasisSet(sysp.unit_cell_molecule(), "sto-3g")
 
-opts = vq.PeriodicKSOptions()
-opts.functional                        = "pbe"
-opts.lattice_opts.coulomb_method       = vq.CoulombMethod.EWALD_3D
-opts.lattice_opts.cutoff_bohr          = 12.0
-opts.lattice_opts.nuclear_cutoff_bohr  = 25.0
-opts.max_iter        = 60
-opts.use_diis        = True
-opts.damping         = 0.85
-opts.conv_tol_energy = 1e-7
-opts.initial_guess   = vq.InitialGuess.SAD
-
 with perf_log(OUT.with_suffix(".perf")):
-    result = vq.run_rks_periodic_gamma_ewald3d(
-        sysp, basis, opts, omega=0.3, spacing_bohr=0.5, progress=False,
+    result = vq.run_periodic_job(
+        sysp, basis,
+        method="RKS",
+        functional="pbe",
+        jk_method="gdf",
+        kpoints=(1, 1, 1),
+        smearing_temperature=0.01,   # Ha; no PBE gap at Gamma (see above)
+        max_iter=60,
+        conv_tol_energy=1e-7,
+        output=str(OUT),
     )
-
-with open(OUT.with_suffix(".out"), "w") as fh:
-    fh.write("Al2O3 cubic stuffed-fluorite model — RKS-PBE / STO-3G / Γ-only Ewald-3D\n")
-    fh.write(f"  lattice constant      = {A_ANG:.3f} Å ({A:.4f} bohr)\n")
-    fh.write(f"  atoms per cell        = 2 Al + 3 O = 5\n")
-    fh.write(f"  basis                 = STO-3G ({basis.nbasis} fns / cell)\n")
-    fh.write(f"  functional            = PBE\n")
-    fh.write("\n")
-    fh.write(f"  E_total               = {result.energy:.8f} Ha\n")
-    fh.write(f"  converged             = {result.converged}\n")
-    fh.write(f"  SCF iterations        = {result.n_iter}\n")
-
-write_system_manifest(OUT.with_suffix(".system"))
 
 print(f"  E = {result.energy:.8f} Ha   converged={result.converged}   "
       f"n_iter={result.n_iter}")

@@ -48,9 +48,24 @@ std::size_t periodic_xc_gradient_batch_size(
     std::size_t nbf, std::size_t n_cells, bool need_hess,
     bool open_shell, std::size_t n_threads);
 
+// AO amplitude below which a lattice image's shell is dropped from a grid
+// batch it cannot reach (compute_shell_radial_cutoffs). The COSX builders use
+// the same 1e-12. Values <= 0 disable the screen and reproduce the dense
+// all-images evaluation exactly.
+inline constexpr double kPeriodicXCAOScreeningTol = 1e-12;
+
 struct PeriodicXCContribution {
     LatticeMatrixSet V_xc;   // real-space V_xc(g), same cell list as P
     double e_xc = 0.0;       // E_xc per unit cell (Hartree)
+    // Grid integral of the density the quadrature evaluated, Σ_g w_g ρ(r_g)
+    // (raw ρ, before the negative-density clamp). For a periodic density
+    // (periodic_density_bras) this is the electron count per cell and
+    // should equal N to quadrature accuracy; a shortfall means the density's
+    // image reach is truncated (vibe-qc#385, #265).
+    double n_electrons_grid = 0.0;
+    // Whether the bra AO also ranged over lattice images (periodic crystal
+    // density) or stayed in the home cell (molecular-limit density).
+    bool periodic_density_bras = false;
 };
 
 // Interpretation of a periodic real-space density supplied to the XC
@@ -84,7 +99,9 @@ PeriodicXCContribution build_xc_periodic(const BasisSet& basis,
                                          const LatticeMatrixSet& P_real_space,
                                          const LatticeSumOptions& opts,
                                          PeriodicXCDensityDomain density_domain =
-                                             PeriodicXCDensityDomain::AUTO);
+                                             PeriodicXCDensityDomain::AUTO,
+                                         double ao_screening_tol =
+                                             kPeriodicXCAOScreeningTol);
 
 // Open-shell (UKS) periodic XC.
 //
@@ -105,6 +122,8 @@ struct PeriodicUKSXCContribution {
     LatticeMatrixSet V_alpha;   // V_xc^α(g)
     LatticeMatrixSet V_beta;    // V_xc^β(g)
     double e_xc = 0.0;          // total E_xc per unit cell (Hartree)
+    double n_electrons_grid = 0.0;   // Σ_g w_g (ρ_α + ρ_β), see above
+    bool periodic_density_bras = false;
 };
 
 PeriodicUKSXCContribution build_xc_periodic_uks(
@@ -116,7 +135,72 @@ PeriodicUKSXCContribution build_xc_periodic_uks(
     const LatticeMatrixSet& P_beta_real_space,
     const LatticeSumOptions& opts,
     PeriodicXCDensityDomain density_domain =
-        PeriodicXCDensityDomain::AUTO);
+        PeriodicXCDensityDomain::AUTO,
+    double ao_screening_tol = kPeriodicXCAOScreeningTol);
+
+// Direct-k value results. Unlike the real-space APIs above, these can use
+// signed finite-torus grouping. Their matrices follow the supplied k order;
+// no k weight or Hermitian projection is applied to a returned potential.
+struct BlochKMesh;
+struct PeriodicKXCContribution {
+    std::vector<Eigen::MatrixXcd> V_xc;
+    double e_xc = 0.0, n_electrons_grid = 0.0;
+    bool periodic_density_bras = false;
+    bool torus_density_compatible = false, used_torus_grouping = false;
+};
+struct PeriodicKUKSXCContribution {
+    std::vector<Eigen::MatrixXcd> V_alpha, V_beta;
+    double e_xc = 0.0, n_electrons_grid = 0.0;
+    bool periodic_density_bras = false;
+    bool torus_density_compatible = false, used_torus_grouping = false;
+};
+
+// Non-torus densities and noncanonical meshes retain the original pair
+// kernel before Bloch projection. The requested finite domain and screening
+// decisions are identical on both paths. Individual V(g) consumers must use
+// the real-space APIs, including real-space derivative consumers.
+// torus_complete (opt-in, default off) evaluates the torus density over every
+// pair of images that reach a batch instead of the retained pair graph; it is
+// meant for a domain that closes the density (#465 bound), where the two
+// differ by pairs beyond the closure (#519 RG-1).
+PeriodicKXCContribution build_xc_periodic_kpoints(
+    const BasisSet&, const PeriodicSystem&, const Grid&, const Functional&,
+    const LatticeMatrixSet&, const BlochKMesh&, const LatticeSumOptions&,
+    PeriodicXCDensityDomain = PeriodicXCDensityDomain::AUTO,
+    double ao_screening_tol = kPeriodicXCAOScreeningTol,
+    bool torus_complete = false);
+PeriodicKUKSXCContribution build_xc_periodic_uks_kpoints(
+    const BasisSet&, const PeriodicSystem&, const Grid&, const Functional&,
+    const LatticeMatrixSet&, const LatticeMatrixSet&, const BlochKMesh&,
+    const LatticeSumOptions&,
+    PeriodicXCDensityDomain = PeriodicXCDensityDomain::AUTO,
+    double ao_screening_tol = kPeriodicXCAOScreeningTol,
+    bool torus_complete = false);
+
+// Work counts of the AO-reach screen for one XC evaluation, without AO
+// evaluation or functional calls: the grid batches the value kernels would
+// form, the lattice-image shells (cell x shell) and bra-ket cell pairs they
+// would evaluate, against the dense totals. Diagnostic and test hook.
+struct PeriodicXCScreeningStats {
+    std::size_t n_points = 0;           // grid points
+    std::size_t n_points_evaluated = 0; // points carrying a nonzero weight
+    std::size_t n_batches = 0;
+    std::size_t image_shells_dense = 0; // Σ_batches n_active * n_shells
+    std::size_t image_shells_live = 0;
+    std::size_t pairs_dense = 0;        // Σ_batches n_pairs
+    std::size_t pairs_live = 0;
+};
+
+PeriodicXCScreeningStats periodic_xc_screening_stats(
+    const BasisSet& basis,
+    const PeriodicSystem& system,
+    const Grid& grid,
+    const LatticeMatrixSet& P_real_space,
+    const LatticeSumOptions& opts,
+    PeriodicXCDensityDomain density_domain = PeriodicXCDensityDomain::AUTO,
+    double ao_screening_tol = kPeriodicXCAOScreeningTol,
+    bool open_shell = false,
+    bool need_grad = true);
 
 // ---------------------------------------------------------------------------
 // Periodic XC Pulay atomic gradient (the analytic V_xc force).

@@ -1,6 +1,6 @@
 """Adsorption of water and ammonia on oxide + metal surfaces with MACE.
 
-Requires the ``[mace]`` extra (Python <= 3.13) and ASE:
+Requires the ``[mace]`` extra (Python 3.14 supported) and ASE:
 
     pip install 'vibe-qc[mace]'
 

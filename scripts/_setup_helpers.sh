@@ -16,7 +16,8 @@
 #   vibeqc_extras_to_pip_spec GROUP OUT_VAR
 #       Maps the user-friendly --extras GROUP value (test / dev / docs
 #       / viewer / viewer-gpu / basisopt / ase / dispersion / mpi /
-#       dispersion,mpi / mace / all / none) to the pip extras
+#       mace / all / none, or a comma-separated combination of the pip
+#       groups such as dispersion,mpi,test) to the pip extras
 #       suffix the editable install needs ("[test]", "[dev]", "", …).
 #       Stores the result in OUT_VAR via printf -v. Errors loud + non-
 #       zero on a bogus group so the caller's `set -e` propagates. For a
@@ -80,33 +81,48 @@ vibeqc_set_branch() {
 vibeqc_extras_to_pip_spec() {
     local group="$1"
     local out_var="$2"
-    local spec
+    local spec="" part parts=() seen=","
     VIBEQC_COLOCATED_EXTRA=""
     case "$group" in
-        none)       spec="" ;;
-        test)       spec="[test]" ;;
-        dev)        spec="[dev]" ;;
-        docs)       spec="[docs]" ;;
-        viewer)     spec="[viewer]" ;;
-        viewer-gpu) spec=""; VIBEQC_COLOCATED_EXTRA="viewer-gpu" ;;
-        basisopt)   spec=""; VIBEQC_COLOCATED_EXTRA="basisopt" ;;
-        ase)        spec="[ase]" ;;
-        dispersion) spec="[dispersion]" ;;
-        mpi)        spec="[mpi]" ;;
-        dispersion,mpi) spec="[dispersion,mpi]" ;;
-        mace)       spec="[mace]" ;;
-        # 'all' deliberately omits [mace]: the MACE MLIP stack is a heavy
-        # (~650 MB torch/e3nn) Python <=3.13-only opt-in. Folding it into
-        # 'all' would bloat every "give me everything" install and would
-        # no-op on the 3.14 dev .venv anyway (pyproject marker
-        # python_version < '3.14'). Request it explicitly: --extras mace.
-        all)        spec="[dev,docs,viewer]" ;;
-        *)
-            echo "Error: --extras must be one of: test / dev / docs / viewer / viewer-gpu / basisopt / ase / dispersion / mpi / dispersion,mpi / mace / all / none (got '$group')." >&2
-            return 1
+        none)       printf -v "$out_var" '%s' ""; return 0 ;;
+        viewer-gpu|basisopt)
+            # Co-located companion projects install separately from the
+            # [extras] suffix, so they stay single-valued.
+            VIBEQC_COLOCATED_EXTRA="$group"
+            printf -v "$out_var" '%s' ""
+            return 0
             ;;
+        # 'all' deliberately omits [mace]: the MACE MLIP stack is a heavy
+        # torch/e3nn opt-in. Request it explicitly with --extras mace;
+        # it also works in the usual Python 3.14 environment.
+        all)        printf -v "$out_var" '%s' "[dev,docs,viewer]"; return 0 ;;
     esac
-    printf -v "$out_var" '%s' "$spec"
+    # One pip extras group or a comma-separated combination of them, e.g.
+    # "dispersion,mpi" or "dispersion,mpi,test" for a cluster runtime that
+    # also runs the test suite.
+    IFS=',' read -r -a parts <<< "$group"
+    for part in "${parts[@]}"; do
+        case "$part" in
+            test|dev|docs|viewer|ase|dispersion|mpi|mace) ;;
+            *)
+                echo "Error: --extras must be one of: test / dev / docs / viewer / viewer-gpu / basisopt / ase / dispersion / mpi / mace / all / none, or a comma-separated combination of test / dev / docs / viewer / ase / dispersion / mpi / mace such as dispersion,mpi,test (got '$group')." >&2
+                return 1
+                ;;
+        esac
+        case "$seen" in
+            *",$part,"*)
+                echo "Error: --extras lists '$part' twice (got '$group')." >&2
+                return 1
+                ;;
+        esac
+        seen="$seen$part,"
+        spec="${spec:+$spec,}$part"
+    done
+    if [ -z "$spec" ]; then
+        echo "Error: --extras is empty (got '$group')." >&2
+        return 1
+    fi
+    printf -v "$out_var" '%s' "[$spec]"
 }
 
 vibeqc_verify_install() {
@@ -120,7 +136,7 @@ vibeqc_verify_install() {
             # install lifecycle proves the extension/native-library link
             # without singleton initialization. Cluster deployers own the
             # separate launcher-backed execution gate.
-            "$python" - <<'PY'
+            env -u PYTHONPATH -u PYTHONHOME PYTHONNOUSERSITE=1 "$python" -I - <<'PY'
 import mpi4py
 
 mpi4py.rc.initialize = False
@@ -136,7 +152,8 @@ vibeqc.print_banner()
 PY
             ;;
         *)
-            "$python" -c "import vibeqc; vibeqc.print_banner()"
+            env -u PYTHONPATH -u PYTHONHOME PYTHONNOUSERSITE=1 \
+                "$python" -I -c "import vibeqc; vibeqc.print_banner()"
             ;;
     esac
 }
@@ -203,8 +220,10 @@ vibeqc_install_colocated_extra() {
 
     vibeqc_assert_colocated_extra_available "$repo_root" "$group"
     echo "==> Installing co-located $group package from this checkout..."
-    "$venv/bin/python" -m pip install --upgrade -e "$install_spec"
-    "$venv/bin/python" -c "$verify"
+    env -u PYTHONPATH -u PYTHONHOME PYTHONNOUSERSITE=1 \
+        "$venv/bin/python" -I -m pip install --upgrade -e "$install_spec"
+    env -u PYTHONPATH -u PYTHONHOME PYTHONNOUSERSITE=1 \
+        "$venv/bin/python" -I -c "$verify"
 }
 
 vibeqc_worktree_state() {

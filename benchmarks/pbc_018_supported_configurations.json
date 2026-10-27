@@ -1,0 +1,1114 @@
+{
+  "schema": "vibeqc.pbc-018-supported-configurations.v1",
+  "scope": "Bounded issue 557 evidence inventory; not a run_suite input or a declaration of CRYSTAL23 parity.",
+  "units": {
+    "cell": "bohr; lattice vectors in columns",
+    "atoms": "Cartesian bohr",
+    "energy": "Hartree",
+    "k": "fractional reciprocal coordinates; B=2*pi*inverse(A).T",
+    "time": "seconds"
+  },
+  "defaults_policy": "Explicit settings and source-pinned policies transcribed from accepted carriers, supplemented by identified support-planning replays on the original source/native runtimes. Recovered radii are metadata, not new SCF acceptance. No runtime was rebuilt or relabelled.",
+  "rows": [
+    {
+      "dimension": 3,
+      "charge": 0,
+      "multiplicity": 1,
+      "temperature_Ha": 0,
+      "ecp": null,
+      "converged": true,
+      "id": "lih-rsgdf-gamma",
+      "issue": 179,
+      "claim": "matched_fitted_energy",
+      "method": "HF",
+      "reference_spin": "restricted closed shell",
+      "cell_bohr": [
+        [
+          0,
+          3.8579,
+          3.8579
+        ],
+        [
+          3.8579,
+          0,
+          3.8579
+        ],
+        [
+          3.8579,
+          3.8579,
+          0
+        ]
+      ],
+      "atoms_bohr": [
+        [
+          "Li",
+          0,
+          0,
+          0
+        ],
+        [
+          "H",
+          3.8579,
+          3.8579,
+          3.8579
+        ]
+      ],
+      "basis": "STO-3G",
+      "kpoints": {
+        "mesh": [
+          1,
+          1,
+          1
+        ],
+        "fractional_reciprocal_coordinates": [
+          [
+            0.0,
+            0.0,
+            0.0
+          ]
+        ],
+        "weights": [
+          1.0
+        ],
+        "shift": [
+          0,
+          0,
+          0
+        ],
+        "symmetry_reduction": false,
+        "coordinate_provenance": "Resolved from the archived carrier and source-pinned Bloch mesh convention; not a CRYSTAL output attestation."
+      },
+      "jk_route": "SR/LR Gaussian fitted J and full-range fitted K",
+      "physical_supports": {
+        "requested_ao_cutoff_bohr": 15,
+        "nuclear_cutoff_bohr": 25,
+        "pair_complete_1e": true,
+        "one_electron_cutoff_bohr_printed": 40.0925,
+        "one_electron_overlap_screen_relative": 1e-16,
+        "fit_ao_images_bohr_printed": 81.42,
+        "fit_auxiliary_images_bohr_printed": 64.52,
+        "fit_lr_cutoff_Ha_printed": 22.66,
+        "precision_note": "Printed radii/cutoff are rounded diagnostics; reproduce using the pinned auto policy, not these rounded values."
+      },
+      "fitting_xc": {
+        "gdf_method": "rsgdf",
+        "fit_source": "sr",
+        "auxiliary_basis": "def2-svp-jk",
+        "omega_bohr_inverse": 0.4,
+        "g_precision": 1e-10,
+        "rcut_strategy": "pyscf_auto",
+        "rcut_precision": 1e-08,
+        "overlap_threshold": 1e-07,
+        "metric_threshold": 1e-13,
+        "retained_auxiliary_modes": 69,
+        "fit_screen_threshold": 0.0,
+        "xc": null
+      },
+      "zero_mode": "Neutral 3D Ewald electrostatics; exxdiv=ewald on the BvK mesh.",
+      "convergence": {
+        "max_iter": 100,
+        "energy_Ha": 1e-11,
+        "commutator": 1e-08,
+        "iterations": 7
+      },
+      "result": {
+        "energy_Ha": -8.335327447080662,
+        "reference_energy_Ha": -8.335327445765765,
+        "reference": "PySCF 2.6.2 KRHF/GDF, def2-svp-jkfit, precision=1e-10, exxdiv=ewald; identical cell, basis and Gamma-centered mesh; SCF energy=1e-11, gradient=1e-8.",
+        "error_Ha": -1.3148966360176928e-09,
+        "tolerance_Ha": 1e-07
+      },
+      "cost": {
+        "wall_seconds": 1317.0007948875427,
+        "scope": "Driver setup plus complete SCF; 4 CPU allocation. Original combined job timed out after the completed Gamma row; 222 is the successful resumed calculation."
+      },
+      "evidence_key": "qc179-gamma",
+      "source_commit": "63031b080ba58c6aab29f9cd6830b60f7f030e93",
+      "limitations": [
+        "Fitted-energy agreement only; no universal metric default, MDF or unfitted-energy claim.",
+        "No matched CRYSTAL cost or total-energy comparison."
+      ]
+    },
+    {
+      "dimension": 3,
+      "charge": 0,
+      "multiplicity": 1,
+      "temperature_Ha": 0,
+      "ecp": null,
+      "converged": true,
+      "id": "lih-rsgdf-222",
+      "issue": 179,
+      "claim": "matched_fitted_energy",
+      "method": "HF",
+      "reference_spin": "restricted closed shell",
+      "cell_bohr": [
+        [
+          0,
+          3.8579,
+          3.8579
+        ],
+        [
+          3.8579,
+          0,
+          3.8579
+        ],
+        [
+          3.8579,
+          3.8579,
+          0
+        ]
+      ],
+      "atoms_bohr": [
+        [
+          "Li",
+          0,
+          0,
+          0
+        ],
+        [
+          "H",
+          3.8579,
+          3.8579,
+          3.8579
+        ]
+      ],
+      "basis": "STO-3G",
+      "kpoints": {
+        "mesh": [
+          2,
+          2,
+          2
+        ],
+        "fractional_reciprocal_coordinates": [
+          [
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.5
+          ],
+          [
+            0.0,
+            0.5,
+            0.0
+          ],
+          [
+            0.0,
+            0.5,
+            0.5
+          ],
+          [
+            0.5,
+            0.0,
+            0.0
+          ],
+          [
+            0.5,
+            0.0,
+            0.5
+          ],
+          [
+            0.5,
+            0.5,
+            0.0
+          ],
+          [
+            0.5,
+            0.5,
+            0.5
+          ]
+        ],
+        "weights": [
+          0.125,
+          0.125,
+          0.125,
+          0.125,
+          0.125,
+          0.125,
+          0.125,
+          0.125
+        ],
+        "shift": [
+          0,
+          0,
+          0
+        ],
+        "symmetry_reduction": false,
+        "coordinate_provenance": "Resolved from the archived carrier and source-pinned Bloch mesh convention; not a CRYSTAL output attestation."
+      },
+      "jk_route": "SR/LR Gaussian fitted J and full-range fitted K",
+      "physical_supports": {
+        "requested_ao_cutoff_bohr": 15,
+        "nuclear_cutoff_bohr": 25,
+        "pair_complete_1e": true,
+        "one_electron_cutoff_bohr_printed": 40.0925,
+        "one_electron_overlap_screen_relative": 1e-16,
+        "fit_ao_images_bohr_printed": 81.42,
+        "fit_auxiliary_images_bohr_printed": 64.52,
+        "fit_lr_cutoff_Ha_printed": 22.66,
+        "precision_note": "Printed radii/cutoff are rounded diagnostics; reproduce using the pinned auto policy, not these rounded values."
+      },
+      "fitting_xc": {
+        "gdf_method": "rsgdf",
+        "fit_source": "sr",
+        "auxiliary_basis": "def2-svp-jk",
+        "omega_bohr_inverse": 0.4,
+        "g_precision": 1e-10,
+        "rcut_strategy": "pyscf_auto",
+        "rcut_precision": 1e-08,
+        "overlap_threshold": 1e-07,
+        "metric_threshold": 1e-13,
+        "retained_auxiliary_modes": 69,
+        "fit_screen_threshold": 0.0,
+        "xc": null
+      },
+      "zero_mode": "Neutral 3D Ewald electrostatics; exxdiv=ewald on the BvK mesh.",
+      "convergence": {
+        "max_iter": 100,
+        "energy_Ha": 1e-11,
+        "commutator": 1e-08,
+        "iterations": 8
+      },
+      "result": {
+        "energy_Ha": -7.922007391408032,
+        "reference_energy_Ha": -7.922007387186994,
+        "reference": "PySCF 2.6.2 KRHF/GDF, def2-svp-jkfit, precision=1e-10, exxdiv=ewald; identical cell, basis and Gamma-centered mesh; SCF energy=1e-11, gradient=1e-8.",
+        "error_Ha": -4.221037741558575e-09,
+        "tolerance_Ha": 1e-07
+      },
+      "cost": {
+        "wall_seconds": 11063.026356458664,
+        "scope": "Driver setup plus complete SCF; 4 CPU allocation. Original combined job timed out after the completed Gamma row; 222 is the successful resumed calculation."
+      },
+      "evidence_key": "qc179-222",
+      "source_commit": "63031b080ba58c6aab29f9cd6830b60f7f030e93",
+      "limitations": [
+        "Fitted-energy agreement only; no universal metric default, MDF or unfitted-energy claim.",
+        "No matched CRYSTAL cost or total-energy comparison."
+      ]
+    },
+    {
+      "dimension": 3,
+      "charge": 0,
+      "multiplicity": 1,
+      "temperature_Ha": 0,
+      "ecp": null,
+      "converged": true,
+      "id": "diamond-gamma-pbe0-xc",
+      "issue": 465,
+      "claim": "xc_domain_convergence",
+      "method": "PBE0",
+      "reference_spin": "restricted closed shell",
+      "cell_bohr": [
+        [
+          0,
+          3.3703265432700613,
+          3.3703265432700613
+        ],
+        [
+          3.3703265432700613,
+          0,
+          3.3703265432700613
+        ],
+        [
+          3.3703265432700613,
+          3.3703265432700613,
+          0
+        ]
+      ],
+      "atoms_bohr": [
+        [
+          "C",
+          0,
+          0,
+          0
+        ],
+        [
+          "C",
+          1.6851632716350307,
+          1.6851632716350307,
+          1.6851632716350307
+        ]
+      ],
+      "basis": "def2-SVP",
+      "kpoints": {
+        "mesh": [
+          1,
+          1,
+          1
+        ],
+        "fractional_reciprocal_coordinates": [
+          [
+            0.0,
+            0.0,
+            0.0
+          ]
+        ],
+        "weights": [
+          1.0
+        ],
+        "shift": [
+          0,
+          0,
+          0
+        ],
+        "symmetry_reduction": false,
+        "coordinate_provenance": "Resolved from the archived carrier and source-pinned Bloch mesh convention; not a CRYSTAL output attestation."
+      },
+      "jk_route": "Gamma SR/LR Gaussian fitted J and 0.25 full-range fitted K",
+      "physical_supports": {
+        "requested_ao_cutoff_bohr": 15,
+        "nuclear_cutoff_bohr": 25,
+        "rcut_strategy": "pyscf_auto",
+        "rcut_precision": 1e-08,
+        "xc_ao_cutoff_bohr": 18.501284106877893,
+        "resolved_non_xc_radii": {
+          "one_electron_ao_pair_bohr": 23.532024462586605,
+          "fit_ao_images_bohr": 43.9975328815882,
+          "fit_auxiliary_images_bohr": 57.98878984898395
+        },
+        "pair_complete_1e": true,
+        "one_electron_bound_bohr": 34.86711490084021,
+        "one_electron_overlap_screen_relative": 1e-16,
+        "fit_lr_cutoff_Ha": 21.031901088329146,
+        "v_ne_reciprocal_cutoff_Ha": 200.0,
+        "schwarz_threshold": 1e-12,
+        "schwarz_threshold_forces": 1e-14,
+        "support_metadata_evidence_key": "qc557-diamond-support-recovery",
+        "domain_note": "The one-electron radius is the screened pair-complete domain; its bound is a planning enclosure only. Fitting AO and auxiliary image supports are distinct. XC retains its existing 18.501284106877893-bohr domain."
+      },
+      "fitting_xc": {
+        "gdf_method": "rsgdf",
+        "auxiliary_basis": "def2-svp-jk",
+        "omega_bohr_inverse": 0.4,
+        "g_precision": 1e-10,
+        "metric_threshold": 1e-09,
+        "overlap_threshold": 1e-07,
+        "fit_screen_threshold": 0,
+        "xc": {
+          "functional": "PBE0",
+          "exact_exchange_fraction": 0.25,
+          "grid": {
+            "radial": 75,
+            "angular_scheme": "ProductGaussLegendre",
+            "n_theta": 17,
+            "n_phi": 36,
+            "pruning": "None",
+            "partition": "Becke",
+            "becke_k": 3,
+            "periodic_image_radius_bohr": 10
+          },
+          "density_domain": "Gamma torus; automatic XC AO image radius 18.501284106877893 bohr"
+        }
+      },
+      "zero_mode": "Neutral EWALD_3D electrostatics; exxdiv=ewald, scaled by 0.25 in exchange.",
+      "convergence": {
+        "max_iter": 100,
+        "energy_Ha": 1e-08,
+        "commutator": 1e-06,
+        "provenance": "PeriodicKSOptions defaults at the evidence source"
+      },
+      "result": {
+        "energy_Ha": -75.08648342894216,
+        "reference_energy_Ha": -75.08648352805882,
+        "reference": "Same-method converged 25-bohr XC-domain value; 20 to 25 bohr changes energy by 1.03e-8 Ha. Not a CRYSTAL reference.",
+        "error_Ha": 9.911666154494014e-08,
+        "tolerance_Ha": 1e-05,
+        "t2_split_Ha": 3.3373773227207693e-06,
+        "t2_tolerance_Ha": 1e-05
+      },
+      "cost": {
+        "wall_seconds": 2268.98,
+        "scope": "Whole acceptance command: diamond SCF plus diffuse-cell assertion (7.580 s); no isolated diamond timer.",
+        "cpu_seconds": 17421.98,
+        "peak_rss_MiB": 457.246094,
+        "cpu_allocation": 8
+      },
+      "evidence_key": "qc465",
+      "source_commit": "ebd046c1ac2c1930dfb7eacf3cae7973bc80abfd",
+      "limitations": [
+        "Only this converged diamond XC-domain row is included.",
+        "Arbitrary-cell default convergence and CRYSTAL energy parity remain unqualified."
+      ],
+      "followup_checks": [
+        {
+          "evidence_key": "qc465-continuous-grid",
+          "source_commit": "f1ad771416b02c48c518cedb64403de5acc249e8",
+          "claim": "same_frozen_diamond_configuration_on_continuous_grid",
+          "converged": true,
+          "energy_Ha": -75.08648292670634,
+          "reference_energy_Ha": -75.08648352805882,
+          "reference": "Unchanged original 25-bohr XC-domain reference in qc465; not a new independent reference.",
+          "error_Ha": 6.013524825e-07,
+          "tolerance_Ha": 1e-05,
+          "t2_split_Ha": 3.215068693e-06,
+          "t2_tolerance_Ha": 1e-05,
+          "xc_ao_cutoff_bohr": 18.501284106877893,
+          "cost": null,
+          "limitation": "Affected-path source linkage only. Original evidence, diffuse-cell check and original measured cost remain historical; no final release binary or CI qualification."
+        }
+      ]
+    },
+    {
+      "dimension": 3,
+      "charge": 0,
+      "multiplicity": 1,
+      "temperature_Ha": 0,
+      "ecp": null,
+      "converged": true,
+      "id": "gpw-rhf-h2-9",
+      "issue": 534,
+      "claim": "energy_fock_directional_derivative",
+      "method": "HF",
+      "reference_spin": "restricted closed shell",
+      "cell_bohr": [
+        [
+          9.0,
+          0,
+          0
+        ],
+        [
+          0,
+          9.0,
+          0
+        ],
+        [
+          0,
+          0,
+          9.0
+        ]
+      ],
+      "atoms_bohr": [
+        [
+          "H",
+          3.83,
+          4.41,
+          4.2
+        ],
+        [
+          "H",
+          5.23,
+          4.41,
+          4.2
+        ]
+      ],
+      "basis": "STO-3G",
+      "kpoints": {
+        "mesh": [
+          1,
+          1,
+          1
+        ],
+        "fractional_reciprocal_coordinates": [
+          [
+            0.0,
+            0.0,
+            0.0
+          ]
+        ],
+        "weights": [
+          1.0
+        ],
+        "shift": [
+          0,
+          0,
+          0
+        ],
+        "symmetry_reduction": false,
+        "coordinate_provenance": "Resolved from the archived carrier and source-pinned Bloch mesh convention; not a CRYSTAL output attestation."
+      },
+      "jk_route": "GPW grid J; adjoint-symmetric legacy Gamma molecular-limit K model",
+      "physical_supports": {
+        "ao_image_cutoff_bohr": 25,
+        "nuclear_cutoff_bohr": 25,
+        "pair_complete_1e": false,
+        "fft_grid": [
+          24,
+          24,
+          24
+        ]
+      },
+      "fitting_xc": {
+        "auxiliary_basis": null,
+        "xc": null
+      },
+      "zero_mode": "FFT Poisson G=0 omitted; V_ne convention=ewald, matched periodic nuclear electrostatics; no bulk exchange q=0 qualification.",
+      "convergence": {
+        "max_iter": 40,
+        "energy_Ha": 1e-09,
+        "density": 1e-07,
+        "initial_guess": "PATOM",
+        "damping": 0
+      },
+      "result": {
+        "energy_Ha": -1.1189626290793393,
+        "reference": "Central finite difference of this same model E(D); h=1e-5, direction [[0.2,0.13],[0.13,-0.15]].",
+        "numerical_derivative": -0.17107547174433077,
+        "fock_contraction": -0.17107547179335736,
+        "absolute_error": 4.902658834460283e-11,
+        "tolerance": 2e-09
+      },
+      "cost": {
+        "wall_seconds": 0.6743192672729492,
+        "scope": "Complete SCF and directional derivative; 4 numerical threads. Whole 7-check acceptance command 75.59 s."
+      },
+      "evidence_key": "qc534",
+      "source_commit": "ebd046c1ac2c1930dfb7eacf3cae7973bc80abfd",
+      "limitations": [
+        "Derivative consistency of the retained model only; not physical bulk GPW exchange or external total-energy parity."
+      ]
+    },
+    {
+      "dimension": 3,
+      "charge": 0,
+      "multiplicity": 1,
+      "temperature_Ha": 0,
+      "ecp": null,
+      "converged": true,
+      "id": "gpw-rhf-h2-16",
+      "issue": 534,
+      "claim": "energy_fock_directional_derivative",
+      "method": "HF",
+      "reference_spin": "restricted closed shell",
+      "cell_bohr": [
+        [
+          16.0,
+          0,
+          0
+        ],
+        [
+          0,
+          16.0,
+          0
+        ],
+        [
+          0,
+          0,
+          16.0
+        ]
+      ],
+      "atoms_bohr": [
+        [
+          "H",
+          7.33,
+          7.91,
+          7.7
+        ],
+        [
+          "H",
+          8.73,
+          7.91,
+          7.7
+        ]
+      ],
+      "basis": "STO-3G",
+      "kpoints": {
+        "mesh": [
+          1,
+          1,
+          1
+        ],
+        "fractional_reciprocal_coordinates": [
+          [
+            0.0,
+            0.0,
+            0.0
+          ]
+        ],
+        "weights": [
+          1.0
+        ],
+        "shift": [
+          0,
+          0,
+          0
+        ],
+        "symmetry_reduction": false,
+        "coordinate_provenance": "Resolved from the archived carrier and source-pinned Bloch mesh convention; not a CRYSTAL output attestation."
+      },
+      "jk_route": "GPW grid J; adjoint-symmetric legacy Gamma molecular-limit K model",
+      "physical_supports": {
+        "ao_image_cutoff_bohr": 25,
+        "nuclear_cutoff_bohr": 25,
+        "pair_complete_1e": false,
+        "fft_grid": [
+          48,
+          48,
+          48
+        ]
+      },
+      "fitting_xc": {
+        "auxiliary_basis": null,
+        "xc": null
+      },
+      "zero_mode": "FFT Poisson G=0 omitted; V_ne convention=ewald, matched periodic nuclear electrostatics; no bulk exchange q=0 qualification.",
+      "convergence": {
+        "max_iter": 40,
+        "energy_Ha": 1e-09,
+        "density": 1e-07,
+        "initial_guess": "PATOM",
+        "damping": 0
+      },
+      "result": {
+        "energy_Ha": -1.1167122051314982,
+        "reference": "Central finite difference of this same model E(D); h=1e-5, direction [[0.2,0.13],[0.13,-0.15]].",
+        "numerical_derivative": -0.17225597277459312,
+        "fock_contraction": -0.17225597272957507,
+        "absolute_error": 4.5018044847466854e-11,
+        "tolerance": 2e-09
+      },
+      "cost": {
+        "wall_seconds": 0.4604494571685791,
+        "scope": "Complete SCF and directional derivative; 4 numerical threads. Whole 7-check acceptance command 75.59 s."
+      },
+      "evidence_key": "qc534",
+      "source_commit": "ebd046c1ac2c1930dfb7eacf3cae7973bc80abfd",
+      "limitations": [
+        "Derivative consistency of the retained model only; not physical bulk GPW exchange or external total-energy parity."
+      ]
+    },
+    {
+      "dimension": 3,
+      "charge": 0,
+      "multiplicity": 1,
+      "temperature_Ha": 0,
+      "ecp": {
+        "name": "LANL2DZ scalar ECP sidecar",
+        "core_electrons_per_atom": 10,
+        "effective_charges": [
+          7,
+          7
+        ]
+      },
+      "converged": true,
+      "id": "cl2-uks-ecp-gamma",
+      "issue": 35,
+      "claim": "source_matched_ecp_derivative_preview",
+      "method": "PBE",
+      "reference_spin": "unrestricted singlet, Nalpha=Nbeta=7",
+      "cell_bohr": [
+        [
+          20,
+          0,
+          0
+        ],
+        [
+          0,
+          20,
+          0
+        ],
+        [
+          0,
+          0,
+          20
+        ]
+      ],
+      "atoms_bohr": [
+        [
+          "Cl",
+          10,
+          10,
+          8.119722505997359
+        ],
+        [
+          "Cl",
+          10,
+          10,
+          11.880277494002641
+        ]
+      ],
+      "basis": "LANL2DZ",
+      "kpoints": {
+        "mesh": [
+          1,
+          1,
+          1
+        ],
+        "fractional_reciprocal_coordinates": [
+          [
+            0.0,
+            0.0,
+            0.0
+          ]
+        ],
+        "weights": [
+          1.0
+        ],
+        "shift": [
+          0,
+          0,
+          0
+        ],
+        "symmetry_reduction": false,
+        "coordinate_provenance": "Resolved from the archived carrier and source-pinned Bloch mesh convention; not a CRYSTAL output attestation."
+      },
+      "jk_route": "Analytic Ewald Hartree J, pure PBE (no exact K), effective-charge nuclear and lattice ECP operators",
+      "physical_supports": {
+        "requested_ao_cutoff_bohr": 15,
+        "nuclear_cutoff_bohr": 25,
+        "pair_complete_1e": false,
+        "auto_optimize_truncation": true,
+        "policy": "Legacy cell-ball support in the archived fixture; the pinned optimizer accepts the starting radii in one evaluation. Source-matched derivative uses that captured SCF support.",
+        "resolved_ao_cutoff_bohr": 15.0,
+        "resolved_nuclear_cutoff_bohr": 25.0,
+        "schwarz_threshold": 1e-12,
+        "schwarz_threshold_forces": 1e-14,
+        "support_metadata_evidence_key": "qc557-ecp-support-recovery",
+        "displaced_geometry_support_check": {
+          "bond_displacements_bohr": [
+            0,
+            0.001,
+            -0.001,
+            0.0005,
+            -0.0005
+          ],
+          "same_radii": true,
+          "optimizer_evaluations_each": 1,
+          "minimum_overlap_eigenvalue": 0.051242408461881585
+        }
+      },
+      "fitting_xc": {
+        "auxiliary_basis": null,
+        "xc": {
+          "functional": "PBE",
+          "exact_exchange_fraction": 0,
+          "grid": {
+            "radial": 75,
+            "angular_scheme": "ProductGaussLegendre",
+            "n_theta": 17,
+            "n_phi": 36,
+            "pruning": "None",
+            "partition": "Becke",
+            "becke_k": 3,
+            "periodic_image_radius_bohr": 10
+          },
+          "density_domain": "Periodic Becke driver domain; not the Gamma GDF torus"
+        }
+      },
+      "zero_mode": "Forced EWALD_3D for Hartree, V_ne and ion-ion with effective charges +7,+7; neutral 14-electron cell. Pure PBE has no exact-exchange zero mode.",
+      "convergence": {
+        "max_iter": 150,
+        "energy_Ha": 1e-12,
+        "commutator": 1e-09
+      },
+      "result": {
+        "energy_Ha": -29.810831798121853,
+        "reference_energy_Ha": -29.81083782369643,
+        "reference": "Same-code molecular UKS PBE/LANL2DZ limit plus periodic Richardson bond finite differences at 1e-3 and 5e-4 bohr; not independent ORCA/CRYSTAL force validation.",
+        "error_Ha": 6.025574577961379e-06,
+        "tolerance_Ha": 1e-05,
+        "gradient_error_Ha_per_bohr": 6.095380658543981e-09,
+        "gradient_tolerance_Ha_per_bohr": 2e-06
+      },
+      "cost": {
+        "wall_seconds": 378.71,
+        "scope": "Shared command for both rows, their displaced SCFs, molecular controls and gradients; do not sum once per row.",
+        "cpu_seconds": 669.7,
+        "peak_rss_MiB": 5165.257812,
+        "cpu_allocation": 4
+      },
+      "evidence_key": "qc35-ecp-preview",
+      "source_commit": "46d08d59737d6c4efd68a2f3285e750be99aaf88",
+      "limitations": [
+        "Maintained preview only; no physical-support, general ECP gradient, stress or independent force acceptance.",
+        "Effective-command cost differs from the 432.697 s pytest suite timer; both are retained in the receipts."
+      ]
+    },
+    {
+      "dimension": 3,
+      "charge": 0,
+      "multiplicity": 1,
+      "temperature_Ha": 0,
+      "ecp": {
+        "name": "LANL2DZ scalar ECP sidecar",
+        "core_electrons_per_atom": 10,
+        "effective_charges": [
+          7,
+          7
+        ]
+      },
+      "converged": true,
+      "id": "cl2-uks-ecp-311",
+      "issue": 35,
+      "claim": "source_matched_ecp_derivative_preview",
+      "method": "PBE",
+      "reference_spin": "unrestricted singlet, Nalpha=Nbeta=7",
+      "cell_bohr": [
+        [
+          20,
+          0,
+          0
+        ],
+        [
+          0,
+          20,
+          0
+        ],
+        [
+          0,
+          0,
+          20
+        ]
+      ],
+      "atoms_bohr": [
+        [
+          "Cl",
+          10,
+          10,
+          8.119722505997359
+        ],
+        [
+          "Cl",
+          10,
+          10,
+          11.880277494002641
+        ]
+      ],
+      "basis": "LANL2DZ",
+      "kpoints": {
+        "mesh": [
+          3,
+          1,
+          1
+        ],
+        "fractional_reciprocal_coordinates": [
+          [
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.3333333333333333,
+            0.0,
+            0.0
+          ],
+          [
+            0.6666666666666666,
+            0.0,
+            0.0
+          ]
+        ],
+        "weights": [
+          0.3333333333333333,
+          0.3333333333333333,
+          0.3333333333333333
+        ],
+        "shift": [
+          0,
+          0,
+          0
+        ],
+        "symmetry_reduction": false,
+        "coordinate_provenance": "Resolved from the archived carrier and source-pinned Bloch mesh convention; not a CRYSTAL output attestation."
+      },
+      "jk_route": "Analytic Ewald Hartree J, pure PBE (no exact K), effective-charge nuclear and lattice ECP operators",
+      "physical_supports": {
+        "requested_ao_cutoff_bohr": 15,
+        "nuclear_cutoff_bohr": 25,
+        "pair_complete_1e": false,
+        "auto_optimize_truncation": true,
+        "policy": "Legacy cell-ball support in the archived fixture; the pinned optimizer accepts the starting radii in one evaluation. Source-matched derivative uses that captured SCF support.",
+        "resolved_ao_cutoff_bohr": 15.0,
+        "resolved_nuclear_cutoff_bohr": 25.0,
+        "schwarz_threshold": 1e-12,
+        "schwarz_threshold_forces": 1e-14,
+        "support_metadata_evidence_key": "qc557-ecp-support-recovery",
+        "displaced_geometry_support_check": {
+          "bond_displacements_bohr": [
+            0,
+            0.001,
+            -0.001,
+            0.0005,
+            -0.0005
+          ],
+          "same_radii": true,
+          "optimizer_evaluations_each": 1,
+          "minimum_overlap_eigenvalue": 0.051242408461881585
+        }
+      },
+      "fitting_xc": {
+        "auxiliary_basis": null,
+        "xc": {
+          "functional": "PBE",
+          "exact_exchange_fraction": 0,
+          "grid": {
+            "radial": 75,
+            "angular_scheme": "ProductGaussLegendre",
+            "n_theta": 17,
+            "n_phi": 36,
+            "pruning": "None",
+            "partition": "Becke",
+            "becke_k": 3,
+            "periodic_image_radius_bohr": 10
+          },
+          "density_domain": "Periodic Becke driver domain; not the Gamma GDF torus"
+        }
+      },
+      "zero_mode": "Forced EWALD_3D for Hartree, V_ne and ion-ion with effective charges +7,+7; neutral 14-electron cell. Pure PBE has no exact-exchange zero mode.",
+      "convergence": {
+        "max_iter": 150,
+        "energy_Ha": 1e-12,
+        "commutator": 1e-09
+      },
+      "result": {
+        "energy_Ha": -29.81083179812187,
+        "reference_energy_Ha": -29.81083782369643,
+        "reference": "Same-code molecular UKS PBE/LANL2DZ limit plus periodic Richardson bond finite differences at 1e-3 and 5e-4 bohr; not independent ORCA/CRYSTAL force validation.",
+        "error_Ha": 6.0255745601978106e-06,
+        "tolerance_Ha": 1e-05,
+        "gradient_error_Ha_per_bohr": 6.1097303882817755e-09,
+        "gradient_tolerance_Ha_per_bohr": 2e-06
+      },
+      "cost": {
+        "wall_seconds": 378.71,
+        "scope": "Shared command for both rows, their displaced SCFs, molecular controls and gradients; do not sum once per row.",
+        "cpu_seconds": 669.7,
+        "peak_rss_MiB": 5165.257812,
+        "cpu_allocation": 4
+      },
+      "evidence_key": "qc35-ecp-preview",
+      "source_commit": "46d08d59737d6c4efd68a2f3285e750be99aaf88",
+      "limitations": [
+        "Maintained preview only; no physical-support, general ECP gradient, stress or independent force acceptance.",
+        "Effective-command cost differs from the 432.697 s pytest suite timer; both are retained in the receipts."
+      ]
+    }
+  ],
+  "refusals": [
+    {
+      "id": "dense-mg-rijcosx",
+      "issue": 555,
+      "status": "qualified_refusal",
+      "method": "HF",
+      "reference_spin": "restricted closed shell",
+      "dimension": 3,
+      "cell": "Mg primitive fcc; conventional a=4.51 angstrom, volume approximately 155 bohr^3",
+      "basis": "STO-3G",
+      "ecp": null,
+      "kpoints": {
+        "mesh": [
+          1,
+          1,
+          1
+        ],
+        "fractional_reciprocal_coordinates": [
+          [
+            0.0,
+            0.0,
+            0.0
+          ]
+        ],
+        "weights": [
+          1.0
+        ],
+        "shift": [
+          0,
+          0,
+          0
+        ],
+        "symmetry_reduction": false,
+        "coordinate_provenance": "Resolved from the archived carrier and source-pinned Bloch mesh convention; not a CRYSTAL output attestation."
+      },
+      "jk_route": "periodic RIJCOSX",
+      "physical_supports": "Dense 3D exchange-image rank 3; direct and public entry refuse before integral construction.",
+      "fitting_xc": "Not evaluated: admission refusal",
+      "zero_mode": "Not evaluated",
+      "convergence": "Not applicable: no SCF requested past refusal",
+      "reference_result": "Original dense refusal and retained molecular/vacuum boundary checks: 3 passed, 0 skipped.",
+      "cost": {
+        "wall_seconds": 4.23,
+        "scope": "Three-test refusal/boundary suite, not SCF cost"
+      },
+      "evidence_key": "qc555"
+    }
+  ],
+  "excluded": [
+    {
+      "issue": 531,
+      "configuration": "General BIPOLE cancellation / 100-bohr Ne molecular limit",
+      "reason": "100-bohr residual -9.208e-8 Ha fails the unchanged abs(delta_E)*L/N_e^2 < 1e-8 gate. The 50-bohr observation alone does not qualify the claim. Combined omitted EE+EN+NN bound and relabelling checks remain open.",
+      "boundary_kind": "release_inventory_exclusion_not_a_runtime_refusal",
+      "gate": "abs(delta_E_Ha) * box_bohr / n_electrons**2 < 1e-8",
+      "required_future_evidence": [
+        "Both 50- and 100-bohr molecular-limit rungs with unchanged coefficient gate",
+        "Combined omitted EE+EN+NN energy bound including charge amplitudes and image multiplicities",
+        "Resolved component domains and precision controls; origin/atom-representative invariance on a non-vacuum fixture"
+      ]
+    },
+    {
+      "issue": 179,
+      "configuration": "Automatic metric policy, dense compcell/MDF, unfitted exactness",
+      "reason": "The accepted rows fix the metric cutoff at 1e-13 and retain 69 modes only for LiH."
+    },
+    {
+      "issue": 573,
+      "configuration": "Six restricted BIPOLE starter rows and full CRYSTAL23 method/spin/dimension matrix",
+      "reason": "28-bohr overlap-support convergence is not a matched total-energy acceptance. Remains in programme 593."
+    },
+    {
+      "issue": 648,
+      "configuration": "General input or scalar-ECP matcher success as scientific parity",
+      "reason": "Actual reference k coordinates/weights, grids/domains/zero modes, reference ECP operators and numerical acceptance remain separate obligations."
+    },
+    {
+      "issue": 579,
+      "configuration": "General physical-support ECP gradients",
+      "reason": "The reused preview uses legacy cell-ball support and same-code finite differences."
+    },
+    {
+      "issue": 534,
+      "configuration": "Physical bulk GPW exchange",
+      "reason": "Adjoint consistency fixes the derivative of the retained energy model, not its bulk exchange formulation."
+    },
+    {
+      "issue": 555,
+      "configuration": "Corrected dense-cell COSX energy",
+      "reason": "Refusal is accepted; dense exchange remains unsupported."
+    },
+    {
+      "issue": 652,
+      "configuration": "Dense translated NaCl/LANL2DZ GDF RHF/UHF and general ECP projector-tail completeness",
+      "reason": "No NaCl or dense GDF ECP row is included. The affected AO enclosure grows to 63.0539 bohr while the historical home-centered projector radius is 25 bohr. Main contains the physical midpoint-projector fix, but bounded RHF evidence does not close the shared UHF route, the density-grid artifact failure or establish a tail bound.",
+      "included_ecp_rows": [
+        "cl2-uks-ecp-gamma",
+        "cl2-uks-ecp-311"
+      ],
+      "included_route": "Ewald multi-k UKS, pure PBE, 20-bohr Cl2 cell, legacy pair_complete_1e=False, resolved AO radius 15 bohr and nuclear/projector radius 25 bohr. Its scoped force evidence is not a NaCl/GDF qualification.",
+      "boundary_kind": "release_inventory_exclusion_not_a_runtime_refusal"
+    }
+  ],
+  "companion_matrix": {
+    "method": "MANTA",
+    "profiles": [
+      "image-tight",
+      "ordinary-rhf",
+      "global-pbe0",
+      "compact-tight"
+    ],
+    "configuration_producer": "benchmarks/manta_release_controls.py:make_job and configuration",
+    "evidence_guide": "benchmarks/manta_release_controls.md",
+    "user_guide": "docs/user_guide/manta_release_controls.md",
+    "required_candidate_change": "ebbf5957bf93bf1ea7af3bbaef954e3e0fa5f729",
+    "scope": "Reuse the owned frozen producer and current-grid acceptance; do not substitute a new profile, sum unlike component certificates, or claim bulk/symmetry/speed parity."
+  },
+  "remaining_metadata": [
+    "No matched CRYSTAL23 timing series exists for these rows."
+  ],
+  "support_metadata_recovery": {
+    "qc557-ecp-support-recovery": {
+      "kind": "source_and_native_pinned_support_planning_replay",
+      "source_commit": "46d08d59737d6c4efd68a2f3285e750be99aaf88",
+      "scope": "Both meshes and the four bond displacements per mesh. Actual original native digest and planner/driver module hashes verified; no SCF or gradient repeated. Supplements rather than replaces qc35-ecp-preview.",
+      "native_identity": "See the corresponding immutable recovery receipt in the runner evidence note."
+    },
+    "qc557-diamond-support-recovery": {
+      "kind": "source_and_native_pinned_support_planning_replay",
+      "source_commit": "ebd046c1ac2c1930dfb7eacf3cae7973bc80abfd",
+      "scope": "Original diamond geometry/default basis, one-electron resolver, Gamma SR/LR cutoff planner and XC resolver. Original native digest and relevant module hashes verified; XC radius matches the accepted receipt. No SCF repeated. Supplements rather than replaces qc465.",
+      "native_identity": "See the corresponding immutable recovery receipt in the runner evidence note."
+    }
+  }
+}

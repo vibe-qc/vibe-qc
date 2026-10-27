@@ -7,6 +7,11 @@ surface. Runtime and accuracy depend on the model, structure, device,
 and whether the chemistry lies inside the training domain. vibe-qc
 exposes molecular `method="mace"` dispatch plus direct periodic drivers.
 
+This tutorial uses the `mace-torch` distribution from ACEsuit. Mendoza
+Automated Crystal Engine, including its `mace gui connect` workflow command,
+is a separate application. See [Which MACE?](../user_guide/mlip.md#which-mace)
+for the project and installation distinction.
+
 MACE is a *learned potential*, not a quantum-chemistry method: it solves
 no Schrödinger equation and produces no wavefunction. vibe-qc drives
 MACE's pre-trained forward pass and attributes it as an external model, 
@@ -20,17 +25,79 @@ vibe-qc's own semi-empirical methods.
 > probe; choose a model and respect its license; and compare relative
 > curves without mixing incompatible energy references.
 
+## Background
+
+**What MACE is.** MACE ({vibeqc-cite}`batatia_mace_2022`) is a message-passing
+neural network potential. The total energy is a sum of atomic site energies,
+each a learned function of the neighbours within a cutoff radius, and forces
+and stress are its analytic derivatives obtained by automatic differentiation,
+
+$$
+E = \sum_i E_i\bigl(\{\mathbf r_{ij}, Z_j\}_{|\mathbf r_{ij}| < r_\text{cut}}\bigr),
+\qquad
+\mathbf F_i = -\nabla_{\mathbf r_i} E ,
+$$
+
+where $\mathbf r_{ij}$ are the vectors to the neighbours of atom $i$, $Z_j$
+their elements and $r_\text{cut}$ the cutoff. *Equivariant* message passing
+means the internal features are irreducible representations of $E(3)$ built
+from spherical harmonics of the neighbour directions, so the symmetry under
+rotation, reflection and translation is exact by construction, and the
+messages combine many neighbours at once (a high body order from the atomic
+cluster expansion) so that two layers are enough.
+
+**Training data and families.** The parameters are fitted by the model
+authors to DFT energies, forces and stresses. MACE-MP-0 and MACE-MPA-0
+({vibeqc-cite}`batatia_mace_mp_2024`) are trained on Materials Project
+relaxation data (MPA-0 adds a subsample of a second materials database),
+cover 89 elements and are released under the MIT licence. MACE-OFF23
+({vibeqc-cite}`kovacs_mace_off_2023`) is trained on organic molecules,
+covers H, C, N, O, F, P, S, Cl, Br and I, and is released under the
+Academic Software License (academic and non-commercial use only), which is
+why vibe-qc gates it behind an explicit acknowledgement. Section 3 lists the
+model keys; the [MACE user guide](../user_guide/mlip.md#background-what-mace-is)
+gives the longer account.
+
+**What it is not.** MACE is an **external pre-trained model, not a vibe-qc
+method.** vibe-qc drives its forward pass, records the provenance and cites
+the papers, but computes none of the numbers itself and cannot vouch for their
+accuracy beyond what the model papers report. The interface (model registry,
+licence gate, molecular and periodic drivers) is a production route; the
+model behind it carries the limits of any learned potential. Inside its
+training distribution it is fast and typically close to the DFT it learned;
+outside it (unusual oxidation states, charged or open-shell species, elements
+or bonding motifs absent from the data, very short contacts) it fails without
+warning, because there is no variational principle, no SCF residual and no
+electronic structure to inspect. The run must therefore be judged against an
+external observable, and its absolute energies never compared with an
+electronic-structure total.
+
+```{note}
+This tutorial's code needs the optional `[mace]` extra (PyTorch, e3nn, MACE)
+including on Python 3.14. The interpreter used to check this documentation
+pass carries neither, so the calls below were not re-run on this build and
+no new output is quoted; the numbers and behaviour described come from the
+existing examples and the user guide. Run the health check in the
+Installation section before relying on them.
+```
+
 ## Installation
 
 MACE is an optional dependency (a heavy PyTorch + e3nn stack), behind the
-`[mace]` extra, on **Python ≤ 3.13**:
+`[mace]` extra, including on Python 3.14:
 
 ```sh
 pip install 'vibe-qc[mace]'
 ```
 
-On Python 3.14 the runtime is import-gated with a clear message (MACE's
-`matscipy` dependency has no 3.14 wheel yet). On macOS, vibe-qc auto-sets
+The extra requires `mace-torch>=0.3.16,<0.4`; ACEsuit's planned 1.0 API
+and checkpoint migration need a separate integration update. The runtime
+health check uses the same dependency guard as calculations and prints
+actionable installation errors without downloading weights.
+
+On Python 3.14 the extra requests PyTorch >=2.14.1. No older interpreter
+is needed. A missing backend raises a clear installation error.
+On macOS, vibe-qc auto-sets
 `KMP_DUPLICATE_LIB_OK=TRUE` (its native core and PyTorch each link an
 OpenMP runtime) and caps MACE's OpenMP/BLAS pools to one thread by
 default, verified not to change results. Set
@@ -65,6 +132,12 @@ run_job(mol, method="mace", output="h2o_mace")
 references; `h2o_mace.bibtex` / `.references` cite the MACE method
 paper + the foundation-model paper. There is no `.molden`, MACE has no
 orbitals.
+
+The single-point wrappers require a finite scalar energy, one three-component
+force per atom, and a finite six-component stress for a 3D periodic run.
+Missing, malformed, or non-finite backend results raise `ValueError` before
+an energy or converged periodic result is returned. Failed evaluations do
+not populate the result cache; backend loading and evaluation errors propagate.
 
 > **Energy scale.** A MACE energy lives on a **model-specific reference
 > scale** (each model subtracts its own per-element atomic energies),
@@ -276,8 +349,8 @@ See [`mlip`](../user_guide/mlip.md) § Visualization.
   forces, and successful optimization establish runtime execution only.
   Scientific accuracy needs an external observable comparison.
 - **Attribution**, every run cites the MACE papers; cite them in
-  published work (`CLAUDE.md` § 10: vibe-qc drives MACE, it does not
-  claim MACE's energy as its own).
+  published work (vibe-qc drives MACE, it does not claim MACE's energy as
+  its own).
 
 ## See also
 

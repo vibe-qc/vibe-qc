@@ -463,6 +463,12 @@ def run_rks_periodic_multi_k_ewald3d(
     :class:`PeriodicRKSMultiKEwaldResult`.
     """
     opts = options if options is not None else PeriodicKSOptions()
+    max_iter = int(opts.max_iter)
+    if max_iter < 0:
+        raise ValueError(
+            "run_rks_periodic_multi_k_ewald3d: max_iter must be >= 0 "
+            "(0 evaluates the initial guess only)"
+        )
     from .guess import select_periodic_driver_guess
     guess = select_periodic_driver_guess(
         system, opts, route="ewald", method="RKS", driver="run_rks_periodic_multi_k_ewald3d",
@@ -488,7 +494,7 @@ def run_rks_periodic_multi_k_ewald3d(
         )
     plog = resolve_progress(progress, verbose=verbose)
 
-    # ---- Force EWALD_3D gauge (gauge consistency; handover F4 2026-06-01) ----
+    # ---- Force EWALD_3D gauge (gauge consistency; historical design record F4 2026-06-01) ----
     # This driver hard-codes the Hartree J to the Ewald-3D builder, so V_ne
     # (compute_nuclear_lattice_dispatch) and e_nuc (nuclear_repulsion_per_cell)
     # MUST share that gauge. Without the force, a default options object
@@ -1259,7 +1265,7 @@ def run_rks_periodic_multi_k_ewald3d(
         )
         D_real_prev = D_per_k_prev = None
 
-    for iter_idx in range(1, int(opts.max_iter) + 1):
+    for iter_idx in range(1, max(1, max_iter) + 1):
         if damper is not None:
             damping = damper.alpha
         diis_active = use_diis and iter_idx >= diis_start_iter
@@ -1347,6 +1353,30 @@ def run_rks_periodic_multi_k_ewald3d(
         # values; a single re-build at the end gives precise numbers.
 
         free_energy = E_total - smearing_T * entropy
+
+        if max_iter == 0:
+            # Evaluate E[D_guess] without taking an SCF step (ORCA manual
+            # Sec. 2.20.9, CALCGUESSENERGY NOITER; the Gamma contract in
+            # docs/user_guide/from_orca.md). Diagnostic orbitals diagonalise
+            # the physical Fock. Keep the input density (also for READ) and
+            # do not refill occupations/entropy from that diagnostic spectrum.
+            C_per_k, eps_per_k = [], []
+            for fock, x in zip(F_k_list, X_k_list):
+                c, eps = _diag_in_orth_basis(fock, x)
+                C_per_k.append(c)
+                eps_per_k.append(eps)
+            D_real = D_used
+            D_per_k = D_used_per_k
+            # Populate the same energy decomposition as a converged result,
+            # contracted with the evaluated density, not the new orbitals.
+            J_only_k_list = _build_hf_k(D_used, None)
+            E_coulomb_per_cell = sum(
+                0.5 * float(w) * float(np.real(np.trace(d @ j)))
+                for w, d, j in zip(weights, D_used_per_k, J_only_k_list)
+            )
+            E_hf_K_per_cell = float(E_HF_trace - E_coulomb_per_cell)
+            iter_idx = 0
+            break
         dE = free_energy - E_prev
         # Divergence detection (v0.6.2).
         check_scf_divergence(

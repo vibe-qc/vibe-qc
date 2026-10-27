@@ -12,6 +12,7 @@
 #include <map>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -21,6 +22,7 @@
 #include <libint2/chemistry/elements.h>
 
 #include "vibeqc/ao_eval.hpp"
+#include "vibeqc/degenerate_frontier.hpp"
 #include "vibeqc/grid.hpp"
 #include "vibeqc/fock.hpp"
 #include "vibeqc/init.hpp"
@@ -373,13 +375,16 @@ AtomicSCF atomic_scf(int Z, const std::string& basis_name,
     // check by constructing the libint basis directly and skipping our
     // own Molecule for the atomic SCF.
     std::vector<libint2::Atom> atoms{libint2::Atom{Z, 0.0, 0.0, 0.0}};
-    std::string name_lower = basis_name;
-    std::transform(name_lower.begin(), name_lower.end(), name_lower.begin(),
-                   [](unsigned char c) { return std::tolower(c); });
     libint2::BasisSet shells;
     try {
-        shells = actual_basis ? actual_basis->libint()
-                              : libint2::BasisSet(name_lower, atoms);
+        // The same resolver and loader as BasisSet (#30). A bare lowercase
+        // name here missed every alias spelling ("6-31G(d)", "sto3g") and
+        // took libint's aug-cc-pv* split, so SAD's atomic basis could differ
+        // from the molecular one it is assembled into.
+        shells = actual_basis
+                     ? actual_basis->libint()
+                     : load_named_libint_basis(basis_data_name(basis_name),
+                                               atoms);
     } catch (const std::exception& e) {
         // libint throws (rather than returning empty) for bogus
         // LIBINT_DATA_PATH and malformed .g94 parses. Translate into a
@@ -418,8 +423,9 @@ AtomicSCF atomic_scf(int Z, const std::string& basis_name,
         for (int l = 0; l < 4; ++l) {
             const auto capacity = 2 * std::count(ao_l.begin(), ao_l.end(), l);
             if (populations[l] > capacity) throw GuessCapabilityError(
-                "initial guess: actual atomic basis cannot represent ECP valence "
-                "occupation in l=" + std::to_string(l));
+                std::string("initial guess: actual atomic basis cannot represent ")
+                + (ncore ? "ECP valence " : "all-electron ")
+                + "occupation in l=" + std::to_string(l));
         }
     }
 
@@ -637,13 +643,35 @@ void validate_ecp_context(const Molecule* mol, const GuessECPContext& ecp,
         throw std::invalid_argument("initial guess: total ECP core count disagrees with atom operators");
 }
 
+// Exact, process-local shell keys include ordering, representation and the
+// already-normalized primitives. Binary scalar bytes avoid approximate keys
+// and floating-point ordering assumptions. Origins/owners are omitted only
+// after extracting one atom's shells and recentering that atomic problem.
+std::string atomic_shell_template(const std::vector<ShellInfo>& shells) {
+    std::string key;
+    const auto append = [&](const auto& value) {
+        key.append(reinterpret_cast<const char*>(&value), sizeof(value));
+    };
+    for (const auto& shell : shells) {
+        append(shell.l);
+        key.push_back(shell.pure ? 'p' : 'c');
+        append(shell.exponents.size());
+        for (double exponent : shell.exponents) append(exponent);
+        for (double coefficient : shell.coefficients) append(coefficient);
+    }
+    return key;
+}
+
+using AtomicStateCache =
+    std::map<std::tuple<int, std::size_t, std::string>, AtomicSCF>;
+
 // Atom-local corrections follow Van Lenthe (2006), Procedure p. 927.
-// ECP atoms use their actual shells and one-center operator. Element-only
-// caching is retained for the unchanged AE path; ECP states are keyed by
-// atom so different cores/operators/bases on equal-Z atoms cannot alias.
+// All atoms use their actual shells. AE states share work only for identical
+// shell templates at equal Z; ECP states retain their atom-specific key so
+// different cores/operators on equal-Z atoms cannot alias.
 const AtomicSCF& atomic_state_for_atom(
     const Molecule& mol, const BasisSet& basis, std::size_t a,
-    const GuessECPContext& ecp, std::map<int, AtomicSCF>& cache) {
+    const GuessECPContext& ecp, AtomicStateCache& cache) {
     const auto& atom = mol.atoms().at(a);
     int source = -1;
     bool use_inline = !ecp.primitive_blocks.empty();
@@ -662,22 +690,23 @@ const AtomicSCF& atomic_state_for_atom(
             }
         }
     }
-    const int key = !ecp.active() ? atom.Z : -static_cast<int>(a + 1);
-    auto found = cache.find(key);
-    if (found != cache.end()) return found->second;
-    if (!ecp.active()) return cache.emplace(key, atomic_scf(atom.Z, basis.name())).first->second;
-
     Molecule atom_mol({Atom{atom.Z, {0.0, 0.0, 0.0}}}, 0, atom.Z % 2 + 1);
     std::vector<ShellInfo> atom_shells;
     for (auto shell : basis.shells()) {
         if (shell.atom_index != static_cast<int>(a)) continue;
-        if (!shell.pure && shell.l >= 2) throw GuessCapabilityError(
+        if (ecp.active() && !shell.pure && shell.l >= 2) throw GuessCapabilityError(
             "initial guess: ECP atomic averaging requires pure d/higher shells");
         shell.atom_index = 0;
         shell.origin = {0.0, 0.0, 0.0};
         atom_shells.push_back(std::move(shell));
     }
+    const auto key = std::make_tuple(
+        atom.Z, ecp.active() ? a + 1 : std::size_t{0}, atomic_shell_template(atom_shells));
+    const auto found = cache.find(key);
+    if (found != cache.end()) return found->second;
     BasisSet atom_basis(atom_mol, atom_shells, basis.name(), true);
+    if (!ecp.active())
+        return cache.emplace(key, atomic_scf(atom.Z, basis.name(), &atom_basis)).first->second;
     ECPHcore h;
     if (source < 0) {
         h.total_ncore = 0;
@@ -720,9 +749,9 @@ Eigen::MatrixXd sad_density(const Molecule& mol, const BasisSet& basis,
     const std::size_t nbf = basis.nbasis();
     Eigen::MatrixXd D = Eigen::MatrixXd::Zero(nbf, nbf);
 
-    // Cache atomic densities per Z so we only do each element's atomic
-    // SCF once even for molecules with repeated atoms.
-    std::map<int, AtomicSCF> atomic;
+    // Identical atom-local bases share one atomic SCF; distinct bases at
+    // the same element must retain their own density.
+    AtomicStateCache atomic;
     const auto ranges = atom_basis_ranges(basis, mol);
 
     for (std::size_t a = 0; a < mol.atoms().size(); ++a) {
@@ -998,16 +1027,34 @@ Eigen::MatrixXd build_v_sap_matrix(
 }
 
 // SAP path: diagonalise F_SAP = T + V_SAP in a canonically orthogonalised
+// Seed density for `n_occ` orbitals at `occupancy` from the ordered seed
+// frame `C` with spectrum `eps`. A molecular seed fills an exactly degenerate
+// frontier with equal fractional weights (#336, `ensemble_seed_density`), so
+// the density depends on the degenerate subspace rather than on the
+// eigensolver's basis for it, which rotates with the molecule. Periodic
+// callers and seeds without a matching spectrum keep the integer projector.
+Eigen::MatrixXd seed_density(
+    const Eigen::MatrixXd& C, const Eigen::VectorXd& eps, int n_occ,
+    double occupancy, bool ensemble_frontier) {
+    if (ensemble_frontier && eps.size() == C.cols()) {
+        return ensemble_seed_density(C, eps, std::max(0, n_occ), occupancy);
+    }
+    const auto C_occ = C.leftCols(std::max(0, n_occ));
+    return occupancy * C_occ * C_occ.transpose();
+}
+
 // AO basis. Lehtola, Visscher, and Engel, JCP 152, 144105 (2020), Sec. II A,
 // define this spin-independent one-particle Hamiltonian as the source of the
 // approximate molecular orbitals. Closed- and open-shell callers occupy the
-// same ordered orbital set with their respective electron counts.
+// same ordered orbital set with their respective electron counts. `eps_out`,
+// when given, receives the ordered SAP orbital energies.
 Eigen::MatrixXd sap_orbitals(
     const Molecule& mol, const BasisSet& basis,
     int n_orbitals_required,
     const Eigen::MatrixXd& S,
     double linear_dep_threshold,
-    const std::string& sap_basis_name, const GuessECPContext& ecp) {
+    const std::string& sap_basis_name, const GuessECPContext& ecp,
+    Eigen::VectorXd* eps_out = nullptr) {
     const Eigen::MatrixXd T = compute_kinetic(basis);
     const auto& table = sap_table_for(sap_basis_name);
     const Eigen::MatrixXd V_SAP = ecp.active()
@@ -1028,22 +1075,24 @@ Eigen::MatrixXd sap_orbitals(
     if (es.info() != Eigen::Success) {
         throw std::runtime_error("SAP: F_SAP diagonalisation failed");
     }
+    if (eps_out != nullptr) *eps_out = es.eigenvalues();
     return X * es.eigenvectors();
 }
 
 // Produce a closed-shell SAP density from the first n_occ orbitals. Caller is
 // responsible for passing a valid S matrix; linear_dep_threshold drives the
-// orthogonalisation cutoff.
+// orthogonalisation cutoff. A molecular seed averages a degenerate frontier.
 Eigen::MatrixXd sap_density(
     const Molecule& mol, const BasisSet& basis,
     int n_occ,
     const Eigen::MatrixXd& S,
     double linear_dep_threshold,
-    const std::string& sap_basis_name, const GuessECPContext& ecp) {
+    const std::string& sap_basis_name, const GuessECPContext& ecp,
+    bool ensemble_frontier) {
+    Eigen::VectorXd eps;
     const Eigen::MatrixXd C = sap_orbitals(
-        mol, basis, n_occ, S, linear_dep_threshold, sap_basis_name, ecp);
-    const auto C_occ = C.leftCols(n_occ);
-    return 2.0 * C_occ * C_occ.transpose();
+        mol, basis, n_occ, S, linear_dep_threshold, sap_basis_name, ecp, &eps);
+    return seed_density(C, eps, n_occ, 2.0, ensemble_frontier);
 }
 
 }  // namespace
@@ -1070,7 +1119,7 @@ struct ValenceAtomicPotential {
 std::vector<ValenceAtomicPotential> valence_atomic_potentials(
     const Molecule& mol, const BasisSet& basis, const GuessECPContext& ecp) {
     validate_guess_ecp(InitialGuess::SAP, ecp, &mol);
-    std::map<int, AtomicSCF> cache;
+    AtomicStateCache cache;
     std::vector<ValenceAtomicPotential> potentials;
     for (std::size_t a = 0; a < mol.atoms().size(); ++a) {
         const auto& state = atomic_state_for_atom(mol, basis, a, ecp, cache);
@@ -1244,7 +1293,7 @@ Eigen::MatrixXd patom_density_closed(
     const Molecule& mol, const BasisSet& basis, int n_occ,
     const Eigen::MatrixXd& S, const Eigen::MatrixXd& Hcore,
     const JKBuilder& jk, double linear_dep_threshold, int n_iter,
-    const GuessECPContext& ecp) {
+    const GuessECPContext& ecp, bool ensemble_frontier) {
     Eigen::MatrixXd D = normalize_guess_density(
         sad_density(mol, basis, ecp), S, 2.0 * n_occ);
     if (n_occ <= 0) return D;
@@ -1266,8 +1315,12 @@ Eigen::MatrixXd patom_density_closed(
                 "PATOM: in-field Fock diagonalisation failed");
         }
         const Eigen::MatrixXd C = X * es.eigenvectors();
-        const auto C_occ = C.leftCols(n_occ);
-        D = 2.0 * C_occ * C_occ.transpose();
+        if (ensemble_frontier) {
+            D = ensemble_seed_density(C, es.eigenvalues(), n_occ);
+        } else {
+            const auto C_occ = C.leftCols(n_occ);
+            D = 2.0 * C_occ * C_occ.transpose();
+        }
     }
     return D;
 }
@@ -1284,8 +1337,7 @@ Eigen::MatrixXd patom_density_closed(
 // envelope never engages). With a symmetric start and n_α == n_β the
 // per-spin refinement below stays bit-identical across spins.
 //
-// Policy note (guess-spin-symmetry investigation, 2026-08-15; see
-// handovers/HANDOVER_GUESS_SPIN_SYMMETRY.md): n_α == n_β is NOT a
+// Policy note (guess-spin-symmetry investigation, 2026-08-15): n_α == n_β is NOT a
 // spin-restricted-state proxy — the broken-symmetry singlet class (H2
 // past the Coulson-Fischer point, ozone, twisted ethylene, p-benzyne,
 // AFM dimers) genuinely breaks symmetry. The default guess is
@@ -1299,14 +1351,14 @@ std::pair<Eigen::MatrixXd, Eigen::MatrixXd> patom_density_open(
     const Molecule& mol, const BasisSet& basis, int n_alpha, int n_beta,
     const Eigen::MatrixXd& S, const Eigen::MatrixXd& Hcore,
     const JKBuilder& jk, double linear_dep_threshold, int n_iter,
-    const GuessECPContext& ecp) {
+    const GuessECPContext& ecp, bool ensemble_frontier) {
     // Build Hund-split per-atom densities (same as the default SAD path).
     const bool spin_balanced = (n_alpha == n_beta);
     const std::size_t nbf = basis.nbasis();
     Eigen::MatrixXd Da = Eigen::MatrixXd::Zero(nbf, nbf);
     Eigen::MatrixXd Db = Eigen::MatrixXd::Zero(nbf, nbf);
     const auto ranges = atom_basis_ranges(basis, mol);
-    std::map<int, AtomicSCF> cache;
+    AtomicStateCache cache;
     for (std::size_t a = 0; a < mol.atoms().size(); ++a) {
         const int Z = mol.atoms()[a].Z;
         const AtomicSCF& at = atomic_state_for_atom(mol, basis, a, ecp, cache);
@@ -1347,8 +1399,7 @@ std::pair<Eigen::MatrixXd, Eigen::MatrixXd> patom_density_open(
                 "PATOM: in-field Fock diagonalisation failed");
         }
         const Eigen::MatrixXd C = X * es.eigenvectors();
-        const auto C_occ = C.leftCols(std::max(0, n_occ));
-        return C_occ * C_occ.transpose();
+        return seed_density(C, es.eigenvalues(), n_occ, 1.0, ensemble_frontier);
     };
     for (int it = 0; it < std::max(1, n_iter); ++it) {
         const Eigen::MatrixXd J = jk.build_J(Da + Db);
@@ -1400,7 +1451,7 @@ Eigen::MatrixXd huckel_mo_coefficients(
     const double occ_tol = 1e-8;
     std::vector<Eigen::VectorXd> cols;
     std::vector<double> col_eps;
-    std::map<int, AtomicSCF> cache;
+    AtomicStateCache cache;
     for (std::size_t a = 0; a < mol.atoms().size(); ++a) {
         const int Z = mol.atoms()[a].Z;
         const AtomicSCF& at = atomic_state_for_atom(mol, basis, a, ecp, cache);
@@ -1463,7 +1514,7 @@ Eigen::VectorXd huckel_ao_energies(
     const std::size_t nbf = basis.nbasis();
     Eigen::VectorXd eps_ao = Eigen::VectorXd::Zero(nbf);
     const auto ranges = atom_basis_ranges(basis, mol);
-    std::map<int, AtomicSCF> cache;
+    AtomicStateCache cache;
     for (std::size_t a = 0; a < mol.atoms().size(); ++a) {
         const int Z = mol.atoms()[a].Z;
         const AtomicSCF& at = atomic_state_for_atom(mol, basis, a, ecp, cache);
@@ -1649,7 +1700,7 @@ Eigen::MatrixXd minao_density(
     // basis. Core occupations are removed by angular channel, and the exact
     // operator/center contract is preserved (including mixed AE/ECP cells).
     const BasisSet reference_basis(mol, ref_name, true);
-    std::map<int, AtomicSCF> atomic;
+    AtomicStateCache atomic;
     for (std::size_t a = 0; a < mol.atoms().size(); ++a) {
         const int Z = mol.atoms()[a].Z;
         const auto& D_at = atomic_state_for_atom(mol, reference_basis, a, ecp, atomic).D;
@@ -1722,7 +1773,7 @@ Eigen::MatrixXd compute_minao_density_periodic(
     // basis. Core occupations are removed by angular channel, and the exact
     // operator/center contract is preserved (including mixed AE/ECP cells).
     const BasisSet reference_basis(mol, ref_name, true);
-    std::map<int, AtomicSCF> atomic;
+    AtomicStateCache atomic;
     for (std::size_t a = 0; a < mol.atoms().size(); ++a) {
         const int Z = mol.atoms()[a].Z;
         const auto& D_at = atomic_state_for_atom(mol, reference_basis, a, ecp, atomic).D;
@@ -2104,6 +2155,9 @@ InitialGuess GuessEngine::resolve_auto(InitialGuess kind,
     //                                        explicit periodic SAP is
     //                                        available through route-local
     //                                        lattice-summed drivers)
+    //   molecular, open-shell d/f  → PATOM  (the bare Hund seed gives every
+    //                                        open-shell ligand its full
+    //                                        free-atom moment; see below)
     //   molecular, open-shell       → SAD   (SCF asymmetry develops
     //                                        from per-spin Fock build)
     //   molecular, transition metal → SAD   (closed-shell SAP can land
@@ -2113,6 +2167,22 @@ InitialGuess GuessEngine::resolve_auto(InitialGuess kind,
     //   molecular, closed-shell    → PATOM  (preserve the established
     //                                        molecular default basin)
     if (hints.is_periodic) return InitialGuess::SAD;
+    // Open-shell d/f-block complex (#273). The SAD seed superposes free-ATOM
+    // Hund densities, so every open-shell main-group ligand arrives carrying
+    // its own free-atom moment -- one full unpaired electron per Cl in
+    // FeCl3, which in the molecule is a closed-shell chloride. That spurious
+    // ligand polarisation survives into the SCF and traps a symmetry-broken
+    // solution: FeCl3 sextet / cc-pVDZ converges, and certifies a negative
+    // internal Hessian eigenvalue, 90.05 mHa above its ground state with one
+    // Cl left as a radical cation. PATOM is the same Hund seed followed by a
+    // per-spin in-field re-polarisation, which quenches the ligand moments
+    // against the molecular field before the SCF starts; it reaches the
+    // ground state (-2641.1344915780 Ha, S^2 = 8.767533, matching ORCA 6.1.1)
+    // in 23 iterations, internally stable with no stability restart. The
+    // basin is sharp: a seed moment above ~0.05 e per ligand still lands on
+    // the saddle, so reducing the ligand moment is not enough on its own.
+    if (hints.has_transition_metal && hints.is_open_shell)
+        return InitialGuess::PATOM;
     if (hints.is_open_shell) return InitialGuess::SAD;
     if (hints.has_transition_metal) return InitialGuess::SAD;
     // Retain the established molecular closed-shell default basin while AUTO
@@ -2366,7 +2436,8 @@ GuessClosedShellResult GuessEngine::build_closed_shell(
             }
             result.D = sap_density(mol, basis, n_occ, *S,
                                    linear_dep_threshold,
-                                   "sap_helfem_large", ecp);
+                                   "sap_helfem_large", ecp,
+                                   !hints.is_periodic);
             result.provenance = (kind == InitialGuess::AUTO)
                 ? "AUTO -> SAP (Lehtola/Visscher/Engel 2020, sap_helfem_large)"
                 : "SAP (Lehtola/Visscher/Engel 2020, sap_helfem_large)";
@@ -2389,7 +2460,8 @@ GuessClosedShellResult GuessEngine::build_closed_shell(
                     "the in-field re-polarisation step; caller passed nullptr");
             }
             result.D = patom_density_closed(mol, basis, n_occ, *S, *Hcore, *jk,
-                                            linear_dep_threshold, /*n_iter=*/1, ecp);
+                                            linear_dep_threshold, /*n_iter=*/1, ecp,
+                                            !hints.is_periodic);
             if (hints.is_periodic) {
                 result.provenance =
                     "PATOM (periodic Gamma, SAD + in-field re-polarisation)";
@@ -2424,8 +2496,7 @@ GuessClosedShellResult GuessEngine::build_closed_shell(
                     "occupied orbitals (a highly charged anion in a small "
                     "basis?) — use SAD or SAP for this system");
             }
-            const auto C_occ = C.leftCols(n_occ);
-            result.D = 2.0 * C_occ * C_occ.transpose();
+            result.D = seed_density(C, eps, n_occ, 2.0, !hints.is_periodic);
             result.provenance = (kind == InitialGuess::AUTO)
                 ? "AUTO -> HUECKEL (parameter-free GWH; Hoffmann 1963 / Lehtola 2019)"
                 : "HUECKEL (parameter-free GWH; Hoffmann 1963 / Lehtola 2019)";
@@ -2492,17 +2563,25 @@ GuessOpenShellResult GuessEngine::build_open_shell(
     // as the production UHF/UKS drivers. In particular, an isolated
     // spin-polarised atom needs PATOM's in-field re-polarisation rather than
     // the generic open-shell SAD choice.
-    InitialGuess resolved = resolve_auto_for_molecule(
-        mol, kind, hints.is_periodic, true,
-        kind == InitialGuess::AUTO && (!S || !Hcore || !jk)
-            ? std::optional<std::vector<InitialGuess>>({
-                InitialGuess::HCORE, InitialGuess::SAD, InitialGuess::SAP,
-                InitialGuess::HUECKEL, InitialGuess::MINAO})
-            : std::nullopt);
     // Spin seeds modify SAD only; AUTO is resolved before validating that
     // contract. An explicit PATOM request cannot lose its in-field step.
     const bool seed_present =
         atomic_spins != nullptr && !atomic_spins->empty();
+    // AUTO must not resolve to a construction the request cannot use. That is
+    // the case when the caller has no S/Hcore/JK for PATOM's in-field step,
+    // and when an ATOMSPIN seed is present: the per-atom pattern is defined on
+    // the SAD density, so AUTO resolves to SAD and the seed is honoured
+    // (#273; the open-shell d/f rule above would otherwise take an AFM-seeded
+    // metal complex to PATOM and reject its own seed).
+    const bool patom_unavailable =
+        kind == InitialGuess::AUTO && ((!S || !Hcore || !jk) || seed_present);
+    InitialGuess resolved = resolve_auto_for_molecule(
+        mol, kind, hints.is_periodic, true,
+        patom_unavailable
+            ? std::optional<std::vector<InitialGuess>>({
+                InitialGuess::HCORE, InitialGuess::SAD, InitialGuess::SAP,
+                InitialGuess::HUECKEL, InitialGuess::MINAO})
+            : std::nullopt);
     validate_guess_ecp(resolved, ecp, &mol);
     result.resolved_kind = resolved;
     if (seed_present) validate_atomic_spin_selection(&mol, resolved, *atomic_spins);
@@ -2547,7 +2626,7 @@ GuessOpenShellResult GuessEngine::build_open_shell(
                 Eigen::MatrixXd Da = Eigen::MatrixXd::Zero(nbf, nbf);
                 Eigen::MatrixXd Db = Eigen::MatrixXd::Zero(nbf, nbf);
                 const auto ranges = atom_basis_ranges(basis, mol);
-                std::map<int, AtomicSCF> cache;
+                AtomicStateCache cache;
                 for (std::size_t a = 0; a < mol.atoms().size(); ++a) {
                     const int Z = mol.atoms()[a].Z;
                     const AtomicSCF& at = atomic_state_for_atom(mol, basis, a, ecp, cache);
@@ -2600,7 +2679,7 @@ GuessOpenShellResult GuessEngine::build_open_shell(
             // via ATOMSPIN (handled above). Broken-symmetry singlets are
             // still reachable under defaults: the stability escape, not
             // the guess, descends from the symmetric saddle (verified
-            // H2/O3/C2H4/pC6H4; handovers/HANDOVER_GUESS_SPIN_SYMMETRY.md).
+            // H2/O3/C2H4/pC6H4; the original investigation).
             //
             // The UKS path (jk != nullptr) first builds per-spin densities
             // this way, then Fock-diagonalises for further refinement.
@@ -2609,7 +2688,7 @@ GuessOpenShellResult GuessEngine::build_open_shell(
             Eigen::MatrixXd Da_hund = Eigen::MatrixXd::Zero(nbf, nbf);
             Eigen::MatrixXd Db_hund = Eigen::MatrixXd::Zero(nbf, nbf);
             const auto ranges = atom_basis_ranges(basis, mol);
-            std::map<int, AtomicSCF> cache;
+            AtomicStateCache cache;
             for (std::size_t a = 0; a < mol.atoms().size(); ++a) {
                 const int Z = mol.atoms()[a].Z;
                 const AtomicSCF& at = atomic_state_for_atom(mol, basis, a, ecp, cache);
@@ -2652,6 +2731,10 @@ GuessOpenShellResult GuessEngine::build_open_shell(
                     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(
                         X.transpose() * F_guess * X);
                     const Eigen::MatrixXd C = X * es.eigenvectors();
+                    // Deliberately still the integer projector: averaging this
+                    // frontier moves the UKS SH default-path witness of #55
+                    // (tests/test_uks.py) by 6.8e-8 Ha against its 1 nHa pin,
+                    // so that change waits for the #55 owner's decision.
                     const auto Cao = C.leftCols(n_alpha);
                     const auto Cbo = C.leftCols(n_beta);
                     result.D_alpha = Cao * Cao.transpose();
@@ -2693,13 +2776,12 @@ GuessOpenShellResult GuessEngine::build_open_shell(
             // proportional split of a doubly occupied max(n_alpha, n_beta)
             // density would contain 2*max(n_alpha, n_beta) electrons instead
             // of n_alpha+n_beta for every genuine open shell (issue 666).
+            Eigen::VectorXd sap_eps;
             const Eigen::MatrixXd C = sap_orbitals(
                 mol, basis, std::max(n_alpha, n_beta), *S,
-                linear_dep_threshold, "sap_helfem_large", ecp);
-            const auto C_alpha_occ = C.leftCols(n_alpha);
-            const auto C_beta_occ = C.leftCols(n_beta);
-            result.D_alpha = C_alpha_occ * C_alpha_occ.transpose();
-            result.D_beta = C_beta_occ * C_beta_occ.transpose();
+                linear_dep_threshold, "sap_helfem_large", ecp, &sap_eps);
+            result.D_alpha = seed_density(C, sap_eps, n_alpha, 1.0, !hints.is_periodic);
+            result.D_beta = seed_density(C, sap_eps, n_beta, 1.0, !hints.is_periodic);
             result.provenance =
                 (kind == InitialGuess::AUTO)
                 ? "AUTO -> SAP (Lehtola/Visscher/Engel 2020, spin-resolved occupations)"
@@ -2727,7 +2809,7 @@ GuessOpenShellResult GuessEngine::build_open_shell(
             }
             auto [Da, Db] = patom_density_open(
                 mol, basis, n_alpha, n_beta, *S, *Hcore, *jk,
-                linear_dep_threshold, /*n_iter=*/1, ecp);
+                linear_dep_threshold, /*n_iter=*/1, ecp, !hints.is_periodic);
             result.D_alpha = std::move(Da);
             result.D_beta = std::move(Db);
             result.provenance = (kind == InitialGuess::AUTO)
@@ -2762,10 +2844,8 @@ GuessOpenShellResult GuessEngine::build_open_shell(
                     "occupied orbitals (a highly charged anion in a small "
                     "basis?) — use SAD or SAP for this system");
             }
-            const auto Ca = C.leftCols(n_alpha);
-            const auto Cb = C.leftCols(n_beta);
-            result.D_alpha = Ca * Ca.transpose();
-            result.D_beta = Cb * Cb.transpose();
+            result.D_alpha = seed_density(C, eps, n_alpha, 1.0, !hints.is_periodic);
+            result.D_beta = seed_density(C, eps, n_beta, 1.0, !hints.is_periodic);
             result.provenance = (kind == InitialGuess::AUTO)
                 ? "AUTO -> HUECKEL (parameter-free GWH; Hoffmann 1963 / Lehtola 2019)"
                 : "HUECKEL (parameter-free GWH; Hoffmann 1963 / Lehtola 2019)";
@@ -2812,5 +2892,7 @@ GuessOpenShellResult GuessEngine::build_open_shell(
     }
     throw std::logic_error("GuessEngine: unhandled InitialGuess kind");
 }
+
+const char* initial_guess_name(InitialGuess kind) { return guess_name(kind); }
 
 }  // namespace vibeqc

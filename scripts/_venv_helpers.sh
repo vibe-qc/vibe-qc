@@ -854,7 +854,8 @@ vibeqc_create_venv() {
     fi
     vibeqc_assert_python "$python_bin" || return
     echo "==> Creating venv at $venv (using $python_bin)..."
-    "$python_bin" -m venv "$venv"
+    env -u PYTHONPATH -u PYTHONHOME PYTHONNOUSERSITE=1 \
+        "$python_bin" -I -m venv "$venv"
 }
 
 # ---------------------------------------------------------------------------
@@ -868,7 +869,8 @@ vibeqc_create_venv() {
 vibeqc_pip_upgrade() {
     local venv="$1"
     echo "==> Upgrading pip in $venv/ ..."
-    "$venv/bin/python" -m pip install --quiet --upgrade pip
+    env -u PYTHONPATH -u PYTHONHOME PYTHONNOUSERSITE=1 \
+        "$venv/bin/python" -I -m pip install --quiet --upgrade pip
 }
 
 # ---------------------------------------------------------------------------
@@ -879,16 +881,46 @@ vibeqc_pip_install_editable() {
     local extras="$2"
     local root="${3:-.}"
 
+    # Ambient Python paths can make pip call an external dependency already
+    # satisfied, leaving the target venv incomplete. Clear them for pip and
+    # its build subprocesses; -I also excludes cwd and the user site. Compiler,
+    # library and pip configuration remain available to the installation.
     # Keep build requirements in the persistent target venv. pip's default
     # isolated build environment lives at a new temporary path on every run;
     # that path change makes CMake rediscover pybind11 and invalidates the
     # binding translation unit even when no source changed. Explicit build
     # requirements + --no-build-isolation give the stable scikit-build tree
     # and ccache a stable include path without relaxing the pyproject floors.
+    # --no-build-isolation also applies to every dependency pip builds from
+    # an sdist in the same call: dftd3 and dftd4 (dispersion/test/dev extras)
+    # ship meson-python sdists whose [build-system] requires meson-python,
+    # meson (not 1.8.0), cffi and setuptools, so those must be here too.
     echo "==> Ensuring editable-build requirements in $venv/ ..."
-    "$venv/bin/python" -m pip install --quiet \
-        "scikit-build-core>=0.10" "pybind11>=2.12"
+    env -u PYTHONPATH -u PYTHONHOME PYTHONNOUSERSITE=1 \
+        "$venv/bin/python" -I -m pip install --quiet \
+        "scikit-build-core>=0.10" "pybind11>=2.12" \
+        "meson-python" "meson>=1.2.3,!=1.8.0" "cffi" "setuptools"
+
+    # Install the co-located pure-Python distribution before resolving the
+    # core's hard dependency; this works before an index publishes naming.
+    # Do not install editable: its development path exposes the whole python/
+    # tree, which could hide absent files in the core wheel.
+    if [ ! -f "$root/vibeqc-naming/pyproject.toml" ]; then
+        echo "Error: source install requires co-located vibeqc-naming/." >&2
+        return 1
+    fi
+    env -u PYTHONPATH -u PYTHONHOME PYTHONNOUSERSITE=1 \
+        "$venv/bin/python" -I -m pip install "$root/vibeqc-naming" || return
+
+    # #411: size the core build's parallelism from the memory free now, not
+    # from whatever the native-dependency phase left behind. A no-op when
+    # the caller set CMAKE_BUILD_PARALLEL_LEVEL explicitly, or on hosts
+    # without /proc/meminfo, or when _safe_build_env.sh was not sourced.
+    if declare -F vibeqc_refresh_build_parallelism >/dev/null 2>&1; then
+        vibeqc_refresh_build_parallelism "vibe-qc core" 15000
+    fi
 
     echo "==> Installing vibe-qc into $venv/ (reuses unchanged C++ objects)..."
-    "$venv/bin/python" -m pip install --no-build-isolation -e "${root}${extras}"
+    env -u PYTHONPATH -u PYTHONHOME PYTHONNOUSERSITE=1 \
+        "$venv/bin/python" -I -m pip install --no-build-isolation -e "${root}${extras}"
 }

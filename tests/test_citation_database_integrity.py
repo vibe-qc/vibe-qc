@@ -31,10 +31,17 @@ What each test is defending against, with the defect that motivated it:
 
 * `test_bibtex_keys_are_unique` -- a collision silently drops one of the two
   references from the user's bibliography.
+
+* `test_entries_carry_only_entry_fields` -- a route row appended at the end
+  of the file lands in the last `[entries.*]` table, and the entry parser
+  ignores fields it does not read. Two MANTA numerics routes sat inside
+  `[entries.greiner_opentrustregion_2026]` that way, so the runs that emit
+  them cited nothing for them (#567).
 """
 
 from __future__ import annotations
 
+import dataclasses
 import re
 import sys
 from collections import defaultdict
@@ -69,9 +76,12 @@ _DOI_RE = re.compile(r"^10\.\d{4,9}/\S+$")
 # only defers the double-print that `test_no_two_entries_share_a_doi` guards.
 _KNOWN_DUPLICATE_DOIS: dict[str, frozenset[str]] = {}
 
-# Entries with `kind = "article"` that genuinely have no DOI. Keep empty if
-# possible: an article without a DOI cannot be Crossref-verified.
-_ARTICLES_WITHOUT_DOI: frozenset[str] = frozenset()
+# DOI-less articles require an exact independently checked primary record.
+# MathNet identifies the Russian original of the 1999 English translation;
+# it records no DOI. Checked 2026-10-09, https://www.mathnet.ru/eng/dan3035.
+_ARTICLES_WITHOUT_DOI = {
+    "lebedev_laikov_1999": "https://www.mathnet.ru/eng/dan3035",
+}
 
 
 def _database() -> dict:
@@ -138,7 +148,9 @@ def test_known_duplicate_dois_still_exist() -> None:
 def test_every_article_has_a_doi(key: str) -> None:
     entry = _entries()[key]
     if key in _ARTICLES_WITHOUT_DOI:
-        pytest.skip(f"{key} is a documented DOI-less article")
+        assert entry.get("url") == _ARTICLES_WITHOUT_DOI[key]
+        assert not entry.get("doi"), "Remove the DOI-less record when a verified DOI is available"
+        return
     assert entry.get("doi"), (
         f"[entries.{key}] has kind='article' but no DOI, so nothing can "
         f"check mechanically that the paper exists. This is how the KDIIS "
@@ -204,3 +216,61 @@ def test_bibtex_keys_are_unique() -> None:
         ".bibtex:\n"
         + "\n".join(f"  {b} <- {keys}" for b, keys in collisions.items())
     )
+
+
+# Fields an [entries.*] table may carry: what the registry reads into a
+# Citation, the two template fields it resolves, and bibliographic fields
+# kept for books though no emitter renders them yet.
+_TEMPLATE_FIELDS = {"year_template", "version_template"}
+_BIBLIOGRAPHIC_EXTRAS = {"address", "edition"}
+
+
+def test_entries_carry_only_entry_fields() -> None:
+    from vibeqc.output.citations.registry import Citation
+
+    allowed = (
+        {f.name for f in dataclasses.fields(Citation)} - {"key"}
+    ) | _TEMPLATE_FIELDS | _BIBLIOGRAPHIC_EXTRAS
+    stray = {
+        key: sorted(set(entry) - allowed)
+        for key, entry in _entries().items()
+        if set(entry) - allowed
+    }
+    assert not stray, (
+        "entries carry fields the registry never reads. A route row placed "
+        "after an [entries.*] table belongs to that table, so it routes "
+        "nothing:\n"
+        + "\n".join(f"  [entries.{k}] {fields}" for k, fields in stray.items())
+    )
+
+
+@pytest.mark.parametrize(
+    ("numerics_key", "expected"),
+    [
+        ("manta_hermitian_spectrum", {"rump_lange_hermitian_bounds_2023"}),
+        (
+            "manta_hermitian_inverse",
+            {"rump_lange_hermitian_bounds_2023", "higham_matrix_functions_2008"},
+        ),
+        (
+            "manta_hermitian_inverse_action",
+            {
+                "rump_verification_2010",
+                "rump_lange_hermitian_bounds_2023",
+                "higham_matrix_functions_2008",
+            },
+        ),
+    ],
+)
+def test_manta_hermitian_numerics_cite_their_bounds(numerics_key, expected) -> None:
+    """The keys python/vibeqc/manta_periodic.py emits for a fitted periodic
+    MANTA run resolve through [routes.numerics] (#567)."""
+    from vibeqc.output.citations.registry import load_default_database
+
+    baseline = {c.key for c in load_default_database().assemble().citations}
+    cited = {
+        c.key
+        for c in load_default_database().assemble(numerics=[numerics_key]).citations
+    }
+    assert expected <= cited - baseline
+

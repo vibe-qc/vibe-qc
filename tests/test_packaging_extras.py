@@ -15,7 +15,7 @@ consistent.  In particular:
   separately rather than redirected at a co-located directory (#212).
 
 Where the declared metadata is currently out of step with what the
-docs / handover claim, the test is marked ``xfail(strict=True)`` so
+docs / historical design record claim, the test is marked ``xfail(strict=True)`` so
 the gap is explicit and a fix flips it green automatically.
 """
 
@@ -64,6 +64,27 @@ class TestRootExtrasMetadata:
             f"`viewer` extra should pull in moltui (terminal viewer); "
             f"got {viewer!r}"
         )
+
+    def test_mace_extra_selects_acesuit_supported_api(self, root_pyproject):
+        from packaging.requirements import Requirement
+
+        requirements = [
+            Requirement(value)
+            for value in root_pyproject["project"]["optional-dependencies"]["mace"]
+        ]
+        mace = next(req for req in requirements if req.name == "mace-torch")
+        assert not any(req.name == "mace" for req in requirements)
+        assert "0.3.16" in mace.specifier
+        assert "0.3.17" in mace.specifier
+        assert "0.3.15" not in mace.specifier
+        assert "0.4.0" not in mace.specifier
+        assert "1.1.5" not in mace.specifier
+        assert mace.marker is None
+        torch = next(req for req in requirements if req.name == "torch")
+        assert torch.marker.evaluate({"python_version": "3.14"})
+        assert torch.marker.evaluate({"python_version": "3.15"})
+        assert "2.14.1" in torch.specifier
+        assert "2.13.0" not in torch.specifier
 
 
 class TestViewerGpuExtraIsDeclared:
@@ -182,7 +203,7 @@ class TestBasisoptExtraIsDeclared:
     """The ``basisopt`` extra makes ``vibe_basis`` installable.
 
     Decision recorded in
-    ``handovers/HANDOVER_VIBE_BASIS_DEPLOYMENT.md`` (2026-07-26):
+    the original investigation (2026-07-26):
     vibe-basis is **not** a managed vq program and gets no fleet rollout
     lane — it is a client that submits *to* the fleet (it shells out to
     the ``vq`` CLI and never imports it) rather than a payload that runs

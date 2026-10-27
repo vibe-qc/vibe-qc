@@ -1,18 +1,29 @@
 # χ-CCM / aiccm2026dev-b: 3D backends and dimensional guards
 
+```{admonition} Status: experimental
+:class: warning
+
+χ-CCM (`run_periodic_job(method="aiccm", variant="chi")`) is an experimental route. Every χ-CCM SCF driver emits `vibeqc.AICCM2026DevBExperimentalWarning`, and the `.system` manifest records `method_status = "experimental"` for every AICCM job run through `run_periodic_job(method="aiccm", variant="chi")`. Its numbers are research output, not validated results, and it is not part of the release gate. The label vocabulary is defined in [Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+```
+
 See also the [user-guide reference](../user_guide/aiccm2026dev_b.md) for
 the full keyword surface, backend selection, and scientific caveats.
 
 This tutorial exercises only χ-CCM[^xccm-convention], the
 finite-translation-group character CCM implemented under the
-`aiccm2026dev-b` selector. Γ-CCM, the union-and-weight/Wigner--Seitz
-integral-weighting sibling selected as `aiccm2026dev-a`, has its own
-[page](../aiccm2026dev_a.md) and example. The inputs stay explicit so a future
+`aiccm2026dev-b` selector. Γ-CCM, the neutral finite-torus construction
+(variants `real-gamma` and `neutral-bloch`), has its own
+[page](../aiccm2026dev_a.md) and example; the `four-center` variant is the
+2014 union-and-weight lineage kept in the same `aiccm2026dev-a` development
+line. The inputs stay explicit so a future
 construction-level comparison will not share either implementation's core;
 the current reportable route map is empty.
 
-[^xccm-convention]: Γ-CCM and χ-CCM are distinct CCM approaches. Γ-CCM uses
-    the union-and-weight/Wigner--Seitz integral-weighting construction; χ-CCM
+[^xccm-convention]: Γ-CCM and χ-CCM are distinct CCM approaches. Γ-CCM is
+    the neutral finite-torus construction with two producers, `variant="real-gamma"`
+    and `variant="neutral-bloch"` (ruling R1, 2026-08-21); the `four-center` variant
+    is the 2014 union-and-weight/Wigner-Seitz lineage, a different construction
+    kept in the same `aiccm2026dev-a` development line. χ-CCM
     uses the finite-translation-group character construction. They are compared
     at a declared common exchange-q=0 convention. Their distinction is not a
     choice of Coulomb kernels, and equality for a specified operator/route is
@@ -54,8 +65,10 @@ records remain permanently revision-bound; a fresh exact-v2 record may clear
 only this shared-Ewald gate. Gamma-only here is the one-character χ evaluation
 path, not Γ-CCM construction identity.
 
-Compact dense-core MDF calculations in the MgO/STO-3G class fail closed since
-`6ce142339`; the validated vacuum-padded MDF envelope is unchanged. Every
+Compact dense-core MDF calculations in the MgO/STO-3G class failed closed from
+`6ce142339` until 2026-09-29; the shared GDF layer admits them since its
+auxiliary-image sum (GitLab #172), and B inherits that. The validated
+vacuum-padded MDF envelope is unchanged. Every
 fitted B row nevertheless remains D93 `not-qualified`. The bounded shared-q
 auxiliary Fourier-transform cache inherited from `ad96a2f63` is bit-identical
 and changes memory/performance only. Every fitted B dispatch also pins

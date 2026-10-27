@@ -10,11 +10,28 @@ MSINDO semiempirical surface or on any other vibe-qc potential-energy
 surface, exactly the way [`run_neb`](neb.md) drives a band over an
 energy+gradient seam.
 
-```{note}
-The top-level names `vibeqc.run_md` / `run_nve` / `run_nvt` are the
-**periodic GAPW** Born–Oppenheimer helpers (they wrap an ASE calculator —
-see {mod}`vibeqc.periodic_gapw_md`). The general driver described here lives
-in its own module and is imported as `from vibeqc.md import run_md`.
+There are two APIs with similar names, and they are not the same thing:
+
+* `vibeqc.md.run_md`, `vibeqc.md.run_nve` and `vibeqc.md.run_nvt` are the
+  **general, method-agnostic** driver described on this page. They take any
+  `(coords) -> (energy, gradient)` callable and are production for every
+  method that supplies forces.
+* The top-level `vibeqc.run_md`, `vibeqc.run_nve`, `vibeqc.run_nvt` and
+  `vibeqc.run_npt` are the **periodic GAPW** helpers in
+  `vibeqc.periodic_gapw_md`: they attach the `VibeqcGAPW` ASE calculator to
+  an `ase.Atoms` object and drive ASE's `VelocityVerlet`, `Langevin` and
+  `NPTBerendsen` integrators.
+
+```{admonition} Status: experimental
+:class: warning
+
+The top-level `vibeqc.run_md` / `run_nve` / `run_nvt` / `run_npt` helpers
+inherit the label of the GAPW route they run on. GAPW is an experimental
+route: its drivers emit `GAPWExperimentalWarning` and the `.out` route line
+says so. Their numbers are research output, not validated results, and they
+are not part of the release gate. The general `vibeqc.md` driver on this page
+carries no such label. The label vocabulary is defined in
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels).
 ```
 
 ## The energy+gradient interface
@@ -36,6 +53,67 @@ Everything is in **atomic units**: bohr, Hartree, electron masses, and atomic
 time units (ħ/E_h ≈ 0.0242 fs). The timestep and thermostat coupling time are
 given in femtoseconds and converted internally; trajectory velocities are
 stored in bohr / atomic-time-unit.
+
+## Theory
+
+Born-Oppenheimer molecular dynamics integrates Newton's equations for the
+nuclei, $m_i\ddot{\mathbf r}_i = \mathbf F_i = -\nabla_i E(\mathbf R)$, on
+the electronic potential-energy surface that the force provider evaluates
+at every step. The driver uses the velocity-Verlet scheme
+({vibeqc-cite}`swope_velocity_verlet_1982`),
+
+$$
+\mathbf v_i\!\left(t+\tfrac{\Delta t}{2}\right) = \mathbf v_i(t) + \frac{\Delta t}{2m_i}\,\mathbf F_i(t),
+\qquad
+\mathbf r_i(t+\Delta t) = \mathbf r_i(t) + \Delta t\,\mathbf v_i\!\left(t+\tfrac{\Delta t}{2}\right),
+\qquad
+\mathbf v_i(t+\Delta t) = \mathbf v_i\!\left(t+\tfrac{\Delta t}{2}\right) + \frac{\Delta t}{2m_i}\,\mathbf F_i(t+\Delta t),
+$$
+
+which needs one force evaluation per step, is time reversible and
+symplectic, and therefore conserves a shadow Hamiltonian: the total energy
+oscillates with an amplitude proportional to $\Delta t^2$ but shows no
+secular drift. That conservation is the consistency test between a method's
+energy and its gradient, and `MDTrajectory.energy_drift()` reports it. The
+instantaneous temperature is defined from the kinetic energy,
+$T = 2K/(N_f k_B)$, with $N_f$ the number of nuclear degrees of freedom the
+driver counts after removing the centre-of-mass motion.
+
+Two thermostats turn the microcanonical run into a canonical one. The
+Berendsen weak-coupling thermostat ({vibeqc-cite}`berendsen_thermostat_1984`)
+rescales the velocities after each step by
+
+$$
+\lambda = \sqrt{1 + \frac{\Delta t}{\tau_T}\left(\frac{T_0}{T} - 1\right)},
+$$
+
+so the kinetic temperature relaxes exponentially towards the target $T_0$
+with the time constant $\tau_T$ (`thermostat_tau_fs`). It is robust and
+quick to equilibrate, but it suppresses the kinetic-energy fluctuations of
+the canonical ensemble and has no conserved quantity, so it is an
+equilibration tool rather than a sampling one. The Nose-Hoover thermostat
+({vibeqc-cite}`nose_thermostat_1984`, {vibeqc-cite}`hoover_thermostat_1985`)
+couples the system to one extended degree of freedom, a friction $\zeta$
+with the thermostat mass $Q$,
+
+$$
+\dot{\mathbf v}_i = \frac{\mathbf F_i}{m_i} - \zeta\,\mathbf v_i,
+\qquad
+Q\,\dot\zeta = 2K - N_f k_B T_0,
+\qquad
+Q = N_f k_B T_0\,\tau_T^{2},
+$$
+
+integrated as symmetric half-step brackets around the velocity-Verlet
+update. For an ergodic system its trajectories sample the canonical
+distribution (a single thermostat on a purely harmonic system is not
+ergodic), and the extended energy
+$H_{\mathrm{NH}} = K + E + \tfrac12 Q\zeta^2 + N_f k_B T_0\,\eta$ with
+$\dot\eta = \zeta$ is conserved, which is what `conserved_energy` and
+`energy_drift()` monitor under NVT. The general driver adds no
+approximation of its own beyond the finite time step; what limits it in
+practice is the cost of the force provider, which for MSINDO is a
+finite-difference gradient.
 
 ## Ensembles and thermostats
 
@@ -72,12 +150,12 @@ xyz = np.array([[0.0,  0.0,    0.0],
                 [0.0,  0.7572, 0.5865],
                 [0.0, -0.7572, 0.5865]])   # Ångström
 
-# Microcanonical (NVE) — check energy conservation.
+# Microcanonical (NVE): check energy conservation.
 traj = run_msindo_md(Z, xyz, timestep_fs=0.3, n_steps=50,
                      temperature_K=300.0, thermostat=None, seed=1)
 print("E drift:", traj.energy_drift(), "Ha")
 
-# Canonical (NVT) with a Nosé–Hoover thermostat.
+# Canonical (NVT) with a Nose-Hoover thermostat.
 traj = run_msindo_md(Z, xyz, timestep_fs=0.3, n_steps=200,
                      temperature_K=300.0, thermostat="nose_hoover",
                      thermostat_tau_fs=25.0, seed=1, output="h2o_md")
@@ -87,7 +165,7 @@ print("mean T:", traj.mean_temperature(), "K")
 ```{warning}
 MSINDO exposes a **finite-difference** gradient, so every MD step costs
 `6N + 1` SCFs. This is fine for short trajectories on small molecules but is
-not a production MD engine — keep `n_steps` modest.
+not a production MD engine; keep `n_steps` modest.
 ```
 
 ### `MDTrajectory`
@@ -164,6 +242,40 @@ SCFs and filling a basin needs many steps, MSINDO metadynamics is for tiny
 systems / short demonstrations; the headline free-energy recovery is validated
 on an analytic double well in
 `examples/semiempirical/25_msindo_metadynamics.py`.
+
+## Metadynamics and conical intersections
+
+Both enhanced-sampling layers in vibe-qc are method-agnostic and sit on the
+same energy+gradient seam as the MD driver; neither is tied to MSINDO.
+
+* `vibeqc.metadynamics` is a layer over `vibeqc.md.run_md`.
+  `run_metadynamics(force_fn, coords, cvs, ...)` wraps any force provider,
+  adds the bias energy and its chain-rule gradient through the collective
+  variables `DistanceCV(i, j)` and `AngleCV(i, j, k)`, and deposits Gaussian
+  hills on a fixed stride. In the well-tempered scheme
+  ({vibeqc-cite}`laio_parrinello_metadynamics_2002`,
+  {vibeqc-cite}`barducci_well_tempered_2008`) the height of hill $k$ is
+  damped by the bias already present,
+  $w_k = w_0\exp[-V(s_k)/(k_B\,\Delta T)]$ with the bias factor
+  $\gamma = (T+\Delta T)/T$, so the bias converges and
+  $F(s) = -\tfrac{\gamma}{\gamma-1}V(s) + \mathrm{const}$.
+  `run_msindo_metadynamics` is only the MSINDO-specific convenience wrapper.
+* `vibeqc.conical` locates a minimum-energy conical intersection with the
+  Levine-Coe-Martinez penalty function ({vibeqc-cite}`levine_meci_2008`),
+  $F_\sigma = \tfrac12(E_I + E_J) + \sigma\,\Delta E^2/(\Delta E + \alpha)$,
+  escalating $\sigma$ until the gap closes. It needs only the two state
+  energies and their gradients, no derivative coupling, so
+  `optimize_conical_intersection` accepts any two-state `(E, gradient)`
+  callback: `make_cis_meci_fn` builds one from an HF-CIS energy function
+  with finite-difference gradients
+  (`vibeqc.excited_gradient.make_hf_cis_energy_fn`) or from MSINDO CIS
+  (`msindo_meci`). The [MSINDO guide](msindo.md#conical-intersections-meci)
+  shows a worked S1/S0 search.
+
+Both layers share the MD driver's status: they add no electronic
+approximation of their own, so the accuracy of a free-energy profile or a
+crossing geometry is that of the electronic method underneath, and the
+cost is that method's gradient times the number of steps.
 
 ## Citations
 

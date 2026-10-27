@@ -372,8 +372,8 @@ def test_restricted_stability_verdict_flags_unstable_root_and_warns(tmp_path):
 
     The default path on 90-deg twisted ethene lands an externally
     unstable restricted solution; the verdict surface reports a negative
-    lowest Hessian eigenvalue, marks internal_instability, and the .out
-    carries the loud SCF INTERNAL INSTABILITY warning. At the parent the
+    lowest Hessian eigenvalue, marks external_instability, and the .out
+    carries the external-instability warning. At the parent the
     run was silent — converged=True with no signal — which is the defect.
     """
     mol = _twisted_ethene_90deg()
@@ -385,12 +385,16 @@ def test_restricted_stability_verdict_flags_unstable_root_and_warns(tmp_path):
     # completed with converged=True and no warning at all — that
     # silence is the defect. The emitted artifact is the observable.
     out = stem.with_suffix(".out").read_text()
-    assert "SCF INTERNAL INSTABILITY" in out
-    assert "EXCITED SCF solution" in out
+    assert "SCF EXTERNAL RHF/RKS-TO-UHF/UKS INSTABILITY" in out
+    assert "SCF INTERNAL INSTABILITY" not in out
+    assert "EXCITED SCF solution" not in out
     # The new verdict surface (missing-symbol at the parent).
     assert res.stability_checked is True
     assert res.stability_analysis_converged is True
-    assert res.internal_instability is True
+    assert res.internal_instability is False
+    assert res.external_instability is True
+    assert res.stability_internal_eigenvalue > 0
+    assert res.stability_external_eigenvalue < -1e-4
     assert res.stability_eigenvalue < -1e-4
 
 
@@ -436,4 +440,5 @@ def test_restricted_stability_stable_h2_exactly_stable(tmp_path):
     assert res.stability_checked is True
     assert res.stability_analysis_converged is True
     assert res.internal_instability is False
+    assert res.external_instability is False
     assert res.stability_eigenvalue > 0.0

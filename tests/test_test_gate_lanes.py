@@ -796,6 +796,8 @@ def test_manifest_routes_gdf_and_aiccm_files_to_area_lanes():
     assert "tests/test_aiccm2026_testset.py" in aiccm_aggregate
     assert "tests/test_periodic_aiccm2026dev_b.py" in aiccm_periodic
     assert "tests/test_periodic_aiccm2026dev_b.py" in aiccm_aggregate
+    assert "tests/test_chi_fit_source.py" in aiccm_periodic
+    assert "tests/test_chi_fit_source.py" in aiccm_aggregate
     assert "tests/test_aiccm2026_testset.py" not in smoke
     assert "tests/test_aiccm2026_testset.py" not in pbc_core
     assert "tests/test_periodic_aiccm2026dev_b.py" not in pbc_core
@@ -892,6 +894,63 @@ def test_shipped_and_release_lanes_exclude_experimental_tests():
         if leaked:
             leaks[lane_name] = leaked
     assert leaks == {}, f"shipped/release lanes select experimental tests: {leaks}"
+
+    # The chi family must stay manual-only even before a new file acquires a
+    # CURATED row. #369's correctly classified fit-source file leaked through
+    # the broad lane globs because only the older CCM names were excluded.
+    chi_probe = "tests/test_chi_future_source.py"
+    probe_files = [root / chi_probe]
+    for lane_name in sorted(shipped_lane_names):
+        assert chi_probe not in runner.select_lane_set_targets(
+            probe_files, root, [lane_manifest["lanes"][lane_name]]
+        ), lane_name
+    for lane_name in ("aiccm-periodic", "aiccm-experimental"):
+        assert chi_probe in runner.select_lane_set_targets(
+            probe_files, root, [lane_manifest["lanes"][lane_name]]
+        )
+    lanes, blocking_files = generator.load_lanes()
+    assert generator.classify(chi_probe, lanes, blocking_files)[:2] == (
+        "experimental", "T3"
+    )
+
+
+def test_every_discovered_test_file_is_selected_by_some_lane():
+    """No discovered test file may be selected by zero lanes.
+
+    The guard above only catches a leak: an experimental file that a shipped
+    or release lane wrongly selects. The opposite mistake is silent. A family
+    named in the shipped lanes' ``exclude`` block but in no research lane's
+    ``include`` runs nowhere -- the file is collected by no lane, so no lane
+    reports it red, green, or missing, and its coverage simply stops existing.
+
+    ``tests/test_polipo_parity.py`` sat that way: excluded from full-fast and
+    slow-nightly as experimental, and absent from the aiccm-experimental
+    include list that mirrors that exclude block for every other family. It
+    was the only file of all discovered tests that no lane ran, and its seven
+    passing POLIPO-vs-libint moment assertions were evidence nobody collected.
+    """
+    root = RUNNER_PATH.parents[2]
+    lane_manifest = runner.load_lane_manifest(MANIFEST_PATH)
+    files = runner.discover_test_files(root)
+
+    covered = set()
+    for lane in lane_manifest["lanes"].values():
+        covered.update(
+            p.relative_to(root).as_posix()
+            for p in runner.select_lane_files(files, root, lane)
+        )
+
+    orphans = sorted(
+        rel
+        for rel in (p.relative_to(root).as_posix() for p in files)
+        if rel not in covered
+    )
+    assert not orphans, (
+        "test files that no lane selects, so nothing ever runs them: "
+        f"{orphans}. Add the family to the include list of the research lane "
+        "that owns it -- excluding it from the shipped lanes is only half the "
+        "classification."
+    )
 
 
 def test_release_core_cheap_lane_is_blocking_and_non_experimental():
@@ -1177,33 +1236,183 @@ def test_lane_defaults_fill_unset_values():
     assert resolved.test_timeout == 1800
 
 
+def test_lane_file_timeout_override_raises_one_file_cap_only():
+    """A file whose measured cost exceeds the lane cap gets its own (#397)."""
+    lanes = [
+        {"file_timeout_s": 2400, "file_timeout_overrides_s": {"tests/test_a.py": 6000}},
+        {"file_timeout_s": 1800, "file_timeout_overrides_s": {"tests/test_a.py": 9000}},
+    ]
+    merged = runner.combined_lane_defaults(lanes)
+    assert merged["file_timeout_overrides_s"] == {"tests/test_a.py": 9000.0}
+
+    args = Namespace(markexpr="", jobs=None, file_timeout=None, test_timeout=None, heavy_env=False)
+    resolved = runner.apply_lane_defaults(args, merged)
+    assert resolved.file_timeout == 2400.0
+    assert runner.target_file_timeout("tests/test_a.py", resolved) == 9000.0
+    assert runner.target_file_timeout("tests/test_a.py::test_x", resolved) == 9000.0
+    assert runner.target_file_timeout("tests/test_b.py", resolved) == 2400.0
+
+    # An explicit --file-timeout is the cap for every file.
+    args = Namespace(markexpr="", jobs=None, file_timeout=99.0, test_timeout=None, heavy_env=False)
+    resolved = runner.apply_lane_defaults(args, merged)
+    assert runner.target_file_timeout("tests/test_a.py", resolved) == 99.0
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [["tests/test_a.py"], {"test_a.py": 10}, {"tests/test_a.py": 0}, {"tests/test_a.py": True}],
+)
+def test_lane_file_timeout_override_rejects_malformed_entries(overrides):
+    with pytest.raises(ValueError, match="file_timeout_overrides_s"):
+        runner.lane_file_timeout_overrides({"file_timeout_overrides_s": overrides})
+
+
+def test_shipped_file_timeout_overrides_name_real_files_above_the_lane_cap():
+    manifest = runner.load_lane_manifest(runner.DEFAULT_LANE_MANIFEST)
+    root = runner.DEFAULT_LANE_MANIFEST.resolve().parents[2]
+    for name, lane in manifest["lanes"].items():
+        for rel, seconds in runner.lane_file_timeout_overrides(lane).items():
+            assert (root / rel).is_file(), f"{name}: {rel} does not exist"
+            assert seconds > float(lane["file_timeout_s"]), f"{name}: {rel} override is not a raise"
+
+
+# Test files that import vibeqc.periodic.ccm without being Γ-CCM research
+# coverage, each with the reason it is not. The guard below refuses an
+# importer that is neither classified experimental nor listed here, so a new
+# file that genuinely exercises the -a line cannot pass by being named
+# something the AICCM lane globs do not match.
+CCM_INCIDENTAL_IMPORTERS = {
+    "test_manta_periodic_ri_multipole.py": (
+        "MANTA J-only approximation export refusal: reaches the CCM fit-source "
+        "front door to assert rejection before any correlated calculation."
+    ),
+    "test_manta_periodic_ri_hierarchy.py": (
+        "MANTA hierarchy J-only export refusal: verifies the shared fit-source "
+        "guard, without exercising experimental CCM numerical methods."
+    ),
+    "test_kpoints.py": (
+        "front-door count validation only: monkhorst_pack and CCMSystem are "
+        "monkeypatched so a malformed periodic count is rejected before any "
+        "CCM construction (#274). Public KPoints contract, T2/periodic-SCF."
+    ),
+}
+
+# Experimental files that reach the -a line without the module-level marker:
+# the -b stream imports -a helpers only inside slow head-to-head tests and is
+# labeled by its own warning contract.
+CCM_UNMARKED_EXPERIMENTAL = {
+    "test_periodic_aiccm2026dev_b.py": "-b stream head-to-head comparison",
+    "test_periodic_aiccm2026dev_b_posthf.py": "-b stream head-to-head comparison",
+}
+
+
+def _experimental_manifest_files():
+    """``tests/<name>.py`` rows the suite manifest calls ``experimental``."""
+    manifest = json.loads(SUITE_MANIFEST_PATH.read_text(encoding="utf-8"))
+    return {
+        row["file"] for row in manifest["tests"]
+        if row.get("maturity") == "experimental"
+    }
+
+
 def test_periodic_ccm_test_files_carry_experimental_pytestmark():
     """Every test file exercising vibeqc.periodic.ccm (the Γ-CCM -a line) must
     carry the module-level ``experimental`` pytest marker, so marker-based
-    selection stays in sync with the manual-research lane policy. The -b
-    stream's files are excluded: they import -a helpers only inside slow
-    head-to-head tests and are labeled by their own warning contract."""
+    selection stays in sync with the manual-research lane policy.
+
+    An import of the -a package is only a proxy for exercising it. A file may
+    reach a Γ-CCM front door incidentally and still belong in a shipped lane,
+    so each importer must be one of three things, never a fourth: classified
+    ``maturity: experimental`` and marked; listed in
+    ``CCM_UNMARKED_EXPERIMENTAL``; or listed with its reason in
+    ``CCM_INCIDENTAL_IMPORTERS``. An importer the manifest does not call
+    experimental and the table does not name is the drift this guard exists to
+    catch, whether it was classified by hand or by
+    update_suite_manifest.py.
+
+    The marker is not free to hand out: ``maturity: experimental`` forces tier
+    T3 (run_full_suite.py), so marking an incidental importer would demote
+    shipped coverage out of the release and advisory tiers rather than
+    describe it. test_kpoints.py is the worked example (#274)."""
     import re
 
     tests_dir = Path(__file__).resolve().parent
-    offenders = []
+    experimental = _experimental_manifest_files()
+    importers, missing_marker, unclassified, mislabeled = set(), [], [], []
     for path in sorted(tests_dir.glob("test_*.py")):
-        if "aiccm2026dev_b" in path.name:
-            continue
         src = path.read_text(encoding="utf-8")
         if not re.search(r"^\s*(from|import)\s+vibeqc\.periodic\.ccm", src, re.M):
             continue
-        if not re.search(r"^pytestmark\s*=.*experimental", src, re.M):
-            offenders.append(path.name)
-    assert not offenders, (
+        importers.add(path.name)
+        is_experimental = f"tests/{path.name}" in experimental
+        if path.name in CCM_INCIDENTAL_IMPORTERS:
+            # An exemption for a file the manifest calls experimental is a
+            # silenced guard, not an exemption: it should carry the marker.
+            if is_experimental:
+                mislabeled.append(path.name)
+        elif not is_experimental:
+            unclassified.append(path.name)
+        elif (
+            path.name not in CCM_UNMARKED_EXPERIMENTAL
+            and not re.search(r"^pytestmark\s*=.*experimental", src, re.M)
+        ):
+            missing_marker.append(path.name)
+
+    assert not missing_marker, (
         "Γ-CCM test files missing 'pytestmark = pytest.mark.experimental': "
-        f"{offenders}"
+        f"{missing_marker}"
+    )
+    assert not unclassified, (
+        "test files importing vibeqc.periodic.ccm that the suite manifest does "
+        "not call experimental. Classify them experimental and mark them, or "
+        "name them in CCM_INCIDENTAL_IMPORTERS with the reason they only touch "
+        f"a front door: {unclassified}"
+    )
+    assert not mislabeled, (
+        "CCM_INCIDENTAL_IMPORTERS entries the suite manifest calls "
+        f"experimental; they need the marker, not an exemption: {mislabeled}"
+    )
+    stale = sorted(
+        (set(CCM_INCIDENTAL_IMPORTERS) | set(CCM_UNMARKED_EXPERIMENTAL))
+        - importers
+    )
+    assert not stale, (
+        "exemption entries for files that no longer import "
+        f"vibeqc.periodic.ccm; drop them: {stale}"
+    )
+
+
+def test_experimental_pytestmark_matches_the_suite_manifest():
+    """A file carrying ``pytestmark = pytest.mark.experimental`` must be
+    ``maturity: experimental`` in the suite manifest: the converse of the guard
+    above, and the reason adding the marker is not a way to silence it.
+
+    The marker and the manifest row encode one fact. run_full_suite.py refuses
+    an experimental row outside tier T3, so a marker on a shipped file either
+    contradicts its own row or, once the row follows the marker, drops real
+    coverage out of the blocking and advisory tiers."""
+    import re
+
+    tests_dir = Path(__file__).resolve().parent
+    experimental = _experimental_manifest_files()
+    offenders = [
+        path.name for path in sorted(tests_dir.glob("test_*.py"))
+        if re.search(
+            r"^pytestmark\s*=.*experimental",
+            path.read_text(encoding="utf-8"),
+            re.M,
+        )
+        and f"tests/{path.name}" not in experimental
+    ]
+    assert not offenders, (
+        "files marked 'pytest.mark.experimental' that the suite manifest does "
+        f"not call experimental: {offenders}"
     )
 
 
 def test_chi_and_ccm_lines_import_nothing_from_each_other():
     """D56/D74 firewall as a gate (M1 of
-    handovers/HANDOVER_AICCM_STANDARD_METHOD.md): no module under
+    the original investigation): no module under
     python/vibeqc/periodic/chi imports vibeqc.periodic.ccm and no module under
     periodic/ccm imports vibeqc.periodic.chi, at any relative level. The
     front door (``method="aiccm"``) is a layer above both lines and lives in
@@ -1258,3 +1467,70 @@ def test_experimental_marker_registered_in_pyproject():
         "pyproject.toml [tool.pytest.ini_options] markers must register "
         "'experimental'"
     )
+
+
+def _retired_reference_targets(line: str) -> list[str]:
+    """Extract concrete navigation targets, without matching generic history."""
+    import re
+
+    return re.findall(
+        r"(?<!\w)(?:(?:\.\./)*handovers/)?HANDOVER_[A-Za-z0-9_.-]+(?:\.md)?",
+        line,
+        re.I,
+    )
+
+
+def _missing_retired_reference_targets(line: str, tracked_names: set[str]) -> list[str]:
+    return [
+        target for target in _retired_reference_targets(line)
+        if "handovers/" in target or target not in tracked_names
+    ]
+
+
+def _retired_reference_scan_exempt(path: Path) -> bool:
+    return path.name == "CHANGELOG.md" or path == Path("tests/test_test_gate_lanes.py")
+
+
+def test_retired_handover_navigation_has_no_missing_targets():
+    """A deleted document must not remain an apparent navigation target."""
+    import subprocess
+
+    root = Path(__file__).resolve().parents[1]
+    tracked = subprocess.check_output(["git", "ls-files", "-z"], cwd=root)
+    paths = [Path(raw.decode()) for raw in tracked.split(b"\0") if raw]
+    names = {path.name for path in paths}
+    offenders = []
+    for path in paths:
+        if _retired_reference_scan_exempt(path):
+            continue  # Published history and this test's literal controls.
+        try:
+            lines = (root / path).read_text(encoding="utf-8").splitlines()
+        except (UnicodeError, OSError):
+            continue
+        for lineno, line in enumerate(lines, 1):
+            for target in _missing_retired_reference_targets(line, names):
+                offenders.append(f"{path}:{lineno}: {target}")
+    assert not offenders, "deleted-document navigation:\n" + "\n".join(offenders)
+
+
+def test_retired_reference_target_controls():
+    """The detector distinguishes missing navigation and a real public path."""
+    root = Path(__file__).resolve().parents[1]
+    assert _retired_reference_targets("see handovers/HANDOVER_GONE.md") == [
+        "handovers/HANDOVER_GONE.md"
+    ]
+    assert not (root / "handovers/HANDOVER_GONE.md").exists()
+    assert _retired_reference_targets("see ../handovers/HANDOVER_GONE.md") == [
+        "../handovers/HANDOVER_GONE.md"
+    ]
+    assert _missing_retired_reference_targets(
+        "see ../handovers/HANDOVER_GONE.md", {"roadmap.md"}
+    ) == ["../handovers/HANDOVER_GONE.md"]
+    assert _missing_retired_reference_targets(
+        "see HANDOVER_GONE.md", {"roadmap.md"}
+    ) == ["HANDOVER_GONE.md"]
+    assert _retired_reference_targets("/handovers/") == []
+    assert _retired_reference_scan_exempt(Path("CHANGELOG.md"))
+    assert not _retired_reference_scan_exempt(Path("docs/roadmap.md"))
+    assert (root / "docs/roadmap.md").is_file()
+    assert _retired_reference_targets("see docs/roadmap.md") == []

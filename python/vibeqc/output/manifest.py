@@ -57,26 +57,91 @@ from __future__ import annotations
 import datetime as _dt
 import hashlib
 import os
+import sys
 import threading
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from functools import wraps
+from typing import Any, Callable, Iterator, Mapping
 
 from .formats.system_info import system_info
 from .plan import OutputPlan, PlannedFile
 from ._text_safety import toml_escape_str
 from ._stem_paths import stem_sibling
+from .verdict import verdict_section
 
 __all__ = [
     "FileOutcome",
     "IncompleteOutputError",
     "ManifestUpdater",
     "ManifestStatus",
+    "portable_manifest_from_keyword",
+    "portable_manifest_requested",
+    "portable_manifest_scope",
     "write_initial_manifest",
 ]
 
 
 ManifestStatus = str  # "running" | "complete" | "crashed" | "dry_run"
+
+# Placeholder prefixes of the portable mode (#388). A path that cannot be
+# written relative to its base keeps only its file name behind a marker,
+# never its absolute spelling, the way a redacted hostname keeps its key.
+_EXTERNAL_PREFIX = "<external>/"
+_ENV_PREFIX = "<env>/"
+_VIBEQC_PREFIX = "<vibeqc>/"
+
+
+# Set for the duration of a front-door call that passed
+# ``portable_manifest=True``, so every manifest the job writes -- its main
+# writer, a preflight refusal receipt, a nested job -- follows the one
+# keyword without threading it through each internal writer.
+_PORTABLE_MANIFEST: ContextVar[bool] = ContextVar(
+    "vibeqc_portable_manifest", default=False,
+)
+
+
+def portable_manifest_requested() -> bool:
+    """Honor ``VIBEQC_PORTABLE_MANIFEST=1`` (any non-empty value other
+    than ``0`` / ``false`` / ``no``) or an enclosing
+    :func:`portable_manifest_scope`. Same opt-in shape as
+    ``VIBEQC_NO_HOSTNAME``; the ``portable_manifest=True`` keyword of
+    ``run_job`` / ``run_periodic_job`` is the per-call lever."""
+    if _PORTABLE_MANIFEST.get():
+        return True
+    val = os.environ.get("VIBEQC_PORTABLE_MANIFEST", "").strip().lower()
+    return val not in ("", "0", "false", "no")
+
+
+@contextmanager
+def portable_manifest_scope(enabled: bool) -> Iterator[None]:
+    """Write every manifest created inside the block in portable mode.
+
+    Only ever turns the mode on: a nested call that leaves the keyword at
+    its default inherits an enclosing ``True``.
+    """
+    token = _PORTABLE_MANIFEST.set(_PORTABLE_MANIFEST.get() or bool(enabled))
+    try:
+        yield
+    finally:
+        _PORTABLE_MANIFEST.reset(token)
+
+
+def portable_manifest_from_keyword(func):
+    """Open a :func:`portable_manifest_scope` from ``portable_manifest=``.
+
+    Applied outermost on the public job entry points, so the scope also
+    covers the refusal receipts their output-lifecycle wrappers write.
+    """
+
+    @wraps(func)
+    def wrapped(*args, **kwargs):
+        with portable_manifest_scope(bool(kwargs.get("portable_manifest", False))):
+            return func(*args, **kwargs)
+
+    return wrapped
 
 
 class IncompleteOutputError(RuntimeError):
@@ -119,6 +184,7 @@ class FileOutcome:
     checksum_status: str = "pending"
     wall_time_s: float | None = None
     error: str | None = None
+    component_errors: dict[str, str] = field(default_factory=dict)
 
     def to_toml_table(self) -> dict[str, Any]:
         """Return a plain mapping suitable for the
@@ -137,6 +203,8 @@ class FileOutcome:
         )
         # When a file was declared but not written, surface the error.
         out["error"] = str(self.error) if self.error is not None else ""
+        if self.component_errors:
+            out["component_errors"] = dict(self.component_errors)
         return out
 
 
@@ -172,15 +240,27 @@ class ManifestUpdater:
         wall_seconds: float = 0.0,
         estimate_bytes: int | None = None,
         extra_run_fields: dict[str, Any] | None = None,
+        portable_manifest: bool = False,
     ) -> None:
         self._plan = plan
         self._record_hostname = record_hostname
+        # Portable mode (#388): every path the manifest writes is relative
+        # to the manifest's own directory, so the output directory can be
+        # moved or published without carrying the writer's absolute paths.
+        # The default keeps the supplied spelling as runtime provenance.
+        self._portable = bool(portable_manifest) or portable_manifest_requested()
         # Optional scalar fields merged into the [run] section (e.g. the periodic
         # SCF's exchange-q=0 finite-size convention, the §0.5 reproducibility
         # gate). Invariant across a run; None leaves [run] as the fixed shape.
         self._extra_run_fields: dict[str, Any] = dict(extra_run_fields or {})
         self._lock = threading.Lock()
         self._status: ManifestStatus = "running"
+        self._result_status = "not_reported"
+        self._result_error = ""
+        # The run-level verdict (vibeqc.output.verdict.RunVerdict.as_dict())
+        # once a writer recorded one; [verdict] is derived from
+        # result_status until then (#342 #346 #351).
+        self._verdict: dict[str, Any] | None = None
         self._finished_at_iso: str = ""
         self._wall_seconds = float(wall_seconds)
         # Optional peak-memory estimate (bytes, configured headroom already
@@ -197,6 +277,12 @@ class ManifestUpdater:
         # dict to make it appear.  Fields: phase, iteration, energy_eh,
         # gradient_norm, diis_subspace.
         self._progress: dict[str, object] | None = None
+        # Optional [hessian] section -- which potential-energy surface a
+        # requested Hessian was built on, and whether that surface is the
+        # method the caller asked for. Set by run_job through
+        # ``set_hessian`` when hessian=True; None omits the section, so a
+        # job that ran no Hessian gains no empty stub.
+        self._hessian: dict[str, object] | None = None
         # One outcome per declared file, keyed by path for fast update.
         self._outcomes: dict[Path, FileOutcome] = {
             f.path: FileOutcome(path=f.path) for f in plan.files
@@ -334,6 +420,21 @@ class ManifestUpdater:
             outcome.error = str(error)
             self._write_unlocked()
 
+    def mark_component_failed(
+        self, path: os.PathLike | str, component: str, error: str,
+    ) -> None:
+        """Record an omitted archive component without failing its container.
+
+        Unlike a file-write error, this survives a later ``mark_written``:
+        a valid QVF archive can still lack its requested density volume.
+        """
+        if not isinstance(component, str) or not component.strip():
+            raise ValueError("output component must be a nonempty string")
+        with self._lock:
+            outcome = self._outcome_for_path_unlocked(Path(os.fspath(path)))
+            outcome.component_errors[component] = str(error)
+            self._write_unlocked()
+
     def downgrade_planned(self, path: os.PathLike | str) -> None:
         """Mark a planned file as no longer guaranteed.
 
@@ -391,26 +492,47 @@ class ManifestUpdater:
         *,
         resolved_root: str = "",
         fetched: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
+        records: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
     ) -> None:
         """Record basis-data provenance into ``[basis_library]``.
 
         ``resolved_root`` is the directory libint actually read for this
         job. ``fetched`` carries one flat scalar dict per basis rendered on
         demand from the Basis Set Exchange (see
-        :mod:`vibeqc.basis_fetch`); it is empty for the ordinary case where
-        every basis came from the bundle.
+        :mod:`vibeqc.basis_fetch`); ``records`` one per store or cache
+        record the resolution added over the bundled library (name, kind,
+        layer, content hash; see :mod:`vibeqc.basis_store`). Both are empty
+        for the ordinary case where every basis came from the bundle.
 
-        Branch on ``fetched_count``, not on ``fetched``: the emitter drops an
-        empty array-of-tables, so on an ordinary run the ``fetched`` key is
-        absent rather than ``[]``. Same shape as ``[citations]`` with no
-        entries. The section itself is always present.
+        Branch on ``fetched_count`` / ``records_count``, not on the arrays:
+        the emitter drops an empty array-of-tables, so on an ordinary run
+        the keys are absent rather than ``[]``. Same shape as ``[citations]``
+        with no entries. The section itself is always present.
         """
         with self._lock:
             self._basis_library = {
                 "resolved_root": str(resolved_root),
                 "fetched_count": len(fetched),
+                "records_count": len(records),
                 "fetched": [dict(e) for e in fetched],
+                "records": [dict(e) for e in records],
             }
+            self._write_unlocked()
+
+    def set_hessian(self, fields: dict[str, Any]) -> None:
+        """Record the Hessian's surface into ``[hessian]`` and rewrite.
+
+        ``fields`` comes from
+        :func:`vibeqc.output.hessian_surface_manifest_fields` -- flat
+        scalars naming the surface the Hessian was (or would have been)
+        built on, the method the caller requested, and whether the two
+        agree. run_job resolves a correlated request down to its
+        mean-field reference before the Hessian is built, so without
+        this section a consumer reading frequencies out of a manifest
+        cannot tell an MP2 job's RHF frequencies from an RHF job's.
+        """
+        with self._lock:
+            self._hessian = dict(fields)
             self._write_unlocked()
 
     def update_wall_seconds(self, wall_seconds: float) -> None:
@@ -452,6 +574,34 @@ class ManifestUpdater:
         """
         with self._lock:
             self._extra_run_fields.update(fields)
+            self._write_unlocked()
+
+    def set_result_status(self, status: str, *, error: str = "") -> None:
+        """Record the calculation outcome independently of file delivery.
+
+        Convergence is a driver's numerical verdict, not external validation
+        of its answer. Writers that have no result leave ``not_reported``.
+        """
+        if status not in {
+            "not_reported", "not_run", "converged", "not_converged",
+            "refused", "crashed",
+        }:
+            raise ValueError(f"unknown calculation result status: {status!r}")
+        with self._lock:
+            self._result_status = status
+            self._result_error = str(error)
+            self._write_unlocked()
+
+    def set_verdict(self, verdict: Mapping[str, Any]) -> None:
+        """Record the run-level verdict carried by ``[verdict]`` (#342).
+
+        ``verdict`` is ``RunVerdict.as_dict()`` (or any mapping in that
+        vocabulary; it is validated and ``usable`` is recomputed). The
+        section keeps its fixed shape whether or not this was called.
+        """
+        body = verdict_section(dict(verdict), self._result_status)
+        with self._lock:
+            self._verdict = body
             self._write_unlocked()
 
     def finish(self, *, wall_seconds: float | None = None) -> None:
@@ -496,6 +646,8 @@ class ManifestUpdater:
         """Flip status to ``"crashed"`` (SCF raised / job aborted)."""
         with self._lock:
             self._status = "crashed"
+            if self._result_status == "not_reported":
+                self._result_status = "crashed"
             self._finished_at_iso = _now_iso()
             if wall_seconds is not None:
                 self._wall_seconds = float(wall_seconds)
@@ -510,6 +662,7 @@ class ManifestUpdater:
         :func:`vibeqc.runner.run_job`."""
         with self._lock:
             self._status = "dry_run"
+            self._result_status = "not_run"
             self._finished_at_iso = _now_iso()
             self._mark_manifest_written_unlocked()
             self._write_unlocked()
@@ -528,8 +681,22 @@ class ManifestUpdater:
         return self._path
 
     @property
+    def portable(self) -> bool:
+        """Whether the manifest is written in portable mode (#388)."""
+        return self._portable
+
+    @property
     def status(self) -> ManifestStatus:
         return self._status
+
+    @property
+    def result_status(self) -> str:
+        return self._result_status
+
+    @property
+    def verdict(self) -> dict[str, Any] | None:
+        """The recorded run verdict, or ``None`` when none was set."""
+        return None if self._verdict is None else dict(self._verdict)
 
     def outcomes(self) -> tuple[FileOutcome, ...]:
         """Snapshot copy of the current per-file outcome records."""
@@ -592,6 +759,9 @@ class ManifestUpdater:
             plan=self._plan,
             outcomes=tuple(self._outcomes.values()),
             status=self._status,
+            result_status=self._result_status,
+            result_error=self._result_error,
+            verdict=self._verdict,
             declared_at_iso=self._declared_at_iso,
             finished_at_iso=self._finished_at_iso,
             wall_seconds=self._wall_seconds,
@@ -601,8 +771,25 @@ class ManifestUpdater:
             estimate_bytes=self._estimate_bytes,
             extra_run_fields=self._extra_run_fields,
             progress=self._progress,
+            hessian=self._hessian,
+            portable_path=self._portable_path if self._portable else None,
         )
         _atomic_write(self._path, body)
+
+    def _portable_path(self, path: Path | str) -> str:
+        """Spell an artefact path relative to the manifest's directory.
+
+        Both sides are resolved, so a symlinked prefix (``/tmp`` versus
+        ``/private/tmp``) cannot turn a sibling into an external file. A
+        path outside the manifest directory is written as
+        ``<external>/<name>``: its location is not recorded at all.
+        """
+        base = _resolved(self._path.parent)
+        target = _resolved(self._on_disk(Path(os.fspath(path))))
+        try:
+            return target.relative_to(base).as_posix()
+        except ValueError:
+            return _EXTERNAL_PREFIX + target.name
 
 
 # ---------------------------------------------------------------------- #
@@ -615,6 +802,7 @@ def write_initial_manifest(
     *,
     record_hostname: bool = True,
     wall_seconds: float = 0.0,
+    portable_manifest: bool = False,
 ) -> ManifestUpdater:
     """One-shot helper -- construct + return a :class:`ManifestUpdater`.
 
@@ -626,6 +814,7 @@ def write_initial_manifest(
         plan,
         record_hostname=record_hostname,
         wall_seconds=wall_seconds,
+        portable_manifest=portable_manifest,
     )
 
 
@@ -647,8 +836,10 @@ _SECTION_ORDER = (
     "validation",
     "run",
     "progress",
+    "hessian",
     "plan",
     "outputs",
+    "verdict",
     "basis_library",
     "citations",
 )
@@ -668,6 +859,11 @@ def _render_manifest(
     estimate_bytes: int | None = None,
     extra_run_fields: dict[str, Any] | None = None,
     progress: dict[str, object] | None = None,
+    hessian: dict[str, object] | None = None,
+    result_status: str = "not_reported",
+    result_error: str = "",
+    verdict: dict[str, Any] | None = None,
+    portable_path: Callable[[Path | str], str] | None = None,
 ) -> str:
     """Produce the full manifest TOML body.
 
@@ -687,6 +883,12 @@ def _render_manifest(
     already applied) for memory-aware ``vq submit auto`` placement. It
     is set only on the ``VIBEQC_DRY_RUN_ESTIMATE`` dry-run path; ``None``
     leaves ``[memory]`` exactly as the runtime probe produced it.
+
+    ``portable_path`` (when not ``None``) selects the portable mode of
+    #388: it maps every ``[plan]`` / ``[outputs]`` path and the plan stem
+    onto the manifest's directory, the interpreter is written relative
+    to its environment, the basis root relative to the package, and
+    ``[run]`` records ``path_mode`` and ``path_base``.
     """
     # Shallow-copy so the per-rewrite run / plan / outputs keys don't
     # accumulate on the cached snapshot (they're overwritten each
@@ -709,14 +911,30 @@ def _render_manifest(
     # convention). Merged after the fixed keys so the v0.5.1 prefix shape holds.
     for _k, _v in (extra_run_fields or {}).items():
         info["run"][str(_k)] = _v
+    if portable_path is not None:
+        info["run"]["path_mode"] = "portable"
+        info["run"]["path_base"] = "manifest_directory"
     if progress is not None:
         info["progress"] = dict(progress)
+    # [hessian] -- the potential-energy surface a requested Hessian was
+    # built on. Conditional like [progress]: present only when the job
+    # asked for a Hessian, absent otherwise.
+    if hessian is not None:
+        info["hessian"] = dict(hessian)
     info["plan"] = plan.to_toml_section()
     info["outputs"] = {
         "status": status,
+        "result_status": result_status,
+        "result_error": result_error,
         "finished_at_iso": finished_at_iso,
         "files": [o.to_toml_table() for o in outcomes],
     }
+    # [verdict] -- the run-level verdict every writer shares (SCF axis,
+    # stability axis, stop reason, budget, and the ``usable`` gate).
+    # Fixed shape like [citations]: the recorded RunVerdict when the
+    # writer set one, otherwise derived from result_status with
+    # stability = "not_reported" (#342 #346 #351).
+    info["verdict"] = verdict_section(verdict, result_status)
     # [citations] -- full assembled provenance for this job (CLAUDE.md
     # Sec.8.3/Sec.8.5). Always emitted (count = 0 with no entries before the
     # end-of-run assemble fires, or for citation-less paths) so the
@@ -734,17 +952,23 @@ def _render_manifest(
     info["basis_library"] = dict(basis_library or {}) or {
         "resolved_root": "",
         "fetched_count": 0,
+        "records_count": 0,
         "fetched": [],
+        "records": [],
     }
+    if portable_path is not None:
+        _make_portable(info, portable_path)
 
     lines: list[str] = [
         "# vibe-qc system manifest -- written alongside output-<job>.out by run_job(...).",
         "# Captures the runtime environment so generated calculation outputs are",
         "# reproducible and wall-time numbers are interpretable. The [plan]",
         "# section is the declared output contract (written once, at job start);",
-        "# the [outputs] section is the running status (rewritten as each file",
-        "# lands). External QC programs are validation references only: run",
-        "# them out-of-process and parse their outputs.",
+        "# [outputs].status describes file delivery, not scientific success.",
+        "# result_status records the driver's calculation outcome; convergence",
+        "# does not establish external validation. [verdict] carries the run",
+        "# verdict every writer shares; verdict.usable is the consumer gate.",
+        "# External QC references run them out-of-process and parse outputs.",
         "",
     ]
     for section in _SECTION_ORDER:
@@ -755,6 +979,75 @@ def _render_manifest(
         else:
             _emit_flat_section(lines, section, info[section])
     return "\n".join(lines)
+
+
+def _make_portable(
+    info: dict[str, Any], portable_path: Callable[[Path | str], str],
+) -> None:
+    """Rewrite the path-valued fields of ``info`` for the portable mode.
+
+    Every other value is left as the runtime probe produced it: in
+    particular the hostname follows only its own redaction lever.
+    """
+    plan_body = dict(info["plan"])
+    plan_body["stem"] = portable_path(plan_body["stem"])
+    plan_body["files"] = [
+        {**row, "path": portable_path(row["path"])} for row in plan_body["files"]
+    ]
+    info["plan"] = plan_body
+    outputs = dict(info["outputs"])
+    outputs["files"] = [
+        {**row, "path": portable_path(row["path"])} for row in outputs["files"]
+    ]
+    info["outputs"] = outputs
+    if "python" in info:
+        python = dict(info["python"])
+        python["executable"] = _portable_interpreter(str(python.get("executable", "")))
+        info["python"] = python
+    basis_library = info.get("basis_library")
+    if basis_library and basis_library.get("resolved_root"):
+        info["basis_library"] = {
+            **basis_library,
+            "resolved_root": _portable_package_path(basis_library["resolved_root"]),
+        }
+
+
+def _portable_interpreter(executable: str) -> str:
+    """``<env>/<path inside sys.prefix>``, else ``<external>/<name>``.
+
+    A redacted ``~/...`` spelling is expanded first so both levers
+    together still give the environment-relative form.
+    """
+    if not executable or executable == "unknown":
+        return executable
+    target = _resolved(Path(executable).expanduser())
+    for prefix in (sys.prefix, sys.base_prefix):
+        try:
+            return _ENV_PREFIX + target.relative_to(_resolved(Path(prefix))).as_posix()
+        except ValueError:
+            continue
+    return _EXTERNAL_PREFIX + target.name
+
+
+def _portable_package_path(path: str) -> str:
+    """A path inside the installed ``vibeqc`` package as ``<vibeqc>/...``.
+
+    The basis library normally answers from inside the package; a build
+    overlay or user store outside it keeps only its directory name.
+    """
+    target = _resolved(Path(path))
+    package = _resolved(Path(__file__).parent.parent)
+    try:
+        return _VIBEQC_PREFIX + target.relative_to(package).as_posix()
+    except ValueError:
+        return _EXTERNAL_PREFIX + target.name
+
+
+def _resolved(path: Path) -> Path:
+    try:
+        return path.resolve(strict=False)
+    except OSError:
+        return Path(os.path.abspath(os.fspath(path)))
 
 
 def _emit_flat_section(lines: list[str], name: str, body: dict[str, Any]) -> None:
@@ -787,19 +1080,17 @@ def _emit_complex_section(lines: list[str], name: str, body: dict[str, Any]) -> 
         ...
     """
     lines.append(f"[{name}]")
-    array_key: str | None = None
-    array_items: list[dict[str, Any]] = []
+    arrays: list[tuple[str, list[dict[str, Any]]]] = []
     for key, value in body.items():
         if isinstance(value, list):
-            # We only support one array-of-tables per section; the
-            # caller controls which.
-            array_key = key
-            array_items = value
+            # Arrays of tables follow the scalars, in insertion order
+            # ([[basis_library.fetched]] then [[basis_library.records]]).
+            arrays.append((key, value))
             continue
         lines.append(f"{key:<16s} = {_toml_value(value)}")
     lines.append("")
 
-    if array_key is not None:
+    for array_key, array_items in arrays:
         for item in array_items:
             lines.append(f"[[{name}.{array_key}]]")
             for k, v in item.items():
@@ -828,12 +1119,18 @@ def _toml_str(s: str) -> str:
 
 
 def _toml_value(v: Any) -> str:
+    if isinstance(v, (list, tuple)):
+        return "[" + ", ".join(_toml_value(item) for item in v) + "]"
+    if isinstance(v, dict):
+        return "{ " + ", ".join(_toml_str(str(k)) + " = " + _toml_value(val)
+                                 for k, val in v.items() if val is not None) + " }"
     if isinstance(v, bool):
         return "true" if v else "false"
     if isinstance(v, int):
         return str(v)
     if isinstance(v, float):
-        s = repr(v)
+        # NumPy float64 is a float subclass whose repr includes its type.
+        s = repr(float(v))
         if "." not in s and "e" not in s and "E" not in s:
             s += ".0"
         return s

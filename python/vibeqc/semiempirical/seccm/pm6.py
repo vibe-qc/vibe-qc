@@ -155,7 +155,7 @@ def run_pm6_seccm(
     with the self image excluded (``madelsum.f``, SMADEL branch), because
     the NDDO two-centre integrals already carry everything inside the WS
     cell. Three dimensions fail closed: the WS-folded remainder there has
-    no thermodynamic limit (issues #211, #425, #444).
+    no thermodynamic limit (former-tracker issues 211, 425 and 444).
 
     Without the embedding a nontrivial cyclic topology is **not
     quantitative** - the WS-truncated monopole sum it leaves reproduces the
@@ -193,7 +193,12 @@ def run_pm6_seccm(
         else ("energy",),
         charge=int(molecule.charge),
         multiplicity=int(molecule.multiplicity),
-    ).with_seccm_runtime(periodic_dimension=topology.dimensionality)
+    ).with_seccm_runtime(
+        periodic_dimension=topology.dimensionality,
+        # An embedded run cites the Madelung route it executed; the kernel
+        # name carries the dimension (madelung_wire_1d, madelung_parry_2d).
+        electrostatics_family="madelung" if madelung else "none",
+    )
     (
         translations,
         central,

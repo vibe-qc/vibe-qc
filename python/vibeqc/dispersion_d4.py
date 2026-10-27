@@ -15,15 +15,15 @@ vibe-qc supports two backends:
   Verified bit-exact to the upstream package (audit 2026-05-31).
 * **native** -- vibe-qc's own MPL-2.0 implementation (Phase D4b).
   Requires a pre-generated reference dataset JSON file. The shipped
-  ``d4_reference_data.json`` applies the per-atom Eq.-6 extraction of
+  ``d4_reference_data.json`` applies the per-atom Eq.-5 extraction of
   Caldeweyher et al. (2019) over a **correlated CPKS (PBE38/TD-DFT)**
   reference polarizability, and the r4r2 / C8 table is dftd4-consistent,
   so native pairwise C6 agree with the dftd4 backend to within a few
   percent and the CH4-dimer D4 energy to <0.05 kcal/mol -- the
-  handover's production parity bars. **Supported elements: H-Ne** (the
-  Phase-D4b reference catalogue); elements outside it raise a clear
+  historical design record's production parity bars. **Supported elements: H-Ar (Z = 1-18) and Cu**;
+  elements outside the frozen dataset raise a clear
   error. ``backend="dftd4"`` remains the default for full
-  periodic-table coverage. See ``handovers/HANDOVER_D4_NATIVE.md``.
+  periodic-table coverage.
 
 Both backends are accessed through the same :func:`compute_d4` API.
 
@@ -58,7 +58,7 @@ class D4NativeExperimentalWarning(UserWarning):
     """Back-compat warning category for the native D4 backend.
 
     **No longer emitted** (2026-06-26): the native backend is now
-    parity-validated for its supported element set (H-Ne) -- correlated
+    parity-validated for its original supported element set (H-Ne) -- correlated
     CPKS (PBE38) reference polarizabilities + the corrected r4r2 table
     bring pairwise C6 within a few percent and the CH4-dimer energy
     within <0.05 kcal/mol of dftd4. The class is retained so existing
@@ -147,7 +147,10 @@ def compute_d4(
         scaling (the main upgrade over D3). Default 0.0 (neutral).
     with_gradient
         When True, the returned :class:`D4Result` carries the
-        ``(n_atoms, 3)`` gradient of E_disp in Hartree/bohr.
+        ``(n_atoms, 3)`` gradient of E_disp in Hartree/bohr. The native
+        gradient is analytic and includes two-body and ATM geometry,
+        CN-dependent C6, and EEQ charge response at fixed ``charge``;
+        requesting it preserves the scalar energy functional.
     backend
         ``"dftd4"`` (default, requires optional dependency) or
         ``"native"`` (Phase D4b, requires generated reference dataset).
@@ -190,7 +193,8 @@ def compute_d4(
         )
     elif backend == "native":
         return _compute_d4_native(
-            mol, functional, with_gradient=with_gradient, ref_data_path=ref_data_path
+            mol, functional, charge=charge, with_gradient=with_gradient,
+            ref_data_path=ref_data_path,
         )
     else:
         raise ValueError(
@@ -248,17 +252,18 @@ def _compute_d4_native(
     mol: Molecule,
     functional: str,
     *,
+    charge: float = 0.0,
     with_gradient: bool = False,
     ref_data_path: Optional[str] = None,
 ) -> D4Result:
     """D4 via the vibe-qc native Phase D4b backend.
 
     Un-gated (2026-06-26): the reference dataset is built from the
-    per-atom Eq.-6 extraction over a **correlated CPKS (PBE38/TD-DFT)**
+    per-atom Eq.-5 extraction over a **correlated CPKS (PBE38/TD-DFT)**
     alpha(iw), and the r4r2 / C8 table was corrected, so native pairwise
     C6 agree with dftd4 to within a few percent and the CH4-dimer D4
-    energy to <0.05 kcal/mol (handover Sec. 5 bars met). No experimental
-    warning is emitted for the supported element set (H-Ne); elements
+    energy to <0.05 kcal/mol (historical design record Sec. 5 bars met). No experimental
+    warning is emitted for the supported element set (H-Ar plus Cu); elements
     outside the reference catalogue raise a clear error from the dataset
     lookup. ``backend="dftd4"`` remains the default for full
     periodic-table coverage.
@@ -276,6 +281,7 @@ def _compute_d4_native(
             mol,
             ref_data,
             functional,
+            total_charge=charge,
             **charge_scaling,
         )
         return D4Result(
@@ -288,6 +294,7 @@ def _compute_d4_native(
             mol,
             ref_data,
             functional,
+            total_charge=charge,
             atm=True,
             **charge_scaling,
         )
@@ -301,10 +308,20 @@ def _resolve_refdata_path(explicit: Optional[str] = None) -> str:
     """Resolve the path to the D4 reference dataset JSON file."""
     import os
 
-    if explicit and os.path.isfile(explicit):
-        return explicit
+    if explicit is not None:
+        if not os.path.isfile(explicit):
+            raise FileNotFoundError(
+                "compute_d4 native backend: reference dataset selected by "
+                f"ref_data_path is not a file: {explicit!r}"
+            )
+        return os.fspath(explicit)
     env = os.environ.get("VIBEQC_D4_REFDATA", "")
-    if env and os.path.isfile(env):
+    if env:
+        if not os.path.isfile(env):
+            raise FileNotFoundError(
+                "compute_d4 native backend: reference dataset selected by "
+                f"VIBEQC_D4_REFDATA is not a file: {env!r}"
+            )
         return env
     # Try the shipped package copy (works for wheel/editable installs).
     try:

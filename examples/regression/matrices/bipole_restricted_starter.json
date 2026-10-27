@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "jk_method": "bipole",
+  "cases": [
+    {
+      "system_id": "lih_rocksalt",
+      "basis": "sto-3g",
+      "method_id": "rhf",
+      "kmesh": [
+        1,
+        1,
+        1
+      ],
+      "tolerance_ha": 1e-06,
+      "tolerance_rationale": "Initial one-microhartree-per-conventional-cell comparison target; convergence ladders and matched inputs are required before scientific acceptance.",
+      "reference_code": "crystal",
+      "notes": "Restricted starter control, not the full production matrix. Qualify the actual CRYSTAL executable/version and basis/functional conventions before interpreting a passing energy comparison. BIPOLE refuses lih_rocksalt's default 12-bohr lattice cutoff (S(Gamma) fold drift 2.5e-1 from the STO-3G Li 2sp tail); measured drift 7.0e-2 at 16, 3.3e-3 at 20, 5.3e-4 at 24 and 1.1e-5 at 28 bohr, so these rows declare 28. One Gamma RHF took 47 min locally (2026-10-23).",
+      "reference_version": "CRYSTAL23",
+      "lattice_cutoff_bohr": 28.0,
+      "nuclear_cutoff_bohr": 28.0
+    },
+    {
+      "system_id": "lih_rocksalt",
+      "basis": "sto-3g",
+      "method_id": "rhf",
+      "kmesh": [
+        2,
+        2,
+        2
+      ],
+      "tolerance_ha": 1e-06,
+      "tolerance_rationale": "Initial one-microhartree-per-conventional-cell comparison target; convergence ladders and matched inputs are required before scientific acceptance.",
+      "reference_code": "crystal",
+      "notes": "Restricted starter control, not the full production matrix. Qualify the actual CRYSTAL executable/version and basis/functional conventions before interpreting a passing energy comparison. BIPOLE refuses lih_rocksalt's default 12-bohr lattice cutoff (S(Gamma) fold drift 2.5e-1 from the STO-3G Li 2sp tail); measured drift 7.0e-2 at 16, 3.3e-3 at 20, 5.3e-4 at 24 and 1.1e-5 at 28 bohr, so these rows declare 28. One Gamma RHF took 47 min locally (2026-10-23).",
+      "reference_version": "CRYSTAL23",
+      "lattice_cutoff_bohr": 28.0,
+      "nuclear_cutoff_bohr": 28.0
+    },
+    {
+      "system_id": "lih_rocksalt",
+      "basis": "sto-3g",
+      "method_id": "rks-pbe",
+      "kmesh": [
+        1,
+        1,
+        1
+      ],
+      "tolerance_ha": 1e-06,
+      "tolerance_rationale": "Initial one-microhartree-per-conventional-cell comparison target; convergence ladders and matched inputs are required before scientific acceptance.",
+      "reference_code": "crystal",
+      "notes": "Restricted starter control, not the full production matrix. Qualify the actual CRYSTAL executable/version and basis/functional conventions before interpreting a passing energy comparison. BIPOLE refuses lih_rocksalt's default 12-bohr lattice cutoff (S(Gamma) fold drift 2.5e-1 from the STO-3G Li 2sp tail); measured drift 7.0e-2 at 16, 3.3e-3 at 20, 5.3e-4 at 24 and 1.1e-5 at 28 bohr, so these rows declare 28. One Gamma RHF took 47 min locally (2026-10-23).",
+      "reference_version": "CRYSTAL23",
+      "lattice_cutoff_bohr": 28.0,
+      "nuclear_cutoff_bohr": 28.0
+    },
+    {
+      "system_id": "lih_rocksalt",
+      "basis": "sto-3g",
+      "method_id": "rks-pbe",
+      "kmesh": [
+        2,
+        2,
+        2
+      ],
+      "tolerance_ha": 1e-06,
+      "tolerance_rationale": "Initial one-microhartree-per-conventional-cell comparison target; convergence ladders and matched inputs are required before scientific acceptance.",
+      "reference_code": "crystal",
+      "notes": "Restricted starter control, not the full production matrix. Qualify the actual CRYSTAL executable/version and basis/functional conventions before interpreting a passing energy comparison. BIPOLE refuses lih_rocksalt's default 12-bohr lattice cutoff (S(Gamma) fold drift 2.5e-1 from the STO-3G Li 2sp tail); measured drift 7.0e-2 at 16, 3.3e-3 at 20, 5.3e-4 at 24 and 1.1e-5 at 28 bohr, so these rows declare 28. One Gamma RHF took 47 min locally (2026-10-23).",
+      "reference_version": "CRYSTAL23",
+      "lattice_cutoff_bohr": 28.0,
+      "nuclear_cutoff_bohr": 28.0
+    },
+    {
+      "system_id": "lih_rocksalt",
+      "basis": "sto-3g",
+      "method_id": "rks-b3lyp",
+      "kmesh": [
+        1,
+        1,
+        1
+      ],
+      "tolerance_ha": 1e-06,
+      "tolerance_rationale": "Initial one-microhartree-per-conventional-cell comparison target; convergence ladders and matched inputs are required before scientific acceptance.",
+      "reference_code": "crystal",
+      "notes": "Restricted starter control, not the full production matrix. Qualify the actual CRYSTAL executable/version and basis/functional conventions before interpreting a passing energy comparison. BIPOLE refuses lih_rocksalt's default 12-bohr lattice cutoff (S(Gamma) fold drift 2.5e-1 from the STO-3G Li 2sp tail); measured drift 7.0e-2 at 16, 3.3e-3 at 20, 5.3e-4 at 24 and 1.1e-5 at 28 bohr, so these rows declare 28. One Gamma RHF took 47 min locally (2026-10-23).",
+      "reference_version": "CRYSTAL23",
+      "lattice_cutoff_bohr": 28.0,
+      "nuclear_cutoff_bohr": 28.0
+    },
+    {
+      "system_id": "lih_rocksalt",
+      "basis": "sto-3g",
+      "method_id": "rks-b3lyp",
+      "kmesh": [
+        2,
+        2,
+        2
+      ],
+      "tolerance_ha": 1e-06,
+      "tolerance_rationale": "Initial one-microhartree-per-conventional-cell comparison target; convergence ladders and matched inputs are required before scientific acceptance.",
+      "reference_code": "crystal",
+      "notes": "Restricted starter control, not the full production matrix. Qualify the actual CRYSTAL executable/version and basis/functional conventions before interpreting a passing energy comparison. BIPOLE refuses lih_rocksalt's default 12-bohr lattice cutoff (S(Gamma) fold drift 2.5e-1 from the STO-3G Li 2sp tail); measured drift 7.0e-2 at 16, 3.3e-3 at 20, 5.3e-4 at 24 and 1.1e-5 at 28 bohr, so these rows declare 28. One Gamma RHF took 47 min locally (2026-10-23).",
+      "reference_version": "CRYSTAL23",
+      "lattice_cutoff_bohr": 28.0,
+      "nuclear_cutoff_bohr": 28.0
+    }
+  ]
+}

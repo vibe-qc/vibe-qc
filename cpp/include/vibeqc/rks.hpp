@@ -14,6 +14,7 @@
 // supported through a single path.
 
 #pragma once
+#include "vibeqc/opentrustregion.hpp"
 
 #include <Eigen/Dense>
 #include <optional>
@@ -36,6 +37,10 @@
 namespace vibeqc {
 
 struct RKSOptions {
+    // Explicit whole-SCF orbital optimizer; existing native phase defaults stay unchanged.
+    std::string orbital_optimizer = "native";
+    OpenTrustRegionOptions opentrustregion;
+
     std::string functional = "LDA";   // name accepted by Functional(...)
     GridOptions grid;
 
@@ -228,27 +233,14 @@ struct RKSOptions {
     std::vector<HubbardSiteCxx> dft_plus_u_sites;
     std::vector<std::vector<int>> dft_plus_u_ao_groups;
 
-    // Restricted-stability VERDICT (issue #144 prerequisite, decision-
-    // neutral). After a converged RKS SCF, the lowest eigenvalue of the
-    // orbital-rotation Hessian at the returned solution is computed
-    // matrix-free: the coupled per-spin UHF machinery at equal spin
-    // blocks with the polarised XC kernel pinned at (D/2, D/2), i.e. the
-    // union of the closed-shell KS singlet and triplet sectors
-    // (Bauernschmitt & Ahlrichs, Chem. Phys. Lett. 256, 454 (1996),
-    // doi:10.1063/1.471637; HF limit: Seeger & Pople 1977,
-    // doi:10.1063/1.434318). A negative eigenvalue below
-    // -stability_tol means the converged solution is a saddle or an
-    // externally unstable restricted root: the result carries
-    // internal_instability=true and the output layer warns loudly.
-    //
-    // Verdict ONLY — no rotation, no escape, no promotion, no basin
-    // search. What to DO with a negative verdict is the maintainer
-    // decision in
-    // agentic-loop/asks/ask-scf144-restricted-stability-contract-2026-08-27.md.
-    //
-    // Default ON (matching UHF/UKS). Cost when stable: one Davidson
-    // solve plus the batched XC-kernel build. Set stability_check=False
-    // for legacy single-SCF behaviour.
+    // Test the real restricted internal singlet and external triplet
+    // orbital-rotation sectors independently (Seeger-Pople 1977,
+    // doi:10.1063/1.434318; KS: Bauernschmitt-Ahlrichs 1996,
+    // doi:10.1063/1.471637). Separate channel records distinguish internal
+    // saddles from spin-breaking instabilities. No complex rotations,
+    // escape or automatic promotion to an unrestricted method are performed.
+    // Both solves share the declared wall and matvec budgets. The default
+    // aggregate verdict rejects either instability or an incomplete test.
     bool stability_check = true;
     // Distinguishes the automatic default from an explicit request so
     // unsupported routes (+U, meta-GGA, RSH, VV10, COSX hybrids) skip
@@ -257,9 +249,22 @@ struct RKSOptions {
     bool stability_check_explicit = false;
     double stability_tol = 1e-4;
     int stability_davidson_max_iter = 60;
+    // Wall-clock budget for each post-convergence stability solve (#342).
+    // stability_wall_budget_s > 0 is used as given; 0 (default) means
+    // automatic: max(stability_wall_floor_s, stability_wall_fraction x the
+    // SCF loop's own wall, the sum of the per-iteration trace). A spent
+    // budget ends the solve with an UNVERIFIED verdict instead of running
+    // to the matvec cap; a solve that finishes inside it is unchanged.
+    // Defaults: fraction 3.0, floor 600 s (maintainer decision D1,
+    // 2026-09-29).
+    double stability_wall_budget_s = 0.0;
+    double stability_wall_fraction = 3.0;
+    double stability_wall_floor_s = 600.0;
 };
 
 struct RKSResult {
+    std::optional<manta::MolecularEngineProvenance> engine_provenance;
+    OpenTrustRegionReport opentrustregion;
     std::optional<BasisSet> restart_basis;
     std::optional<GuessSelection> guess_selection;
     double energy = 0.0;              // total KS energy (Hartree)
@@ -295,11 +300,30 @@ struct RKSResult {
     // analysis ran; ``stability_analysis_converged`` reports the
     // Davidson solve; ``stability_eigenvalue`` is the lowest
     // orbital-rotation Hessian eigenvalue (>= -stability_tol means
-    // stable); ``internal_instability`` is the negative verdict.
+    // stable); channel flags identify the separate negative verdicts.
     bool stability_checked = false;
     bool stability_analysis_converged = false;
+    // Why the stability solve ended (vibeqc::StabilityStop as int: 0
+    // converged, 1 matvec budget, 2 wall budget, 3 not run, 4 trivial,
+    // 5 stagnated), the Hessian-vector products it spent and the wall
+    // budget that applied (seconds; 0 = unbounded). Carried into every
+    // output writer by the Python verdict object (#342).
+    int stability_stop_reason = 3;
+    int stability_n_matvec = 0;
+    double stability_wall_budget_s = 0.0;
     double stability_eigenvalue = 0.0;
     bool internal_instability = false;
+    // Separate real restricted (singlet) and spin-breaking (triplet)
+    // channels. Complex-orbital stability is not tested by these fields.
+    bool restricted_stability_channels = false;
+    bool stability_internal_converged = false;
+    bool stability_external_converged = false;
+    double stability_internal_eigenvalue = 0.0;
+    double stability_external_eigenvalue = 0.0;
+    int stability_internal_stop_reason = 3;
+    int stability_external_stop_reason = 3;
+    bool external_instability = false;
+
     double stability_wall_s = 0.0;
     double stability_cpu_s = 0.0;
     // Maximum independent XC grid batches evaluated concurrently during
@@ -334,6 +358,7 @@ RKSResult run_rks(const Molecule& mol,
 // for downstream inspection; MP2 ignores them.
 inline RHFResult rhf_result_from_rks(const RKSResult& rks) {
     RHFResult r;
+    r.engine_provenance = rks.engine_provenance;
     r.restart_basis = rks.restart_basis;
     r.guess_selection = rks.guess_selection;
     r.energy       = rks.energy;
@@ -353,11 +378,15 @@ inline RHFResult rhf_result_from_rks(const RKSResult& rks) {
     r.density      = rks.density;
     r.fock         = rks.fock;
     r.scf_trace    = rks.scf_trace;
+    r.opentrustregion = rks.opentrustregion;
     // Carry the restricted-stability verdict across the adapter so
     // double-hybrid / MP2-on-RKS consumers see the same diagnosis the
     // RKS result reported (issue #144).
     r.stability_checked = rks.stability_checked;
     r.stability_analysis_converged = rks.stability_analysis_converged;
+    r.stability_stop_reason = rks.stability_stop_reason;
+    r.stability_n_matvec = rks.stability_n_matvec;
+    r.stability_wall_budget_s = rks.stability_wall_budget_s;
     r.stability_eigenvalue = rks.stability_eigenvalue;
     r.internal_instability = rks.internal_instability;
     r.stability_wall_s = rks.stability_wall_s;

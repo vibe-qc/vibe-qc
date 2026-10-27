@@ -1,7 +1,8 @@
 # coulomb-method-zoo: alternative periodic Coulomb J/K methods
 
 Experimental cross-pollination spike. Throwaway. See
-`POSTMORTEM.md` (written at the end) for the verdict.
+`POSTMORTEM.md` (written at the end) for the verdict, and the section
+"What actually exists" below for the inventory of files.
 
 ## What this benchmarks
 
@@ -42,15 +43,15 @@ broken reference would teach us nothing. Instead:
   limit test where periodic and molecular SCF are both well-defined
   and the existing Ewald-3D path is converged. This is the
   primary benchmark.
-- **LiH in a 16-bohr vacuum cubic box / sto-3g**. One element heavier,
-  ionic, still molecular-limit. A check that the methods that work
-  on H₂ also handle a Li 1s core.
+- **LiH in a 16-bohr vacuum cubic box / sto-3g** was the planned second
+  system (one element heavier, ionic, still molecular-limit). It was
+  never benchmarked; no LiH script exists in this directory.
 
 The molecular-limit choice is forced by the molecular-DF integral
 machinery, `compute_3c_eri` is molecular, not lattice-summed, so
 true bulk geometries (tight unit cells with cell-to-cell density
 overlap) need a separate native-periodic 3c-ERI binding that doesn't
-exist yet (per `docs/handover_periodic_scf_followup.md`).
+exist yet.
 
 ## Math summary
 
@@ -105,13 +106,33 @@ existing molecular DF tooling (`compute_2c_eri`, `compute_3c_eri`)
 because the AO density has no significant overlap across cell
 boundaries. For tight bulk this would need a periodic 3c-ERI binding.
 
+## What actually exists
+
+The spike stopped after the H2 J-builder comparison (see
+`POSTMORTEM.md`). The directory holds:
+
+| File | Role |
+|---|---|
+| `j_builders.py` | the four pluggable J builders (EWALD3D, WOLF, PLAIN_EWALD, ADFT) |
+| `scf_driver.py` | a tiny Gamma-point RHF driver that accepts any of them |
+| `bench_h2_jonly.py` | the primary deliverable: J-builder accuracy at the converged H2 density, five sweeps |
+| `bench_h2.py` | the full SCF sweep on H2; a template whose gauge bookkeeping was never finished |
+| `bug_compute_2c_eri_pshell.py` | three-line reproducer of the `compute_2c_eri` segmentation fault on p-shell auxiliary sets |
+| `results/bench_h2_jonly.json` | the only committed result, the five sweeps of `bench_h2_jonly.py` |
+
+The LiH benchmark (`bench_lih*.py`), an `run_all_methods.py` driver and
+CSV outputs were planned in the brief and are named in the postmortem's
+to-do list, but were never written. There are no `results/*.csv` files.
+
 ## How to run
 
+    .venv/bin/python examples/experimental/coulomb-method-zoo/bench_h2_jonly.py
     .venv/bin/python examples/experimental/coulomb-method-zoo/bench_h2.py
-    .venv/bin/python examples/experimental/coulomb-method-zoo/bench_lih.py
-    .venv/bin/python examples/experimental/coulomb-method-zoo/run_all_methods.py
 
-Outputs: `results/*.csv` and `results/*.json`.
+`bench_h2_jonly.py` rewrites `results/bench_h2_jonly.json`. Both scripts
+call the old Gamma-only Ewald-3D driver directly and predate the native
+GDF, BIPOLE and GPW routes; treat them as a historical record, not as a
+current benchmark.
 
 ## Throwaway scope reminder
 

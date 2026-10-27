@@ -7,6 +7,21 @@ myst:
 
 # Machine-learning interatomic potentials (MACE)
 
+## Which MACE?
+
+Two separate projects use this name:
+
+| Project | Purpose | Relation to vibe-qc |
+| --- | --- | --- |
+| [ACEsuit MACE](https://github.com/ACEsuit/mace), installed as `mace-torch` | Machine-learned energy, forces and stress | Provides `method="mace"` and the optional `[mace]` extra |
+| [Mendoza Automated Crystal Engine](https://www.egr.msu.edu/~jmendoza/code.html) | DFT workflow automation for CRYSTAL, including structure preparation, job management and analysis | Separate workflow application |
+
+Mendoza's v1.1.5 announcement, browser GUI and `mace gui connect` command
+refer to the workflow application. Our MLIP interface uses ACEsuit's
+calculator API. Install the `mace-torch` distribution for this interface;
+a package named `mace` is not a substitute. Keep applications that occupy
+the same Python import namespace in separate environments.
+
 vibe-qc can run [ACEsuit **MACE**](https://github.com/ACEsuit/mace), a
 pre-trained *E(3)*-equivariant graph-neural-network **interatomic
 potential**, as a first-class method:
@@ -22,14 +37,111 @@ run_job(mol, method="mace", output="h2o_mace")
 MACE predicts energy, forces, and stress on a DFT-fitted potential-energy
 surface, it does **not** solve the Schrödinger equation and builds no
 wavefunction. vibe-qc drives MACE's pre-trained forward pass and
-attributes it as an external pre-trained model (see `CLAUDE.md` § 10);
+attributes it as an external pre-trained model in the citation block;
 the energy is MACE's, not a vibe-qc ab-initio total. Within its trained
 domain it provides a fast model surface, but accuracy must be established
 against an external observable for the system and protocol in question.
 It gives no electronic structure (no orbitals / charges / gap) and only
 covers its trained elements.
 
-## Installation, the `[mace]` extra (Python ≤ 3.13)
+**Status.** The vibe-qc interface (registry, licence gate, molecular and
+periodic drivers, provenance) is production. The model behind it is an
+external pre-trained potential and not a vibe-qc method: vibe-qc computes
+none of its numbers and cannot vouch for their accuracy beyond what the
+model papers report. The label vocabulary is defined in
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+
+## Background: what MACE is
+
+MACE ({vibeqc-cite}`batatia_mace_2022`) is a **message-passing neural
+network interatomic potential**. The total energy is a sum of atomic site
+energies,
+
+$$
+E = \sum_i E_i, \qquad E_i = E_i\big(\{\mathbf r_{ij}, Z_j : |\mathbf r_{ij}| < r_{\mathrm{cut}}\}\big),
+$$
+
+each a learned function of the atom's neighbourhood within a cutoff. Forces
+and the stress are the analytic negative derivatives of $E$ with respect to
+positions and strain, obtained by automatic differentiation, so they are
+exactly consistent with the energy. Three ideas make MACE what it is.
+
+*Equivariance.* Every internal feature is a set of irreducible
+representations of $E(3)$ (scalars, vectors, rank-2 tensors, ...) built
+from spherical harmonics of the neighbour directions and a learned radial
+basis. Rotating or reflecting the input rotates the features accordingly and
+leaves the energy unchanged, so symmetry is exact by construction rather
+than learned from augmented data.
+
+*Body order from the atomic cluster expansion.* The message an atom
+receives in one layer is not a sum of pair terms but a many-body
+expansion: MACE forms symmetric tensor products of the neighbour features
+up to a correlation order $\nu$ (the published models use $\nu = 3$, so
+one message already contains up to four-body information) using the
+atomic cluster expansion, and two such layers are sufficient in practice.
+This is why MACE reaches its accuracy with few layers and a modest
+receptive field.
+
+*Training data.* The parameters are fitted to DFT energies, forces and
+stresses of large datasets. **MACE-MP-0** ({vibeqc-cite}`batatia_mace_mp_2024`)
+is trained on MPtrj, the relaxation trajectories of the Materials Project
+(PBE and PBE+U), and **MACE-MPA-0** on MPtrj plus a subsample of the
+Alexandria database; both cover 89 elements and are released under the MIT
+licence. **MACE-OFF23** ({vibeqc-cite}`kovacs_mace_off_2023`) is trained on
+the SPICE dataset of organic molecules at the
+$\omega$B97M-D3(BJ)/def2-TZVPPD level, covers H, C, N, O, F, P, S, Cl, Br
+and I, and is released under the Academic Software License (academic,
+non-commercial), which is why vibe-qc gates it. The absolute energy of each
+family sits on the reference scale of its training functional minus a
+per-element offset, hence the energy-scale caveat below.
+
+What follows from this for a user: a MACE energy is a regression estimate
+of the training functional on the training distribution. Inside that
+distribution it is fast and typically close to the DFT it learned; outside
+it (unusual oxidation states, charged or open-shell species, elements or
+bonding motifs absent from the data, very short contacts) it fails without
+warning, because there is no variational principle, no SCF residual and no
+electronic structure to inspect. The registry exported by
+`mace_model_registry()` records the training data and theory level of each
+model so that this provenance travels with every result.
+Single-point evaluation validates the backend energy, forces, and applicable
+3D stress before returning or caching a result. Missing properties, wrong
+array shapes, and non-finite values raise `ValueError`; backend exceptions
+propagate. A failed evaluation cannot leave a partially accepted energy in
+the cache. These checks validate the result contract, not model accuracy.
+
+Molecular and periodic optimizers require a finite positive `fmax` and a
+non-negative integer step budget (`max_opt_steps` for molecular `run_job`,
+`max_steps` for periodic drivers). They reject invalid controls before loading
+a model. Molecular `run_job` also rejects these controls before creating output.
+A zero-step budget is allowed to assess the initial structure against the
+requested force criterion; it does not imply convergence.
+
+The fixed-cell optimizer's `gradient()` is the physical energy derivative
+in Ha/bohr, including forces on frozen atoms. Its `max_force_eva` and
+`converged` fields use the constrained forces, with frozen atoms excluded
+from the stopping criterion.
+`fixed_indices` requires integer atom indices; fractional values and strings
+are rejected instead of converted. Both periodic optimizers check the final
+energy and physical forces for finite values before returning. Cell
+relaxation also checks the final stress.
+
+MACE checks that coordinates have finite values and shape `(n_atoms, 3)`
+and that a supplied cell has finite values and shape `(3, 3)` before
+loading the backend. Explicit `pbc` masks contain three booleans or integer
+0/1 flags. The model copies the supplied cell. A rejected structure update
+in a reusable evaluator preserves the previous structure and cached result.
+These checks validate input representation, not a geometry's physical
+suitability for a trained model.
+
+## Installation, the `[mace]` extra
+
+For an installation without pip, choose the optional **vibe-qc + MACE**
+prebuilt download. It includes Python 3.14, the normal QC runtime and MACE's
+runtime dependencies in one package. Standard prebuilt downloads remain
+available without MACE. The optional package uses the normal
+`method="mace"` interface; model weights download separately into your cache
+on first use.
 
 MACE is an **optional** dependency (a heavy PyTorch + e3nn stack), not
 part of the default install:
@@ -38,10 +150,37 @@ part of the default install:
 pip install 'vibe-qc[mace]'
 ```
 
-> **Python ≤ 3.13 only.** MACE's `matscipy` dependency has no Python 3.14
-> wheel yet, so the `[mace]` extra is marked `python_version < "3.14"` and
-> the runtime import is gated. On Python 3.14, `method="mace"` raises a
-> clear error telling you to use a ≤ 3.13 environment.
+The extra selects `mace-torch>=0.3.16,<0.4`. ACEsuit's
+[supported 0.3.x line](https://github.com/ACEsuit/mace#project-status)
+provides the calculator and serialized checkpoint APIs used here.
+Its planned 1.0 rewrite changes those APIs and requires checkpoint conversion.
+When installed `mace-torch` version metadata is available, other API series
+raise an installation error before importing the ML stack or changing its
+runtime environment. Source trees without distribution metadata still pass
+through the calculator import checks. A missing stack or calculator reports
+the ACEsuit package name and installation command, preserving the original
+import failure as the exception cause.
+
+Python 3.14 is supported with `mace-torch==0.3.16`, `e3nn==0.4.4`
+and PyTorch 2.14.1. The extra requests PyTorch >=2.14.1 on Python 3.14
+and newer; no separate older interpreter is needed. CPU float64 molecular
+energy, forces, output and periodic stress have been exercised together with
+the native core. PyTorch warns that the legacy TorchScript APIs used by
+these checkpoints are unsupported on Python 3.14 and may break. The
+current tested stack executes them successfully; the warning is retained, and
+this qualification does not cover future Torch releases or GPU backends.
+A missing backend still raises an installation error.
+
+Apple MPS requires `MLIPOptions(device="mps", dtype="float32")`.
+vibe-qc loads and converts the checkpoint on CPU before transferring the
+model to MPS; inference stays on the requested device. Invalid precision
+choices and unavailable MPS devices fail explicitly.
+MACE 0.3.16 has a separate forward-pass float64 cast that prevents MPS
+inference even with float32 weights. MPS also requires an upstream build
+containing [the node-energy fix, commit 22f0809](https://github.com/ACEsuit/mace/commit/22f0809735bd4dd1deba80cf8e16f89913a35ff4).
+Installing the ordinary extra with MACE 0.3.16 does not satisfy that
+requirement. The real MPS energy/force/stress regression remains active on
+MPS hardware so this dependency limitation is not hidden.
 
 The foundation-model **weights are fetched on demand** into the XDG cache
 (`~/.cache/mace/`) on first use, vibe-qc bundles none of them.
@@ -53,12 +192,32 @@ python examples/mlip/00_runtime_healthcheck.py
 ```
 
 For a reproducible runtime, record the VibeQC source SHA and version,
-Python version, MACE/Torch/e3nn/ASE versions, device, dtype, model key,
-loader, cache path, and weight-file digest. The health-check example
-reports everything available before a model is loaded. A calculation
-manifest should add the resolved weight path and digest after first use.
-Moving or clearing the cache causes the upstream loader to fetch weights
-again; it does not change the model key recorded by vibe-qc.
+Python version, MACE/Torch/e3nn/ASE versions, device, dtype and model key.
+The health-check example reports everything available before a model is
+loaded. Loading snapshots the registered checkpoint and computes a SHA256
+digest of the same bytes passed to PyTorch. `MACEModel.weight_identity` and
+periodic result objects expose this digest, byte count, registered URL and
+checkpoint loader. The `loader` model metadata names the upstream registry
+selector; `checkpoint.loader` identifies VibeQC's snapshot loader.
+The URL identifies the registry entry, not proof of the cached file's origin.
+The digest identifies the serialized checkpoint, not subsequent in-memory
+modifications or the scientific accuracy of its predictions. Upstream cache
+names and the bundled MPA-0 preference are preserved; clearing a cache fetches
+the registered weights again.
+
+Molecular `run_job` records the executed model, device and dtype in
+`.system` under `[run.mlip]` and in QVF `provenance.mlip`, together with
+the loader, license, citation and energy scale. Its QVF job specification
+preserves those runtime choices for replay, resolving aliases to the
+canonical model name. `.out`, `.system` and QVF also record the checkpoint
+identity. Replay supplies its digest as `MLIPOptions(weight_sha256=...)` and
+rejects different bytes before deserialization. This option can also pin a
+checkpoint for a new job. Older archives without a digest still load the
+selected model, but cannot enforce checkpoint identity.
+Output records do not copy academic-license acknowledgment;
+replaying an OFF23 calculation still requires the caller's acknowledgment.
+QVF provenance marks the forward pass as `scf_applicable=false` and omits
+SCF convergence and iteration claims.
 
 ## Selecting a model, `MLIPOptions`
 
@@ -150,20 +309,55 @@ license, and this caveat.
 |---|---|---|
 | Molecular single point | `run_job(molecule, method="mace", mlip_options=...)` | `.energy` in Ha and `.gradient()` in Ha/bohr; writes provenance and citations |
 | Molecular optimization | `run_job(..., method="mace", optimize=True)` | optimized structure and ASE trajectory |
-| Molecular reaction path | `run_neb(..., method="mace", mlip_options=...)` | fixed-model relative path energies and forces |
+| Molecular or periodic reaction path | `run_neb(..., method="mace", mlip_options=...)` | fixed-model relative path energies and forces; preserves 1D/2D/3D periodic axes and skew cells |
 | Bare ASE workflow | `mace_calculator(options)` | upstream ASE calculator in eV and Angstrom units |
 | Periodic single point | `run_periodic_mace(system, options)` | 1D/2D/3D `.energy` in Ha and `.gradient()` in Ha/bohr; 3D-only `.stress()` in Ha/bohr³; runtime/model provenance |
 | Sequential periodic scan | `PeriodicMACEEvaluator(options).run(system)` | same result, with one retained model and calculator |
 | Fixed-cell periodic/slab relaxation | `optimize_periodic_mace_positions(system, options, fixed_indices=...)` | result containing the relaxed `PeriodicSystem`, convergence, forces, and provenance |
-| 3D periodic cell relaxation | `optimize_periodic_mace_cell(system, options, fmax=...)` | relaxed 3D `PeriodicSystem` |
+| 3D periodic cell relaxation | `optimize_periodic_mace_cell(system, options, fmax=...)` | converged 3D `PeriodicSystem`; raises on step exhaustion |
 | Registry export | `mace_model_registry()` / `save_mace_model_registry(path)` | dependency-free provenance metadata |
 
 `MACEModel` is the lower-level molecular wrapper behind these APIs.
 Most user workflows should prefer `run_job` so output manifests,
 citations, and provenance are written automatically.
+`MACEModel` and `PeriodicMACEEvaluator` copy the supplied `MLIPOptions` when
+constructed. Later edits to those options do not change the loaded model or
+its reported device and precision. `MACEModel.options` returns a detached copy;
+construct a new model to use different runtime settings.
+
+Molecular `run_job(..., method="mace", optimize=True)` retains the optimizer's
+loaded model for the final energy and gradient. The reported result and its
+checkpoint digest therefore describe the same potential as the trajectory,
+even if the cached checkpoint or caller's options change during optimization.
+
+MACE reaction-path QVF archives mark SCF as inapplicable and omit SCF
+convergence and iteration counts. Path convergence is the separate NEB force
+criterion exposed by `NEBResult.converged`.
+The results of `run_neb`, `run_dimer`, and `run_irc` with `method="mace"`
+retain `model_info`, `device`, `dtype`, and `weight_identity` from the loaded
+potential. `NEBResult.write_qvf` includes these in `provenance.mlip`, including
+the checkpoint digest and model license. Changing the caller's options after
+loading does not relabel a path. Reaction-path archives do not currently
+provide a replayable NEB job specification.
 
 `run_periodic_job(method="mace")` is not supported. It is an SCF runner;
 use the direct periodic MACE APIs above.
+
+Variable-cell relaxation checks ASE's combined atomic and cell-force criterion.
+Zero atomic forces alone do not qualify a strained cell. If the step budget
+is exhausted, `optimize_periodic_mace_cell` raises
+`PeriodicMACECellOptimizationError` (a `RuntimeError`), preserving the last
+`PeriodicSystem` in `error.system`, the completed and allowed step counts in
+`error.n_steps` and `error.max_steps`, and the terminal cell-filter force norm
+and requested threshold in `error.final_max_force` and `error.target_max_force`.
+Those last two values use ASE's filter scaling, not raw physical stress units.
+An already converged starting structure may return with `max_steps=0`.
+Both the relaxed structure and `error.system` retain the input charge and
+spin multiplicity for subsequent electronic-structure calculations. These
+labels do not change the neutral MACE potential or suppress its charge/spin
+warning.
+Optimizer convergence does not establish dynamical stability or predictive
+accuracy of the selected model.
 
 ## macOS note
 
@@ -213,9 +407,9 @@ Keep these five statements separate:
 1. **Implemented in VibeQC.** The model registry, license gate, molecular
    wrapper, periodic direct driver, reusable periodic evaluator, stress,
    cell relaxation, and citation plumbing exist in the source tree.
-2. **Runtime available.** Real calculations additionally require Python
-   3.13 or earlier plus the `[mace]` extra and accessible model weights.
-   A normal Python 3.14 VibeQC runtime does not satisfy this condition.
+2. **Runtime available.** Real calculations additionally require the `[mace]`
+   extra and accessible model weights. Python 3.14 can run MACE in the
+   same environment as the other VibeQC methods.
 3. **Molecular dispatch supported.** `run_job(..., method="mace")` handles
    molecular single points and optimization; `run_neb(method="mace")`
    handles molecular reaction paths.
@@ -266,6 +460,11 @@ Keep these five statements separate:
   (`method="mace"` is not yet wired into `run_periodic_job`; use these
   drivers directly.) A `PeriodicMACEEvaluator` is sequential; create one per
   worker when scan points run in parallel.
+  Periodic lattice vectors must be nonzero and numerically linearly
+  independent. Degenerate cells are rejected before backend loading or
+  evaluation. Only periodic columns enter this check: a wire or slab may
+  retain zero bookkeeping vectors on its nonperiodic axes. A rejected scan
+  point leaves the evaluator's previous structure and cached result intact.
 - No electronic structure (orbitals / charges / gap).
 - Trained-domain only, fails out-of-distribution.
 - Charge and spin do not select an electronic state. Non-neutral and
@@ -279,7 +478,7 @@ Keep these five statements separate:
 
 ## Examples
 
-Runnable scripts (require the `[mace]` extra, Python ≤ 3.13) live in
+Runnable scripts (require the `[mace]` extra, including on Python 3.14) live in
 [`examples/mlip/`](https://github.com/vibe-qc/vibe-qc/tree/main/examples/mlip):
 
 - `00_runtime_healthcheck.py`, dependency, source, registry, API, and cache
@@ -304,7 +503,35 @@ Runnable scripts (require the `[mace]` extra, Python ≤ 3.13) live in
 MACE also drives **reaction-path searches**: `run_neb(...,
 method="mace")` runs a Nudged Elastic Band on the MACE potential,
 analytic forces, no SCF, and (for periodic bands) no finite-difference
-gradient. See [`neb.md`](neb.md) § MACE backend.
+gradient. Each image must return a finite scalar energy and a finite force
+vector for every atom. Invalid model output stops the calculation before it
+can enter the band or its optimizer state. See [`neb.md`](neb.md) § MACE backend.
+
+`run_dimer(..., method="mace")` uses the same checked energy and force
+evaluations for a saddle search from one starting structure. For periodic
+systems, every evaluation retains the input's 1D, 2D or 3D periodic axes
+and cell, including skew cells.
+Force tolerances (`conv_tol_force`, `rotation_force_tol`), `dimer_separation`,
+`max_step`, and `initial_step` must be finite and positive. Invalid values
+are rejected before loading a model or evaluating forces; an infinite force
+threshold cannot certify a nonstationary structure as a converged saddle.
+The positive integer `max_iter` limits evaluated dimer centres. When that
+budget is exhausted, the result keeps the last evaluated geometry, its
+energy and force residual, and `converged=False`; it does not return an
+unevaluated final displacement.
+
+`run_irc(..., method="mace")` follows molecular paths from an explicit
+`transition_mode`, for example a dimer mode. `step_size` and `conv_tol_grad`
+must be finite and positive; `max_points` must be a nonnegative integer.
+Invalid controls are rejected before loading a model. Each branch evaluates
+the initial displacement and allows up to `max_points` further step attempts,
+including rejected trials. The convergence flag reflects the maximum absolute
+Cartesian gradient at the last accepted point, including a final accepted
+step. Repeated rejected steps cannot certify convergence. A stalled or
+exhausted branch retains its accepted path and energies, with its convergence
+flag false unless the endpoint satisfies `conv_tol_grad` in Ha/bohr. Check
+that flag before treating `forward_minimum` or `reverse_minimum` as a minimum
+or interpreting the corresponding barrier as a converged result.
 
 See also: [`ase_integration.md`](ase_integration.md),
 [`external_codes.md`](external_codes.md), and the

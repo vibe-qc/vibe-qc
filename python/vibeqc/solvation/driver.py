@@ -81,6 +81,7 @@ def _build_cavity_for(sm: "SolventModel", pos: np.ndarray, Zs: np.ndarray):
         n_points_per_sphere=sm.n_points_per_sphere,
         switching_sigma_bohr=sm.switching_sigma_bohr,
         drop_threshold=sm.switching_drop_threshold,
+        charge_representation=sm.charge_representation or "point",
     )
 
 
@@ -119,6 +120,43 @@ class SolventModel:
         orientation (#769). ``"lab"`` is the pre-#769 behaviour and the right
         choice for a linear solute. See
         :func:`vibeqc.solvation.fine_cavity.molecular_frame`.
+    charge_representation : {None, "point", "gaussian"}, default None
+        The segment-charge kernel of the Lebedev cavity matrix ``A``. ``None``
+        is the cavity's own default: ``"point"`` for the Lebedev cavity, which
+        is what every shipped number was computed with, and ``"gaussian"`` for
+        the fine cavity, which requires it. ``"gaussian"`` on the Lebedev
+        cavity uses the York-Karplus Gaussian segment charges (Lange and
+        Herbert's SWIG form): the matrix is positive definite for any geometry,
+        so the charge equations cannot resonate. The point-charge matrix is
+        indefinite, and an eigenvalue crossing zero puts a spike in the
+        energy and the analytic gradient at roughly one random geometry in ten
+        to twenty (#681). It is opt-in because it moves every energy: the
+        solvation energy is 15 to 19 percent smaller in magnitude on STO-3G
+        water and methanol, because at the default switching width the point
+        kernel overshoots the sharp union-of-spheres limit by 17 to 27 percent
+        and the Gaussian kernel by 2 to 4 percent (user guide, "Choosing the
+        number of cavity points"). ``"point"`` on the fine cavity is refused.
+    operator_cache_mb : float, default 1024
+        The largest stack of per-segment Coulomb operators ``<mu|1/|r-s_i||nu>``
+        (``8 n_segments n_basis^2`` bytes) the SCF keeps in memory. Above it the
+        solvated SCF streams: it recomputes the electrostatic potential and the
+        Fock operator one segment at a time on every macro-iteration, so nothing
+        of that size is held. The numbers are the same to rounding; the cost is
+        roughly one extra pass over the integrals per macro-iteration, which is
+        a small fraction of the SCF it sits in. ``0`` always streams.
+    gradient_symmetry_tol_bohr : float, default 1e-4
+        For ``cavity="fine"`` in the molecule-fixed frame, the tolerance
+        (bohr) within which :func:`~vibeqc.solvation.cpcm_gradient` recognizes
+        the solute's point-group operations and projects the gradient onto
+        their totally symmetric subspace. The frame's step-1 selections break a
+        symmetric solute's symmetry, which puts a cusp in the energy at the tie
+        and a force along the tie-breaking direction in the gradient: 1.9e-5
+        Ha/bohr for the conductor energy and 1.4e-3 for Direct COSMO-RS on
+        water, the latter above the optimizer's default threshold (#535).
+        ``0.0`` disables the projection and returns the raw gradient, which is
+        the derivative of one branch of the cusp. A solute with no symmetry at
+        this tolerance is unaffected, bit for bit. See
+        :mod:`vibeqc.solvation.point_group`.
     switching_sigma_bohr : float, default 0.5
         Scalmani-Frisch switching width (bohr).
     switching_drop_threshold : float, default 1e-8
@@ -178,6 +216,12 @@ class SolventModel:
     fine_frame: str = "molecular"
     max_macro_iter: int = 30
     tol_e_solv: float = 1e-6
+    # See the docstring: the symmetry tolerance of the fine cavity's gradient.
+    gradient_symmetry_tol_bohr: float = 1.0e-4
+    # See the docstring: None is the cavity's own kernel.
+    charge_representation: Optional[str] = None
+    # See the docstring: the largest operator stack the SCF keeps in memory.
+    operator_cache_mb: float = 1024.0
     q_diis: bool = False
     # When True, use DIIS extrapolation on the apparent surface charges
     # q between macro-iterations to accelerate CPCM convergence.  Adds
@@ -201,6 +245,35 @@ class SolventModel:
                 f"(got {self.fine_frame!r})."
             )
         self.fine_frame = frame
+        tol_sym = float(self.gradient_symmetry_tol_bohr)
+        if not math.isfinite(tol_sym) or tol_sym < 0.0:
+            raise ValueError(
+                "SolventModel.gradient_symmetry_tol_bohr must be a finite "
+                f"tolerance >= 0 in bohr (got {self.gradient_symmetry_tol_bohr!r}); "
+                "0.0 disables the symmetric projection of the gradient."
+            )
+        self.gradient_symmetry_tol_bohr = tol_sym
+        if not self.operator_cache_mb >= 0.0:
+            raise ValueError(
+                "SolventModel.operator_cache_mb must be >= 0 "
+                f"(got {self.operator_cache_mb!r}); 0 always streams."
+            )
+        if self.charge_representation is not None:
+            rep = str(self.charge_representation).strip().lower()
+            if rep not in {"point", "gaussian"}:
+                raise ValueError(
+                    "SolventModel.charge_representation must be None, 'point' "
+                    f"or 'gaussian' (got {self.charge_representation!r})."
+                )
+            if self.cavity == "fine" and rep != "gaussian":
+                raise ValueError(
+                    "SolventModel(cavity='fine', charge_representation='point'): "
+                    "the COSMO FINE cavity has no switching function to keep "
+                    "point charges apart, so its point-charge matrix is "
+                    "indefinite for about one grid spacing in six (#744). It "
+                    "requires 'gaussian' (the default for it)."
+                )
+            self.charge_representation = rep
         variant = self.variant.strip().lower()
         if variant not in {"cpcm", "cosmo", "dcosmo-rs"}:
             raise ValueError(
@@ -260,6 +333,36 @@ class SolventModel:
 
 # Accepted user input types for ``solvent=``.
 SolventSpec = Union[None, str, float, int, Mapping[str, Any], SolventModel]
+
+
+def solvation_citation_key(solvent) -> str:
+    """The ``routes.solvation`` row for the solvation model that actually ran.
+
+    The registry fires exactly one solvation row per run, so the key has to
+    carry everything that changes the method, not only the screening variant.
+    The cavity does: a Lebedev run uses the Scalmani-Frisch switched
+    point-charge diagonal, while a COSMO FINE Cavity run uses none of that and
+    a Gaussian-charge kernel instead (York & Karplus 1999, eq. 56; diagonal from
+    Lange & Herbert 2010, eq. 3.7). Keying on the variant alone cited a
+    fine-cavity run as a Lebedev one: Scalmani-Frisch in, Klamt & Diedenhofen
+    2018 out.
+
+    Accepts anything :func:`resolve_solvent` does. Gas phase keeps the
+    historical ``"cpcm"`` key.
+    """
+    sm = resolve_solvent(solvent)
+    if sm is None or sm.is_gas_phase:
+        return "cpcm"
+    if sm.variant == "dcosmo-rs":
+        # Refused on any other cavity, and its row already carries the fine one.
+        return "dcosmo-rs"
+    if getattr(sm, "cavity", "lebedev") == "fine":
+        return f"{sm.variant}_fine"
+    if getattr(sm, "charge_representation", None) == "gaussian":
+        # Lebedev cavity, Gaussian kernel (#681): the switching is still
+        # Scalmani-Frisch's, the diagonal is not.
+        return f"{sm.variant}_gaussian"
+    return sm.variant
 
 
 def resolve_solvent(spec: SolventSpec) -> Optional[SolventModel]:
@@ -423,29 +526,80 @@ class GaussianESPProvider:
     """ESP-on-grid solute<->cavity coupling for a Gaussian-basis reference.
 
     Implements :class:`vibeqc.solvation.provider.SolutePotentialProvider` for
-    HF / DFT: it caches the per-cavity-point one-electron Coulomb operators
-    ``<mu|1/|r-s_i||ν>`` once per geometry and uses them for both arrows -- the
-    electronic ESP at the surface (from the density) and the Fock operator
-    (from the apparent charges).  This is the coupling :func:`run_cpcm_scf`
-    has always used, now behind the provider seam so a non-Gaussian reference
-    (MSINDO) can supply its own coupling to the same reaction-field engine.
+    HF / DFT. Both arrows need the one-electron Coulomb operators
+    ``<mu|1/|r-s_i||nu>`` of the cavity points: the electronic ESP at the
+    surface (from the density) and the Fock operator (from the apparent
+    charges).  This is the coupling :func:`run_cpcm_scf` has always used, now
+    behind the provider seam so a non-Gaussian reference (MSINDO) can supply
+    its own coupling to the same reaction-field engine.
+
+    The operators are an ``(n_pts, n_bf, n_bf)`` stack, ``8 n_pts n_bf^2``
+    bytes: 3 GB for a 30-atom molecule in def2-SVP and 16 GB for 50 atoms, which
+    is more than everything else the run holds. So the stack is cached only
+    while it fits ``max_cache_bytes``. Above that nothing of that size is kept:
+    the ESP and the Fock operator are each accumulated one point at a time (a
+    pass costs about a tenth of a millisecond per point at 100 basis functions
+    and a few tenths at 300, against minutes for the SCF it sits in). Both
+    routes give the same numbers to rounding.
     """
 
-    __slots__ = ("_operators",)
+    __slots__ = ("_operators", "_basis", "_points")
 
-    def __init__(self, basis, cavity_points: np.ndarray):
-        self._operators = _build_point_charge_operators(basis, cavity_points)
+    def __init__(
+        self,
+        basis,
+        cavity_points: np.ndarray,
+        *,
+        max_cache_bytes: float = float("inf"),
+    ):
+        pts = np.ascontiguousarray(cavity_points, dtype=np.float64)
+        n_bf = int(basis.nbasis)
+        stack_bytes = 8 * int(pts.shape[0]) * n_bf * n_bf
+        self._basis = basis
+        self._points = pts
+        self._operators = (
+            _build_point_charge_operators(basis, pts)
+            if stack_bytes <= max_cache_bytes
+            else None
+        )
 
     @property
-    def operators(self) -> np.ndarray:
-        """The cached ``(n_pts, n_bf, n_bf)`` Coulomb-operator stack."""
+    def operators(self) -> Optional[np.ndarray]:
+        """The cached ``(n_pts, n_bf, n_bf)`` Coulomb-operator stack, or
+        ``None`` when it was too large to keep and the provider streams."""
         return self._operators
 
     def esp_at_cavity(self, density: np.ndarray) -> np.ndarray:
-        return _density_potential_at_cavity(density, self._operators)
+        if self._operators is not None:
+            return _density_potential_at_cavity(density, self._operators)
+        from vibeqc import Atom, Molecule, compute_nuclear
+
+        D = np.ascontiguousarray(density, dtype=np.float64)
+        out = np.empty(self._points.shape[0], dtype=np.float64)
+        for i, s in enumerate(self._points):
+            # compute_nuclear returns -<mu|1/r_i|nu>, and the electrons carry
+            # the sign: V_elec(s_i) = -tr(D <.|1/r_i|.>) = +tr(D M_i).
+            M_i = compute_nuclear(self._basis, Molecule([Atom(1, tuple(s))], 1, 1))
+            out[i] = np.vdot(D, np.asarray(M_i))
+        return out
 
     def fock_contribution(self, charges: np.ndarray) -> np.ndarray:
-        return _fock_solvent_contribution(charges, self._operators)
+        if self._operators is not None:
+            return _fock_solvent_contribution(charges, self._operators)
+        from vibeqc import Atom, Molecule, compute_nuclear
+
+        # -sum_i q_i <mu|1/|r-s_i||nu> is sum_i q_i M_i, with M_i what
+        # compute_nuclear returns for a unit charge at s_i. One call per point
+        # and an axpy is twice as fast as handing libint every charge at once
+        # (compute_nuclear_with_charges: 0.25 against 0.12 ms per point at 86
+        # basis functions) and keeps the same O(n_bf^2) footprint.
+        q = np.asarray(charges, dtype=np.float64).ravel()
+        F = np.zeros((int(self._basis.nbasis),) * 2, dtype=np.float64)
+        for q_i, s in zip(q, self._points):
+            F += q_i * np.asarray(
+                compute_nuclear(self._basis, Molecule([Atom(1, tuple(s))], 1, 1))
+            )
+        return F
 
 
 @dataclass
@@ -485,6 +639,15 @@ class SolventResult:
     # segment's sigma crosses +-sigma_hb, and a segment parked there sees a
     # different potential every cycle.
     direct_feedback: Optional[Any] = None
+    # The symmetry tolerance the run's model asked the gradient to project with
+    # (``SolventModel.gradient_symmetry_tol_bohr``); 0 for a result that did not
+    # come from a model, which projects nothing.
+    gradient_symmetry_tol_bohr: float = 0.0
+    # The SolventModel that built this result, so a consumer that has to
+    # rebuild the cavity at a displaced geometry (the finite-difference
+    # oracle in vibeqc.solvation.gradient) uses the run's own recipe instead
+    # of re-deriving it from the tessellation. None for a hand-built result.
+    solvent_model: Optional[Any] = None
     all_scf_traces: list[Any] = field(default_factory=list)
     # Aggregated per-iteration records across gas-phase + all inner
     # SCF phases, suitable for replay into PerfTracker (BUG 100).
@@ -1126,13 +1289,20 @@ def run_cpcm_scf(
     # (vibeqc.solvation.provider). The reaction-field engine below (ESP ->
     # screened ASC solve -> Fock correction -> macro-iteration) is
     # reference-independent.
-    provider = GaussianESPProvider(basis, cavity.points)
+    provider = GaussianESPProvider(
+        basis,
+        cavity.points,
+        max_cache_bytes=float(sm.operator_cache_mb) * 1024.0 * 1024.0,
+    )
     V_nuc_cav = _nuclear_potential_at_cavity(pos, Zs_cav, cavity.points)
 
     # Pre-factor A once — the cavity is fixed across macro-iterations, so
     # each cycle reuses one LU rather than repeating an O(N³) decomposition
     # (BUG 100). The solve is injected into the shared reaction-field step.
-    _cavity_solve = lu_cavity_solve(A)
+    # A is not needed again once factored, so factor it in place: a second copy
+    # of an N x N matrix is 1.9 GB at the 15 500 segments of a 74-atom alkane.
+    _cavity_solve = lu_cavity_solve(A, overwrite=True)
+    del A
 
     # One screening model for the whole run: built here, carried on the
     # result, read by every consumer. Nothing downstream re-derives ``f``.
@@ -1146,6 +1316,39 @@ def run_cpcm_scf(
     direct_rs = sm.variant == "dcosmo-rs"
     if direct_rs:
         from .cosmors.direct import direct_cosmors_feedback
+        from .cosmors.experimental import _warn_experimental
+        from .cosmors.potential import _anderson_step
+
+        _warn_experimental("Direct COSMO-RS (SolventModel(variant='dcosmo-rs'))")
+
+        # Anderson acceleration of the feedback potential across
+        # macro-iterations (Anderson, J. ACM 12, 547 (1965); the same step the
+        # solvent solver uses). On a polar solute at a realistic protocol the
+        # feedback overshoots: acetate at BPW91 changes sign on every one of
+        # its last ten macro-iterations and needs 26 of them at def2-SVP and
+        # 60 at def2-TZVP, twice the default cap. Anderson brings those to 18
+        # and 15 and leaves monotone runs alone (water, ammonium and acetate
+        # at RHF/STO-3G: 9, 5, 9 either way). Fixed damping was rejected: at
+        # 0.7 it helps acetate but nearly doubles every monotone run (water
+        # 9 -> 16). The fixed point is unchanged -- energies agree to 1e-13 Ha.
+        _drs_xs: list[np.ndarray] = []
+        _drs_rs: list[np.ndarray] = []
+        _drs_seen: list[np.ndarray] = []  # the phi the Hamiltonian last used
+
+        def _accelerate_feedback(phi_new: np.ndarray) -> np.ndarray:
+            if not _drs_seen or _drs_seen[0].shape != phi_new.shape:
+                _drs_seen[:] = [phi_new]
+                return phi_new
+            used = _drs_seen[0]
+            _drs_xs.append(used)
+            _drs_rs.append(phi_new - used)
+            if len(_drs_rs) > 4:
+                _drs_xs.pop(0)
+                _drs_rs.pop(0)
+            nxt = _anderson_step(_drs_xs, _drs_rs, 1.0)
+            _drs_seen[:] = [nxt]
+            return nxt
+
     last_feedback = None
 
     def _as_cpcm(field: ReactionField) -> CPCMResult:
@@ -1240,11 +1443,15 @@ def run_cpcm_scf(
             last_feedback = direct_cosmors_feedback(
                 field.q, cavity.weights, sm.sigma_potential
             )
+            # The operator uses the accelerated potential. The reported
+            # feedback keeps eq. 19's phi and its energy, both evaluated at the
+            # conductor charges; the two potentials agree at convergence.
+            phi_used = _accelerate_feedback(
+                np.asarray(last_feedback.phi, dtype=np.float64)
+            )
             # eq. 7 again, on the correction potential. No screening factor:
             # see vibeqc.solvation.cosmors.direct.
-            q_drs = np.asarray(
-                _cavity_solve(-last_feedback.phi), dtype=np.float64
-            )
+            q_drs = np.asarray(_cavity_solve(-phi_used), dtype=np.float64)
             if not np.all(np.isfinite(q_drs)):
                 raise RuntimeError(
                     "run_cpcm_scf: the Direct COSMO-RS correction solve "
@@ -1420,10 +1627,10 @@ def run_cpcm_scf(
                 functional=_func,
                 uses_cpcm=True,
                 scf_guess=last_inner_result.guess_selection.effective.name,
-                # The run's own variant, never a fixed one: routes.solvation
-                # fires exactly one row per variant, and "dcosmo-rs" is the
-                # only row that cites the method a Direct COSMO-RS run used.
-                solvent_variant=sm.variant,
+                # The model that ran, variant *and* cavity: routes.solvation
+                # fires exactly one row, so a key without the cavity cites a
+                # fine-cavity run as a Lebedev one.
+                solvent_variant=solvation_citation_key(sm),
             )
         except Exception:
             # Best-effort -- never let citation writer failure tank a
@@ -1446,10 +1653,12 @@ def run_cpcm_scf(
         scf=verified_scf_result,
         energy=total_energy,
         direct_feedback=last_feedback,
+        gradient_symmetry_tol_bohr=float(sm.gradient_symmetry_tol_bohr),
         e_solv=last_cpcm.e_solv,
         e_gas=e_gas,
         epsilon=sm.epsilon,
         solvent_name=sm.name,
+        solvent_model=sm,
         solvent_variant=sm.variant,
         screening=screening,
         cavity=cavity,

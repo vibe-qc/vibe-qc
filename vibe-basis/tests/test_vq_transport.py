@@ -8,6 +8,8 @@ the CRYSTAL14-on-compute-host-d recipe (README + chat memory).
 
 from __future__ import annotations
 
+import sys
+
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -102,6 +104,18 @@ def test_submit_builds_correct_argv(tmp_path):
     # try to interpret `bash`/flags as its own options.
     sep = argv.index("--")
     assert argv[sep + 1:] == ["bash", "run-crystal.sh", "mgo.d12"]
+
+
+def test_a_label_becomes_the_job_name(tmp_path):
+    runner = _FakeVqRunner()
+    vq = VqTransport(runner=runner)
+    vq.submit(tmp_path, ["sh", "run_crystal.sh"], label="calc/MgO/1a2b3c")
+    argv = runner.calls[0]
+    sep = argv.index("--")
+    assert argv[argv.index("--job-name") + 1] == "calc-MgO-1a2b3c"
+    assert argv.index("--job-name") < sep
+    vq.submit(tmp_path, ["true"])
+    assert "--job-name" not in runner.calls[1]
 
 
 def test_submit_explicit_cpus_and_walltime_override_defaults(tmp_path):
@@ -211,6 +225,58 @@ def test_fetch_returns_job_subdir_and_creates_dest(tmp_path):
     fetch_argv = runner.calls[-1]
     assert fetch_argv[0:3] == ["vq", "fetch", "job-abc123"]
     assert "-o" in fetch_argv and str(dest) in fetch_argv
+
+
+def test_status_and_fetch_name_the_submit_host(tmp_path):
+    """Host-less, vq searches every host and can miss a live job on a slow one."""
+    runner = _FakeVqRunner()
+    vq = VqTransport(runner=runner, host="crystal-host")
+    handle = vq.submit(tmp_path, ["true"])
+    vq.poll(handle)
+    vq.fetch(handle, tmp_path / "fetched")
+    assert runner.calls[1][:4] == ["vq", "status", "crystal-host", "job-abc123"]
+    assert runner.calls[2][:4] == ["vq", "fetch", "crystal-host", "job-abc123"]
+
+
+def test_fetch_finds_the_directory_vq_names_after_a_named_job(tmp_path):
+    """A named job lands in <dest>/<name>-<job_id>/; returning <dest>/<job_id>
+    made the engine read a missing output as a lost transport and resubmit."""
+    dest = tmp_path / "fetched"
+
+    def runner(argv, **kw):
+        if argv[1] == "fetch":
+            (dest / "calc-MgO-1a2b3c-job-abc123").mkdir(parents=True)
+        return _FakeProc(stdout="job-abc123\n")
+
+    vq = VqTransport(runner=runner, host="crystal-host")
+    handle = vq.submit(tmp_path, ["true"], label="calc/MgO/1a2b3c")
+    assert vq.fetch(handle, dest) == dest / "calc-MgO-1a2b3c-job-abc123"
+
+
+def test_a_vq_call_that_hangs_fails_instead_of_blocking(tmp_path):
+    from vibe_basis.transports.vq import _default_runner
+
+    proc = _default_runner([sys.executable, "-c", "import time; time.sleep(5)"], timeout=0.2)
+    assert proc.returncode == 124 and "timed out" in proc.stderr
+
+
+def test_wait_survives_a_few_failed_polls_but_not_many(tmp_path):
+    """A failed poll says nothing about the job: abandoning it on the first
+    one made a retrying caller submit the same work again beside it."""
+    def runner_with(codes):
+        codes = iter(codes)
+
+        def run(argv, **kw):
+            rc = next(codes)
+            return _FakeProc(stdout="state: completed\n" if rc == 0 else "", returncode=rc)
+        return run
+
+    handle = JobHandle("job-1", tmp_path, ("true",))
+    flaky = VqTransport(runner=runner_with([1, 1, 0]))
+    assert flaky.wait(handle, sleep=lambda s: None, clock=lambda: 0.0) == "completed"
+    dead = VqTransport(runner=runner_with([1] * 5))
+    with pytest.raises(TransportError):
+        dead.wait(handle, sleep=lambda s: None, clock=lambda: 0.0)
 
 
 def test_fetch_raises_on_nonzero_exit(tmp_path):

@@ -28,6 +28,9 @@ import json
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
+
+import numpy as np
 
 import pytest
 from vibeqc.output import (
@@ -584,3 +587,130 @@ def test_nto_molden_dispatch_preserves_default_title(
 
     assert written == [target]
     assert seen == {"path": target, "title": ""}
+
+
+@pytest.mark.parametrize("dim", [1, 2, 3], ids=["chain", "slab", "bulk"])
+@pytest.mark.parametrize(
+    "different_input_system", [False, True], ids=["cell", "supercell"]
+)
+def test_periodic_density_xsf_keeps_sampled_origin_and_atoms(
+    tmp_path: Path,
+    dim: int,
+    different_input_system: bool,
+) -> None:
+    """Execute the runner's actual dispatch expression through the XSF writer.
+
+    An analytic array isolates spatial registration from SCF convergence. The
+    emitted origin must describe the box sampled, while atom coordinates stay
+    in their original frame. A distinct input system catches accidentally
+    using the primitive cell when the runner emits a supercell density.
+    """
+    from vibeqc.periodic_runner import _qvf_grid_origin_bohr
+
+    lattice = np.diag([8.0, 12.0, 20.0])
+    atoms = [_Atom(1, (1.0, -1.0, -0.7)), _Atom(3, (3.0, 1.0, 0.7))]
+    system = SimpleNamespace(dim=dim, lattice=lattice, unit_cell=atoms)
+    expected_origin = np.array(
+        [0.0, -6.0 if dim == 1 else 0.0, -10.0 if dim < 3 else 0.0]
+    )
+    sampled_origin = _qvf_grid_origin_bohr(system, lattice)
+    np.testing.assert_array_equal(sampled_origin, expected_origin)
+    shape = (3, 4, 5)
+    fractions = np.indices(shape).reshape(3, -1) / np.array(shape)[:, None]
+    sampled_points = sampled_origin[:, None] + lattice @ fractions
+    data = np.exp(
+        -np.sum((sampled_points - np.array(atoms[0].xyz)[:, None]) ** 2, axis=0) / 30.0
+    ).reshape(shape)
+
+    stem = tmp_path / "density"
+    target = tmp_path / "density.xsf"
+    plan = OutputPlan(
+        stem=stem,
+        job_kind="periodic_scf",
+        method="analytic-fixture",
+        basis="none",
+        functional=None,
+        files=(PlannedFile("density", target, "xsf", True, "density fixture"),),
+    )
+    writer = OutputWriter(plan, record_hostname=False)
+    runner_path = Path(__file__).parents[1] / "python/vibeqc/periodic_runner.py"
+    tree = ast.parse(runner_path.read_text(encoding="utf-8"))
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "dispatch_role"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and node.args[0].value == "density"
+        and any(
+            kw.arg == "only_format"
+            and isinstance(kw.value, ast.Constant)
+            and kw.value.value == "xsf"
+            for kw in node.keywords
+        )
+    ]
+    assert len(calls) == 1
+    input_system = (
+        SimpleNamespace(dim=3, lattice=np.eye(3), unit_cell=[])
+        if different_input_system
+        else system
+    )
+    eval(
+        compile(ast.Expression(calls[0]), str(runner_path), "eval"),
+        {
+            "_output_writer": writer,
+            "system": input_system,
+            "density_write_system": system,
+            "rho": data,
+            "output_stem": stem,
+            "L_bohr": lattice,
+            "_qvf_grid_origin_bohr": _qvf_grid_origin_bohr,
+        },
+    )
+
+    lines = target.read_text(encoding="utf-8").splitlines()
+    assert lines[0] == {1: "POLYMER", 2: "SLAB", 3: "CRYSTAL"}[dim]
+    atom_start = lines.index("PRIMCOORD") + 2
+    emitted_atoms = np.array(
+        [
+            list(map(float, line.split()[1:]))
+            for line in lines[atom_start : atom_start + len(atoms)]
+        ]
+    )
+    bohr_to_angstrom = 0.529177210903
+    np.testing.assert_allclose(
+        emitted_atoms,
+        np.array([a.xyz for a in atoms]) * bohr_to_angstrom,
+        rtol=0,
+        atol=5.1e-9,
+    )
+    start = next(
+        i for i, line in enumerate(lines) if line.startswith("BEGIN_DATAGRID_3D_")
+    )
+    emitted_shape = tuple(map(int, lines[start + 1].split()))
+    emitted_origin = np.fromstring(lines[start + 2], sep=" ")
+    emitted_spans = np.array(
+        [np.fromstring(line, sep=" ") for line in lines[start + 3 : start + 6]]
+    )
+    end = next(
+        i
+        for i in range(start + 6, len(lines))
+        if lines[i].startswith("END_DATAGRID_3D_")
+    )
+    emitted_data = np.fromstring(" ".join(lines[start + 6 : end]), sep=" ")
+    emitted_data = emitted_data.reshape(emitted_shape, order="F")
+    assert emitted_shape == shape
+    np.testing.assert_allclose(
+        emitted_origin, expected_origin * bohr_to_angstrom, rtol=0, atol=5.1e-9
+    )
+    np.testing.assert_allclose(
+        emitted_spans, lattice.T * bohr_to_angstrom, rtol=0, atol=5.1e-9
+    )
+    np.testing.assert_allclose(emitted_data, data, rtol=5e-6, atol=1e-12)
+    reconstructed_points = (
+        emitted_origin[:, None] + emitted_spans.T @ fractions
+    ) / bohr_to_angstrom
+    np.testing.assert_allclose(reconstructed_points, sampled_points, rtol=0, atol=3e-8)
+    assert next(o for o in writer.outcomes() if o.path == target).written

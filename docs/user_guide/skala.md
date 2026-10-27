@@ -15,6 +15,20 @@ the same model can be combined with different Coulomb builders, Gaussian
 bases, spin treatments, and periodic boundary conditions where the route uses
 the shared AO-grid XC projector.
 
+```{admonition} Status: experimental
+:class: warning
+
+SKALA-1.1 is an experimental route throughout: self-consistent energies at a
+fixed geometry only. The molecular envelope (RKS, UKS and ROKS single points) is
+documented on this page; every periodic route is experimental. The code signals
+it by failing closed on every derivative, optimisation, response and
+unsupported-route request instead of substituting libxc, and the `.system`
+manifest records the external-XC backend, checkpoint revision and digest. Its
+numbers are research output, not validated results, and it is not part of the
+release gate. The label vocabulary is defined in
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+```
+
 ```{admonition} Current scope
 :class: important
 
@@ -24,6 +38,38 @@ Periodic support is experimental and limited to the routes listed below.
 Analytic forces, geometry or cell optimization, stress, Hessians, TDDFT, and
 Newton/TRAH response paths are not available and fail closed.
 ```
+
+## Theory
+
+SKALA ({vibeqc-cite}`luise_skala_2025`) writes the exchange-correlation energy as
+a learned enhancement factor times the spin-resolved local-density exchange
+energy density, evaluated on the integration grid $\{\mathbf r_i, w_i\}$:
+
+$$
+E_{\rm xc}^{\theta}[\rho] = -\frac34\Big(\frac{6}{\pi}\Big)^{1/3}
+\int \big[\rho_\uparrow^{4/3}(\mathbf r) + \rho_\downarrow^{4/3}(\mathbf r)\big]\,
+f_\theta[\mathbf x[\rho]](\mathbf r)\,d\mathbf r
+\;\approx\; -\frac34\Big(\frac{6}{\pi}\Big)^{1/3}\sum_i w_i
+\big[\rho_{\uparrow,i}^{4/3} + \rho_{\downarrow,i}^{4/3}\big]\, f_{\theta,i} .
+$$
+
+With $f_\theta = 1$ this is LDA exchange; the form makes the high-density
+uniform coordinate scaling, size consistency and the Lieb-Oxford bound
+straightforward to build in. The inputs at each point are the seven meta-GGA
+features $\mathbf x_i = (\rho_\uparrow, \rho_\downarrow, |\nabla\rho_\uparrow|^2,
+|\nabla\rho_\downarrow|^2, \tau_\uparrow, \tau_\downarrow, |\nabla\rho|^2)$. Unlike a
+meta-GGA, $f_\theta$ is a neural functional of the whole feature field: a
+non-local layer exchanges information between each grid point and a coarse
+point of its atom, which keeps semi-local cost scaling while the enhancement
+factor depends on the density elsewhere. The per-atom grids are therefore model
+inputs, which is why vibe-qc pins the quadrature below, although the
+architecture is designed to converge as the grid is refined. The Kohn-Sham
+potential is the derivative $V^{\rm xc}_{\mu\nu} = \partial E_{\rm xc}^{\theta}/\partial P_{\mu\nu}$,
+obtained by differentiating through the features. Dispersion is not part of the
+model: it was trained on B3LYP densities with the D3 correction included in the
+total energy, hence the recommended D3(BJ) setting below. The AO-density host
+interface follows the CP2K/GauXC implementation
+({vibeqc-cite}`poschel_skala_cp2k_2026`).
 
 ## At a glance
 
@@ -121,7 +167,8 @@ source example, including a safe `--dry-run` mode.
 ### Add the checkpoint-recommended D3(BJ) correction
 
 The TorchScript artifact is the XC functional only. Its metadata records
-`b3lyp5` as the expected D3 setting, but vibe-qc does not silently add
+`b3lyp5` as the expected D3 setting (D3 with Becke-Johnson damping,
+{vibeqc-cite}`grimme_d3_2010`, {vibeqc-cite}`grimme_d3bj_2011`), but vibe-qc does not silently add
 dispersion. Request it explicitly when you intend to reproduce that molecular
 protocol:
 
@@ -189,15 +236,16 @@ weights, atomic grouping, and ordering are therefore part of the model input,
 not a freely interchangeable numerical accuracy setting within one benchmark.
 Microsoft's implementation allows configurable grids, and the training data
 used multiple grid constructions. vibe-qc deliberately accepts one pinned
-profile: the PySCF 2.14 level-3 default used by Microsoft's PySCF inference
-and benchmark protocol:
+profile: the PySCF 2.14 level-3 default ({vibeqc-cite}`sun_pyscf_2020`) used by
+Microsoft's PySCF inference and benchmark protocol:
 
 - element-period radial counts from 50 through 105;
 - Lebedev order 29, 302 points, through Ne and order 35, 434 points,
-  thereafter;
-- atom-specific Treutler-Ahlrichs radial scaling;
+  thereafter ({vibeqc-cite}`lebedev_laikov_1999`);
+- atom-specific Treutler-Ahlrichs radial scaling ({vibeqc-cite}`treutler_ahlrichs_1995`);
 - the radius-based five-region NWChem pruning rule;
-- the square-root Bragg-radius heteroatomic Becke adjustment; and
+- the square-root Bragg-radius heteroatomic Becke adjustment
+  ({vibeqc-cite}`becke_grid_1988`); and
 - complete atom-major blocks with the required angular and radial ordering.
 
 For normal high-level use, do not set a different grid:
@@ -258,6 +306,15 @@ builders but bypass their ordinary pointwise or split XC path and use the same
 full-grid periodic adapter. The example below is an API smoke calculation in a
 deliberately simple 3D cell. It is not a converged chemistry benchmark.
 
+For the GPW/GAPW full-grid adapter, `external_xc_image_radius_bohr` selects
+only the Becke partition. The AO density uses
+`external_xc_lattice_options.cutoff_bohr`; a positive
+`external_xc_lattice_options.becke_image_radius_bohr` narrows its bra-image
+reach, capped at that cutoff. A nonpositive value uses the full cutoff.
+These two radii are independent, as in BIPOLE. Converge both the AO support
+and the quadrature; separating them does not certify diffuse-basis convergence
+or a real-checkpoint SKALA result.
+
 ```python
 import numpy as np
 import vibeqc as vq
@@ -316,7 +373,7 @@ Every row marked available below remains experimental for SKALA. Normal route
 restrictions from [Periodic-SCF methods](periodic_methods.md) still apply.
 All periodic full-grid external-XC routes are currently zero-temperature
 only. Positive electronic smearing fails before dry-run or integral setup;
-finite-iteration Mermin energy, entropy, occupations, and the returned density
+finite-iteration Mermin ({vibeqc-cite}`mermin_finite_temperature_dft_1965`) energy, entropy, occupations, and the returned density
 must first be made one coherent state in every host driver.
 
 | Periodic route | SKALA methods and sampling | Qualification |
@@ -350,6 +407,24 @@ literal WSSC construction.
 The image set used by the periodic Becke partition is currently an
 implementation-pinned part of this experimental adaptation, not an independent
 high-level convergence keyword.
+
+The [LiF Gamma input](../../studies/skala-showcase/lif_gamma.py) and
+[LiF complete 2x2x2 input](../../studies/skala-showcase/lif_k222.py) can select
+BIPOLE with `--jk-method bipole --bipole-cutoff-bohr R`, where `R` is an
+explicit positive finite cutoff in bohr. Add `--dry-run` to check dispatch
+without evaluating the checkpoint. These experimental RKS inputs retain GDF
+as their default; selecting BIPOLE does not establish cutoff convergence or
+extend validation to UKS. See the
+[campaign instructions](https://github.com/vibe-qc/vibe-qc/blob/main/studies/skala-showcase/README.md#select-bipole-for-the-lif-inputs)
+for output separation and comparison limits.
+
+The [BeH doublet input](../../studies/skala-showcase/beh_bipole_uks.py) exercises
+BIPOLE UKS with unequal spin populations, at Gamma or a complete mesh supplied
+with `--kpoints NX NY NZ`. It requires `--bipole-cutoff-bohr R` and supports
+`--dry-run`. A real run checks the returned occupations for three alpha and
+two beta electrons. This experimental periodic molecular cell tests routing
+and spin bookkeeping; it does not certify grid densities, forces or chemical
+accuracy.
 
 For any periodic SKALA calculation:
 

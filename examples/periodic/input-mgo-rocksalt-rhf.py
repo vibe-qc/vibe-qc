@@ -1,18 +1,36 @@
-"""MgO conventional rocksalt — RHF / STO-3G / Γ-only Ewald-3D.
+"""MgO conventional rocksalt — RHF / STO-3G / Γ-only GDF.
+
+Success criterion: the SCF converges within the iteration budget
+(``max_iter = 60``) and energy tolerance (``conv_tol_energy = 1e-7``) set
+below, and the |dE| against PySCF.pbc printed by
+``examples/debug/mgo_al2o3_parity.py`` is at the mHa level. The PySCF
+reference for this cell that the GDF parity scripts target is
+-1085.231546 Ha (``examples/debug/scratch_test_gdf_driver.py``). This
+conventional 8-atom cell is a long run on the Gamma-only Ewald-3D route
+(tens of minutes on a loaded machine), not a seconds-scale example.
 
 Standard ionic-wide-gap-insulator benchmark. 4 Mg + 4 O in the
 cubic conventional cell, lattice constant a = 4.211 Å (experimental).
-The vibe-qc half of the v0.7 RHF parity test against PySCF.pbc; see
-``examples/debug/mgo_al2o3_parity.py`` for the side-by-side
-comparison.
+The vibe-qc half of the RHF parity test against PySCF.pbc (Γ-only
+GDF with ``exxdiv='ewald'``); see ``examples/debug/mgo_al2o3_parity.py``
+for the side-by-side comparison.
+
+Runs native Gaussian density fitting through ``run_periodic_job`` at
+the single Γ point. One k point is a crude Brillouin-zone sample for
+this cell: the point here is a like-for-like parity target, not a
+converged MgO energy. Pass a k mesh, e.g. ``kpoints=(4, 4, 4)``, for
+that.
 
 Run:
     .venv/bin/python examples/periodic/input-mgo-rocksalt-rhf.py
 
+Expect 20 to 30 minutes with 3 or 4 OpenMP threads (vibe-qc 0.17.15).
+
 Outputs (next to this script):
     input-mgo-rocksalt-rhf.out      — banner, SCF trace, energies
-    input-mgo-rocksalt-rhf.perf     — per-iteration wall-clock
     input-mgo-rocksalt-rhf.system   — host / build / runtime manifest
+    input-mgo-rocksalt-rhf.perf     — per-stage wall-clock
+    plus the runner's structure, orbital, citation and QVF files
 """
 
 from pathlib import Path
@@ -20,7 +38,7 @@ from pathlib import Path
 import numpy as np
 
 import vibeqc as vq
-from vibeqc import perf_log, write_system_manifest
+from vibeqc import perf_log
 
 HERE = Path(__file__).resolve().parent
 STEM = Path(__file__).stem  # → "input-mgo-rocksalt-rhf"
@@ -41,33 +59,16 @@ unit_cell = (
 sysp  = vq.PeriodicSystem(3, np.diag([A, A, A]), unit_cell)
 basis = vq.BasisSet(sysp.unit_cell_molecule(), "sto-3g")
 
-opts = (vq.PeriodicRHFOptions() if hasattr(vq, "PeriodicRHFOptions")
-        else vq.PeriodicKSOptions())
-opts.lattice_opts.coulomb_method      = vq.CoulombMethod.EWALD_3D
-opts.lattice_opts.cutoff_bohr         = 12.0
-opts.lattice_opts.nuclear_cutoff_bohr = 25.0
-opts.max_iter        = 60
-opts.use_diis        = True
-opts.damping         = 0.85
-opts.conv_tol_energy = 1e-7
-opts.initial_guess   = vq.InitialGuess.SAD
-
 with perf_log(OUT.with_suffix(".perf")):
-    result = vq.run_rhf_periodic_gamma_ewald3d(
-        sysp, basis, opts, omega=0.3, spacing_bohr=0.5, progress=False,
+    result = vq.run_periodic_job(
+        sysp, basis,
+        method="RHF",
+        jk_method="gdf",
+        kpoints=(1, 1, 1),
+        max_iter=60,
+        conv_tol_energy=1e-7,
+        output=str(OUT),
     )
-
-with open(OUT.with_suffix(".out"), "w") as fh:
-    fh.write("MgO conventional rocksalt — RHF / STO-3G / Γ-only Ewald-3D\n")
-    fh.write(f"  lattice constant      = {A_ANG:.3f} Å ({A:.4f} bohr)\n")
-    fh.write(f"  atoms per cell        = 4 Mg + 4 O = 8\n")
-    fh.write(f"  basis                 = STO-3G ({basis.nbasis} fns / cell)\n")
-    fh.write("\n")
-    fh.write(f"  E_total               = {result.energy:.8f} Ha\n")
-    fh.write(f"  converged             = {result.converged}\n")
-    fh.write(f"  SCF iterations        = {result.n_iter}\n")
-
-write_system_manifest(OUT.with_suffix(".system"))
 
 print(f"  E = {result.energy:.8f} Ha   converged={result.converged}   "
       f"n_iter={result.n_iter}")

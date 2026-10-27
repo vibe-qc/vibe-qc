@@ -176,6 +176,15 @@ class EnergyEngine(abc.ABC):
         """
         return None
 
+    def atom_cache_settings(self, *, host: Any = None) -> dict[str, Any]:
+        """Stable, JSON-serializable atom-reference settings for cache keys.
+
+        Engines changing their atom-reference formulation must distinguish it
+        from previously persisted results. The empty default preserves existing
+        keys for engines whose reference convention has not changed.
+        """
+        return {}
+
     @abc.abstractmethod
     def crystal_energy(
         self,
@@ -214,8 +223,7 @@ class EnergyEngine(abc.ABC):
         the convention of whatever reference the result is compared
         against. This is the single biggest correctness trap in cohesive
         energies: spin-restricting the Br reference alone moved KBr's
-        atomization by 37 kJ/mol (see
-        ``handovers/HANDOVER_GPAW_PW_REFERENCE.md``, GPAW-PWREF-002).
+        atomization by 37 kJ/mol (GPAW-PWREF-002).
         An engine that can vary the convention must record which one it
         used in ``EngineEnergy.detail``.
 

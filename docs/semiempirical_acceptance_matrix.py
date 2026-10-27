@@ -7,11 +7,14 @@ update it as tests are added and validation gaps are closed.
 Current status (2026-08-21)
 ----------------------------
 - DFTB0/SCC-DFTB: screening/preopt only (in-house parameters, no fitted repulsives)
-- GFN2-xTB: gated experimental (molecular AES + GAM3 + post-SCF native
-  D4-style dispersion landed for the native D4 reference-data set;
-  Gamma-periodic derivatives are FD-validated, while faithful periodic AES
-  electrostatics, broader molecular-limit coverage, mixer tuning, and external
-  parity gates remain)
+- GFN2-xTB: gated experimental (molecular faithful AES + GAM3 +
+  self-consistent D4 from the pinned published references; the public
+  molecular total is at xtb 6.7.0 parity on the 45 closed-shell matrix rows
+  since 2026-10-26, and the explicit legacy_eeq control keeps the post-SCF
+  native D4 for its own reference-data set; Gamma-periodic derivatives are
+  FD-validated, while faithful periodic AES electrostatics, broader
+  molecular-limit coverage, mixer tuning, external gradient parity and the
+  unrestricted route remain)
 - PM6/UPM6: native molecular development route; H-only and H-heavy s/p
   interactions are source-correct, but the full heavy-heavy two-center tensor
   and exact MOPAC heat-of-formation convention remain open
@@ -88,8 +91,11 @@ ACCEPTANCE = {
         },
         "gating_issues": [
             (
-                "Native post-SCF D4 is limited to H, He, B, C, N, O, F, Ne "
-                "and returns zero with GFN2D4UnsupportedWarning outside that set"
+                "Native post-SCF D4 is limited to H-Ar and Cu "
+                "and returns zero with GFN2D4UnsupportedWarning outside that set "
+                "(explicit legacy_eeq control only; the default route couples the "
+                "pinned published references and matches xtb's dispersion channel "
+                "to 1e-6 Ha on every closed-shell matrix row)"
             ),
             "Periodic AES image-cell multipole Ewald still pending",
             (
@@ -97,7 +103,15 @@ ACCEPTANCE = {
                 "H2O fixture so far"
             ),
             "DIIS/Broyden mixer convergence still needs polar-molecule tuning",
-            "External xTB parity matrix not closed across molecules, ions, radicals, and periodic cells",
+            (
+                "External xTB parity: the closed-shell molecular matrix is "
+                "closed (49 systems, electronic + repulsion within 2e-5 Ha of "
+                "xtb 6.7.0 and, on the default coupled-D4 route, the public "
+                "total within 2e-5 Ha and the dispersion channel within 1e-6 Ha, "
+                "tests/test_gfn2_xtb_parity_matrix.py); external gradient "
+                "parity, radicals (gated unrestricted path only) and periodic "
+                "cells remain open"
+            ),
             "C2H4 / polar SCC convergence remains a tuning gate for non-simple mixers",
         ],
     },

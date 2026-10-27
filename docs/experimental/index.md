@@ -17,14 +17,21 @@ catalog
   there if you want to know what's gated and why.
 - **Basis set development**, developer documentation for the basis-set
   optimiser toolchain, design notes, and verification reports.
-- **AICCM**, the ab-initio cyclic cluster model, both Γ-CCM
-  (`aiccm2026dev-a`, union-and-weight/Wigner--Seitz integral weighting) and
+- **AICCM**, the ab-initio cyclic cluster model, both the Γ-CCM line
+  (`aiccm2026dev-a`: Γ-CCM is the neutral finite-torus construction with the
+  `real-gamma` and `neutral-bloch` variants, and the `four-center` variant is
+  the 2014 union-and-weight/Wigner-Seitz lineage kept in the same line) and
   χ-CCM[^xccm-convention] (`aiccm2026dev-b`, finite-translation-group
-  characters).
+  characters). Every AICCM variant is experimental; the label vocabulary
+  (production, preview, experimental, gated) that every status page uses is
+  defined in [Methods: theory and status](../methods.md#how-to-read-the-status-labels).
 
 [^xccm-convention]: Γ-CCM and χ-CCM are distinct CCM construction approaches:
-    union-and-weight/Wigner-Seitz integral weighting and finite-translation-group
-    characters, respectively. A declared common exchange-q=0 convention is a
+    Γ-CCM is the neutral finite-torus construction with two producers,
+    `variant="real-gamma"` and `variant="neutral-bloch"` (ruling R1, 2026-08-21),
+    while the `four-center` variant is the 2014 union-and-weight/Wigner-Seitz
+    lineage kept in the same `aiccm2026dev-a` development line; χ-CCM is the
+    finite-translation-group character construction. A declared common exchange-q=0 convention is a
     comparison constraint, not an identification of the constructions. Their
     distinction is not a choice of Coulomb kernels, and equality for a specified
     operator and route must be established rather than inferred from the labels.
@@ -44,11 +51,14 @@ The cyclic cluster model is vibe-qc's signature real-space approach to
 periodic systems. Two independent implementations are maintained while the
 common limit is being established:
 
-- **[`aiccm2026dev-a`](../aiccm2026dev_a.md)**, the union-and-weight
-  Gamma-supercell CCM line (`vibeqc.periodic.ccm`). Its construction methods
-  are HF, KS, MP2, UMP2, and CCSD(T), with analytic gradients and derivable
-  properties. The same namespace contains neutral fitted-torus UCCSD(T) and
-  DLPNO controls that are not assigned a Γ-CCM or χ-CCM identity.
+- **[`aiccm2026dev-a`](../aiccm2026dev_a.md)**, the Γ-CCM development line
+  (`vibeqc.periodic.ccm`). Γ-CCM is the neutral finite-torus construction with
+  two producers, `variant="real-gamma"` and `variant="neutral-bloch"`; the
+  `four-center` variant is the 2014 union-and-weight/Wigner-Seitz lineage kept
+  in the same line. The line's methods are HF, KS, MP2, UMP2, and CCSD(T),
+  with analytic gradients and derivable properties. The same namespace
+  contains neutral fitted-torus UCCSD(T) and DLPNO controls that D90 leaves
+  without an assigned Γ-CCM or χ-CCM identity.
 - **[`aiccm2026dev-b`](../user_guide/aiccm2026dev_b.md)**, χ-CCM, the
   finite-character (Γ-centred character-mesh) CCM line
   (`vibeqc.periodic.chi`). It uses the explicit Γ-centred
@@ -64,7 +74,16 @@ Open-shell capabilities across both lines are documented in
 
 ../aiccm2026dev_a
 ../aiccm2026dev_a_followon
+../aiccm2026dev_a_production
 ../user_guide/aiccm2026dev_b
+../chi_fitted_support
+../chi_ccsd
+../chi_local_mp2
+../chi_rohf_mp2
+../chi_ecp
+../chi_restart
+../chi_mp2_convergence
+../translation_ccsd_residual
 ../design_aiccm2026dev_b
 ../aiccm2026dev_b_decisions
 ```
@@ -102,7 +121,7 @@ aiccm2026dev_troubleshooting
 The runnable examples live under `examples/periodic/`:
 
 - [`aiccm2026dev_a_demo.py`](https://github.com/vibe-qc/vibe-qc/blob/main/examples/periodic/aiccm2026dev_a_demo.py),
-  Γ-CCM union-and-weight stack: 8-fold ERI symmetry check on 1-D/2-D/3-D
+  Γ-CCM line, four-centre union-and-weight stack: 8-fold ERI symmetry check on 1-D/2-D/3-D
   lattices and the HF→MP2→CCSD(T) correlation ladder. It also reports the
   neutral four-center Madelung-background diagnostic as a separate control.
 - [`aiccm2026dev_b_demo.py`](https://github.com/vibe-qc/vibe-qc/blob/main/examples/periodic/aiccm2026dev_b_demo.py),

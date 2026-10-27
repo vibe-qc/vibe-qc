@@ -247,7 +247,7 @@ SCCDFTBSECCMResult run_scc_dftb_seccm(
             "SCC-DFTB-SECCM madelung and ewald_gamma are mutually exclusive: "
             "the Ewald-summed gamma already carries the Coulomb tail");
     }
-    // The refusal is a property of the kernel, not of the boundary (#211):
+    // The refusal is a property of the kernel, not of the boundary (former-tracker issue 211):
     // it is the Klopman-Ohno remainder's R^-3 tail, with a pair-dependent
     // amplitude, whose Wigner-Seitz truncation has no thermodynamic limit in
     // three dimensions.  The Elstner remainder decays exponentially and does,
@@ -257,7 +257,7 @@ SCCDFTBSECCMResult run_scc_dftb_seccm(
         throw std::invalid_argument(
             "SCC-DFTB-SECCM 3-D Madelung embedding is unavailable with the "
             "Klopman-Ohno gamma: its Ohno correction has no thermodynamic "
-            "limit. Pass gamma_form=Elstner for a kernel that does (#211).");
+            "limit. Pass gamma_form=Elstner for a kernel that does (former-tracker issue 211).");
     }
     int replica_order = 1;
     for (std::size_t axis = 0; axis < replicas.size(); ++axis) {
@@ -399,26 +399,16 @@ SCCDFTBSECCMResult run_scc_dftb_seccm(
     // cycle). All three dimensions contract through
     // indo::_madelung_potential_ewald so the SMADEL short-range
     // subtraction stays consistent across dimensions.
-    const int dim = static_cast<int>(topology.translations.size());
     std::vector<std::vector<indo::WSNeighbor>> ews;
     Eigen::MatrixXd madkonst;
     auto madelung_potential = [&](const Eigen::VectorXd& charges) {
         return indo::_madelung_potential_ewald(charges, madkonst, ews);
     };
     if (opts.madelung) {
-        ews = indo::_ewald_ws_cells(topology);
-        if (dim == 1) {
-            madkonst = detail::wire_madkonst_1d(ews, topology.translations[0], n_atoms);
-        } else if (dim == 2) {
-            madkonst = indo::_madkonst_2d(ews, topology.translations, n_atoms);
-        } else if (dim == 3) {
-            madkonst = indo::_madkonst_3d(ews, topology.translations, n_atoms);
-        }
-        if (!madkonst.allFinite()) {
-            throw std::runtime_error(
-                "SCC-DFTB-SECCM Madelung-constant matrix produced "
-                "non-finite values");
-        }
+        auto madelung_state = detail::build_seccm_madelung_state(
+            topology, n_atoms, "SCC-DFTB-SECCM");
+        ews = std::move(madelung_state.ews);
+        madkonst = std::move(madelung_state.madkonst);
     }
 
     // ---- Charge SCF loop (molecular run_scc_dftb pattern, T = 0) ----
@@ -448,7 +438,7 @@ SCCDFTBSECCMResult run_scc_dftb_seccm(
     // The stiff charge response of an embedded charged supercell can leave
     // plain Aitken relaxation in a limit cycle; DIIS on (dq, resid) pairs
     // breaks it. Disabled by default for parity with the molecular
-    // non-DIIS path; the Python wrapper enables it for madelung runs.
+    // non-DIIS path; the Python wrapper passes use_diis through unchanged.
     std::unique_ptr<DIIS> charge_diis;
     if (opts.use_diis) {
         charge_diis = std::make_unique<DIIS>(opts.diis_subspace);
@@ -765,7 +755,7 @@ Eigen::MatrixXd compute_scc_dftb_seccm_gradient(
             "SCC-DFTB-SECCM madelung and ewald_gamma are mutually exclusive: "
             "the Ewald-summed gamma already carries the Coulomb tail");
     }
-    // The refusal is a property of the kernel, not of the boundary (#211):
+    // The refusal is a property of the kernel, not of the boundary (former-tracker issue 211):
     // it is the Klopman-Ohno remainder's R^-3 tail, with a pair-dependent
     // amplitude, whose Wigner-Seitz truncation has no thermodynamic limit in
     // three dimensions.  The Elstner remainder decays exponentially and does,
@@ -775,7 +765,7 @@ Eigen::MatrixXd compute_scc_dftb_seccm_gradient(
         throw std::invalid_argument(
             "SCC-DFTB-SECCM 3-D Madelung embedding is unavailable with the "
             "Klopman-Ohno gamma: its Ohno correction has no thermodynamic "
-            "limit. Pass gamma_form=Elstner for a kernel that does (#211).");
+            "limit. Pass gamma_form=Elstner for a kernel that does (former-tracker issue 211).");
     }
     const int n_atoms = static_cast<int>(mol.atoms().size());
     if (result.group_order != group_order || result.n_basis <= 0
@@ -858,14 +848,12 @@ Eigen::MatrixXd compute_scc_dftb_seccm_gradient(
     std::vector<std::vector<indo::WSNeighbor>> ews;
     Eigen::MatrixXd madkonst;
     if (opts.madelung) {
-        ews = indo::_ewald_ws_cells(topology);
-        if (dim == 1) {
-            madkonst = detail::wire_madkonst_1d(
-                ews, topology.translations[0], n_atoms);
-        } else {
-            madkonst = indo::_madkonst_2d(
-                ews, topology.translations, n_atoms);
-        }
+        // The same state the energy was converged with, in every dimension.
+        // This copy used to hand a 3-D cell to the 2-D slab kernel.
+        auto madelung_state = detail::build_seccm_madelung_state(
+            topology, n_atoms, "SCC-DFTB-SECCM");
+        ews = std::move(madelung_state.ews);
+        madkonst = std::move(madelung_state.madkonst);
         const Eigen::VectorXd V_mad =
             indo::_madelung_potential_ewald(
                 result.charges, madkonst, ews);
@@ -878,7 +866,7 @@ Eigen::MatrixXd compute_scc_dftb_seccm_gradient(
     }
 
     // M matrix, molecular compute_scc_dftb_gradient convention:
-    // M = -W + D . 1/2 (kappa hbar_avg - V_A - V_B) on cross-atom pairs.
+    // M = -W + D . (kappa hbar_avg - (V_A + V_B)/2) on cross-atom pairs.
     // The Elstner PRB 58, 7260 (1998) Eq. 25 sign reasoning carries over
     // unchanged from the molecular driver (dq > 0 = cation convention).
     Eigen::MatrixXd effective = -energy_weighted;
@@ -890,8 +878,9 @@ Eigen::MatrixXd compute_scc_dftb_seccm_gradient(
             const double hbar_avg = 0.5
                 * (params.average_on_site(atoms[central].Z)
                    + params.average_on_site(atoms[origin].Z));
-            effective(mu, nu) += result.density(mu, nu) * 0.5
-                * (kappa * hbar_avg - potential(central) - potential(origin));
+            effective(mu, nu) += result.density(mu, nu)
+                * (kappa * hbar_avg
+                   - 0.5 * (potential(central) + potential(origin)));
         }
     }
 

@@ -1,4 +1,6 @@
+#include "vibeqc/hermitian_operator.hpp"
 #include "vibeqc/rks.hpp"
+#include "vibeqc/orbital_scf.hpp"
 
 #include <Eigen/Eigenvalues>
 #include <algorithm>
@@ -11,6 +13,7 @@
 #include <vector>
 
 #include "vibeqc/ao_eval.hpp"
+#include "vibeqc/degenerate_frontier.hpp"
 #include "vibeqc/diis.hpp"
 #include "vibeqc/diagnostics.hpp"
 #include "vibeqc/dynamic_damping.hpp"
@@ -562,9 +565,27 @@ XcContribution build_xc(const Functional& func,
 
 }  // namespace
 
+OrbitalXCFunction make_orbital_rks_xc(const BasisSet& basis, const Grid& grid, const std::string& name) {
+    auto f = std::make_shared<Functional>(name, 1);
+    validate_orbital_xc(*f);
+    auto ao = std::make_shared<AOValues>(evaluate_ao_with_gradient(basis, grid.points));
+    auto pool = std::make_shared<XcFunctionalPool>(
+        make_xc_functional_pool(name, 1, grid.points.rows()));
+    return [basis, grid, f, ao, pool](const Eigen::MatrixXd& da, const Eigen::MatrixXd& db, bool response) {
+        OrbitalXC out;
+        (void)db;
+        const auto value = build_xc(*f, basis, grid, da, nullptr, *pool);
+        out.energy = value.energy; out.alpha = value.V;
+        if (response) out.restricted_kernel = make_unpolarised_xc_kernel_builder(
+            *f, grid, ao->values, ao->gradients, da);
+        return out;
+    };
+}
+
 RKSResult run_rks(const Molecule& mol,
                   const BasisSet& basis,
                   const RKSOptions& opts) {
+    validate_orbital_optimizer(opts);
     validate_initial_guess(opts.initial_guess);
     validate_guess_ecp(opts.initial_guess, molecular_guess_ecp_context(opts), &mol);
     validate_scf_max_iter(opts.max_iter, "run_rks");
@@ -650,36 +671,7 @@ RKSResult run_rks(const Molecule& mol,
     const Functional functional(opts.functional);
     if (functional.needs_vv10() && opts.grid.vv10_grid_factor > 0.0
         && opts.grid.vv10_grid_factor != 1.0) {
-        GridOptions vv10_opts = opts.grid;
-        // Scale radial and angular resolution down by the factor.
-        const double f = opts.grid.vv10_grid_factor;
-        vv10_opts.n_radial = std::max(5, static_cast<int>(
-            std::lround(opts.grid.n_radial / f)));
-        if (vv10_opts.angular == AngularScheme::Lebedev) {
-            // Step down to the next lower bundled Lebedev order (29→17,
-            // 35→23, etc.).  The bundled orders are 11, 17, 23, 29, 35,
-            // 41, 47, 53.
-            int order = vv10_opts.lebedev_order;
-            if (order > 11) {
-                // Reduce by roughly factor f; at least one tier down.
-                int steps = std::max(1, static_cast<int>(std::lround(
-                    static_cast<double>(order - 11) / f)));
-                order = std::max(11, order - steps * 6);
-                // Snap to the nearest bundled order.
-                if (order <= 14) order = 11;
-                else if (order <= 20) order = 17;
-                else if (order <= 26) order = 23;
-                else if (order <= 32) order = 29;
-                else if (order <= 38) order = 35;
-            }
-            vv10_opts.lebedev_order = order;
-        } else {
-            vv10_opts.n_theta = std::max(3, static_cast<int>(
-                std::lround(opts.grid.n_theta / f)));
-            vv10_opts.n_phi = std::max(4, static_cast<int>(
-                std::lround(opts.grid.n_phi / f)));
-        }
-        vv10_grid_owner = std::make_unique<Grid>(build_grid(mol, vv10_opts));
+        vv10_grid_owner = std::make_unique<Grid>(build_vv10_grid(mol, opts.grid));
     }
     const Grid* vv10_grid = vv10_grid_owner.get();
     Grid cosx_grid_built;
@@ -800,6 +792,7 @@ RKSResult run_rks_scf_with_jk(const BasisSet& basis,
                               const GuessSelection* prepared_guess) {
     validate_initial_guess(opts.initial_guess);
     validate_guess_ecp(opts.initial_guess, molecular_guess_ecp_context(opts), guess_molecule);
+    validate_orbital_optimizer(opts);
     validate_scf_max_iter(opts.max_iter, "run_rks_scf_with_jk");
     if (n_electrons < 0 || n_electrons % 2 != 0) {
         throw std::invalid_argument("closed-shell SCF requires a nonnegative even electron count");
@@ -844,6 +837,10 @@ RKSResult run_rks_scf_with_jk(const BasisSet& basis,
     DavidsonOptions dav_opts = opts.davidson;
     if (use_davidson_here) {
         if (dav_opts.n_eig == 0) dav_opts.n_eig = orth.n_kept;
+        if (dav_opts.n_eig < nocc) {
+            throw std::invalid_argument(
+                "RKS: Davidson n_eig must include the occupied space");
+        }
     }
     Eigen::MatrixXd dav_guess_ortho;  // for eigenvector recycling
 
@@ -877,28 +874,14 @@ RKSResult run_rks_scf_with_jk(const BasisSet& basis,
             xc_kernel_ao->gradients, density);
     };
 
-    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> fock_solver;
     auto diagonalize_fock = [&](const Eigen::MatrixXd& F)
         -> std::pair<Eigen::MatrixXd, Eigen::VectorXd> {
-        const Eigen::MatrixXd Fp = X.transpose() * F * X;
-        if (use_davidson_here) {
-            if (dav_guess_ortho.size() != 0) {
-                dav_opts.guess_vectors = dav_guess_ortho;
-            }
-            DavidsonResult dres = davidson_solve(Fp, dav_opts);
-            if (!dres.converged) {
-                throw std::runtime_error(
-                    "RKS: Davidson diagonalization did not converge after "
-                    + std::to_string(dres.n_iter) + " iterations");
-            }
-            dav_guess_ortho = dres.eigenvectors;
-            return {X * dres.eigenvectors, dres.eigenvalues};
-        }
-        fock_solver.compute(Fp);
-        if (fock_solver.info() != Eigen::Success) {
-            throw std::runtime_error("RKS: Fock diagonalization failed");
-        }
-        return {X * fock_solver.eigenvectors(), fock_solver.eigenvalues()};
+        if (use_davidson_here && dav_guess_ortho.size() != 0)
+            dav_opts.guess_vectors = dav_guess_ortho;
+        auto result = solve_fock_matrix(F, X,
+            use_davidson_here ? &dav_opts : nullptr, OperatorKind::KohnSham);
+        if (use_davidson_here) dav_guess_ortho = result.eigenvectors;
+        return {X * result.eigenvectors, result.eigenvalues};
     };
 
     // ---- Initial density (and a seed MO frame for the C1c Newton step) ----
@@ -913,7 +896,25 @@ RKSResult run_rks_scf_with_jk(const BasisSet& basis,
         }
         D = constructed.density;
     } else {
-        D = build_density(C0, nocc);
+        // Hcore seed with a degenerate frontier averaged (#336), as in
+        // rhf.cpp: a user-requested partial Davidson spectrum can end inside
+        // the frontier, so complete only this seed diagonalization when the
+        // missing partners cannot be excluded.
+        if (nocc > 0 && C0.cols() < orth.n_kept
+            && (C0.cols() <= nocc
+                || eps0[eps0.size() - 1] - eps0[nocc - 1]
+                    <= kDegenerateFrontierTol)) {
+            Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> seed_solver(
+                X.transpose() * Hcore * X);
+            if (seed_solver.info() != Eigen::Success) {
+                throw std::runtime_error("RKS: Hcore seed diagonalization failed");
+            }
+            dav_guess_ortho = seed_solver.eigenvectors();
+            D = ensemble_seed_density(X * seed_solver.eigenvectors(),
+                                      seed_solver.eigenvalues(), nocc);
+        } else {
+            D = ensemble_seed_density(C0, eps0, nocc);
+        }
     }
     Eigen::MatrixXd D_prev = D;
 
@@ -922,12 +923,34 @@ RKSResult run_rks_scf_with_jk(const BasisSet& basis,
     // diagonalisation or the quadratic step.
     Eigen::MatrixXd C_prev_mo = C0;
     Eigen::VectorXd eps_prev_mo = eps0;
+    // A supplied seed density has no orbitals of its own: the frame above
+    // is Hcore's, so second-order steps wait for one diagonalisation (#426,
+    // see rhf.cpp).
+    bool seed_frame_stale = constructed.density.size() != 0;
 
     RKSResult result;
     result.guess_selection = constructed.selection;
     result.restart_basis = basis;
     result.functional = opts.functional;
     result.e_nuclear = E_nuc;
+
+    if (opts.orbital_optimizer == "opentrustregion") {
+        validate_orbital_xc(functional);
+        OrbitalXCFunction xc = [&](const Eigen::MatrixXd& da, const Eigen::MatrixXd&, bool response) {
+            const auto value = build_xc(functional, basis, grid, da, vv10_grid, xc_functionals);
+            result.xc_batch_workers_used = std::max(result.xc_batch_workers_used, value.batch_workers);
+            OrbitalXC out; out.energy = value.energy; out.alpha = value.V;
+            if (response) out.restricted_kernel = make_xc_kernel(da);
+            return out;
+        };
+        const auto run = run_orbital_scf(opts, X, S, Hcore, E_nuc, jk,
+            D, {}, nocc, nocc, true, alpha, xc);
+        assign_orbital_restricted(result, run, E_nuc);
+        result.e_coulomb = run.state.coulomb;
+        result.e_hf_exchange = run.state.exchange;
+        result.e_xc = run.state.xc.energy;
+        return result;
+    }
 
     // ORCA NOITER compatibility: evaluate the initial density once, but do
     // not take an SCF update or append an iteration trace entry.
@@ -1183,25 +1206,27 @@ RKSResult run_rks_scf_with_jk(const BasisSet& basis,
         // (cam_a·K + cam_b·K_erf) response, so they are disabled for
         // RSH functionals. Plain DIIS + the F/ε-only SOSCF / quadratic
         // fallback (both RSH-safe) carry the convergence. An
-        // RSH-aware second-order Hessian is a follow-up — see
-        // handovers/HANDOVER_META_GGA.md § 4.
+        // RSH-aware second-order Hessian is a follow-up.
         in_newton_phase =
             opts.newton_threshold > 0.0
             && grad_norm < opts.newton_threshold
             && !in_quadratic_phase
-            && !is_rsh;
+            && !is_rsh
+            && !seed_frame_stale;
         in_trah_phase =
             opts.trah_threshold > 0.0
             && grad_norm < opts.trah_threshold
             && !in_quadratic_phase
             && !in_newton_phase
-            && !is_rsh;
+            && !is_rsh
+            && !seed_frame_stale;
         in_soscf_phase =
             opts.soscf_threshold > 0.0
             && grad_norm < opts.soscf_threshold
             && !in_quadratic_phase
             && !in_newton_phase
-            && !in_trah_phase;
+            && !in_trah_phase
+            && !seed_frame_stale;
 
         // Skip DIIS during any second-order phase — the orbital step IS
         // the update mechanism, mixing with Fock extrapolation undoes
@@ -1419,6 +1444,7 @@ RKSResult run_rks_scf_with_jk(const BasisSet& basis,
         }
         C_prev_mo = C_new;
         eps_prev_mo = eps_new;
+        seed_frame_stale = false;
         D_prev = D_used;
         D = build_density(C_new, nocc);
 
@@ -1691,6 +1717,16 @@ RKSResult run_rks_scf_with_jk(const BasisSet& basis,
                 if (!unsupported_route) {
                     UHFStabilityOptions sopts;
                     sopts.max_iter = opts.stability_davidson_max_iter;
+                    {
+                        // #342: bound the solve by wall time as well as by matvecs.
+                        double scf_loop_wall_s = 0.0;
+                        for (const auto& it : result.scf_trace) {
+                            scf_loop_wall_s += it.wall_s;
+                        }
+                        sopts.wall_budget_s = stability_wall_budget_for(
+                            opts.stability_wall_budget_s, opts.stability_wall_fraction,
+                            opts.stability_wall_floor_s, scf_loop_wall_s);
+                    }
                     // A residual looser than the instability threshold
                     // cannot certify the sign of the reported eigenvalue.
                     sopts.residual_tol =
@@ -1701,8 +1737,7 @@ RKSResult run_rks_scf_with_jk(const BasisSet& basis,
                     // the closed-shell KS singlet and triplet sectors
                     // (Bauernschmitt & Ahlrichs 1996, doi:10.1063/1.471637;
                     // HF limit: Seeger & Pople 1977, doi:10.1063/1.434318),
-                    // so the lowest eigenvalue over the combined space is
-                    // the restricted stability verdict. Memory-bounded
+                    // whose sectors must be assessed separately. Memory-bounded
                     // batched kernel, same as the UKS default path. The
                     // kernel builder evaluates polarised fxc, which
                     // requires a spin=2 Functional view (same pattern as
@@ -1714,22 +1749,42 @@ RKSResult run_rks_scf_with_jk(const BasisSet& basis,
                     result.xc_batch_workers_used = std::max(
                         result.xc_batch_workers_used,
                         xc_k->batch_workers_used());
-                    const auto stab = uhf_internal_stability_lowest(
-                        C_f, C_f, eps_f, eps_f, nocc, nocc, jk, sopts,
-                        xc_k.get(), alpha_hf);
-                    result.xc_batch_workers_used = std::max(
-                        result.xc_batch_workers_used,
-                        xc_k->batch_workers_used());
-                    // The Hessian builder retains only O(n_grid) scalar
-                    // response state, but it need not overlap the complete
-                    // XC phase. Release it before returning.
-                    xc_k.reset();
+                    // Resolve both real spin sectors independently. The combined
+                    // UHF minimum cannot identify which constraint was broken.
+                    // Share the existing wall and matvec budgets between channels.
+                    const double total_wall_budget = sopts.wall_budget_s;
+                    const int total_matvec_budget = sopts.max_iter;
+                    sopts.max_iter = total_matvec_budget / 2;
+                    sopts.wall_budget_s = total_wall_budget / 2;
+                    sopts.restricted_spin_sector = 1;
+                    const auto internal = uhf_internal_stability_lowest(C_f, C_f, eps_f, eps_f, nocc, nocc, jk, sopts, xc_k.get(), alpha_hf);
+                    sopts.max_iter = total_matvec_budget - internal.n_matvec;
+                    sopts.wall_budget_s = total_wall_budget > 0
+                        ? std::max(1e-12, total_wall_budget - internal.wall_s) : 0;
+                    sopts.restricted_spin_sector = -1;
+                    const auto external = uhf_internal_stability_lowest(C_f, C_f, eps_f, eps_f, nocc, nocc, jk, sopts, xc_k.get(), alpha_hf);
+                    result.restricted_stability_channels = true;
+                    result.stability_internal_converged = internal.converged;
+                    result.stability_external_converged = external.converged;
+                    result.stability_internal_eigenvalue = internal.lowest_eigenvalue;
+                    result.stability_external_eigenvalue = external.lowest_eigenvalue;
+                    result.stability_internal_stop_reason = static_cast<int>(internal.stop_reason);
+                    result.stability_external_stop_reason = static_cast<int>(external.stop_reason);
                     result.stability_checked = true;
-                    result.stability_analysis_converged = stab.converged;
-                    result.stability_eigenvalue = stab.lowest_eigenvalue;
-                    result.internal_instability =
-                        stab.converged
-                        && stab.lowest_eigenvalue < -opts.stability_tol;
+                    result.stability_analysis_converged = internal.converged && external.converged;
+                    result.stability_stop_reason = static_cast<int>(
+                        !internal.converged ? internal.stop_reason : external.stop_reason);
+                    result.stability_n_matvec = internal.n_matvec + external.n_matvec;
+                    result.stability_wall_budget_s = total_wall_budget;
+                    result.stability_eigenvalue = std::min(
+                        internal.lowest_eigenvalue, external.lowest_eigenvalue);
+                    result.internal_instability = internal.converged
+                        && internal.lowest_eigenvalue < -opts.stability_tol;
+                    result.external_instability = external.converged
+                        && external.lowest_eigenvalue < -opts.stability_tol;
+                    result.xc_batch_workers_used = std::max(
+                        result.xc_batch_workers_used, xc_k->batch_workers_used());
+                    xc_k.reset();
                 }
                 charge_stability_phase();
             }

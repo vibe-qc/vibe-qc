@@ -1,5 +1,6 @@
 // Tiny actual-source diagnostics. Numerical selection/PNOs/iteration stay C++.
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 #include <pybind11/numpy.h>
 #include <array>
 #include "vibeqc/periodic_gaussian_domain_pair_mp2.hpp"

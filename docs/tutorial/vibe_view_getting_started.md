@@ -78,10 +78,11 @@ route also needs `git`. Debian and Ubuntu users need the matching
 ### Companion release artifacts
 
 Look for a validated wheel on the [vibe-view release page](https://github.com/vibe-qc/vibe-view/releases).
-The `vibeview-2.15.2` wheel retained under this documentation site's
-`_static/downloads/` predates the split. It is a legacy artifact, not a
-verified current release. Until an appropriate companion artifact is
-published, use the source route below.
+Current viewer artifacts belong to the companion's releases, not this core
+documentation site's downloads. Check the selected release's platform and
+Python requirements in the [viewer installation guide](https://vibe-qc.com/vibe-view/docs/installation.html).
+If it has no suitable artifact, use the source route below. A source tag alone
+does not promise a wheel or desktop installer.
 
 ### Source route: clone the repository
 

@@ -23,10 +23,6 @@ from hashlib import sha256
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
-import ase
-import e3nn
-import mace
-import torch
 import vibeqc
 from vibeqc import run_job, run_neb
 from vibeqc.banner import build_info
@@ -34,6 +30,7 @@ from vibeqc.mlip import mace_model_registry, resolve_model, save_mace_model_regi
 from vibeqc.mlip.mace import (
     MACEModel,
     PeriodicMACEEvaluator,
+    _require_backends,
     mace_cache_root,
     mace_calculator,
     optimize_periodic_mace_cell,
@@ -111,11 +108,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
-    if sys.version_info >= (3, 14):
-        raise SystemExit(
-            "MACE currently requires Python 3.13 or earlier; "
-            f"this interpreter is {platform.python_version()}."
-        )
+    try:
+        _require_backends()
+    except ImportError as exc:
+        raise SystemExit(str(exc)) from exc
+    import ase
+    import e3nn
+    import mace
+    import torch
 
     api = {
         "run_job": run_job,
@@ -167,7 +167,7 @@ def main(argv: list[str] | None = None) -> None:
             "explicit and calculation-local"
         )
 
-    print("vibe-qc MACE runtime health: OK")
+    print("vibe-qc ACEsuit MACE runtime health: OK")
     print(f"python:     {platform.python_version()}")
     print(f"vibe-qc:   {vibeqc.__version__}")
     print(f"git SHA:   {source.get('sha_full') or 'not available'}")
@@ -178,7 +178,7 @@ def main(argv: list[str] | None = None) -> None:
     print(f"ASE:       {package_version('ase', ase)}")
     print(f"torch:     {package_version('torch', torch)}")
     print(f"e3nn:      {package_version('e3nn', e3nn)}")
-    print(f"MACE:      {package_version('mace-torch', mace)}")
+    print(f"mace-torch:{package_version('mace-torch', mace):>11}")
     print(f"default:   {info.key}")
     print(f"loader:    {info.loader}")
     print(f"license:   {info.license}")

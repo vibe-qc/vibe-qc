@@ -1,65 +1,42 @@
-"""OH radical — UHF + UMP2 post-SCF correlation energy.
+"""OH radical at 6-31G*: one UHF + UMP2 job with standard output files.
 
-Demonstrates the open-shell post-Hartree-Fock workflow:
+Copy this script to a run directory outside the checkout, activate the
+installed engine environment, and run ``python input-oh-ump2.py``.
+Outputs use the ``output-oh-ump2`` prefix in the current working directory.
 
-  1. Run a UHF reference (using ``run_job`` for the standard files
-     plus banner/MO table/.molden export).
-  2. Re-run the underlying ``run_uhf`` to get the result object that
-     ``run_ump2`` consumes (UMP2 needs the orbital + integral state
-     that the high-level driver assembles internally).
-  3. Print the correlation energy and the spin-contamination
-     diagnostic — UMP2 inherits the UHF reference's <S²>.
-
-Run:
-    .venv/bin/python examples/molecular/input-oh-ump2.py
-
-Outputs (next to this script):
-    input-oh-ump2.out       — banner, UHF SCF trace, MO table
-    input-oh-ump2.molden    — orbitals at the UHF solution
-    input-oh-ump2.system    — host / build / runtime manifest
+``run_job(method="mp2")`` selects UMP2 for this doublet and writes the
+reference and correlation energies through the normal output system. The
+Molden file contains UHF orbitals. All-electron correlation is explicit;
+no second UHF run or manual append to the output is needed.
 """
-
-from pathlib import Path
 
 import vibeqc as vq
 
-HERE = Path(__file__).resolve().parent
-STEM = Path(__file__).stem  # → "input-oh-ump2"
-
-# OH radical — open-shell doublet, equilibrium geometry
+# OH radical: open-shell doublet at an illustrative fixed geometry in bohr.
 mol = vq.Molecule(
     [
         vq.Atom(8, [0.0, 0.0, 0.0]),
-        vq.Atom(1, [0.0, 0.0, 1.85]),   # ~0.98 Å in bohr
+        vq.Atom(1, [0.0, 0.0, 1.85]),   # approximately 0.98 angstrom
     ],
     charge=0,
     multiplicity=2,
 )
 
-# 1. Standard files via run_job (UHF reference)
-vq.run_job(
+job = vq.run_job(
     mol,
     basis="6-31g*",
-    method="uhf",
-    output=HERE / STEM,
+    method="mp2",
+    mp2_reference="uhf",
+    frozen_core=0,
+    output="output-oh-ump2",
+    write_molden_file=True,
 )
+if not job.converged:
+    raise RuntimeError("OH UHF reference did not converge; inspect output-oh-ump2.out")
 
-# 2. UMP2 on top of the UHF reference. run_uhf is needed for the
-#    intermediate-result handoff that run_ump2 consumes.
-basis = vq.BasisSet(mol, "6-31g*")
-uhf = vq.run_uhf(mol, basis)
-ump2 = vq.run_ump2(mol, basis, uhf)
-
-# 3. Report into the same .out the run_job above already wrote.
-out_path = (HERE / STEM).with_suffix(".out")
-with open(out_path, "a") as fh:
-    fh.write("\n=== UMP2 post-HF correlation ===\n")
-    fh.write(f"  E(UHF)              = {uhf.energy:14.8f} Ha\n")
-    fh.write(f"  E(UMP2 correlation) = {ump2.e_correlation:14.8f} Ha\n")
-    fh.write(f"  E(UMP2 total)       = {ump2.e_total:14.8f} Ha\n")
-    fh.write(f"  <S²>(UHF)           = {uhf.s_squared:14.6f}\n")
-    fh.write(f"  ideal <S²>          = {0.5 * (mol.multiplicity - 1) * (mol.multiplicity + 1):14.6f}\n")
-
-print(f"  E(UHF)              = {uhf.energy:14.8f} Ha")
-print(f"  E(UMP2 correlation) = {ump2.e_correlation:14.8f} Ha")
-print(f"  E(UMP2 total)       = {ump2.e_total:14.8f} Ha")
+# energy is the reference energy; energy_total includes the MP2 correction.
+print(f"  E(UHF)              = {job.energy:14.8f} Ha")
+print(f"  E(UMP2 correlation) = {job.mp2.e_correlation:14.8f} Ha")
+print(f"  E(UMP2 total)       = {job.energy_total:14.8f} Ha")
+print(f"  <S^2>(UHF)          = {job.s_squared:14.6f}")
+print(f"  ideal <S^2>         = {job.s_squared_ideal:14.6f}")

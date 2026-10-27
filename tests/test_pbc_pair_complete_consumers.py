@@ -6,14 +6,16 @@ Independent Gaussian sums, image relabelling and finite differences check
 the physical nuclear/quartet predicates; coupled split tests separately
 check that the real-space and reciprocal terms describe the same operator.
 
-The switch stays off by default. Native regression anchors pin each finite
-operator convention; the independent periodic references below test its
-convergence separately.
+The native switch stays off by default; public BIPOLE uses physical support
+and requires an explicit historical replay. Native regression anchors pin
+each finite operator convention; the independent periodic references below
+test its convergence separately.
 """
 
 from __future__ import annotations
 
 from itertools import product
+import re
 
 from scipy.special import erf
 
@@ -44,10 +46,22 @@ _E_RHF_ON = -33.87027955873168  # physical AO products and finite source images
 # Restoring only the historical grid reproduces the old LDA anchors within
 # 1.4e-10 Ha; the wider HF anchor changes only with the Schwarz correction.
 # See docs/bipole_erfc_resume.md for the isolated-build receipts.
-_E_RKS_OFF = -34.66112304044817
-_E_RKS_ON = -33.875342453487875
-_E_RHF_RADIAL_15 = -22.939983004503866
-_E_RHF_PAIR_15 = -23.19210137102612
+# Re-pinned for the continuous periodic Becke partition (#482): images now
+# switch off smoothly past the neighbourhood radius, which moves these LDA
+# anchors by -4.92e-7 (off) and -3.15e-7 (on) Ha; the hard-cutoff build
+# reproduces the previous values -34.66112304044817 / -33.875342453487875.
+_E_RKS_OFF = -34.661123532012134
+_E_RKS_ON = -33.87534276841811
+# Since f034e3ee (#510, 2026-10-20) the native 3D periodic SCF forces physical
+# pair support (``periodic_scf.cpp``: ``if (physical_3d) lattice_opts.
+# pair_complete_1e = true``) and folds the actual k density, so the
+# ``pair_complete_1e=False`` rows of this fixture no longer select the
+# historical sum: they reproduce the physical anchors bit for bit. The
+# cutoff-15 physical anchor moved from -23.19210137102612 with the same
+# commit's operator change (main 26faf8ad, 2026-10-13, still passed the old
+# value; of the periodic_scf.cpp commits since, only f034e3ee changes the
+# domain and k-state handling). Re-pinned on a core built from main 4736aceb.
+_E_RHF_PAIR_15 = -22.864906653348243
 _PIN_TOL = 1.0e-7
 
 
@@ -103,12 +117,14 @@ def test_lists_differ_in_length_on_this_fixture():
 
 @pytest.mark.parametrize("ks", [False, True], ids=["rhf", "rks-lda"])
 def test_cxx_multi_k_fock_assembly_keeps_the_physical_operator_support(ks):
-    """Pin each finite-domain convention after independent integral/FD checks."""
+    """Pin the physical finite-domain convention after independent integral/FD
+    checks; the native 3D SCF ignores the historical switch (f034e3ee)."""
     e_off = _run_cxx(False, ks=ks)
     e_on = _run_cxx(True, ks=ks)
-    assert e_off == pytest.approx(_E_RKS_OFF if ks else _E_RHF_OFF, rel=0, abs=_PIN_TOL)
     assert e_on == pytest.approx(_E_RKS_ON if ks else _E_RHF_ON, rel=0, abs=_PIN_TOL)
-    assert abs(e_on - e_off) > 1.0e-5
+    assert e_off == pytest.approx(e_on, rel=0, abs=1.0e-10)
+    # The retired historical anchors stay on record as the discriminator.
+    assert abs(e_on - (_E_RKS_OFF if ks else _E_RHF_OFF)) > 1.0e-5
 
 
 @pytest.mark.parametrize("cutoff", [8.0, 15.0])
@@ -117,10 +133,10 @@ def test_cxx_multi_k_physical_operator_preserves_cell_relabelling(cutoff):
     relabelled = _run_cxx(True, cutoff=cutoff, relabel=1)
     assert abs(reference-relabelled) < 2e-10
     if cutoff == 15.0:
-        # Equal one-electron cell counts do not make the finite nuclear
-        # and three-image ERI term sets equal to the historical balls.
         assert reference == pytest.approx(_E_RHF_PAIR_15, rel=0, abs=_PIN_TOL)
-        assert _run_cxx(False, cutoff=cutoff) == pytest.approx(_E_RHF_RADIAL_15, rel=0, abs=_PIN_TOL)
+        # The switch is ignored by the native 3D SCF (f034e3ee): the former
+        # radial anchor -22.939983004503866 is no longer reachable here.
+        assert _run_cxx(False, cutoff=cutoff) == pytest.approx(reference, rel=0, abs=1.0e-10)
 
 
 
@@ -452,8 +468,15 @@ def test_bipole_1d_direct_nuclear_route_runs_under_the_switch():
         opts.conv_tol_energy = 1.0e-10
         opts.lattice_opts.pair_complete_1e = on
         opts.lattice_opts.cutoff_bohr = 11.0
-        result = vq.run_pbc_bipole_rhf(system, basis, kmesh, opts, progress=False)
+        # Preserve both existing finite-operator anchors after the public
+        # default migration; a False native flag is not a historical request.
+        result = vq.run_pbc_bipole_rhf(
+            system, basis, kmesh, opts, historical_domain=not on, progress=False,
+        )
         assert result.converged
+        assert result.resolved_domain.policy == (
+            "physical_pairs" if on else "historical_index_ball"
+        )
         energies[on] = float(result.energy)
     assert energies[False] == pytest.approx(-1.839238747730, abs=_PIN_TOL)
     assert energies[True] == pytest.approx(-1.8152364308953906, rel=0, abs=_PIN_TOL)
@@ -644,7 +667,9 @@ def test_sap_finite_source_domain_matches_gaussian_difference():
     terms = []
     net = np.zeros(3)
     for symbol, atoms in [("H", [0, 1]), ("He", [2])]:
-        lines = text.split(symbol + " 0\n", 1)[1].splitlines()
+        lines = re.split(
+            rf"(?m)^{symbol}[ \t]+0[ \t]*\r?\n", text, maxsplit=1,
+        )[1].splitlines()
         count = int(lines[0].split()[1])
         for line in lines[1:1 + count]:
             alpha, coefficient = map(float, line.split())
@@ -739,10 +764,10 @@ def test_physical_fock_support_does_not_use_legacy_symmetry_projector():
     system = SimpleNamespace(symmetry=SimpleNamespace(operations=[object()]))
     logger = SimpleNamespace(info=lambda message: None)
     assert resolve_bipole_fock_symmetry(
-        system, basis, opts, None, None, logger, exchange_split_active=True,
+        system, basis, opts, None, False, logger, exchange_split_active=True,
     ) == (None, None)
     with pytest.raises(NotImplementedError, match="wider output support"):
-        resolve_bipole_fock_symmetry(system, basis, opts, False, True, logger)
+        resolve_bipole_fock_symmetry(system, basis, opts, True, False, logger)
 
 
 def _physical_quartet_reference(system, opts, omega, density):

@@ -1,0 +1,1 @@
+- Repair the open-shell tutorial reference handoff, add convergence and frozen-core checks, and update the OH UMP2 example to use one recorded `run_job(method="mp2")` calculation with the correct energy and spin diagnostics.

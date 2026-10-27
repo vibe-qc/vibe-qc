@@ -296,6 +296,39 @@ def _v_ao_per_spin(
     return 0.5 * (V_AO + V_AO.T)
 
 
+def _manta_overlap_gradient_contraction(basis, M: np.ndarray, budget=None) -> np.ndarray:
+    """``sum_A tr(M dS/dR_A)`` on MANTA's own overlap-derivative panels.
+
+    For the selected route the Hubbard term must be differentiated on the
+    executed one-electron provider, not on libint's ``dS/dR`` buffers. The
+    bra panel ``<d_axis mu | nu>`` of :func:`manta.compute_one_electron_derivative`
+    is the derivative with respect to the centre of ``mu``; since
+    ``dS/dR_A`` is symmetric, ``tr(M dS/dR_A) = 2 sum_{mu in A, nu}
+    M_sym[mu, nu] <d_axis mu | nu>``.
+    """
+    from . import manta
+
+    M_sym = 0.5 * (np.asarray(M, dtype=float) + np.asarray(M, dtype=float).T)
+    owner = []
+    for shell in basis.shells():
+        if not bool(shell.pure):
+            raise NotImplementedError("DFT+U requires spherical AOs")
+        owner.extend([int(shell.atom_index)] * (2 * int(shell.l) + 1))
+    owner = np.asarray(owner)
+    n_atoms = int(owner.max()) + 1 if owner.size else 0
+    request = manta.OneElectronRequest()
+    request.operation = "overlap"
+    budget = manta.ResourceBudget() if budget is None else budget
+    out = np.zeros((n_atoms, 3))
+    for axis in range(3):
+        derivative = manta.OneElectronDerivative()
+        derivative.target, derivative.axis = "bra", axis
+        panel = np.asarray(manta.compute_one_electron_derivative(basis, basis, request, derivative, budget).values)
+        per_ao = 2.0 * np.sum(M_sym * panel, axis=1)
+        np.add.at(out[:, axis], owner, per_ao)
+    return out
+
+
 def _compute_dft_plus_u_gradient(
     basis,
     molecule,
@@ -305,6 +338,8 @@ def _compute_dft_plus_u_gradient(
     P_total: "np.ndarray | None" = None,
     P_alpha: "np.ndarray | None" = None,
     P_beta: "np.ndarray | None" = None,
+    provider: str = "libint",
+    budget=None,
 ) -> np.ndarray:
     """Analytic dE_U/dR contribution from the explicit overlap-derivative.
 
@@ -345,6 +380,11 @@ def _compute_dft_plus_u_gradient(
         The function internally halves it for the per-spin V_AO.
     P_alpha, P_beta
         Per-spin densities (UHF / UKS). Pass both for open-shell.
+    provider
+        ``"libint"`` (legacy ``dS/dR`` buffers) or ``"manta"`` (the selected
+        route's own overlap-derivative panels, with ``budget``). The
+        selected gradient passes the executed one-electron provider so the
+        Hubbard term is differentiated on the same source as the SCF.
 
     Returns
     -------
@@ -390,6 +430,10 @@ def _compute_dft_plus_u_gradient(
         V_b = _v_ao_per_spin(sites, Pb, S, ao_groups_map)
         # dE_U_total/dR_explicit = S_s 2 tr(V_AO_s S P_s dS/dR) per atom.
         M = 2.0 * ((V_a @ S @ Pa) + (V_b @ S @ Pb))
+    if provider == "manta":
+        return _manta_overlap_gradient_contraction(basis, M, budget)
+    if provider != "libint":
+        raise ValueError(f"DFT+U gradient provider must be libint or manta; got {provider!r}")
     # overlap_gradient_contribution returns -S_A tr(M dS/dR_A);
     # the +U explicit gradient is +S_A tr(M_sym dS/dR_A), so negate.
     return -np.asarray(overlap_gradient_contribution(basis, molecule, M))

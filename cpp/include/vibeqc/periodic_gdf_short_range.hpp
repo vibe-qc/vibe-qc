@@ -6,6 +6,7 @@
 
 #include <complex>
 #include <cstddef>
+#include <string>
 #include <vector>
 #include <Eigen/Dense>
 #include "basis.hpp"
@@ -29,6 +30,22 @@ struct GDFShortRangeBatch {
 Eigen::MatrixXcd compute_gdf_sr_metric(
     const BasisSet& aux, const PeriodicSystem& system,
     const Eigen::Vector3d& q, double omega, double cutoff,
+    std::size_t output_byte_cap, std::size_t image_candidate_cap,
+    std::size_t workspace_byte_cap = 256U * 1024U * 1024U,
+    double integral_screen_error = 0.0);
+
+// Several momentum transfers in one pass (GitLab IID 543). Every real-space
+// SR integral block is q-independent; each q only re-phases it by
+// exp(-i q.t) before the ket phases. ket_kpoints row j belongs to transfer
+// ket_transfer[j]. Every q shares the same finite domain, so the result for
+// each q is bitwise identical to compute_gdf_sr_three_center at that q and
+// its own kets. Output rows follow ket_kpoints.
+GDFShortRangeBatch compute_gdf_sr_three_center_multi_q(
+    const BasisSet& orbital, const BasisSet& aux,
+    const PeriodicSystem& system,
+    const Eigen::Matrix<double, Eigen::Dynamic, 3, Eigen::RowMajor>& transfers,
+    const Eigen::MatrixXd& ket_kpoints, const std::vector<std::size_t>& ket_transfer,
+    double omega, double pair_cutoff, double auxiliary_cutoff,
     std::size_t output_byte_cap, std::size_t image_candidate_cap,
     std::size_t workspace_byte_cap = 256U * 1024U * 1024U,
     double integral_screen_error = 0.0);
@@ -117,12 +134,15 @@ Eigen::MatrixXd compute_gdf_plane_wave_projection_gradient_weighted(
     std::size_t output_byte_cap, std::size_t transient_byte_cap,
     std::size_t image_candidate_cap);
 
-// Full jellium Coulomb M(q), T(k-q,k), with the same finite AO-image
+// Jellium M(q), T(k-q,k), with the same finite AO-image
 // domain in SR, LR and the zero-mode overlap. Reciprocal vectors are p=G+q;
 // callers supply a converged omega-sized mesh. Explicit output and transient
 // caps cover numeric arrays and an admitted libint engine workspace estimate.
 // Borrowed bases, runtime/global library storage and allocator overhead are
-// separate; the workspace cap is not a whole-process RSS limit.
+// separate; the workspace cap is not a whole-process RSS limit. The optional
+// physical kernel is coulomb, erfc or erf. omega is the numerical SR/LR split;
+// omega_screen is the independent physical range for erfc/erf. Every physical
+// kernel omits p=0: finite erfc restoration and exchange Madelung are external.
 GDFRangeSeparatedIntegrals compute_gdf_range_separated_integrals(
     const BasisSet& orbital, const BasisSet& aux,
     const PeriodicSystem& system, const Eigen::Vector3d& q,
@@ -131,11 +151,22 @@ GDFRangeSeparatedIntegrals compute_gdf_range_separated_integrals(
     double omega, double pair_cutoff, double auxiliary_cutoff,
     std::size_t output_byte_cap, std::size_t transient_byte_cap,
     std::size_t image_candidate_cap, double integral_screen_error = 0.0,
-    bool compute_metric = true);
+    bool compute_metric = true, const std::string& kernel = "coulomb",
+    double omega_screen = 0.0,
+    const Eigen::MatrixXd* shell_pair_cutoffs = nullptr,
+    GDFShortRangeBatch* sr_three_center = nullptr);
+
+// shell_pair_cutoffs (orbital shells x orbital shells), when given, narrows
+// each AO pair's reciprocal (LR and zero-mode overlap) image radius to
+// min(pair_cutoff, cutoffs(shell_mu, shell_nu)); see ao_pair_gaussian_fourier_panel.
+// The SR real-space domain is unchanged. sr_three_center, when given, is the
+// caller's compute_gdf_sr_three_center(_multi_q) result for exactly this q,
+// kets and domain; it replaces the internal SR three-center build.
 
 // Derivative of Re(sum(metric_weight*M) + sum(three_center_weight*T)).
 // Uses the energy source's pair-distance image domain and finite SR zero
 // mode, including the derivative of its Bloch overlap. Weights are borrowed.
+// Pass the energy's shell_pair_cutoffs to differentiate the same domain.
 Eigen::MatrixXd compute_gdf_range_separated_gradient_weighted(
     const BasisSet& orbital, const BasisSet& aux,
     const PeriodicSystem& system, const Eigen::Vector3d& q,
@@ -145,6 +176,7 @@ Eigen::MatrixXd compute_gdf_range_separated_gradient_weighted(
     const Eigen::Ref<const Eigen::MatrixXcd>& metric_weight,
     GDFShortRangeWeightView three_center_weight,
     std::size_t output_byte_cap, std::size_t transient_byte_cap,
-    std::size_t image_candidate_cap, double integral_screen_error = 0.0);
+    std::size_t image_candidate_cap, double integral_screen_error = 0.0,
+    const Eigen::MatrixXd* shell_pair_cutoffs = nullptr);
 
 }  // namespace vibeqc

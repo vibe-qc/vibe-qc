@@ -466,7 +466,7 @@ def test_bulk_drivers_admit_oneel_before_cells_or_grid(
     system = vq.PeriodicSystem(3, np.eye(3) * 8.0,
                              [vq.Atom(1, [0, 0, 0]), vq.Atom(1, [0, 0, 1.4])])
     basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
-    options = vq.PeriodicRHFOptions()
+    options = vq.PeriodicKSOptions() if functional else vq.PeriodicRHFOptions()
     options.initial_guess = vq.InitialGuess.HCORE
     monkeypatch.setattr(memory, "available_memory_bytes", lambda: 1)
 
@@ -481,6 +481,39 @@ def test_bulk_drivers_admit_oneel_before_cells_or_grid(
         getattr(driver, driver_name)(system, basis, mesh, options,
                                     functional=functional, gdf_method="rsgdf",
                                     progress=False)
+
+
+def test_oneel_admission_charges_the_bound_without_enumerating_it(monkeypatch):
+    """The bulk one-electron domain is screened on an overlap built at the
+    S/T tail bound (#438), so drivers and the job estimate admit that bound
+    set first. It must cost no cells to produce, and its reservation must
+    equal that of the ball the bound used to resolve to."""
+    import vibeqc.periodic_k_gdf as driver
+    from vibeqc.lattice_screening import RcutStrategy, make_lattice_opts
+
+    system = vq.PeriodicSystem(3, np.eye(3) * 6.0,
+                               [vq.Atom(3, [0, 0, 0]), vq.Atom(1, [3.0, 0.4, 0.2])])
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    base = vq.LatticeSumOptions()
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("the admission options enumerated one-electron cells")
+
+    for name in ("compute_overlap_lattice", "compute_kinetic_lattice",
+                 "direct_lattice_cells", "_direct_cells"):
+        monkeypatch.setattr(driver, name, forbidden)
+    admitted = driver._oneel_admission_opts(
+        system, basis, base, rcut_strategy="pyscf_auto",
+        k_points_cart=np.zeros((1, 3)))
+    assert admitted.pair_complete_1e
+    ball = make_lattice_opts(basis, strategy=RcutStrategy.FLAT, base_opts=base,
+                             cutoff_bohr=driver._gdf_oneel_cutoff_bound(system, basis))
+    assert not ball.pair_complete_1e
+    for n_kpoints in (1, 8):
+        assert (driver._gdf_oneel_memory_estimate(
+                    system, basis, admitted, n_kpoints=n_kpoints).by_category
+                == driver._gdf_oneel_memory_estimate(
+                    system, basis, ball, n_kpoints=n_kpoints).by_category)
 
 
 @pytest.mark.parametrize("available", [1, 2**60])
@@ -521,7 +554,7 @@ def test_bulk_driver_rechecks_same_resolved_domain_after_grid(monkeypatch, drive
     system = vq.PeriodicSystem(3, np.eye(3) * 8.0,
                              [vq.Atom(1, [0, 0, 0]), vq.Atom(1, [0, 0, 1.4])])
     basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
-    options = vq.PeriodicRHFOptions()
+    options = vq.PeriodicKSOptions()
     options.initial_guess = vq.InitialGuess.HCORE
     resolved = SimpleNamespace(cutoff_bohr=123.0, nuclear_cutoff_bohr=25.0)
     estimates = []

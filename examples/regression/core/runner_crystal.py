@@ -1,4 +1,4 @@
-"""Run the CRYSTAL14 periodic reference via ``vq submit`` (subprocess).
+"""Run a CRYSTAL periodic reference via ``vq submit`` (subprocess).
 
 CRYSTAL14 is the second independent periodic reference alongside
 PySCF.pbc — closed-shell HF / DFT (SVWN, PBE, B3LYP, ...) with the
@@ -37,7 +37,7 @@ Env-var knobs (laptop callers usually leave them at default):
   receives via ``--cpus`` (default: 14, matches the wrapper's own
   default).
 * ``VIBEQC_CRYSTAL_WALL_TIME_SECONDS`` — vq's hard wall-clock cap
-  (default: 7200 = 2 h). The handover's 2-h budget is enough for the
+  (default: 7200 = 2 h). the original investigation's 2-h budget is enough for the
   STO-3G / POB-* canonical regression set; tune up for tight POB-TZVP
   on larger cells.
 * ``VIBEQC_CRYSTAL_POLL_INTERVAL_S`` — how often we re-`vq status` the
@@ -59,6 +59,8 @@ generator lands; out of scope for v1.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import os
 import re
@@ -67,6 +69,7 @@ import subprocess
 import time
 import traceback
 import uuid
+from numbers import Integral
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -74,6 +77,7 @@ import numpy as np
 
 from .case import CodeRow
 from .spec import MethodSpec, PeriodicSpec
+from .periodic_matrix import validated_reference_version
 
 # CRYSTAL14 publishes prints in Hartree (AU) with no scaling — direct
 # match for CodeRow.energy_ha.
@@ -107,7 +111,9 @@ from .spec import MethodSpec, PeriodicSpec
 #                       flavor gap.)
 _CRYSTAL_FUNC_MAP = {
     "lda":    "SVWN",
-    "pbe":    "PBE",
+    # CRYSTAL23 pp. 93, 134 / CRYSTAL14 p. 84: full PBE is the standalone
+    # PBEXC; a bare PBE is only an EXCHANGE/CORRELAT sub-keyword (#648).
+    "pbe":    "PBEXC",
     "blyp":   "BLYP",
     "b3lyp":  "B3LYP",
     "b3lyp5": "B3LYP",
@@ -125,11 +131,27 @@ _CRYSTAL_BASIS_LIBRARY = {
 _DEFAULT_WRAPPER = ""    # must be supplied via VIBEQC_CRYSTAL_WRAPPER
 
 
+def _crystal_kmesh(kmesh) -> Tuple[int, int, int]:
+    """Validate mesh counts without truncating floats or admitting booleans."""
+    message = "CRYSTAL kmesh must contain exactly three positive integers"
+    try:
+        values = tuple(kmesh)
+    except TypeError:
+        raise ValueError(message) from None
+    if len(values) != 3 or any(
+        isinstance(n, bool) or not isinstance(n, Integral) or n <= 0
+        for n in values
+    ):
+        raise ValueError(message)
+    return tuple(int(n) for n in values)
+
+
 def run_periodic_case(
     *, run_id: str, target: str, spec: PeriodicSpec, basis_name: str,
     method: MethodSpec, kmesh: Tuple[int, int, int],
     conv_tol_energy: Optional[float] = None,
     max_iter: Optional[int] = None,
+    expected_version: Optional[str] = None,
     log_path: Path,
     workdir: Path,
 ) -> CodeRow:
@@ -141,18 +163,24 @@ def run_periodic_case(
     The suite stays runnable on machines without the vq / compute-reference
     chain.
 
-    The returned row's ``code_version`` is best-effort — CRYSTAL14
-    prints its banner in the .out; we parse the first matching line.
+    The row records the unambiguous program-banner version. When
+    ``expected_version`` is given, missing/conflicting/different banners
+    reject comparison; the wrapper still selects the executable.
     """
     if conv_tol_energy is None:
         conv_tol_energy = spec.default_conv_tol_energy
     if max_iter is None:
         max_iter = spec.default_max_iter
+    mesh_error = ""
+    try:
+        kmesh = _crystal_kmesh(kmesh)
+    except ValueError as exc:
+        mesh_error = str(exc)
 
     row = CodeRow(
         run_id=run_id, target=target, system_id=spec.id, family=spec.family,
         basis=basis_name, method_id=method.id,
-        kmesh="x".join(str(k) for k in kmesh),
+        kmesh=repr(kmesh) if mesh_error else "x".join(str(k) for k in kmesh),
         code="crystal", code_version="unknown",
         n_atoms=len(spec.atoms),
         n_electrons=sum(at.z for at in spec.atoms),
@@ -172,6 +200,19 @@ def run_periodic_case(
         f"kmesh={kmesh} | target={target}"
     )
     _log("=" * 78)
+
+    if mesh_error:
+        row.status = "error"
+        row.note = mesh_error
+        _log(row.note)
+        return row
+
+    try:
+        validated_reference_version("crystal", expected_version)
+    except ValueError as exc:
+        row.status, row.note = "error", str(exc)
+        _log(row.note)
+        return row
 
     # --- Pre-flight gating ------------------------------------------------
     vq_bin = shutil.which("vq")
@@ -247,6 +288,22 @@ def run_periodic_case(
     case_workdir.mkdir(parents=True, exist_ok=True)
     deck_path = case_workdir / "INPUT.d12"
     deck_path.write_text(deck)
+    receipt = {
+        "schema_version": 1,
+        "expected_version": expected_version,
+        "host": vq_host,
+        "wrapper": wrapper,
+        "cpus": cpus,
+        "wall_time_limit_s": wall_s,
+        "requested_kmesh": list(kmesh),
+        "submitted_input_sha256": hashlib.sha256(deck_path.read_bytes()).hexdigest(),
+        "identity_scope": "Program banner and wrapper/job receipt; executable bytes were not inspected.",
+    }
+
+    def save_receipt():
+        (case_workdir / "reference.json").write_text(json.dumps(receipt, indent=2) + "\n")
+
+    save_receipt()
     _log(f"  wrote {deck_path}")
     _log(f"  vq host: {vq_host}   cpus: {cpus}   wall: {wall_s}s")
 
@@ -261,9 +318,13 @@ def run_periodic_case(
         )
     except Exception as exc:
         row.note = f"vq submit failed: {type(exc).__name__}: {exc}"
+        receipt["submission_error"] = row.note
+        save_receipt()
         _log(f"  EXCEPTION:\n{traceback.format_exc()}")
         return row
     _log(f"  vq jobid: {jobid}   name: {job_name}")
+    receipt.update(job_id=jobid, job_name=job_name)
+    save_receipt()
 
     t0 = time.perf_counter()
     try:
@@ -273,10 +334,17 @@ def run_periodic_case(
         )
     except Exception as exc:
         row.note = f"vq poll failed: {type(exc).__name__}: {exc}"
+        receipt["poll_error"] = row.note
+        save_receipt()
         _log(f"  EXCEPTION:\n{traceback.format_exc()}")
         return row
-    wall = time.perf_counter() - t0
-    _log(f"  vq job terminal state: {final_state}   (wall {wall:.1f} s)")
+    monitor_wall = time.perf_counter() - t0
+    receipt.update(final_state=final_state, queue_monitor_elapsed_s=monitor_wall)
+    save_receipt()
+    _log(
+        f"  vq job terminal state: {final_state}   "
+        f"(queue-monitor elapsed {monitor_wall:.1f} s; not engine time)"
+    )
 
     fetch_dest = case_workdir / "fetched"
     fetch_dest.mkdir(parents=True, exist_ok=True)
@@ -290,17 +358,24 @@ def run_periodic_case(
             f"vq fetch failed (state={final_state}): "
             f"{type(exc).__name__}: {exc}"
         )
+        receipt["fetch_error"] = row.note
+        save_receipt()
         _log(f"  EXCEPTION:\n{traceback.format_exc()}")
         return row
 
     out_path = local_workspace / "INPUT.out"
     if not out_path.is_file():
         row.note = f"CRYSTAL output not found at {out_path}; vq state={final_state}"
+        receipt["output_error"] = row.note
+        save_receipt()
         _log(row.note)
         return row
 
-    parsed = parse_crystal_out(out_path.read_text(errors="replace"))
-    row.wall_s = wall
+    output_bytes = out_path.read_bytes()
+    parsed = parse_crystal_out(output_bytes.decode("utf-8", errors="replace"))
+    # CodeRow uses zero for unavailable timing; paired_wall_ratio excludes it.
+    # Queue waiting and polling latency are not calculation time.
+    row.wall_s = parsed.wall_s if parsed.wall_s is not None else 0.0
     row.code_version = parsed.version or "unknown"
     row.energy_ha = parsed.energy_ha
     row.converged = parsed.converged
@@ -308,20 +383,45 @@ def run_periodic_case(
     if parsed.energy_ha is not None and len(spec.atoms) > 0:
         row.energy_per_atom_ha = parsed.energy_ha / len(spec.atoms)
 
-    note_bits = []
+    note_bits = [f"queue-monitor elapsed={monitor_wall:.1f} s (not engine time)"]
+    if expected_version is not None:
+        if parsed.version != expected_version:
+            row.status = "error"
+            note_bits.append(
+                f"CRYSTAL version mismatch: requested {expected_version}, reported {parsed.version}; "
+                "missing or conflicting program banners cannot qualify a comparison"
+            )
+        else:
+            note_bits.append(f"CRYSTAL version={parsed.version} (output confirmed)")
+    if parsed.kmesh != kmesh:
+        row.status = "error"
+        note_bits.append(
+            f"CRYSTAL mesh mismatch: requested {kmesh}, reported {parsed.kmesh}; "
+            "missing or ambiguous mesh output cannot qualify a comparison"
+        )
+    else:
+        note_bits.append(f"CRYSTAL unshifted mesh={parsed.kmesh} (output confirmed)")
+    if parsed.wall_s is None:
+        note_bits.append("engine wall time unavailable: expected one valid END TELAPSE")
     if parsed.band_gap_ev is not None:
         note_bits.append(f"gap={parsed.band_gap_ev:.3f} eV")
     if final_state != "completed":
+        row.status = "error"
         note_bits.append(f"vq state={final_state}")
     if parsed.error_line:
+        row.status = "error"
         note_bits.append(f"crystal error: {parsed.error_line}")
     row.note = "; ".join(note_bits)
 
     if parsed.energy_ha is None:
         # No SCF energy parsed — escalate to error so the comparison
         # path doesn't silently feed None into the Δ calculation.
-        if not row.note:
-            row.note = "CRYSTAL produced no parseable total energy"
+        row.note += "; CRYSTAL produced no parseable total energy"
+
+    receipt.update(output_sha256=hashlib.sha256(output_bytes).hexdigest(),
+                   reported_version=parsed.version, reported_kmesh=parsed.kmesh,
+                   runner_status=row.status, runner_note=row.note)
+    save_receipt()
 
     _log(
         f"  E = {row.energy_ha!r} Ha   converged={row.converged}   "
@@ -352,11 +452,11 @@ def build_d12(
     is the upper-cased internal-library basis name (STO-3G /
     POB-TZVP-REV2 / ...). Both are pre-validated by the caller.
 
-    ``kmesh`` is consumed isotropically: CRYSTAL's ``SHRINK IS ISP``
-    form takes one (or two) integers. Anisotropic kmeshes get max(k)
-    used uniformly; the caller already prints a warning at the
-    runner-level when this happens.
+    ``kmesh`` specifies an unshifted mesh along the three reciprocal
+    lattice vectors. Anisotropic meshes use ``SHRINK 0 ISP`` followed
+    by the three counts and disable incompatible SABF diagonalization.
     """
+    kmesh = _crystal_kmesh(kmesh)
     title = f"{spec.id} :: {basis_kw} :: {func_kw} :: P1 (vibeqc regression)"
 
     a, b, c, alpha, beta, gamma = _lattice_to_a_b_c_alpha_beta_gamma(
@@ -367,10 +467,15 @@ def build_d12(
         for at in spec.atoms
     )
 
-    # CRYSTAL SHRINK: use max(kmesh) for both arguments. (1,1,1) → "1 1".
-    # The Gilat net (second arg) should be ≥ the MP net per the CRYSTAL
-    # manual; using equal values is the standard textbook recipe.
-    k_iso = max(kmesh) if kmesh else 1
+    # CRYSTAL23 manual, SHRINK pp.124-126 / NOSYMADA p.122;
+    # CRYSTAL14, SHRINK pp.110-112 / NOSYMADA p.108. For IS=0,
+    # ISP denotes ISP1 and ISPj=ISP*ISj/IS1. Choosing ISP=IS1 keeps
+    # all Gilat axes equal to the requested Monkhorst axes, not max(k).
+    if len(set(kmesh)) == 1:
+        shrink = ["SHRINK", f"{kmesh[0]} {kmesh[0]}"]
+    else:
+        shrink = ["NOSYMADA", "SHRINK", f"0 {kmesh[0]}",
+                  " ".join(str(k) for k in kmesh)]
 
     # TOLDEE: number of decimals on energy convergence in CRYSTAL is
     # the integer N in "10⁻ᴺ tolerance". 1e-7 → 7. Clamp to [3, 12].
@@ -384,7 +489,8 @@ def build_d12(
         f"{a:.7f} {b:.7f} {c:.7f} {alpha:.5f} {beta:.5f} {gamma:.5f}",
         f"{len(spec.atoms):d}",
         atoms_block,
-        "END",
+        # CRYSTAL23 manual section 2.2.2, p.29: keyword basis input
+        # replaces the geometry END; it does not follow that terminator.
         "BASISSET",
         basis_kw,
     ]
@@ -394,9 +500,8 @@ def build_d12(
         # PySCF's default `becke` for the same wallclock; XLGRID makes
         # the cross-code Δ a tolerance match.
         parts.extend(["DFT", func_kw, "XLGRID", "END"])
+    parts.extend(shrink)
     parts.extend([
-        "SHRINK",
-        f"{k_iso} {k_iso}",
         "TOLINTEG",
         "7 7 7 7 14",
         "TOLDEE",
@@ -703,7 +808,7 @@ class CrystalParseResult:
 
     __slots__ = (
         "version", "energy_ha", "converged", "n_iter",
-        "band_gap_ev", "error_line",
+        "band_gap_ev", "error_line", "wall_s", "kmesh",
     )
 
     def __init__(self) -> None:
@@ -713,6 +818,8 @@ class CrystalParseResult:
         self.n_iter: Optional[int] = None
         self.band_gap_ev: Optional[float] = None
         self.error_line: str = ""
+        self.wall_s: Optional[float] = None
+        self.kmesh: Optional[Tuple[int, int, int]] = None
 
 
 class CrystalEneCycleRecord:
@@ -767,8 +874,9 @@ _SCF_FAIL_RE = re.compile(r"== SCF ENDED - TOO MANY CYCLES")
 # Version banner. CRYSTAL prints `CRYSTAL14` / `CRYSTAL17` etc. inside
 # a decorated asterisk banner near the top of the .out, e.g.
 #   ` *                                CRYSTAL14                                    *`
-# Match anywhere on the line.
-_VERSION_RE = re.compile(r"\b(CRYSTAL\d+)\b", re.IGNORECASE)
+# Titles and explanatory prose are not executable identity. Require the
+# decorated program-banner line and agreement across all such banners.
+_VERSION_RE = re.compile(r"^\s*\*+\s*(CRYSTAL[0-9]+)\s*\*+\s*$", re.IGNORECASE)
 # Band gap (direct / indirect). CRYSTAL prints e.g.
 #   ` DIRECT ENERGY BAND GAP:    7.4837 eV`
 _GAP_RE = re.compile(
@@ -786,6 +894,18 @@ _ENECYCLE_VALUE_RE = re.compile(
     r"^\s*:::\s+(.+?)\s+(-?\d+(?:\.\d*)?E[+-]?\d+)\s*$",
 )
 _CYC_RE = re.compile(r"^\s*CYC\s+(\d+)\s+ETOT\(AU\)")
+# Only the program END record is total elapsed engine time. Intermediate
+# TELAPSE records and TCPU are not substitutes. Count malformed END records
+# too, so concatenated outputs cannot acquire a seemingly unique valid time.
+_END_TIME_RECORD_RE = re.compile(r"^\s*T{5,}\s+END\b", re.IGNORECASE)
+_END_TIME_RE = re.compile(
+    r"^\s*T{5,}\s+END\s+TELAPSE\s+(\S+)\s+TCPU\b", re.IGNORECASE,
+)
+_MESH_RECORD_RE = re.compile(r"^\s*SHRINK\.\s*FACT\.\(MONKH\.\)", re.IGNORECASE)
+_MESH_RE = re.compile(
+    _MESH_RECORD_RE.pattern + r"\s+(\d+)\s+(\d+)\s+(\d+)\s+NUMBER OF K POINTS\b",
+    re.IGNORECASE,
+)
 
 
 def _normalise_enecycle_label(label: str) -> str:
@@ -793,7 +913,7 @@ def _normalise_enecycle_label(label: str) -> str:
 
 
 def parse_crystal_out(text: str) -> CrystalParseResult:
-    """Parse a CRYSTAL14 .out into the fields the regression row needs.
+    """Parse a CRYSTAL .out into the fields the regression row needs.
 
     All fields are best-effort: an empty or truncated .out returns
     ``energy_ha=None, converged=None, n_iter=None`` rather than raising.
@@ -804,15 +924,39 @@ def parse_crystal_out(text: str) -> CrystalParseResult:
     bottom-of-file value is the canonical converged result). Failure
     mode: ``SCF ENDED - TOO MANY CYCLES`` flips ``converged=False`` but
     the last per-cycle energy is still captured.
+
+    ``wall_s`` is the unique positive finite terminal END TELAPSE value.
+    Missing, malformed or repeated END records leave timing unavailable.
+    ``kmesh`` requires consistent positive printed Monkhorst shrink factors;
+    malformed or conflicting mesh records leave it unavailable.
+    ``version`` requires consistent decorated program banners; case titles
+    and other prose do not establish program identity.
     """
     res = CrystalParseResult()
     last_e = None
     last_iter = None
+    end_records = 0
+    meshes = set()
+    versions = set()
     for line in text.splitlines():
-        if res.version is None:
-            m = _VERSION_RE.search(line)
+        if _MESH_RECORD_RE.match(line):
+            m = _MESH_RE.match(line)
+            mesh = tuple(int(n) for n in m.groups()) if m else None
+            meshes.add(mesh if mesh and all(n > 0 for n in mesh) else None)
+        if _END_TIME_RECORD_RE.match(line):
+            end_records += 1
+            m = _END_TIME_RE.match(line)
             if m:
-                res.version = m.group(1).upper()
+                try:
+                    elapsed = float(m.group(1).replace("D", "E").replace("d", "e"))
+                except ValueError:
+                    pass
+                else:
+                    if math.isfinite(elapsed) and elapsed > 0:
+                        res.wall_s = elapsed
+        m = _VERSION_RE.match(line)
+        if m:
+            versions.add(m.group(1).upper())
         m = _TOTAL_E_RE.match(line)
         if m:
             try:
@@ -840,6 +984,12 @@ def parse_crystal_out(text: str) -> CrystalParseResult:
 
     res.energy_ha = last_e
     res.n_iter = last_iter
+    if end_records != 1:
+        res.wall_s = None
+    if len(meshes) == 1:
+        res.kmesh = meshes.pop()
+    if len(versions) == 1:
+        res.version = versions.pop()
     return res
 
 

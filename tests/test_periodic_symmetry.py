@@ -25,6 +25,8 @@ from vibeqc.periodic_runner import (
     run_periodic_job,
 )
 
+from tests.refusal_receipt import assert_preflight_refusal
+
 # ---------------------------------------------------------------------------
 # Helper: build MgO conventional rocksalt cell
 # ---------------------------------------------------------------------------
@@ -326,7 +328,7 @@ def test_runner_rejects_dft_plus_u_before_primitive_site_remapping(tmp_path):
             output_qvf=False,
             progress=False,
         )
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 @pytest.mark.parametrize("method", ["UHF", "UKS"])
@@ -353,7 +355,7 @@ def test_runner_rejects_atomic_spin_tags_before_primitive_remapping(
             output_qvf=False,
             progress=False,
         )
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 def test_basis_function_count():

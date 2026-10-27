@@ -14,7 +14,7 @@ fixed-lattice relaxation landed at the API level in milestone 2c
 runner on 2026-08-23 -- see ``test_runner_real_gamma_optimize``, which
 also pins that the relaxed geometry lands in the separate ``.opt.xyz``
 artefact rather than overwriting the SCF ``.xyz``. Contract inventory +
-history: ``HANDOVER_AICCM_DIRECT_TORUS.md`` § Milestone 2d and
+history: Milestone 2d and
 § Milestone 2c LANDED.
 """
 
@@ -341,7 +341,7 @@ def test_runner_real_gamma_optimize(tmp_path):
     out = (tmp_path / "rg.out").read_text(encoding="utf-8")
     assert "real-Γ direct-torus, parity-verified" in out
     assert "parity (initial)" in out and "parity (final)" in out
-    # M0 (handovers/HANDOVER_AICCM_STANDARD_METHOD.md): the relaxation runs on
+    # M0 (the original investigation): the relaxation runs on
     # run_ccm_direct_gradient, so the citation surface owes Pulay 1969 and
     # Hellmann-Feynman via uses_gradient, next to the CCM lineage pair.
     from vibeqc.output.citations.registry import load_default_database
@@ -424,7 +424,7 @@ def test_runner_real_gamma_fail_closed_surface(tmp_path):
 
 
 def test_runner_front_door_real_gamma_matches_legacy_selector(tmp_path):
-    """M1 (handovers/HANDOVER_AICCM_STANDARD_METHOD.md): the front door
+    """M1 (the original investigation): the front door
     ``method="aiccm", variant="real-gamma"`` with the torus keyword and the
     deprecated ``jk_method="real-gamma"`` spelling with the k-mesh alias
     execute the same dispatch: same converged energy, same executed route in
@@ -470,22 +470,24 @@ def test_runner_front_door_real_gamma_matches_legacy_selector(tmp_path):
     ).read_text(encoding="utf-8")
 
 
-def test_supercell_gamma_variants_default_to_hcore_but_refuse_explicit_sad(
+def test_supercell_gamma_variants_default_to_hcore_and_gate_explicit_sad(
     tmp_path,
 ):
     """The front door's default must be reachable for every variant (#692).
 
     ``bbe7b9001`` gave the supercell-Gamma variants a guard that refuses any
-    guess but HCORE, which their SCF loops are the only ones to implement.
+    guess but HCORE, which their SCF loops were the only ones to implement.
     The historical runner-wide default was SAD, so both variants failed with *default
     arguments* -- half of a documented front door unreachable -- and eight
     tests on the #670 arm went red for the same reason.
 
     The distinction this pins: an omitted or explicit AUTO ``initial_guess`` resolves to the
-    guess the variant executes, while an EXPLICIT ``initial_guess="SAD"``
-    still fails before SCF. Substituting a guess the caller actually asked for
-    is what the guard exists to prevent; supplying a working default is not
-    that.
+    guess the variant executes (HCORE on both). An EXPLICIT
+    ``initial_guess="SAD"`` runs SAD on the real-gamma variant, whose
+    direct drivers build it on the supercell since #519 RG-9, and still fails
+    before SCF on the four-center variant, which does not implement it.
+    Substituting a guess the caller actually asked for is what the guard
+    exists to prevent; supplying a working default is not that.
     """
     import vibeqc as vq
 
@@ -528,6 +530,24 @@ def test_supercell_gamma_variants_default_to_hcore_but_refuse_explicit_sad(
         # The default must not merely succeed -- it must be the same run.
         assert defaulted.energy == pytest.approx(explicit.energy, abs=1e-12)
 
+        if variant == "real-gamma":
+            sad = vq.run_periodic_job(
+                cell,
+                basis,
+                method="aiccm",
+                variant=variant,
+                initial_guess="SAD",
+                output=tmp_path / f"sad-{variant}",
+                progress=False,
+            )
+            assert sad.guess_selection.requested == vq.InitialGuess.SAD
+            assert sad.guess_selection.effective == vq.InitialGuess.SAD
+            assert sad.ccm_result.guess_selection.transport == vq.InitialGuess.SAD
+            assert "initial_guess       = SAD" in (
+                tmp_path / f"sad-{variant}.out").read_text()
+            # Same Hamiltonian, same (unique) closed-shell minimum.
+            assert sad.energy == pytest.approx(explicit.energy, abs=1e-7)
+            continue
         with pytest.raises(NotImplementedError, match="initial_guess"):
             vq.run_periodic_job(
                 cell,
@@ -569,11 +589,233 @@ def test_ordinary_periodic_routes_keep_the_sad_default(tmp_path):
     assert defaulted.energy == pytest.approx(explicit_sad.energy, abs=1e-12)
 
 
-@pytest.mark.parametrize("selector", ["SAD", "READ", "bad-guess"])
+@pytest.mark.parametrize("selector", ["unsupported", "READ", "bad-guess"])
 @pytest.mark.parametrize("variant", ["real-gamma", "four-center"])
 def test_direct_ccm_adapters_validate_before_basis(selector, variant):
+    """A guess the adapter cannot run fails before the basis is touched.
+
+    SAD is a real-gamma capability since #519 RG-9, so the well-formed but
+    unsupported selector there is SAP; the four-center adapter still refuses
+    SAD."""
     from vibeqc.periodic.ccm.four_center_runner import run_four_center_scf
     adapter = run_real_gamma_scf if variant == "real-gamma" else run_four_center_scf
+    if selector == "unsupported":
+        selector = "SAP" if variant == "real-gamma" else "SAD"
     with pytest.raises((ValueError, NotImplementedError), match="guess"):
         adapter(_h2_cell(), "intentionally-invalid-basis", "RHF", (1, 1, 1),
                 initial_guess=selector)
+
+
+# --- ruling R6: the vacuum-padding opt-in on the real-Γ arm -----------------
+
+
+def test_runner_real_gamma_vacuum_opt_in_warns_and_stamps(tmp_path):
+    """Mirror of the neutral-Bloch gate: the padded chain is refused by
+    default, runs with ``aiccm_allow_vacuum_padding=True``, and the manifest
+    records the switch and the padded directions read off the driver result.
+    Both producers run the SAME padded Hamiltonian, so the identity holds
+    there too (measured, not assumed: pinned at 1e-9 like the 3-D cells)."""
+    import tomllib
+    import warnings as _warnings
+
+    from vibeqc import run_periodic_job
+    from vibeqc._vibeqc_core import BasisSet
+    from vibeqc.periodic.ccm.experimental import AICCMVacuumPaddingWarning
+
+    cell = PeriodicSystem(
+        3, np.diag([6.0, 30.0, 30.0]),
+        [Atom(1, [0.0, 0.0, 0.0]), Atom(1, [1.4, 0.0, 0.0])], 0, 1)
+    basis = BasisSet(cell.unit_cell_molecule(), "sto-3g")
+    common = dict(progress=False, method="aiccm",
+                  aiccm_lattice_extension=(2, 1, 1), initial_guess="HCORE")
+    with pytest.raises(NotImplementedError, match="allow_vacuum_padding"):
+        _quiet(run_periodic_job, cell, basis, output=str(tmp_path / "rg_ref"),
+               variant="real-gamma", **common)
+    with _warnings.catch_warnings():
+        _warnings.simplefilter("ignore")
+        _warnings.simplefilter("error", AICCMVacuumPaddingWarning)
+        with pytest.raises(AICCMVacuumPaddingWarning, match="2, 3"):
+            run_periodic_job(cell, basis, output=str(tmp_path / "rg_w"),
+                             variant="real-gamma",
+                             aiccm_allow_vacuum_padding=True, **common)
+    rg = _quiet(run_periodic_job, cell, basis, output=str(tmp_path / "rg_pad"),
+                variant="real-gamma", aiccm_allow_vacuum_padding=True, **common)
+    assert rg.converged
+    assert rg.real_gamma.vacuum_padding_allowed is True
+    assert rg.real_gamma.vacuum_padded_axes == (2, 3)
+    run = tomllib.loads(
+        (tmp_path / "rg_pad.system").read_text(encoding="utf-8"))["run"]
+    assert run["aiccm_allow_vacuum_padding"] is True
+    assert run["aiccm_vacuum_padded_axes"] == [2, 3]
+    assert run["scf_final_residual_metric"] == (
+        "max_abs_orthonormalised_commutator")
+    assert isinstance(run["scf_final_delta_e_ha"], float)
+    nb = _quiet(run_periodic_job, cell, basis, output=str(tmp_path / "nb_pad"),
+                variant="neutral-bloch", aiccm_allow_vacuum_padding=True,
+                progress=False, method="aiccm",
+                aiccm_lattice_extension=(2, 1, 1))
+    assert nb.energy == pytest.approx(rg.energy, abs=1e-9)
+
+
+def test_runner_real_gamma_cderi_storage(tmp_path):
+    """``aiccm_cderi_storage`` (#519 RG-6): block and star storage through
+    the front door evaluate the dense operator (same energy, same
+    neutral-source identity) and the manifest records the storage that ran;
+    the keyword fails closed off ``real-gamma``, on an unknown value, with a
+    correlation treatment and without ``method="aiccm"``."""
+    import tomllib
+
+    from vibeqc import run_periodic_job
+    from vibeqc._vibeqc_core import BasisSet
+
+    cell = _h2_cell()
+    basis = BasisSet(cell.unit_cell_molecule(), "sto-3g")
+
+    def job(name, **kw):
+        kw.setdefault("method", "aiccm")
+        return _quiet(run_periodic_job, cell, basis, progress=False,
+                      aiccm_lattice_extension=(2, 2, 1), initial_guess="HCORE",
+                      output=str(tmp_path / name), **kw)
+
+    def run_fields(name):
+        return tomllib.loads(
+            (tmp_path / f"{name}.system").read_text(encoding="utf-8"))["run"]
+
+    dense = job("dense", variant="real-gamma")
+    assert run_fields("dense")["cderi_storage_executed"] == "dense"
+    for storage in ("block", "block-star"):
+        r = job(storage, variant="real-gamma", aiccm_cderi_storage=storage)
+        assert r.converged
+        assert r.energy == pytest.approx(dense.energy, abs=1e-10)
+        assert r.real_gamma.cderi_storage == storage
+        assert (r.real_gamma.neutral_source_identity
+                == dense.real_gamma.neutral_source_identity)
+        assert run_fields(storage)["cderi_storage_executed"] == storage
+    with pytest.raises(ValueError, match="aiccm_cderi_storage"):
+        job("nb", variant="neutral-bloch", aiccm_cderi_storage="block")
+    with pytest.raises(ValueError, match="aiccm_cderi_storage"):
+        job("bad", variant="real-gamma", aiccm_cderi_storage="star")
+    with pytest.raises(NotImplementedError, match="dense"):
+        job("mp2", variant="real-gamma", aiccm_cderi_storage="block",
+            correlation="mp2")
+    with pytest.raises(ValueError, match="aiccm_cderi_storage"):
+        job("rhf", method="RHF", aiccm_cderi_storage="block")
+
+
+@pytest.mark.parametrize("method", ["RHF", "RKS", "UHF", "UKS"])
+@pytest.mark.parametrize("read", [False, True])
+def test_real_gamma_first_consumed_density(monkeypatch, method, read):
+    """Exercise adapter -> direct producer -> first J build without integrals."""
+    import vibeqc._vibeqc_core as core
+    import vibeqc.periodic.ccm.direct as direct
+    import vibeqc.periodic.ccm.real_gamma_runner as adapter
+    import vibeqc.periodic.ccm.system as system_module
+    import vibeqc.pbc_bipole_common as guards
+
+    cell = _h2_cell()
+    molecule = cell.unit_cell_molecule()
+    ccm = SimpleNamespace(supercell=molecule, unit_system=cell, n_cells=2,
+                          nrep=(2, 1, 1), n_atoms=2)
+    S, h = np.diag([2., 1.]), np.diag([-4., -1.])
+    opened = method in ("UHF", "UKS")
+    seed = (np.diag([.5, 0.]), np.diag([0., 1.])) if opened else np.diag([0., 2.])
+    source = (SimpleNamespace(density_alpha=seed[0], density_beta=seed[1])
+              if opened else SimpleNamespace(density=seed))
+    payload = adapter.real_gamma_read_source(
+        SimpleNamespace(ccm_result=source), open_shell=opened)
+    expected = (sum(seed) if opened else seed) if read else np.diag([1., 0.])
+    monkeypatch.setattr(system_module, "CCMSystem", lambda *a, **k: ccm)
+    monkeypatch.setattr(adapter, "BasisSet", lambda *a: object())
+    monkeypatch.setattr(guards, "reject_bipole_ecp_options", lambda *a, **k: None)
+    monkeypatch.setattr(core, "Functional", lambda *a: SimpleNamespace(
+        is_range_separated=False, hf_exchange_fraction=1.0))
+    monkeypatch.setattr(direct, "_warn_experimental", lambda: None)
+    monkeypatch.setattr(direct, "_reject_vacuum_padded_direct", lambda *a, **k: ())
+    monkeypatch.setattr(direct, "_reject_external_xc_neutral_hamiltonian", lambda *a, **k: None)
+    monkeypatch.setattr(direct, "_external_xc_grid_options", lambda f, g, **k: g)
+    monkeypatch.setattr(direct, "_neutral_cderi_with_info", lambda *a, **k: (None, None))
+    monkeypatch.setattr(direct, "ccm_direct_oneelectron", lambda *a, **k: (S, h, 0.))
+    monkeypatch.setattr(direct, "_real_gamma_rks_xc_builder",
+                        lambda *a, **k: lambda D: (0., np.zeros_like(D)))
+    monkeypatch.setattr(direct, "_real_gamma_uks_xc_builder",
+                        lambda *a, **k: lambda Da, Db: (0., np.zeros_like(Da), np.zeros_like(Db)))
+
+    class Consumed(Exception):
+        pass
+
+    seen = []
+
+    def first_j(_L, D):
+        np.testing.assert_allclose(D, expected, rtol=0, atol=1e-14)
+        seen.append("J")
+        return np.zeros_like(D)
+
+    def first_k(_L, D, *args):
+        index = len(seen) - 1
+        target = ((seed[index] if read else expected / 2) if opened else expected)
+        np.testing.assert_allclose(D, target, rtol=0, atol=1e-14)
+        seen.append("K")
+        if not opened or index == 1:
+            raise Consumed
+        return np.zeros_like(D)
+
+    monkeypatch.setattr(direct, "ccm_ri_j_neutral", first_j)
+    monkeypatch.setattr(direct, "_k_neutral_fast", first_k)
+    before = np.array(seed, copy=True)
+    with pytest.raises(Consumed):
+        adapter.run_real_gamma_scf(
+            cell, "synthetic", method, (2, 1, 1), exxdiv=None,
+            initial_guess="READ" if read else "AUTO",
+            initial_density=payload if read else None)
+    np.testing.assert_array_equal(np.array(seed), before)
+    assert seen == (["J", "K", "K"] if opened else ["J", "K"])
+
+
+def test_real_gamma_read_admission():
+    from vibeqc.periodic.ccm.scf import _ccm_read_density, _ccm_read_spin_densities
+    from vibeqc.periodic.ccm.real_gamma_runner import real_gamma_read_source
+
+    S = np.diag([2., 1.])
+    good = np.diag([0., 2.])
+    np.testing.assert_array_equal(_ccm_read_density(good, S, 2), good)
+    bad = [np.eye(3), np.array([[0., 1.], [0., 2.]]),
+           np.array([[np.nan, 0.], [0., 2.]]), np.diag([-.1, 2.2]),
+           np.diag([0., 1.]), np.array([[.5, .1j], [-.1j, 1.]])]
+    for density in bad:
+        with pytest.raises(ValueError, match="READ"):
+            _ccm_read_density(density, S, 2)
+    with pytest.raises(ValueError, match="spin capacity"):
+        _ccm_read_density(np.diag([1.5, 0.]), S, 3)
+    with pytest.raises(ValueError, match="alpha, beta"):
+        _ccm_read_spin_densities(good, S, 1, 1)
+    with pytest.raises(ValueError, match="electron count"):
+        _ccm_read_spin_densities((good, good), S, 1, 1)
+    for source in (None, "seed.qvf"):
+        with pytest.raises(ValueError, match="in-memory"):
+            real_gamma_read_source(source)
+
+
+def test_runner_real_gamma_read_keeps_supercell_density(monkeypatch, tmp_path):
+    """The public READ seam must not project a 4-AO seed onto 2 unit-cell AOs."""
+    from vibeqc import BasisSet, run_periodic_job
+    import vibeqc.periodic.ccm.real_gamma_runner as adapter
+    cell = _h2_cell()
+    basis = BasisSet(cell.unit_cell_molecule(), "sto-3g")
+    seed = np.eye(2 * basis.nbasis)
+    reference = SimpleNamespace(density=seed)
+
+    class Routed(Exception):
+        pass
+
+    def consume(system, basis_name, method, mesh, **kwargs):
+        assert tuple(mesh) == (2, 1, 1)
+        assert kwargs["initial_guess"].name == "READ"
+        assert kwargs["initial_density"] is seed
+        raise Routed
+
+    monkeypatch.setattr(adapter, "run_real_gamma_scf", consume)
+    with pytest.raises(Routed):
+        run_periodic_job(cell, basis, method="aiccm", variant="real-gamma",
+                         aiccm_lattice_extension=(2, 1, 1), initial_guess="READ",
+                         read_from=reference, progress=False,
+                         output=str(tmp_path / "read-supercell"))

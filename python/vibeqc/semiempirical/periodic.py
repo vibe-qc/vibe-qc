@@ -743,12 +743,27 @@ def _require_same_parameter_snapshot(
     return result
 
 
+def _resolve_semiempirical_cutoff_bohr(cutoff_bohr, route_plan, system) -> float:
+    """Default image cutoff: derived for full-k DFTB, 15 bohr elsewhere (#565)."""
+    if cutoff_bohr is not None:
+        return float(cutoff_bohr)
+    if (
+        route_plan is not None
+        and route_plan.boundary == BOUNDARY_PERIODIC_K
+        and route_plan.method_key in ("dftb0", "scc_dftb")
+    ):
+        from .dftb_cutoff import default_dftb_kpoint_cutoff_bohr
+
+        return default_dftb_kpoint_cutoff_bohr(system)
+    return 15.0
+
+
 def evaluate_periodic_kpoint_energy_gradient_stress(
     method: str | SemiempiricalRoutePlan,
     system: PeriodicSystem,
     *,
     kpoints,
-    cutoff_bohr: float = 15.0,
+    cutoff_bohr: float | None = None,
     fd_step_bohr: float = 0.001,
     strain_step: float = 0.001,
     max_iter: int | None = None,
@@ -767,6 +782,8 @@ def evaluate_periodic_kpoint_energy_gradient_stress(
 
     The native batched finite-difference kernel makes coordinate and strain
     displacements share parameter views, system workspace, and k-mesh handling.
+    ``cutoff_bohr=None`` derives the pair cutoff from the basis extent of the
+    cell's elements (:func:`vibeqc.semiempirical.dftb_cutoff.default_dftb_kpoint_cutoff_bohr`).
     """
     route_plan = plan_periodic_semiempirical_route(
         method,
@@ -774,6 +791,7 @@ def evaluate_periodic_kpoint_energy_gradient_stress(
         boundary=BOUNDARY_PERIODIC_K,
         properties=("energy", "gradient", "stress"),
     )
+    cutoff_bohr = _resolve_semiempirical_cutoff_bohr(cutoff_bohr, route_plan, system)
     if not np.isfinite(cutoff_bohr) or cutoff_bohr <= 0.0:
         raise ValueError("cutoff_bohr must be finite and positive")
     if not np.isfinite(fd_step_bohr) or fd_step_bohr <= 0.0:
@@ -805,7 +823,7 @@ def evaluate_periodic_energy_gradient(
     system: PeriodicSystem,
     *,
     kpoints=None,
-    cutoff_bohr: float = 15.0,
+    cutoff_bohr: float | None = None,
     fd_step_bohr: float = 0.001,
     max_iter: int | None = None,
     conv_tol_charge: float | None = None,
@@ -834,6 +852,10 @@ def evaluate_periodic_energy_gradient(
     default-on frontier smearing and the returned gradient differentiates the
     Mermin free energy ``A = E - T*S``; an explicit numeric 0.0 restores the
     exact zero-temperature Aufbau surface.
+
+    ``cutoff_bohr=None`` keeps the 15-bohr Gamma image domain and, on the
+    full-k route, derives the pair cutoff from the basis extent of the
+    cell's elements (:func:`vibeqc.semiempirical.dftb_cutoff.default_dftb_kpoint_cutoff_bohr`).
     """
     if isinstance(method, SemiempiricalRoutePlan):
         boundary = method.boundary
@@ -853,6 +875,7 @@ def evaluate_periodic_energy_gradient(
         boundary=boundary,
         properties=("energy", "gradient"),
     )
+    cutoff_bohr = _resolve_semiempirical_cutoff_bohr(cutoff_bohr, route_plan, system)
     if not np.isfinite(cutoff_bohr) or cutoff_bohr <= 0.0:
         raise ValueError("cutoff_bohr must be finite and positive")
     if not np.isfinite(fd_step_bohr) or fd_step_bohr <= 0.0:

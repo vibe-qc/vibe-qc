@@ -38,21 +38,35 @@ SRC_DIR="$LIBXC_DIR/src"
 BUILD_DIR="$LIBXC_DIR/build"
 INSTALL_DIR="$LIBXC_DIR/install"
 
+# Include the numerical patch in the dependency recipe identity. A change to
+# the patch must update this hash so existing unpatched installs rebuild.
+SPIN_PATCH_SHA256="46468943577ab55e18bb495a8742c48346151db842c0635ca8ded6e1c2e2afb4"
+verify_tarball_sha256 "$SCRIPT_DIR/patch_libxc_spin_fractions.py" "$SPIN_PATCH_SHA256"
+
+# vibeqc-recipe-hash: lifecycle-only-begin
 # libxc may install its CMake config to lib/ or lib64/ depending on distro.
 for candidate in \
         "$INSTALL_DIR/lib/cmake/Libxc/LibxcConfig.cmake" \
         "$INSTALL_DIR/lib64/cmake/Libxc/LibxcConfig.cmake"; do
     if [ -f "$candidate" ]; then
-        echo "libxc $LIBXC_VERSION already installed at $INSTALL_DIR"
-        exit 0
+        python3 "$SCRIPT_DIR/attest_native_image.py" libxc "$INSTALL_DIR" || exit 3
+        if python3 "$SCRIPT_DIR/patch_libxc_spin_fractions.py" --check-install "$INSTALL_DIR"; then
+            echo "libxc cache admitted at $INSTALL_DIR (recipe pin $LIBXC_VERSION; stable spin fractions; source/build provenance not attested)"
+            exit 0
+        fi
+        echo "Rebuilding libxc with stable spin fractions."
+        break
     fi
 done
+# vibeqc-recipe-hash: lifecycle-only-end
 
 if [ ! -f "$SRC_DIR/CMakeLists.txt" ]; then
     echo "Cloning libxc $LIBXC_VERSION..."
     git_clone_pinned https://gitlab.com/libxc/libxc.git \
         "$LIBXC_VERSION" "$LIBXC_COMMIT_SHA" "$SRC_DIR"
 fi
+
+python3 "$SCRIPT_DIR/patch_libxc_spin_fractions.py" --source "$SRC_DIR"
 
 # Fetch-only mode for offline-HPC pre-staging (docs/cluster_setup.md):
 # stage source on an internet-connected login node, compile on an offline
@@ -63,7 +77,14 @@ if [ "${VIBEQC_FETCH_ONLY:-0}" = "1" ]; then
     exit 0
 fi
 
-rm -rf "$BUILD_DIR"
+# Optional observation changes no compilation semantics or cache recipe.
+# vibeqc-recipe-hash: lifecycle-only-begin
+# shellcheck source=_native_collector.sh
+. "$SCRIPT_DIR/_native_collector.sh"
+vibeqc_enable_native_collector libxc
+# vibeqc-recipe-hash: lifecycle-only-end
+
+# Reuse configured objects; only the patched translation units need rebuilding.
 mkdir -p "$BUILD_DIR"
 
 case "$(uname -s)" in
@@ -92,6 +113,7 @@ cmake -S "$SRC_DIR" -B "$BUILD_DIR" -GNinja -Wno-dev \
 export CMAKE_BUILD_PARALLEL_LEVEL="${CMAKE_BUILD_PARALLEL_LEVEL:-$PHYS_CORES}"
 echo "Building libxc with $CMAKE_BUILD_PARALLEL_LEVEL parallel jobs..."
 cmake --build "$BUILD_DIR" --target install
+python3 "$SCRIPT_DIR/patch_libxc_spin_fractions.py" --check-install "$INSTALL_DIR"
 
 echo
 echo "libxc $LIBXC_VERSION installed to $INSTALL_DIR"

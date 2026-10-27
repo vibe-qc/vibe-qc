@@ -5,24 +5,32 @@ Open-shell counterpart of :mod:`vibeqc.periodic_rhf_multi_k_ewald`.
 Carries two density matrices ``D_a(g), D_b(g)`` per real-space cell
 and constructs the per-spin 2e Fock at every k as
 
-    F^{2e,s}(g)  =  J(D_total)(g)  -  K(D_s)(g)
+    F^{2e,s}(k)  =  J(D_total)(k)  -  K(D_s)(k)
 
 with ``D_total = D_a + D_b`` (one-particle convention, no factor 2)
 and full-range exchange. The Hartree J comes from the shared
 analytic-FT helper
 (:func:`vibeqc.periodic_fock_multi_k.ewald_3d_j_blocks`) -- the same
 w-invariant reciprocal-space J the closed-shell multi-k Fock builder
-uses, whose per-cell blocks Bloch-sum to the Γ ``build_j_ewald_3d`` J
-at the (1,1,1) mesh. Per-spin K is extracted from the closed-shell
-builder via
+uses.
 
-    K(D_s)  =  2 . (J_full(D_s)  -  F_full(D_s))
+The exact exchange takes the same ``q -> 0`` gauge as
+:func:`vibeqc.run_rhf_periodic_multi_k_ewald3d`, so a closed-shell
+singlet reproduces it (GitLab #399):
 
-where ``J_full(D)`` and ``F_full(D) = J_full(D) - 1/2 K(D)`` are two
-separate ``build_fock_2e_real_space`` calls at w = 0. Cost per
-iteration: one analytic-FT J(D_total) contraction + 4 lattice-ERI
-builds (2 J_full(D_s) + 2 F_full(D_s)), no FFT Poisson on the
-default backend.
+  - On every mesh by default the full-range arm is the corrected
+    Ewald split of :mod:`vibeqc.periodic_corrected_exchange`: erfc-screened
+    K in real space plus the reciprocal and ``q + G = 0`` arms per spin.
+    The SCF density on a finite mesh is Born-von-Karman-torus periodic,
+    so D(g) does not decay and a bare ``1/r`` exchange sum over a radial
+    image ball does not converge. Until #399 this driver summed exactly
+    that: H2/STO-3G in a 6-bohr box at (2,1,1) fell from -2.26 to
+    -6.22 Ha as the lattice cutoff went from 10 to 18 bohr, while RHF
+    held -1.19450 Ha.
+  - At a single Gamma point the corrected split is the default too
+    (GitLab #23); ``exchange_exxdiv='none'`` zeroes the image densities and
+    takes the molecular-limit kernel of
+    :func:`run_uhf_periodic_gamma_ewald3d`.
 
 Bloch-sums each per-spin F^{2e,s}(g) to F^{2e,s}(k), adds Hcore(k),
 diagonalises per spin per k. DIIS is per-spin (separate Pulay history
@@ -32,13 +40,11 @@ per-k MOs each iteration.
 Scope
 -----
 
-  - Multi-k periodic UHF with EWALD_3D. The Γ-only path (single
-    [1,1,1] mesh) reproduces :func:`run_uhf_periodic_gamma_ewald3d`
-    by construction (the multi-k builder reduces to the molecular-
-    limit J convention at [1,1,1] mesh -- same caveat as the RHF
-    case).
+  - Multi-k periodic UHF with EWALD_3D. A single [1,1,1] mesh takes the
+    corrected split by default and the molecular-limit exchange of
+    :func:`run_uhf_periodic_gamma_ewald3d` with ``exchange_exxdiv='none'``.
   - Closed-shell case (multiplicity = 1) reproduces the multi-k
-    Ewald RHF energy to ~µHa.
+    Ewald RHF energy on the same options and mesh.
   - Standard HF (no DFT). Finite-temperature smearing uses separate
     per-spin Fermi levels at fixed ``n_alpha`` / ``n_beta`` and
     converges the Mermin free energy. Gilat-Raubenheimer integration is
@@ -66,7 +72,7 @@ from ._vibeqc_core import (
     SCFIteration,
     bloch_sum,
     level_shift_at_iter,
-    build_jk_2e_real_space,
+    build_jk_gamma_molecular_limit,
     compute_kinetic_lattice,
     compute_overlap_lattice,
     nuclear_repulsion_per_cell,
@@ -80,6 +86,7 @@ from .guess import (
 from .madelung import (
     madelung_energy_correction_for_lat as _madelung_energy_correction_for_lat,
 )
+from .ewald_composed import make_ewald_3d_gamma_j_builder
 from .periodic_fock_multi_k import (
     ewald_3d_j_blocks,
     make_ewald_3d_lattice_j_cache,
@@ -89,16 +96,32 @@ from .periodic_rhf_multi_k_ewald import (
     _damp_lattice_matrix,
     _diag_in_orth_basis,
     _g0_block,
+    _hermitize_k_matrices,
+)
+from .periodic.exchange_convention import (
+    BARE_IMAGE_SUM,
+    BVK_EWALD,
+    MOLECULAR_LIMIT,
+)
+from .periodic_corrected_exchange import (
+    CorrectedEwaldExchange,
+    corrected_exchange_unavailable_reason,
+    is_single_gamma_mesh,
+    is_unsupported_gauge,
+    resolve_exchange_gauge,
+)
+from .periodic_screened_exchange import (
+    PeriodicExchangeAssembly,
+    build_exchange_blocks,
 )
 from .periodic_scf_accelerators import (
     DynamicDamping,
     MultiKPeriodicUHFAccelerator,
 )
 from .periodic_k_density import density_matrices_per_k as _density_matrices_per_k
-from .periodic_uhf_ewald import _spin_squared
 from .progress import ProgressLogger, resolve_progress
 from .scf_divergence import check_scf_divergence
-from .smearing.fermi_dirac import fermi_dirac_occupations_per_k
+from .smearing import spin_channel_occupations as _spin_channel_occupations
 
 __all__ = [
     "PeriodicUHFMultiKEwaldResult",
@@ -165,6 +188,9 @@ class PeriodicUHFMultiKEwaldResult:
     density_alpha_k: Optional[List[np.ndarray]] = None
     density_beta_k: Optional[List[np.ndarray]] = None
 
+    # The exchange q=0 gauge that ran, as on the RHF sibling (GitLab #23).
+    exchange_q0: str = BVK_EWALD
+
 
 def _build_uhf_fock_blocks_ewald3d(
     basis: BasisSet,
@@ -178,19 +204,24 @@ def _build_uhf_fock_blocks_ewald3d(
     spacing_bohr: float,
     j_cache=None,
     d_total_buffer: Optional[LatticeMatrixSet] = None,
+    full_range_alpha: Optional[float] = None,
+    symmetry_reduction=None,
 ) -> Tuple[List[np.ndarray], List[np.ndarray]]:
     """Compute per-cell ``(F^{2e,a}(g), F^{2e,b}(g))`` blocks.
 
-    One analytic-FT Hartree contraction + two fused lattice-ERI calls
-    (one per spin):
+    One analytic-FT Hartree contraction + one lattice-ERI exchange build
+    per spin:
 
       - J(D_total): analytic-FT Hartree per cell via
         :func:`vibeqc.periodic_fock_multi_k.ewald_3d_j_blocks`
         (w-invariant; Bloch-sums to the Γ J at the (1,1,1) mesh).
-      - K(D_a), K(D_b): per-spin full-range exchange via the fused
-        ``build_jk_2e_real_space`` (one lattice-ERI traversal per spin
-        returns both J and K; only K is consumed here -- J comes from
-        the analytic FT above).
+      - K(D_a), K(D_b): per-spin full-range exchange through the shared
+        :func:`vibeqc.periodic_screened_exchange.build_exchange_blocks`.
+        ``full_range_alpha`` puts it on the short-range ``erfc(alpha r)/r``
+        arm of the corrected Ewald split, whose reciprocal and ``q + G = 0``
+        arms the caller subtracts per k (#399); ``None`` keeps the bare
+        ``1/r`` kernel, valid only where the density decays with image
+        distance.
 
     Then ``F^{2e,s}(g) = J_total(g) - K(D_s)(g)``.
 
@@ -236,31 +267,78 @@ def _build_uhf_fock_blocks_ewald3d(
         j_cache=j_cache,
     )
 
-    # Per-spin exchange via the fused J+K builder: ONE lattice-ERI
-    # traversal per spin returns both matrices. The previous
-    # K(D_s) = 2.(J_full(D_s) - F_full(D_s)) reconstruction spent TWO
-    # full traversals per spin on the same quartets (4 of the 6
-    # lattice-ERI calls per Fock build -- the dominant cost of the
-    # multi-k iteration per the 2026-05-25 profiling).
-    # tests/test_periodic_uhf_multi_k_ewald.py pins K-equality of the
-    # two routes at machine precision.
-    jk_alpha = build_jk_2e_real_space(
-        basis, system, lat_opts, D_alpha_real, 0.0,
+    # Per-spin exchange: one lattice-ERI traversal per spin through the
+    # shared builder, which the UKS sibling and the closed-shell route
+    # use too. tests/test_periodic_uhf_multi_k_ewald.py pins K-equality
+    # with the two-traversal J_full - F_full reconstruction.
+    K_alpha_blocks = build_exchange_blocks(
+        basis, system, lat_opts, D_alpha_real, _HF_EXCHANGE,
+        full_range_alpha=full_range_alpha,
+        symmetry_reduction=symmetry_reduction,
     )
-    jk_beta = build_jk_2e_real_space(
-        basis, system, lat_opts, D_beta_real, 0.0,
+    K_beta_blocks = build_exchange_blocks(
+        basis, system, lat_opts, D_beta_real, _HF_EXCHANGE,
+        full_range_alpha=full_range_alpha,
+        symmetry_reduction=symmetry_reduction,
     )
 
     F_alpha_blocks: List[np.ndarray] = []
     F_beta_blocks: List[np.ndarray] = []
     for g in range(n_cells):
         J_total = np.asarray(J_total_blocks[g], dtype=float)
-        K_a = np.asarray(jk_alpha.K.blocks[g], dtype=float)
-        K_b = np.asarray(jk_beta.K.blocks[g], dtype=float)
-        F_alpha_blocks.append(J_total - K_a)
-        F_beta_blocks.append(J_total - K_b)
+        F_alpha_blocks.append(J_total - K_alpha_blocks[g])
+        F_beta_blocks.append(J_total - K_beta_blocks[g])
 
     return F_alpha_blocks, F_beta_blocks
+
+
+#: Pure Hartree-Fock exchange: the full-range arm only.
+_HF_EXCHANGE = PeriodicExchangeAssembly(1.0, 0.0, 0.0)
+
+
+def _single_gamma_molecular_limit_uhf_focks(
+    basis: BasisSet,
+    system: PeriodicSystem,
+    D_alpha_real: LatticeMatrixSet,
+    D_beta_real: LatticeMatrixSet,
+    Hcore_gamma: np.ndarray,
+    *,
+    lattice_opts: LatticeSumOptions,
+    j_build,
+) -> Tuple[List[np.ndarray], List[np.ndarray]]:
+    """Single-Γ per-spin Fock matching :func:`run_uhf_periodic_gamma_ewald3d`.
+
+    The open-shell twin of the RHF driver's
+    ``_build_single_gamma_molecular_limit_fock``: the image-density blocks
+    are zero (the driver localises every density it builds), so the bare
+    exchange sum has exactly one term and IS the molecular-limit K. Same
+    arithmetic as the Γ UHF driver, ``K(D_s) = K(2 D_s) / 2``, so the two
+    agree.
+    """
+    D_a = np.asarray(_g0_block(D_alpha_real), dtype=float)
+    D_b = np.asarray(_g0_block(D_beta_real), dtype=float)
+    J = np.asarray(j_build(D_a + D_b))
+    focks = []
+    for D_s in (D_a, D_b):
+        K_s = 0.5 * np.asarray(
+            build_jk_gamma_molecular_limit(
+                basis, system, lattice_opts, 2.0 * D_s, 0.0
+            ).K
+        )
+        F = np.asarray(Hcore_gamma, dtype=complex) + J - K_s
+        focks.append([0.5 * (F + F.conj().T)])
+    return focks[0], focks[1]
+
+
+def _localize_home_cell(D_real: LatticeMatrixSet, D_home: np.ndarray) -> LatticeMatrixSet:
+    """Set ``D(g=0) = D_home`` and every image block to zero, in place."""
+    home = np.asarray(np.real(D_home), dtype=float)
+    home = 0.5 * (home + home.T)
+    zero = np.zeros_like(home)
+    for g_idx, cell in enumerate(D_real.cells):
+        is_home = (np.asarray(cell.index, dtype=int) == 0).all()
+        D_real.set_block(g_idx, home if is_home else zero)
+    return D_real
 
 
 def _bloch_sum_blocks(
@@ -295,6 +373,7 @@ def run_uhf_periodic_multi_k_ewald3d(
     initial_density_k: Optional[Sequence] = None,
     verbose: Optional[int] = None,
     bz_integration: Optional[str] = None,
+    exchange_exxdiv: Optional[str] = None,
 ) -> PeriodicUHFMultiKEwaldResult:
     """Multi-k open-shell UHF SCF with EWALD_3D Coulomb.
 
@@ -310,15 +389,43 @@ def run_uhf_periodic_multi_k_ewald3d(
     ``bz_integration="gilat"`` instead applies sharp T=0
     Gilat-Raubenheimer occupations independently to each spin channel on a
     full or symmetry-reduced regular mesh.
+
+    ``exchange_exxdiv`` selects the exact-exchange ``q -> 0`` gauge exactly
+    as on :func:`vibeqc.run_rhf_periodic_multi_k_ewald3d`: ``None``
+    (default) takes the corrected Ewald split at every mesh, a single Gamma
+    point included (GitLab #23); ``'ewald'`` does the same and fails closed
+    where the split is unavailable; ``'none'`` takes the molecular-limit
+    kernel of :func:`run_uhf_periodic_gamma_ewald3d` and is accepted only at
+    a single Gamma point. A closed-shell singlet therefore reproduces the
+    RHF energy on the same mesh and options (GitLab #399).
     """
     from ._vibeqc_core import PeriodicRHFOptions as _Opts
 
     opts = options if options is not None else _Opts()
-    from .guess import select_periodic_driver_guess
+    max_iter = int(opts.max_iter)
+    if max_iter < 0:
+        raise ValueError(
+            "run_uhf_periodic_multi_k_ewald3d: max_iter must be >= 0 "
+            "(0 evaluates the initial guess only)"
+        )
+    # ECP cells run here since #35 (3-D cells; the context refuses others):
+    # the Z_eff nuclear frame for V_ne and e_nuc, the Bloch-summed lattice
+    # V_ECP in every Hcore(k), and the valence fill, as on the k-point GDF
+    # drivers. Orphan metadata is refused by the same validators.
+    from .guess import guess_ecp_context, select_periodic_driver_guess, validate_guess_ecp
+    from .periodic_k_gdf import _ecp_lattice_blocks, _periodic_ecp_context
+    _ecp_ctx = _periodic_ecp_context(opts, system, "run_uhf_periodic_multi_k_ewald3d")
+    _ecp_ncore = _ecp_ctx[3] if _ecp_ctx is not None else 0
+    _system_v = _ecp_ctx[4] if _ecp_ctx is not None else system
     guess = select_periodic_driver_guess(
         system, opts, route="ewald", method="UHF", driver="run_uhf_periodic_multi_k_ewald3d",
         multi_k=True, restart_supplied=initial_density_k is not None,
+        ecp_operator=_ecp_ctx is not None,
     ).transport
+    _guess_mol = system.unit_cell_molecule()
+    _guess_ecp = validate_guess_ecp(
+        guess, guess_ecp_context(opts, molecule=_guess_mol), _guess_mol
+    )
     if initial_density_k is not None:
         if len(kmesh.kpoints) != int(np.prod(kmesh.mesh)):
             raise NotImplementedError("READ requires a complete full k mesh on the Ewald lattice adapter")
@@ -356,7 +463,7 @@ def run_uhf_periodic_multi_k_ewald3d(
     lat_opts: LatticeSumOptions = opts.lattice_opts
     plog = resolve_progress(progress, verbose=verbose)
 
-    # ---- Force EWALD_3D gauge (gauge consistency; handover F4 2026-06-01) ----
+    # ---- Force EWALD_3D gauge (gauge consistency; historical design record F4 2026-06-01) ----
     # This driver hard-codes the Hartree J to the Ewald-3D builder, so V_ne
     # (compute_nuclear_lattice_dispatch) and e_nuc (nuclear_repulsion_per_cell)
     # MUST share that gauge. Without the force, a default options object
@@ -446,7 +553,7 @@ def run_uhf_periodic_multi_k_ewald3d(
         plog.write_raw(format_basis_summary(basis))
 
     # Open-shell occupations.
-    n_elec = int(system.n_electrons())
+    n_elec = int(system.n_electrons()) - _ecp_ncore
     mult = int(system.multiplicity)
     if mult < 1:
         raise ValueError(
@@ -472,6 +579,26 @@ def run_uhf_periodic_multi_k_ewald3d(
         f"weights sum = {weights.sum():.4f}; "
         f"n_alpha = {n_alpha}, n_beta = {n_beta}"
     )
+    single_gamma_mesh = is_single_gamma_mesh(kmesh)
+    # ---- Exact-exchange q -> 0 gauge (#399, #23) --------------------------
+    # The same rule as run_rhf_periodic_multi_k_ewald3d, shared through
+    # resolve_exchange_gauge, so a closed-shell singlet reproduces it: the
+    # corrected Ewald split at every mesh by default, a single Gamma point
+    # included; exchange_exxdiv='none' names the molecular-limit kernel of
+    # run_uhf_periodic_gamma_ewald3d at a single Gamma point.
+    exchange_gauge = resolve_exchange_gauge(
+        system,
+        kmesh,
+        exchange_exxdiv=exchange_exxdiv,
+        slab_mode=False,
+        pair_complete_1e=bool(lat_opts.pair_complete_1e),
+        where="run_uhf_periodic_multi_k_ewald3d",
+    )
+    # This flag is the gauge, not the mesh: the density localisation, the
+    # Gamma J closure and the molecular-limit Fock select together.
+    single_gamma_kmesh = exchange_gauge.molecular_limit
+    if single_gamma_mesh:
+        plog.info(exchange_gauge.log_line)
 
     # ---- Auto-optimise lattice truncation (default ON) -------------------
     if auto_optimize_truncation and lat_opts.coulomb_method == CoulombMethod.EWALD_3D:
@@ -504,12 +631,21 @@ def run_uhf_periodic_multi_k_ewald3d(
         T_lat = compute_kinetic_lattice(basis, system, lat_opts)
         from .periodic_v_ne import compute_nuclear_lattice_dispatch
 
-        V_lat = compute_nuclear_lattice_dispatch(basis, system, lat_opts)
+        V_lat = compute_nuclear_lattice_dispatch(basis, _system_v, lat_opts)
+        V_ecp_lat = (
+            _ecp_lattice_blocks(basis, system, lat_opts, _ecp_ctx)
+            if _ecp_ctx is not None else None)
     from .lattice_screening import on_physical_eri_cells
 
     S_lat = on_physical_eri_cells(S_lat, basis, system, lat_opts)
     T_lat = on_physical_eri_cells(T_lat, basis, system, lat_opts)
     V_lat = on_physical_eri_cells(V_lat, basis, system, lat_opts)
+    V_ecp_lat = on_physical_eri_cells(V_ecp_lat, basis, system, lat_opts)
+    if _ecp_ctx is not None:
+        plog.info(
+            f"periodic ECP: {_ecp_ncore} core electrons replaced on "
+            f"{len(_ecp_ctx[0])} centre(s); V_ne and e_nuc on the Z_eff frame"
+        )
     cells = list(S_lat.cells)
 
     # Fused C++ multi-k Bloch transforms (OpenMP-parallel over k) when
@@ -541,6 +677,8 @@ def run_uhf_periodic_multi_k_ewald3d(
         S_k = np.asarray(bloch_sum(S_lat, k_arr))
         T_k = np.asarray(bloch_sum(T_lat, k_arr))
         V_k = np.asarray(bloch_sum(V_lat, k_arr))
+        if V_ecp_lat is not None:
+            V_k = V_k + np.asarray(bloch_sum(V_ecp_lat, k_arr))
         H_k = T_k + V_k
         S_k = 0.5 * (S_k + S_k.conj().T)
         H_k = 0.5 * (H_k + H_k.conj().T)
@@ -565,7 +703,7 @@ def run_uhf_periodic_multi_k_ewald3d(
         Hcore_k_list.append(H_k)
         X_k_list.append(X_k)
 
-    e_nuc = float(nuclear_repulsion_per_cell(system, lat_opts))
+    e_nuc = float(nuclear_repulsion_per_cell(_system_v, lat_opts))
 
     if (
         guess in (InitialGuess.SAP, InitialGuess.HUECKEL)
@@ -587,6 +725,7 @@ def run_uhf_periodic_multi_k_ewald3d(
                 lattice_opts=lat_opts,
                 kinetic_lattice=T_lat,
                 overlap_lattice=S_lat,
+                ecp_context=_guess_ecp,
             )
         )
 
@@ -606,19 +745,10 @@ def run_uhf_periodic_multi_k_ewald3d(
     # Build real-space spin densities. UHF densities are per-spin
     # one-particle (no factor 2). The C++ fractional-occupation builder
     # handles both hard Aufbau occupations and finite-T occupations.
-    def _integer_occupations(nbf: int, n_occ_each: int) -> List[np.ndarray]:
-        occ_per_k = []
-        for _ in range(n_k):
-            occ = np.zeros(nbf, dtype=float)
-            occ[:n_occ_each] = 1.0
-            occ_per_k.append(occ)
-        return occ_per_k
-
     def _occupations_per_spin(
         eps_spin_per_k: Sequence[np.ndarray],
         n_spin: int,
     ) -> Tuple[List[np.ndarray], float, float]:
-        nbf = eps_spin_per_k[0].shape[0] if eps_spin_per_k else 0
         if use_gilat and n_spin > 0:
             from .bz_integration import gilat_occupations_for_kmesh
 
@@ -630,25 +760,41 @@ def run_uhf_periodic_multi_k_ewald3d(
                 spin_degeneracy=1.0,
             )
             return occ, float(e_fermi), 0.0
-        if smearing_T <= 0.0 or n_spin == 0:
-            return _integer_occupations(nbf, n_spin), 0.0, 0.0
-        occ, mu, entropy = fermi_dirac_occupations_per_k(
+        # The shared open-shell fill: one chemical potential per spin over
+        # the whole mesh, also at T = 0 (#176). The per-k integer Aufbau this
+        # replaced filled the lowest n_spin bands at every k and reported
+        # mu = 0.
+        result = _spin_channel_occupations(
             eps_spin_per_k,
-            weights,
-            float(n_spin),
-            smearing_T,
-            spin_degeneracy=1.0,
+            weights=weights,
+            n_electrons=float(n_spin),
+            smearing=smearing_T,
         )
-        return occ, float(mu), float(entropy)
+        return (
+            [np.asarray(o, dtype=float) for o in result.occupations_per_k],
+            float(result.mu),
+            float(result.entropy),
+        )
 
     def _spin_density(C_per_k_local, occ_per_k):
-        """Build a one-particle (no factor 2) real-space spin density."""
-        return real_space_density_from_kpoints_fractional(
+        """Build a one-particle (no factor 2) real-space spin density.
+
+        At a single Gamma point in the molecular-limit gauge the inverse
+        fold cannot recover any cell decay and would fill every image block
+        with P(Gamma); the Gamma convention is P(g != 0) = 0 instead, as on
+        the RHF driver (``_localize_single_gamma_density``).
+        """
+        D = real_space_density_from_kpoints_fractional(
             C_per_k_local,
             occ_per_k,
             kmesh,
             cells,
         )
+        if single_gamma_kmesh:
+            C0 = np.asarray(C_per_k_local[0], dtype=complex)
+            occ0 = np.asarray(occ_per_k[0], dtype=float).reshape(-1)
+            _localize_home_cell(D, (C0 * occ0[None, :]) @ C0.conj().T)
+        return D
 
     occ_alpha_per_k, mu_alpha, entropy_alpha = _occupations_per_spin(
         eps_alpha_per_k, n_alpha
@@ -689,6 +835,7 @@ def run_uhf_periodic_multi_k_ewald3d(
             lattice_opts=lat_opts,
             atomic_spins=getattr(opts, "atomic_spins", None) or None,
             overlap=S_k_list, weights=weights,
+            ecp_context=_guess_ecp,
         )
         if split is not None:
             plog.info(
@@ -719,9 +866,17 @@ def run_uhf_periodic_multi_k_ewald3d(
     # Cache the iteration-invariant analytic-FT Hartree-J machinery once
     # (the 8b148bb5 E2 pattern). PATOM consumes it for the one in-field
     # re-polarisation step, and the SCF loop reuses it for every iteration.
-    j_cache = make_ewald_3d_lattice_j_cache(
-        basis, system, D_alpha_real.cells, lattice_opts=lat_opts,
-    )
+    if single_gamma_kmesh:
+        gamma_j_build = make_ewald_3d_gamma_j_builder(
+            basis, system, omega=float(omega), lattice_opts=lat_opts,
+            grid_shape=grid_shape_t, origin=origin, spacing_bohr=spacing_bohr,
+        )
+        j_cache = None
+    else:
+        gamma_j_build = None
+        j_cache = make_ewald_3d_lattice_j_cache(
+            basis, system, D_alpha_real.cells, lattice_opts=lat_opts,
+        )
     # Reusable D_total container: the LatticeMatrixSet structure (cells,
     # nbf) is fixed for the whole SCF, so build the container once from
     # the overlap template and overwrite every block per Fock build.
@@ -733,13 +888,113 @@ def run_uhf_periodic_multi_k_ewald3d(
         basis.nbasis, cells,
         [np.zeros((basis.nbasis, basis.nbasis)) for _ in cells],
     )
-    if guess == InitialGuess.PATOM:
-        plog.info("initial guess: PATOM (SAD + one periodic in-field step)")
-        F_alpha_blocks, F_beta_blocks = _build_uhf_fock_blocks_ewald3d(
+
+    # ---- Corrected-Ewald full-range exchange (#399) -----------------------
+    # Summed as a bare 1/r kernel over a radial image ball the exchange does
+    # not converge, because the SCF density on a finite k mesh is BvK-torus
+    # periodic and D(g) does not decay. Use the convergent Ewald split
+    # instead (erfc K_SR in real space, reciprocal K_LR per q = k - k',
+    # probe-charge q + G = 0 term), per spin, exactly as the RHF and UKS
+    # siblings do; see vibeqc.periodic_corrected_exchange. Not applied at a
+    # single Gamma point in the molecular-limit gauge, where every image
+    # block is zero and the bare sum has exactly one term.
+    corrected_exchange = None
+    if not single_gamma_kmesh:
+        _unavailable = corrected_exchange_unavailable_reason(
+            system, kmesh, slab_mode=False
+        )
+        if _unavailable is not None and exchange_exxdiv == "ewald":
+            raise NotImplementedError(
+                "run_uhf_periodic_multi_k_ewald3d: exchange_exxdiv='ewald' "
+                f"was requested, but {_unavailable}."
+            )
+        if _unavailable is None:
+            corrected_exchange = CorrectedEwaldExchange.build(
+                basis,
+                system,
+                np.asarray(
+                    [np.asarray(c.r_cart, dtype=float) for c in cells]
+                ),
+                kmesh,
+                float(omega),
+                where="run_uhf_periodic_multi_k_ewald3d",
+                lattice_opts=lat_opts,
+            )
+        elif is_unsupported_gauge(system, slab_mode=False):
+            # dim != 3: the reciprocal cache is 3D-only. These cells keep
+            # the historical kernel and say so, as on the RHF sibling.
+            plog.info(
+                "exact exchange stays on the uncorrected real-space image "
+                f"sum: {_unavailable}. Energies on this route are not "
+                "lattice-cutoff converged."
+            )
+        else:
+            # An explicit k list with no star metadata: fail closed rather
+            # than leave it on the bare kernel while a full mesh takes the
+            # corrected split, as on the RHF sibling.
+            raise NotImplementedError(
+                "run_uhf_periodic_multi_k_ewald3d: multi-k Hartree-Fock "
+                f"needs full-range exact exchange, but {_unavailable}. "
+                "Use a Monkhorst-Pack mesh (full, or symmetry-reduced "
+                "with vq.attach_symmetry + use_symmetry=True)."
+            )
+
+    # SYM3b orbit reduction for the real-space exchange arm, wedge path
+    # only (the RHF driver's comment has the profile and the
+    # symmetrized-answer rationale); here it applies per spin.
+    exchange_symmetry_reduction = None
+    if (
+        corrected_exchange is not None
+        and corrected_exchange.unfolding is not None
+        and not lat_opts.pair_complete_1e
+    ):
+        from ._vibeqc_core import direct_lattice_cells as _radial_cells
+        from .bipole_symmetry_fock import (
+            cell_orbit_mapping,
+            representative_cell_indices,
+        )
+
+        _sym_mapping = cell_orbit_mapping(
+            system, basis, list(_radial_cells(system, lat_opts.cutoff_bohr))
+        )
+        if _sym_mapping is not None:
+            exchange_symmetry_reduction = (
+                _sym_mapping,
+                representative_cell_indices(_sym_mapping),
+            )
+
+    def _uhf_focks(D_a_real, D_b_real, D_a_k, D_b_k):
+        """Per-k ``(F_a(k), F_b(k))`` including Hcore(k), in the run's gauge.
+
+        ``D_a_k`` / ``D_b_k`` are the per-k spin densities behind the
+        real-space sets; the corrected split reads them directly for its
+        reciprocal arms (and, on a symmetry-reduced mesh, to rebuild the
+        real-space sets exactly from the unfolded wedge).
+        """
+        if single_gamma_kmesh:
+            return _single_gamma_molecular_limit_uhf_focks(
+                basis,
+                system,
+                D_a_real,
+                D_b_real,
+                Hcore_k_list[0],
+                lattice_opts=lat_opts,
+                j_build=gamma_j_build,
+            )
+        if (
+            corrected_exchange is not None
+            and corrected_exchange.unfolding is not None
+        ):
+            # Symmetry-reduced wedge: fold the unfolded wedge densities over
+            # the full mesh (Pisani, Dovesi & Roetti 1988, Eqs. II.7.21 and
+            # II.7.48) instead of the plain weighted wedge fold.
+            D_a_real = corrected_exchange.fold_density(D_a_k, lat_opts)
+            D_b_real = corrected_exchange.fold_density(D_b_k, lat_opts)
+        F_a_blocks, F_b_blocks = _build_uhf_fock_blocks_ewald3d(
             basis,
             system,
-            D_alpha_real,
-            D_beta_real,
+            D_a_real,
+            D_b_real,
             omega,
             lat_opts,
             grid_shape_t,
@@ -747,20 +1002,63 @@ def run_uhf_periodic_multi_k_ewald3d(
             spacing_bohr,
             j_cache=j_cache,
             d_total_buffer=d_total_buffer,
+            full_range_alpha=(
+                None if corrected_exchange is None else float(omega)
+            ),
+            symmetry_reduction=exchange_symmetry_reduction,
+        )
+        # F_s(k) = S_g e^{i k.R_g} F^{2e,s}(g) + Hcore(k) at every k in one
+        # fused call (OpenMP-parallel over k) when the C++ kernel is
+        # available; per-k Python fold otherwise.
+        if _asm_mk is not None:
+            F_a = [np.asarray(m) for m in _asm_mk(
+                F_a_blocks, cell_r_list, k_arr_list, Hcore_k_list)]
+            F_b = [np.asarray(m) for m in _asm_mk(
+                F_b_blocks, cell_r_list, k_arr_list, Hcore_k_list)]
+        else:
+            F_a = [
+                _bloch_sum_blocks(F_a_blocks, cells, k) + H
+                for k, H in zip(k_arr_list, Hcore_k_list)
+            ]
+            F_b = [
+                _bloch_sum_blocks(F_b_blocks, cells, k) + H
+                for k, H in zip(k_arr_list, Hcore_k_list)
+            ]
+        if corrected_exchange is None:
+            return F_a, F_b
+        # The reciprocal and q + G = 0 arms of the split, per spin. The
+        # coefficient is 1 on the one-particle spin density (the
+        # closed-shell driver's 0.5 acts on D_total = 2 D_s).
+        t_a = corrected_exchange.k_space_terms_all_k(S_k_list, list(D_a_k))
+        t_b = corrected_exchange.k_space_terms_all_k(S_k_list, list(D_b_k))
+        return (
+            _hermitize_k_matrices([f - t for f, t in zip(F_a, t_a)]),
+            _hermitize_k_matrices([f - t for f, t in zip(F_b, t_b)]),
+        )
+
+    if guess == InitialGuess.PATOM:
+        plog.info("initial guess: PATOM (SAD + one periodic in-field step)")
+        F_a_seed, F_b_seed = _uhf_focks(
+            D_alpha_real,
+            D_beta_real,
+            initial_alpha_k
+            if initial_alpha_k is not None
+            else _density_matrices_per_k(C_alpha_per_k, occ_alpha_per_k),
+            initial_beta_k
+            if initial_beta_k is not None
+            else _density_matrices_per_k(C_beta_per_k, occ_beta_per_k),
         )
         C_alpha_per_k = []
         eps_alpha_per_k = []
         C_beta_per_k = []
         eps_beta_per_k = []
         for k_idx, k_cart in enumerate(k_points):
-            F_a = _bloch_sum_blocks(F_alpha_blocks, cells, np.asarray(k_cart))
-            F_b = _bloch_sum_blocks(F_beta_blocks, cells, np.asarray(k_cart))
             C_a, eps_a = _diag_in_orth_basis(
-                F_a + Hcore_k_list[k_idx],
+                F_a_seed[k_idx],
                 X_k_list[k_idx],
             )
             C_b, eps_b = _diag_in_orth_basis(
-                F_b + Hcore_k_list[k_idx],
+                F_b_seed[k_idx],
                 X_k_list[k_idx],
             )
             C_alpha_per_k.append(C_a)
@@ -791,6 +1089,9 @@ def run_uhf_periodic_multi_k_ewald3d(
         D_beta_real = periodic_restart_lattice_density(
             initial_beta_k, S_k_list, weights, n_beta, kmesh, D_beta_real.cells, retained_k_system=system,
         )
+        if single_gamma_kmesh:
+            _localize_home_cell(D_alpha_real, initial_alpha_k[0])
+            _localize_home_cell(D_beta_real, initial_beta_k[0])
     D_alpha_prev: Optional[LatticeMatrixSet] = None
     D_beta_prev: Optional[LatticeMatrixSet] = None
     D_a_used_per_k_prev = None
@@ -842,7 +1143,7 @@ def run_uhf_periodic_multi_k_ewald3d(
     converged = False
     terminal_recheck_at_cap = False
     iter_idx = 0
-    for iter_idx in range(1, int(opts.max_iter) + 1):
+    for iter_idx in range(1, max(1, max_iter) + 1):
         if damper is not None:
             damping = damper.alpha
         diis_active = use_diis and iter_idx >= diis_start_iter
@@ -882,38 +1183,10 @@ def run_uhf_periodic_multi_k_ewald3d(
             D_a_used_per_k = D_a_cur_per_k
             D_b_used_per_k = D_b_cur_per_k
 
-        # 2e Fock blocks for both spins.
-        F_alpha_blocks, F_beta_blocks = _build_uhf_fock_blocks_ewald3d(
-            basis,
-            system,
-            D_alpha_used,
-            D_beta_used,
-            omega,
-            lat_opts,
-            grid_shape_t,
-            origin,
-            spacing_bohr,
-            j_cache=j_cache,
-            d_total_buffer=d_total_buffer,
+        # Per-spin Fock at every k, in the run's exchange gauge.
+        F_alpha_k_list, F_beta_k_list = _uhf_focks(
+            D_alpha_used, D_beta_used, D_a_used_per_k, D_b_used_per_k
         )
-
-        # F_s(k) = S_g e^{i k.R_g} F^{2e,s}(g) + Hcore(k) at every k in
-        # one fused call (OpenMP-parallel over k) when the C++ kernel is
-        # available; per-k Python fold otherwise.
-        if _asm_mk is not None:
-            F_alpha_k_list = [np.asarray(m) for m in _asm_mk(
-                F_alpha_blocks, cell_r_list, k_arr_list, Hcore_k_list)]
-            F_beta_k_list = [np.asarray(m) for m in _asm_mk(
-                F_beta_blocks, cell_r_list, k_arr_list, Hcore_k_list)]
-        else:
-            F_alpha_k_list = [
-                _bloch_sum_blocks(F_alpha_blocks, cells, k) + H
-                for k, H in zip(k_arr_list, Hcore_k_list)
-            ]
-            F_beta_k_list = [
-                _bloch_sum_blocks(F_beta_blocks, cells, k) + H
-                for k, H in zip(k_arr_list, Hcore_k_list)
-            ]
 
         # Per-cell electronic energy + per-k commutator errors.
         # E_elec = 1/2 tr[D_total . Hcore] + 1/2 tr[D_a . F_a] + 1/2 tr[D_b . F_b]
@@ -947,11 +1220,39 @@ def run_uhf_periodic_multi_k_ewald3d(
         _D_g0 = np.asarray(_g0_block(D_alpha_used)) + np.asarray(_g0_block(D_beta_used))
         _S_g0 = np.asarray(_g0_block(S_lat))
         E_madelung_fix = _madelung_energy_correction_for_lat(
-            _D_g0, _S_g0, system, lat_opts
+            _D_g0, _S_g0, _system_v, lat_opts
         )
         E_total = float(E_elec) + e_nuc + E_madelung_fix
 
         free_energy = E_total - smearing_T * entropy
+
+        if max_iter == 0:
+            # ORCA manual Sec. 2.20.9, CALCGUESSENERGY NOITER: evaluate
+            # the input density without an SCF update. As in Gamma/RHF,
+            # orbitals diagnose its physical Fock; they do not replace the
+            # evaluated density or refill it from the new spectrum.
+            C_alpha_per_k, eps_alpha_per_k = [], []
+            C_beta_per_k, eps_beta_per_k = [], []
+            for fa, fb, x in zip(F_alpha_k_list, F_beta_k_list, X_k_list):
+                ca, ea = _diag_in_orth_basis(fa, x)
+                cb, eb = _diag_in_orth_basis(fb, x)
+                C_alpha_per_k.append(ca)
+                eps_alpha_per_k.append(ea)
+                C_beta_per_k.append(cb)
+                eps_beta_per_k.append(eb)
+            D_alpha_real, D_beta_real = D_alpha_used, D_beta_used
+            if smearing_T > 0.0:
+                # READ/SAD need not have the Hcore seed's occupations.
+                # Mermin entropy belongs to the evaluated density operator,
+                # not the seed spectrum or the new Fock eigenvectors.
+                from .periodic_k_density import _fermi_density_entropy
+                entropy = sum(
+                    _fermi_density_entropy(ds, S_k_list, X_k_list, weights, 1.0)
+                    for ds in (D_a_used_per_k, D_b_used_per_k)
+                )
+                free_energy = E_total - smearing_T * entropy
+            iter_idx = 0
+            break
         dE = free_energy - E_prev
         # Divergence detection (v0.6.2).
         check_scf_divergence(
@@ -1124,49 +1425,12 @@ def run_uhf_periodic_multi_k_ewald3d(
             # and take one look-ahead step before certifying a fixed point.
             # This catches damped energy plateaus and occupation-only motion
             # that the old commutator could not see.
-            F_alpha_check_blocks, F_beta_check_blocks = (
-                _build_uhf_fock_blocks_ewald3d(
-                    basis,
-                    system,
-                    D_alpha_real,
-                    D_beta_real,
-                    omega,
-                    lat_opts,
-                    grid_shape_t,
-                    origin,
-                    spacing_bohr,
-                    j_cache=j_cache,
-                    d_total_buffer=d_total_buffer,
-                )
+            F_alpha_check, F_beta_check = _uhf_focks(
+                D_alpha_real,
+                D_beta_real,
+                _density_matrices_per_k(C_alpha_per_k, occ_alpha_per_k),
+                _density_matrices_per_k(C_beta_per_k, occ_beta_per_k),
             )
-            if _asm_mk is not None:
-                F_alpha_check = [
-                    np.asarray(m)
-                    for m in _asm_mk(
-                        F_alpha_check_blocks,
-                        cell_r_list,
-                        k_arr_list,
-                        Hcore_k_list,
-                    )
-                ]
-                F_beta_check = [
-                    np.asarray(m)
-                    for m in _asm_mk(
-                        F_beta_check_blocks,
-                        cell_r_list,
-                        k_arr_list,
-                        Hcore_k_list,
-                    )
-                ]
-            else:
-                F_alpha_check = [
-                    _bloch_sum_blocks(F_alpha_check_blocks, cells, k) + H
-                    for k, H in zip(k_arr_list, Hcore_k_list)
-                ]
-                F_beta_check = [
-                    _bloch_sum_blocks(F_beta_check_blocks, cells, k) + H
-                    for k, H in zip(k_arr_list, Hcore_k_list)
-                ]
 
             C_alpha_check: List[np.ndarray] = []
             eps_alpha_check: List[np.ndarray] = []
@@ -1245,7 +1509,7 @@ def run_uhf_periodic_multi_k_ewald3d(
             E_madelung_check = _madelung_energy_correction_for_lat(
                 D_g0_check,
                 _S_g0,
-                system,
+                _system_v,
                 lat_opts,
             )
             free_energy_check = (
@@ -1271,34 +1535,13 @@ def run_uhf_periodic_multi_k_ewald3d(
 
     # ---- Final pass on converged D's --------------------------------------
     if converged or terminal_recheck_at_cap:
-        F_alpha_blocks, F_beta_blocks = _build_uhf_fock_blocks_ewald3d(
-            basis,
-            system,
+        F_alpha_k_list, F_beta_k_list = _uhf_focks(
             D_alpha_real,
             D_beta_real,
-            omega,
-            lat_opts,
-            grid_shape_t,
-            origin,
-            spacing_bohr,
-            j_cache=j_cache,
-            d_total_buffer=d_total_buffer,
+            _density_matrices_per_k(C_alpha_per_k, occ_alpha_per_k),
+            _density_matrices_per_k(C_beta_per_k, occ_beta_per_k),
         )
         E_elec = 0.0
-        if _asm_mk is not None:
-            F_alpha_k_list = [np.asarray(m) for m in _asm_mk(
-                F_alpha_blocks, cell_r_list, k_arr_list, Hcore_k_list)]
-            F_beta_k_list = [np.asarray(m) for m in _asm_mk(
-                F_beta_blocks, cell_r_list, k_arr_list, Hcore_k_list)]
-        else:
-            F_alpha_k_list = [
-                _bloch_sum_blocks(F_alpha_blocks, cells, k) + H
-                for k, H in zip(k_arr_list, Hcore_k_list)
-            ]
-            F_beta_k_list = [
-                _bloch_sum_blocks(F_beta_blocks, cells, k) + H
-                for k, H in zip(k_arr_list, Hcore_k_list)
-            ]
         final_C_alpha: List[np.ndarray] = []
         final_C_beta: List[np.ndarray] = []
         final_eps_alpha: List[np.ndarray] = []
@@ -1353,34 +1596,49 @@ def run_uhf_periodic_multi_k_ewald3d(
         )
         _S_g0_f = np.asarray(_g0_block(S_lat))
         E_madelung_fix_f = _madelung_energy_correction_for_lat(
-            _D_g0_f, _S_g0_f, system, lat_opts
+            _D_g0_f, _S_g0_f, _system_v, lat_opts
         )
         E_total = float(E_elec) + e_nuc + E_madelung_fix_f
         free_energy = E_total - smearing_T * entropy
 
-    # <S^2> from the home-cell (Γ-block) MOs as a representative
-    # diagnostic. Multi-k <S^2> is more involved; this is the standard
-    # quick check used by PySCF.pbc / CRYSTAL.
-    if n_alpha == 0 or n_beta == 0:
-        s2 = 0.25 * (n_alpha - n_beta) * (n_alpha - n_beta + 2) + n_beta
+    if max_iter == 0:
+        # Density form of periodic_k_gdf._multi_k_s_squared: inserting
+        # D_s = C_s n_s C_s^H gives Tr(Da S Db S) = sum_ij na_i nb_j
+        # |Ca_i^H S Cb_j|^2. Keep the complex, BZ-weighted READ/SAD state
+        # rather than substituting the diagnostic Fock eigenvectors.
+        diff = n_alpha - n_beta
+        s2 = 0.25 * diff * (diff + 2) + n_beta - sum(
+            float(w) * float(np.real(np.trace(da @ s @ db @ s)))
+            for w, da, db, s in zip(weights, D_a_used_per_k, D_b_used_per_k, S_k_list)
+        )
     else:
-        # Use k=0 if present, else first k.
-        k0_idx = 0
-        for i, k in enumerate(k_points):
-            if np.allclose(np.asarray(k), 0.0):
-                k0_idx = i
-                break
-        S_real = np.real(S_k_list[k0_idx])
-        s2 = _spin_squared(
+        # <S^2> of the multi-k determinant: Sz(Sz+1) + n_b minus the BZ-weighted,
+        # occupation-weighted a/b overlap, the formula every other multi-k
+        # open-shell driver uses. The Gamma-block diagnostic this replaced took
+        # np.real(C) of the k = 0 orbitals, which is only right when F(Gamma) is
+        # real: the corrected exchange (#399) makes it complex-Hermitian, the
+        # eigenvectors carry an arbitrary complex phase, and a closed-shell
+        # singlet with identical a/b densities read <S^2> = 4.9e-6.
+        from .periodic_k_gdf import _multi_k_s_squared
+
+        s2 = _multi_k_s_squared(
             n_alpha,
             n_beta,
-            np.real(C_alpha_per_k[k0_idx]),
-            np.real(C_beta_per_k[k0_idx]),
-            S_real,
+            C_alpha_per_k,
+            C_beta_per_k,
+            S_k_list,
+            weights,
+            occ_alpha_k=occ_alpha_per_k,
+            occ_beta_k=occ_beta_per_k,
         )
 
     plog.converged(n_iter=iter_idx, energy=E_total, converged=converged)
     return PeriodicUHFMultiKEwaldResult(
+        exchange_q0=(
+            MOLECULAR_LIMIT if single_gamma_kmesh
+            else BVK_EWALD if corrected_exchange is not None
+            else BARE_IMAGE_SUM
+        ),
                restart_mesh=tuple(kmesh.mesh),
                restart_kpoints=np.asarray(kmesh.kpoints).copy(), restart_weights=np.asarray(kmesh.weights).copy(),
                guess_selection=periodic_result_selection(system, opts.initial_guess, restarted=initial_density_k is not None),
@@ -1396,8 +1654,14 @@ def run_uhf_periodic_multi_k_ewald3d(
         mo_coeffs_alpha=C_alpha_per_k,
         fock_alpha=F_alpha_k_list,
         density_alpha=D_alpha_real,
-        density_alpha_k=_density_matrices_per_k(C_alpha_per_k, occ_alpha_per_k),
-        density_beta_k=_density_matrices_per_k(C_beta_per_k, occ_beta_per_k),
+        density_alpha_k=(
+            [d.copy() for d in D_a_used_per_k] if max_iter == 0
+            else _density_matrices_per_k(C_alpha_per_k, occ_alpha_per_k)
+        ),
+        density_beta_k=(
+            [d.copy() for d in D_b_used_per_k] if max_iter == 0
+            else _density_matrices_per_k(C_beta_per_k, occ_beta_per_k)
+        ),
         mo_energies_beta=eps_beta_per_k,
         mo_coeffs_beta=C_beta_per_k,
         fock_beta=F_beta_k_list,

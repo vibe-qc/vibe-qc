@@ -15,6 +15,8 @@ from vibeqc.semiempirical.periodic import (
     plan_periodic_semiempirical_route,
 )
 
+from tests.refusal_receipt import assert_preflight_refusal
+
 
 def _he_cell() -> PeriodicSystem:
     return PeriodicSystem(
@@ -37,6 +39,13 @@ def _hli_chain() -> PeriodicSystem:
         0,
         1,
     )
+
+
+# Full-k DFTB on the HLi chain: at the 15-bohr default pair cutoff the
+# #373 Li basis leaves S(k) indefinite (smallest eigenvalue -3.6e-3) and the
+# drivers refuse (#565). From 18 bohr S(k) is positive definite; 20 bohr is
+# within 4e-7 Ha of 30 bohr.
+_HLI_K_CUTOFF_BOHR = 20.0
 
 
 def _argon_fcc(scale: float = 1.0) -> PeriodicSystem:
@@ -129,7 +138,7 @@ def test_periodic_semiempirical_explicit_sidecar_fails_before_engine(
             **{option: True},
         )
 
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 @pytest.mark.parametrize(
@@ -154,6 +163,7 @@ def test_run_periodic_job_accepts_gamma_se_methods_before_hf_gate(
         conv_tol,
         kpoints=None,
         smearing_temperature_hartree=None,
+        dftb_cutoff_bohr=None,
     ):
         seen["method_key"] = route_plan.method_key
         seen["boundary"] = route_plan.boundary
@@ -299,9 +309,60 @@ def test_periodic_parameter_identity_reaches_text_system_and_qvf(
         )
         spec = json.loads(zf.read(job["members"]["spec"]["path"]))
     assert spec["options"] == {
+        "route_maturity": "mixed_native",
+        "route_status": "periodic-pm6",
         "parameter_identity": identity,
         "parameter_sha256": sha256,
     }
+
+
+def test_periodic_route_maturity_reaches_the_qvf_job_spec(tmp_path, monkeypatch):
+    """An archived run records the maturity its route claimed (#150).
+
+    The route plan is the one maturity vocabulary, and a periodic
+    semiempirical run now carries that value into its own artifacts instead of
+    leaving "experimental" to tribal knowledge. Rendering the matching line in
+    the ``.out`` options block belongs to the output lane (#318).
+    """
+
+    def fake_engine(*_args, **_kwargs):
+        return SimpleNamespace(
+            energy=-0.25, converged=True, n_iter=3, n_basis=4
+        )
+
+    monkeypatch.setattr(pr, "_run_periodic_semiempirical_engine", fake_engine)
+    stem = tmp_path / "gamma_gfn2"
+    pr.run_periodic_job(
+        _he_cell(),
+        None,
+        method="gfn2-xtb",
+        output=stem,
+        citations=False,
+        record_hostname=False,
+        write_xyz_file=False,
+        write_xsf_structure_file=False,
+        write_cif_file=False,
+    )
+
+    system_manifest = tomllib.loads(
+        stem.with_suffix(".system").read_text(encoding="utf-8")
+    )
+    assert system_manifest["run"]["route_maturity"] == "experimental"
+    assert system_manifest["run"]["route_status"] == "gfn2-xtb"
+
+    with zipfile.ZipFile(stem.with_suffix(".qvf")) as zf:
+        manifest = json.loads(zf.read("manifest.json"))
+        job = next(
+            section
+            for section in manifest["sections"]
+            if section["kind"] == "job.spec"
+        )
+        spec = json.loads(zf.read(job["members"]["spec"]["path"]))
+
+    # No parameter identity on this fake result, so the maturity is recorded
+    # on its own rather than riding along with the identity keys.
+    assert spec["options"]["route_maturity"] == "experimental"
+    assert spec["options"]["route_status"] == "gfn2-xtb"
 
 
 @pytest.mark.parametrize("method", ["pm7", "om1", "om2", "om3"])
@@ -316,7 +377,7 @@ def test_run_periodic_job_gates_unimplemented_nddo_routes(tmp_path, method):
             citations=False,
             record_hostname=False,
         )
-    assert not stem.with_suffix(".system").exists()
+    assert_preflight_refusal(stem)
 
 
 def test_run_periodic_job_pm6_fcc_argon_uses_bounded_native_branch(tmp_path):
@@ -550,6 +611,7 @@ def test_run_periodic_job_accepts_dftb0_kpoints(tmp_path):
         None,
         method="dftb0",
         kpoints=(2, 1, 1),
+        dftb_cutoff_bohr=_HLI_K_CUTOFF_BOHR,
         output=stem,
         citations=False,
         record_hostname=False,
@@ -564,6 +626,7 @@ def test_run_periodic_job_accepts_dftb0_kpoints(tmp_path):
     assert "PERIODIC DFTB0  basis=<basis-free>" in text
     assert "full k-point periodic semiempirical" in text
     assert "kpoints             = 2" in text
+    assert "dftb_cutoff_bohr    = 20.0" in text
     assert "Band extrema (multi-k)" in text
     assert "Gamma-point periodic semiempirical" not in text
 
@@ -571,6 +634,128 @@ def test_run_periodic_job_accepts_dftb0_kpoints(tmp_path):
     assert manifest["outputs"]["status"] == "complete"
     assert manifest["plan"]["method"] == "DFTB0"
     assert manifest["plan"]["basis"] == "<basis-free>"
+    assert manifest["run"]["dftb_cutoff_bohr"] == 20.0
+    assert manifest["run"]["dftb_cutoff_source"] == "explicit"
+
+
+def test_run_periodic_job_dftb_kpoints_default_cutoff_is_derived(tmp_path):
+    """#565: without dftb_cutoff_bohr the HLi chain runs at the Li-Li
+    overlap reach (33.5 bohr at 1e-6), and the .out/.system say so."""
+    stem = tmp_path / "hli_dftb0_k_derived"
+    result = pr.run_periodic_job(
+        _hli_chain(),
+        None,
+        method="dftb0",
+        kpoints=(2, 1, 1),
+        output=stem,
+        citations=False,
+        record_hostname=False,
+        write_xyz_file=False,
+        write_xsf_structure_file=False,
+        write_cif_file=False,
+    )
+    assert np.isfinite(result.energy)
+    text = stem.with_suffix(".out").read_text(encoding="utf-8")
+    assert "dftb_cutoff_bohr    = 33.5" in text
+    assert (
+        "dftb_cutoff_source  = derived (AO overlap >= 1e-06, floor 15 bohr)"
+        in text
+    )
+    manifest = tomllib.loads(stem.with_suffix(".system").read_text(encoding="utf-8"))
+    assert manifest["run"]["dftb_cutoff_bohr"] == 33.5
+    assert manifest["run"]["dftb_cutoff_source"] == "derived"
+
+
+def test_dftb_pair_overlap_reach_and_derived_default():
+    """The derived default is the largest element-pair overlap reach, never
+    below 15 bohr; a tighter tolerance reaches further."""
+    from vibeqc.semiempirical.dftb_cutoff import (
+        default_dftb_kpoint_cutoff_bohr,
+        dftb_pair_overlap_reach_bohr,
+    )
+
+    assert dftb_pair_overlap_reach_bohr(1, 1) == pytest.approx(14.1)
+    assert dftb_pair_overlap_reach_bohr(3, 1) == dftb_pair_overlap_reach_bohr(1, 3)
+    assert dftb_pair_overlap_reach_bohr(1, 3) == pytest.approx(25.5)
+    assert dftb_pair_overlap_reach_bohr(3, 3) == pytest.approx(33.5)
+    assert dftb_pair_overlap_reach_bohr(3, 3, tolerance=1e-8) > 33.5
+    assert dftb_pair_overlap_reach_bohr(3, 3, tolerance=1e-4) < 33.5
+    assert default_dftb_kpoint_cutoff_bohr(_hli_chain()) == pytest.approx(33.5)
+    h_only = PeriodicSystem(1, np.diag([4.0, 30.0, 30.0]), [Atom(1, [0.0, 0.0, 0.0])], 0, 2)
+    assert default_dftb_kpoint_cutoff_bohr(h_only) == 15.0
+    with pytest.raises(ValueError, match="tolerance"):
+        dftb_pair_overlap_reach_bohr(1, 1, tolerance=0.0)
+
+
+def test_semiempirical_facade_default_cutoff_per_route():
+    """Facades: None is 15 bohr on Gamma routes (the analytic-gradient
+    domain) and the derived value on full-k DFTB."""
+    from vibeqc.semiempirical.periodic import _resolve_semiempirical_cutoff_bohr
+    from vibeqc.semiempirical.routes import (
+        BOUNDARY_PERIODIC_GAMMA,
+        BOUNDARY_PERIODIC_K,
+        plan_periodic_semiempirical_route,
+    )
+
+    system = _hli_chain()
+    gamma = plan_periodic_semiempirical_route(
+        "dftb0", system, boundary=BOUNDARY_PERIODIC_GAMMA,
+    )
+    full_k = plan_periodic_semiempirical_route(
+        "dftb0", system, boundary=BOUNDARY_PERIODIC_K,
+    )
+    assert _resolve_semiempirical_cutoff_bohr(None, gamma, system) == 15.0
+    assert _resolve_semiempirical_cutoff_bohr(None, full_k, system) == pytest.approx(33.5)
+    assert _resolve_semiempirical_cutoff_bohr(20.0, full_k, system) == 20.0
+
+
+def test_run_periodic_job_dftb_kpoints_refusal_names_the_runner_cutoff(tmp_path):
+    """#565: an explicit 15-bohr cutoff is refused before the SCF, and the
+    front door names the keyword that raises it."""
+    with pytest.raises(RuntimeError, match="pass a larger dftb_cutoff_bohr"):
+        pr.run_periodic_job(
+            _hli_chain(),
+            None,
+            method="dftb0",
+            kpoints=(2, 1, 1),
+            dftb_cutoff_bohr=15.0,
+            output=tmp_path / "hli_dftb0_k_short",
+            citations=False,
+            record_hostname=False,
+            write_xyz_file=False,
+            write_xsf_structure_file=False,
+            write_cif_file=False,
+        )
+
+
+@pytest.mark.parametrize(
+    ("method", "kpoints", "value", "error", "match"),
+    [
+        ("dftb0", (2, 1, 1), 0.0, ValueError, "finite and positive"),
+        ("scc_dftb", (2, 1, 1), float("inf"), ValueError, "finite and positive"),
+        ("dftb0", (2, 1, 1), True, TypeError, "must be a number"),
+        ("dftb0", None, 20.0, NotImplementedError, "full k-point"),
+        ("gfn2_xtb", None, 20.0, NotImplementedError, "full k-point"),
+    ],
+)
+def test_run_periodic_job_dftb_cutoff_is_validated_before_any_run(
+    tmp_path, monkeypatch, method, kpoints, value, error, match
+):
+    def fail_engine(*_args, **_kwargs):
+        raise AssertionError("the engine must not run")
+
+    monkeypatch.setattr(pr, "_run_periodic_semiempirical_engine", fail_engine)
+    with pytest.raises(error, match=match):
+        pr.run_periodic_job(
+            _hli_chain(),
+            None,
+            method=method,
+            kpoints=kpoints,
+            dftb_cutoff_bohr=value,
+            output=tmp_path / "bad_cutoff",
+            citations=False,
+            record_hostname=False,
+        )
 
 
 def test_run_periodic_job_scc_dftb_kpoints_converges(tmp_path):
@@ -581,6 +766,7 @@ def test_run_periodic_job_scc_dftb_kpoints_converges(tmp_path):
         None,
         method="scc_dftb",
         kpoints=(2, 1, 1),
+        dftb_cutoff_bohr=_HLI_K_CUTOFF_BOHR,
         max_iter=300,
         output=stem,
         citations=False,
@@ -616,6 +802,7 @@ def test_run_periodic_job_scc_dftb_kpoints_raises_on_nonconvergence(tmp_path):
             None,
             method="scc_dftb",
             kpoints=(2, 1, 1),
+            dftb_cutoff_bohr=_HLI_K_CUTOFF_BOHR,
             max_iter=1,
             output=stem,
             citations=False,
@@ -691,6 +878,7 @@ def test_run_periodic_job_forwards_kpoint_smearing(tmp_path, monkeypatch):
         conv_tol,
         kpoints=None,
         smearing_temperature_hartree=0.0,
+        dftb_cutoff_bohr=None,
     ):
         seen["method_key"] = route_plan.method_key
         seen["boundary"] = route_plan.boundary
@@ -1143,6 +1331,7 @@ def test_run_periodic_job_dftb_kpoints_optimize_uses_gradient_facade(
         conv_tol,
         kpoints=None,
         smearing_temperature_hartree=0.0,
+        dftb_cutoff_bohr=None,
     ):
         seen.setdefault("engine_calls", []).append(
             (
@@ -1251,7 +1440,8 @@ def test_run_periodic_job_dftb_kpoints_optimize_uses_gradient_facade(
     assert seen["gradient_call"] == {
         "method": "dftb0",
         "kpoints": (2, 1, 1),
-        "cutoff_bohr": 15.0,
+        # Li-Li overlap reach at 1e-6: the derived default (#565).
+        "cutoff_bohr": 33.5,
         "fd_step_bohr": 0.001,
         "max_iter": 80,
         "conv_tol_charge": 1e-7,
@@ -1285,6 +1475,7 @@ def test_run_periodic_job_dftb_kpoints_optimize_cell_uses_stress_facade(
         conv_tol,
         kpoints=None,
         smearing_temperature_hartree=0.0,
+        dftb_cutoff_bohr=None,
     ):
         seen.setdefault("engine_calls", []).append(
             (
@@ -1410,7 +1601,8 @@ def test_run_periodic_job_dftb_kpoints_optimize_cell_uses_stress_facade(
     assert seen["derivative_call"] == {
         "method": "dftb0",
         "kpoints": (2, 1, 1),
-        "cutoff_bohr": 15.0,
+        # Li-Li overlap reach at 1e-6: the derived default (#565).
+        "cutoff_bohr": 33.5,
         "fd_step_bohr": 0.001,
         "strain_step": 0.001,
         "max_iter": 80,
@@ -1473,6 +1665,7 @@ def test_periodic_dftb_kpoint_optimize_threads_one_temperature_and_minimises_f(
         conv_tol,
         kpoints=None,
         smearing_temperature_hartree=0.0,
+        dftb_cutoff_bohr=None,
     ):
         seen["engine_T"].append(smearing_temperature_hartree)
         return SimpleNamespace(
@@ -1589,6 +1782,7 @@ def test_periodic_dftb_kpoint_finite_temperature_optimization_is_stationary_on_f
         None,
         method="dftb0",
         kpoints=(2, 1, 1),
+        dftb_cutoff_bohr=_HLI_K_CUTOFF_BOHR,
         optimize=True,
         smearing_temperature=T,
         optimize_max_iter=30,
@@ -1617,7 +1811,7 @@ def test_periodic_dftb_kpoint_finite_temperature_optimization_is_stationary_on_f
         "dftb0",
         final,
         kpoints=(2, 1, 1),
-        cutoff_bohr=15.0,
+        cutoff_bohr=_HLI_K_CUTOFF_BOHR,
         max_iter=80,
         conv_tol_charge=1.0e-7,
         smearing_temperature=T,
@@ -1651,6 +1845,7 @@ def test_periodic_dftb_kpoint_finite_temperature_optimization_is_stationary_on_f
             conv_tol=1.0e-7,
             kpoints=(2, 1, 1),
             smearing_temperature_hartree=T,
+            dftb_cutoff_bohr=_HLI_K_CUTOFF_BOHR,
         )
 
     def central(h, field):
@@ -1851,19 +2046,19 @@ def test_periodic_semiempirical_nonconverged_marks_crashed(
     assert "FATAL: PM6 periodic semiempirical SCF did not converge" in text
 
 
-def test_band_summary_gap_sign_follows_the_t_zero_occupation_contract() -> None:
-    """#85 end to end: occupations in, printed indirect gap out.
+def test_band_summary_reads_both_fills_of_a_band_overlap_metal_as_one_overlap() -> None:
+    """#176 end to end: the SAME two-k spectrum under both T = 0 fills.
 
-    ``_band_summary`` classifies band edges from ``result.occupations``, so the
-    sign of the gap it prints is decided entirely by how those occupations were
-    assigned. Feed it both fills of the SAME two-k spectrum and pin the two
-    reports.
+    Band 0 at k0 (-0.20) lies above bands 0 and 1 at k1 (-0.60, -0.50), so
+    this is a band-overlap metal with a 0.3 Ha overlap. The per-k fill that
+    ``apply_smearing`` returned before #85 occupies band 0 at every k; the
+    global fill occupies both k1 states instead.
 
-    The per-k fill is what ``apply_smearing`` returned at T = 0 before #85: the
-    lowest band occupied at each k independently. It occupies -0.20 at k0 while
-    -0.50 at k1 stays empty, so the VBM lands 0.3 Ha ABOVE the CBM and the
-    block prints a negative gap. The global fill -- one Fermi level over the
-    mesh -- occupies both k1 states instead.
+    Before #176 the block classified states itself and printed the global
+    fill as a 0.300000-Ha (8.2 eV) INSULATOR: under one Fermi level the
+    highest occupied sampled level always lies below the lowest empty one,
+    so the state classes never overlap. Both fills now report the band
+    overlap, -0.300000 Ha, and the global one names the metal.
     """
     eps = [np.array([-0.20, 0.30, 0.90]), np.array([-0.60, -0.50, 0.80])]
     kpoints = [np.array([0.0, 0.0, 0.0]), np.array([0.5, 0.0, 0.0])]
@@ -1885,17 +2080,19 @@ def test_band_summary_gap_sign_follows_the_t_zero_occupation_contract() -> None:
             kpoints=kpoints,
         )
     )
-    assert "gap (indirect) =   0.300000 Ha" in global_fill
-    assert "negative" not in global_fill
+    assert "gap (indirect) =  -0.300000 Ha" in global_fill
+    assert "metallic: the Fermi level crosses a band" in global_fill
+    assert "occupation class = metallic" in global_fill
+    # The pre-#176 report of this fill, pinned so it cannot come back.
+    assert "gap (indirect) =   0.300000 Ha" not in global_fill
 
 
-def test_band_summary_reports_the_gap_apply_smearing_actually_produces() -> None:
-    """#85: the producer and the report, wired together.
+def test_band_summary_reports_the_metal_apply_smearing_actually_produces() -> None:
+    """#85 + #176: the producer and the report, wired together.
 
-    The two tests above pin each half. This one runs the real chain -- the
-    shared T = 0 dispatcher every periodic backend calls, then the block that
-    prints its band edges -- so a future change that reintroduces the per-k
-    fill turns this red without anyone having to remember the connection.
+    The shared T = 0 dispatcher every periodic backend calls, then the block
+    that prints its band edges, so a change to either half that reintroduces
+    the per-k fill or the positive "gap" of a metal turns this red.
     """
     from vibeqc import apply_smearing
 
@@ -1913,23 +2110,24 @@ def test_band_summary_reports_the_gap_apply_smearing_actually_produces() -> None
             mo_energies=eps,
             occupations=list(occ),
             kpoints=[np.array([0.0, 0.0, 0.0]), np.array([0.5, 0.0, 0.0])],
+            kpoint_weights=[0.5, 0.5],
         )
     )
 
-    assert "gap (indirect) =   0.300000 Ha" in text
+    assert "gap (indirect) =  -0.300000 Ha" in text
+    assert "metallic: the Fermi level crosses a band" in text
     assert "negative: band ordering inverted across the mesh" not in text
 
 
-def test_band_summary_absorbs_a_k_point_with_no_occupied_states() -> None:
-    """#85: the VBM and CBM are independent maxima over the whole mesh.
+def test_band_summary_takes_band_pair_edges_at_a_k_with_no_occupied_state() -> None:
+    """#85 + #176: a k-point wholly above the Fermi level still contributes.
 
-    Under one global Fermi level a band-overlap mesh can leave a k point with
-    every band above mu and therefore NO occupied state. Skipping that k
-    outright hid its virtual states from the CBM search: the block reported
-    the CBM as +0.80 Ha at the occupied k instead of -0.20 Ha at the empty
-    one, a 1.300000-Ha "direct" gap in place of the true 0.300000-Ha indirect
-    one. The direct gap is a per-k quantity and is still skipped there, since
-    it is genuinely undefined without both halves.
+    Under one global Fermi level a band-overlap mesh can leave a k-point with
+    no occupied state. Skipping it hid its states from the edge search: the
+    block once read the CBM as +0.80 Ha at the occupied k, a 1.300000-Ha
+    "direct" gap. The edges are now the band pair at the Fermi filling at
+    every k, so the empty k0 supplies the valence-band top (-0.20, band 0)
+    and the minimum direct gap is the per-k band-pair spacing (0.1 Ha at k1).
     """
     text = pr._band_summary(
         SimpleNamespace(
@@ -1945,19 +2143,22 @@ def test_band_summary_absorbs_a_k_point_with_no_occupied_states() -> None:
         )
     )
 
-    assert "VBM     =  -0.5000000000 Ha" in text
-    assert "CBM     =  -0.2000000000 Ha" in text
-    assert "gap (indirect) =   0.300000 Ha" in text
-    # Only k1 has both halves, so it alone sets the minimum direct gap.
-    assert "direct gap (min) =   1.300000 Ha" in text
+    assert "VBM     =  -0.2000000000 Ha" in text
+    assert "CBM     =  -0.5000000000 Ha" in text
+    assert "gap (indirect) =  -0.300000 Ha" in text
+    assert "direct gap (min) =   0.100000 Ha" in text
+    assert "direct gap (min) =   1.300000 Ha" not in text
     assert "(k_idx = 1)" in text
 
 
-def test_band_summary_says_n_a_when_no_k_point_has_both_halves() -> None:
-    """The direct gap can be undefined on every k of the mesh.
+def test_band_summary_never_renders_a_sentinel_for_a_split_fill() -> None:
+    """One k fully occupied, the other fully empty: a band-crossing metal.
 
-    Two k points, one fully occupied and one fully empty. Previously every k
-    was skipped, so the sentinel +1e300 would have been rendered as a number.
+    Previously every k lacking one half was skipped, so the +1e300 sentinel
+    could have been rendered as a number; later the block printed this fill
+    as a 0.800000-Ha insulator. Both bands cross the Fermi level, so the band
+    pair (0, 1) is read at every k: VBM +0.30 at k1, CBM -0.50 at k0, a
+    -0.800000-Ha overlap, and the direct gap is defined everywhere.
     """
     text = pr._band_summary(
         SimpleNamespace(
@@ -1967,9 +2168,158 @@ def test_band_summary_says_n_a_when_no_k_point_has_both_halves() -> None:
         )
     )
 
-    assert "VBM     =  -0.5000000000 Ha" in text
-    assert "CBM     =   0.3000000000 Ha" in text
-    assert "gap (indirect) =   0.800000 Ha" in text
-    assert "direct gap (min) = n/a" in text
-    assert "no k-point has both an occupied and a virtual state" in text
+    assert "VBM     =   0.3000000000 Ha" in text
+    assert "CBM     =  -0.5000000000 Ha" in text
+    assert "gap (indirect) =  -0.800000 Ha" in text
+    assert "occupation class = metallic" in text
+    assert "direct gap (min) =   0.100000 Ha" in text
     assert "1e+300" not in text and "1.000000e+300" not in text
+
+
+# ---------------------------------------------------------------------------
+# #345 / #318: the periodic semiempirical record states the qualifications it
+# rests on -- route maturity and, for DFTB routes, the element pairs whose
+# repulsive is the A/R^12 placeholder -- on every surface a consumer reads
+# (.out options block, .system [run], QVF job spec), not only on stderr.
+# ---------------------------------------------------------------------------
+
+
+def _qvf_job_spec_options(stem):
+    with zipfile.ZipFile(stem.with_suffix(".qvf")) as zf:
+        manifest = json.loads(zf.read("manifest.json"))
+        job = next(
+            section
+            for section in manifest["sections"]
+            if section["kind"] == "job.spec"
+        )
+        spec = json.loads(zf.read(job["members"]["spec"]["path"]))
+    return spec["options"]
+
+
+def _placeholder_pairs_from_warning(recorded):
+    """The pair labels the stderr warning named, e.g. ``["2-2"]``."""
+    from vibeqc.semiempirical import DFTB0RepulsivePlaceholderWarning
+
+    messages = [
+        str(w.message)
+        for w in recorded
+        if issubclass(w.category, DFTB0RepulsivePlaceholderWarning)
+    ]
+    assert messages, "the placeholder warning did not fire"
+    text = messages[0]
+    head = "no fitted repulsive for the pair(s) "
+    start = text.index(head) + len(head)
+    return [label.strip() for label in text[start : text.index(";", start)].split(",")]
+
+
+@pytest.mark.parametrize("method", ["dftb0", "scc-dftb"])
+def test_periodic_dftb_record_carries_the_placeholder_pairs_that_warned(
+    tmp_path, method
+):
+    """Every pair the stderr warning names is in .out, .system and the QVF.
+
+    On the shipped in-house set every pair is a placeholder, He-He included,
+    so this run warns, and the record must name the same pair on each surface
+    (#345 closure criterion: a surface that drops a pair that warned fails).
+    """
+    import warnings
+
+    from vibeqc.output.formats.semiempirical_record import (
+        PLACEHOLDER_REPULSIVE_RUN_FIELD,
+    )
+
+    stem = tmp_path / f"he_{method}"
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always")
+        pr.run_periodic_job(
+            _he_cell(),
+            None,
+            method=method,
+            output=stem,
+            citations=False,
+            record_hostname=False,
+            write_xyz_file=False,
+            write_xsf_structure_file=False,
+            write_cif_file=False,
+        )
+    warned = _placeholder_pairs_from_warning(recorded)
+    assert warned == ["2-2"]
+
+    run = tomllib.loads(stem.with_suffix(".system").read_text(encoding="utf-8"))["run"]
+    assert run[PLACEHOLDER_REPULSIVE_RUN_FIELD] == warned
+    assert run["route_maturity"] == "production"
+
+    text = stem.with_suffix(".out").read_text(encoding="utf-8")
+    options_block = text[text.index("Semiempirical options") : text.index("Results")]
+    assert "    maturity            = production\n" in options_block
+    assert f"    {PLACEHOLDER_REPULSIVE_RUN_FIELD} = 2-2\n" in options_block
+    assert "A/R^12 placeholder repulsive" in options_block
+
+    options = _qvf_job_spec_options(stem)
+    assert options[PLACEHOLDER_REPULSIVE_RUN_FIELD] == warned
+    assert options["route_maturity"] == "production"
+
+
+def test_periodic_out_states_route_maturity_and_omits_placeholders_off_dftb(
+    tmp_path, monkeypatch
+):
+    """#318: the .out options block states the maturity for every periodic
+    semiempirical route; the placeholder key exists only where a repulsive
+    table exists, so an absent key means "not applicable", never "unchecked".
+    """
+    from vibeqc.output.formats.semiempirical_record import (
+        PLACEHOLDER_REPULSIVE_RUN_FIELD,
+    )
+
+    def fake_engine(*_args, **_kwargs):
+        return SimpleNamespace(energy=-0.25, converged=True, n_iter=3, n_basis=4)
+
+    monkeypatch.setattr(pr, "_run_periodic_semiempirical_engine", fake_engine)
+    stem = tmp_path / "gamma_gfn2_maturity"
+    pr.run_periodic_job(
+        _he_cell(),
+        None,
+        method="gfn2-xtb",
+        output=stem,
+        citations=False,
+        record_hostname=False,
+        write_xyz_file=False,
+        write_xsf_structure_file=False,
+        write_cif_file=False,
+    )
+    text = stem.with_suffix(".out").read_text(encoding="utf-8")
+    options_block = text[text.index("Semiempirical options") : text.index("Results")]
+    assert "    method              = gfn2_xtb\n" in options_block
+    assert "    maturity            = experimental\n" in options_block
+    assert PLACEHOLDER_REPULSIVE_RUN_FIELD not in text
+
+    run = tomllib.loads(stem.with_suffix(".system").read_text(encoding="utf-8"))["run"]
+    assert run["route_maturity"] == "experimental"
+    assert PLACEHOLDER_REPULSIVE_RUN_FIELD not in run
+    assert PLACEHOLDER_REPULSIVE_RUN_FIELD not in _qvf_job_spec_options(stem)
+
+
+@pytest.mark.parametrize("request_kind", ["true", "path"])
+def test_periodic_semiempirical_refuses_explicit_structured_log(
+    tmp_path, monkeypatch, request_kind,
+):
+    """#384: the basis-free periodic route writes no structured log, so an
+    explicit requested is refused before calculation instead of dropped."""
+    monkeypatch.delenv("VQ_WORKDIR", raising=False)
+    monkeypatch.delenv("VIBEQC_STRUCTURED_LOG", raising=False)
+    stem = tmp_path / "he_gfn2"
+    requested = True if request_kind == "true" else tmp_path / "log.jsonl"
+    with pytest.raises(NotImplementedError, match="structured_log"):
+        pr.run_periodic_job(
+            _he_cell(),
+            None,
+            method="gfn2_xtb",
+            output=stem,
+            structured_log=requested,
+            citations=False,
+            output_qvf=False,
+            record_hostname=False,
+        )
+    assert_preflight_refusal(stem)
+    # The refusal receipt is the only artifact; no structured log was opened.
+    assert [path.name for path in tmp_path.iterdir()] == ["he_gfn2.system"]

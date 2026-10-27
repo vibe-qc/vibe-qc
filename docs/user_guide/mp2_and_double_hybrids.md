@@ -2,9 +2,135 @@
 
 vibe-qc ships second-order Møller-Plesset perturbation theory (MP2)
 as a post-SCF correlation method for molecules, plus the
-spin-component-scaled variants (SCS-MP2, SOS-MP2) and the first
-double-hybrid density functional (B2PLYP). All variants compose with
-density fitting (RI-MP2) and with the unrestricted (UHF) reference.
+spin-component-scaled variants (SCS-MP2, SOS-MP2) and four
+double-hybrid density functionals (B2PLYP, DSD-PBEP86, revDSD-PBEP86,
+PWPB95). All variants compose with density fitting (RI-MP2) and with
+the unrestricted (UHF) reference; a spin-pure semicanonical ROHF-MP2 is
+available as well. All of these are production routes for molecular
+energies; the label vocabulary is defined in
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels).
+
+## Theory
+
+**The Møller-Plesset partition.** Perturbation theory needs a
+zeroth-order Hamiltonian whose eigenfunctions are known. Møller and
+Plesset ({vibeqc-cite}`moller_plesset_1934`) chose the sum of Fock
+operators, $H_0 = \sum_i f(i)$, so that the Hartree-Fock determinant
+$\Phi_0$ is the zeroth-order ground state with
+$E^{(0)} = \sum_i^{\rm occ} \varepsilon_i$, and the perturbation is the
+fluctuation potential $V = H - H_0$, the difference between the true
+electron repulsion and its mean-field average. Rayleigh-Schrödinger
+theory then gives $E^{(0)} + E^{(1)} = E_{\rm HF}$ (first order recovers
+Hartree-Fock exactly) and the first correction to it at second order.
+Singly excited determinants do not contribute at second order because
+$\langle\Phi_0|H|\Phi_i^a\rangle = F_{ia} = 0$ for canonical HF orbitals
+(Brillouin's theorem), so only doubles survive:
+
+$$
+E^{(2)} = -\sum_{i<j}^{\rm occ}\sum_{a<b}^{\rm virt}
+  \frac{\left|\langle \Phi_0 | V | \Phi_{ij}^{ab}\rangle\right|^2}
+       {\varepsilon_a + \varepsilon_b - \varepsilon_i - \varepsilon_j}
+= \frac14 \sum_{ijab} \frac{|\langle ij \| ab\rangle|^2}
+       {\varepsilon_i + \varepsilon_j - \varepsilon_a - \varepsilon_b},
+$$
+
+in spin orbitals. Spin-integrating for a closed shell gives the working
+formula in spatial orbitals (Szabo-Ostlund eq. 6.71),
+
+$$
+E_{\rm MP2} = \sum_{ijab}
+  \frac{(ia|jb)\,\bigl[2\,(ia|jb) - (ib|ja)\bigr]}
+       {\varepsilon_i + \varepsilon_j - \varepsilon_a - \varepsilon_b},
+$$
+
+with $(ia|jb)$ the MO-basis Coulomb integrals. The denominators are
+always negative, so $E_{\rm MP2} < 0$; it is not variational, and the
+cost is dominated by the $O(o^2 v^2)$ integrals, $O(N^5)$ overall.
+
+**Spin components.** The sum splits into an opposite-spin part
+($\alpha\beta$ pairs, the $(ia|jb)^2$ term) and a same-spin part
+($\alpha\alpha$ and $\beta\beta$ pairs, the antisymmetrised
+$(ia|jb)^2 - (ia|jb)(ib|ja)$ term), tabulated in the next section.
+Second-order theory treats the two unequally: it underestimates the
+opposite-spin correlation that higher orders recover and overestimates
+the same-spin part. Grimme's SCS-MP2
+({vibeqc-cite}`grimme_scs_mp2_2003`) scales them by $c_{\rm os} = 6/5$
+and $c_{\rm ss} = 1/3$, which mimics those higher-order effects at no
+extra cost; SOS-MP2 ({vibeqc-cite}`jung_sos_mp2_2004`) drops the
+same-spin term altogether with $c_{\rm os} = 1.3$, which allows a
+Laplace-transformed $O(N^4)$ algorithm in principle (vibe-qc evaluates
+it through the same RI kernel). `MP2Options.c_os` and `c_ss` expose the
+two coefficients directly.
+
+**Resolution of the identity.** RI-MP2
+({vibeqc-cite}`feyereisen_rimp2_1993`) replaces the four-index integrals
+by the Coulomb-metric fit
+$(ia|jb) \approx \sum_{PQ} (ia|P)[V^{-1}]_{PQ}(Q|jb) = \sum_P B^P_{ia} B^P_{jb}$
+with a correlation-optimised auxiliary basis (`kind="ri"`, see
+[Density fitting](density_fitting.md#theory)). The $O(N^4)$ three-index
+transformation replaces the $O(N^5)$ four-index one; the final
+$(ia|jb)$ assembly is still formally $O(o^2 v^2 M)$ but with a small
+prefactor and no four-index intermediate. The fitting error on the
+correlation energy is a few $10^{-5}$ Ha with the matched `-rifit`
+set, structurally biased between the two spin components (measured in
+the `report_ri_residual` section below).
+
+**Frozen core, UMP2 and ROHF-MP2.** Core orbitals contribute little to
+valence energy differences and need core-correlating basis functions to
+be described consistently, so the sums above exclude the chemical core
+by default (the ORCA 6.1 table, `frozen_core=False` for all-electron).
+On a UHF reference the same formula holds in spin orbitals with the
+UHF orbitals and eigenvalues; the three channels $\alpha\alpha$,
+$\beta\beta$ and $\alpha\beta$ are `UMP2Result.e_aa`, `e_bb`, `e_ab`,
+and the spin contamination of the reference propagates into the
+correlation energy. On an ROHF reference the orbitals are not
+eigenfunctions of the per-spin Fock operators, so the RMP2 of Knowles
+and coworkers ({vibeqc-cite}`knowles_rmp2_1991`) first
+*semicanonicalises* them (diagonalising the occupied-occupied and
+virtual-virtual blocks of $F^\alpha$ and $F^\beta$ separately) and then
+keeps the singles term
+$E^{(2)}_{\rm S} = -\sum_{ia,\sigma} |F^\sigma_{ia}|^2 / (\varepsilon^\sigma_a - \varepsilon^\sigma_i)$
+that Brillouin's theorem no longer removes; that is
+`run_job(method="mp2", mp2_reference="rohf")`.
+
+**Double hybrids.** A double-hybrid functional
+({vibeqc-cite}`grimme_b2plyp_2006`) adds a scaled second-order
+correlation energy, evaluated with the converged Kohn-Sham orbitals and
+eigenvalues of a hybrid SCF, to that SCF energy:
+
+$$
+E_{\rm DH} = E_{\rm KS}\!\left[a_x E_x^{\rm HF} + (1 - a_x) E_x^{\rm DFT} + a_c E_c^{\rm DFT}\right]
+  + c_{\rm os}\, E_{\rm os} + c_{\rm ss}\, E_{\rm ss}.
+$$
+
+The correction is not self-consistent (the orbitals are not
+re-optimised for it) and the DSD family
+({vibeqc-cite}`kozuch_martin_dsd_2011`;
+{vibeqc-cite}`santra_martin_revdsd_2019`) and PWPB95
+({vibeqc-cite}`goerigk_grimme_pwpb95_2011`) scale the two spin
+components differently. Because the SCF step alone is not the method,
+vibe-qc exposes double hybrids as `method=` keywords, not as
+`functional=` values: `run_job(method="rks", functional="b2plyp")` is
+refused rather than reported under a name that would be wrong.
+
+**Geometry optimisation caveat.** `run_job(optimize=True)` with a
+post-SCF `method=` (`mp2`, `scs-mp2`, `sos-mp2`, and likewise the
+coupled-cluster and DLPNO keywords) relaxes the *mean-field reference*
+surface, because the optimiser's analytic gradient is the SCF one; the
+final single point is then evaluated with the requested method on that
+geometry, and the `.xyz` and `.out` tag the energy with the reference
+method (`energy_method`) so the two surfaces are not confused. There is
+no analytic MP2 gradient in vibe-qc today. The double-hybrid `run_job`
+route refuses `optimize=True` outright.
+
+**Where it helps and where it fails.** MP2 is the cheapest correlated
+method that captures dispersion, and SCS-MP2 is a reliable default for
+main-group thermochemistry and conformers. The denominators are the
+weak point: near-degenerate frontier orbitals (stretched bonds,
+transition-metal centres, small-gap systems) make $E^{(2)}$ blow up, and
+for a metal it diverges outright. Plain MP2 overbinds dispersion-bound
+complexes and pi stacks; SCS or SOS scaling, or a double hybrid with a
+dispersion correction, is the usual remedy.
 
 ## At a glance
 
@@ -15,7 +141,7 @@ density fitting (RI-MP2) and with the unrestricted (UHF) reference.
 | SCS-MP2 | `run_scs_mp2(mol, basis, rhf)` | Grimme 2003 (c_os=6/5, c_ss=1/3) | Thermochemistry, reactions |
 | SOS-MP2 | `run_sos_mp2(mol, basis, rhf)` | Jung-Lochan-Dutoi-Head-Gordon 2004 (c_os=1.3, c_ss=0) | Even cheaper than SCS |
 | Canonical / RI / SCS / SOS UMP2 | `run_ump2`, `run_scs_ump2`, `run_sos_ump2` | UHF reference | Open-shell |
-| B2PLYP | `run_b2plyp(mol, basis)` | Grimme 2006 | First double hybrid |
+| B2PLYP | `run_job(..., method="b2plyp")` or `run_b2plyp(mol, basis)` | Grimme 2006 | First double hybrid |
 
 The high-level molecular dispatcher `run_job(..., method="mp2")`
 runs the same **canonical, four-index** MP2 kernel as
@@ -53,20 +179,23 @@ workflows, but `frozen_core=False` is the preferred public spelling.
 This is deliberately a **count-only** implementation of the ORCA table.
 vibe-qc removes that many lowest-energy occupied orbitals; it does not yet
 reproduce ORCA's additional atomic-orbital-character selection when canonical
-orbitals have an unusual ordering. ECP-bearing calculations need particular
-care: molecular ECP references are currently rejected by every correlated
-route because their variational electron count differs from the molecule's
-physical count. `frozen_core=False` controls correlation-space freezing; it
-does not restore electrons removed by an ECP, so it does not bypass this
-fail-closed boundary.
+orbitals have an unusual ordering. ECP-bearing calculations are accepted
+since 2026-09: the occupied space is partitioned from the valence electron
+count the SCF result carries, and the frozen-core table subtracts the ECP
+core per atom (LANL2DZ on sulfur freezes nothing; see
+[Effective core potentials](ecp.md#correlated-open-shell-and-determinant-methods-on-an-ecp-reference)).
+`frozen_core=False` controls correlation-space freezing; it does not
+restore electrons removed by an ECP.
 
 The four `run_*` convenience wrappers (`run_scs_mp2`, `run_sos_mp2`,
 `run_scs_ump2`, `run_sos_ump2`) **default to RI-MP2 with the per-zeta
 RIfit aux auto-resolved** from the orbital basis name. Canonical MP2
 is reachable only via the explicit `density_fit=False` flag, the
-brief's recommended setup throughout, since canonical MP2 scales as
-O(N⁵) in the AO→MO ERI transform while RI-MP2 scales as O(N⁴) with
-sub-µHa drift on the standard bases.
+brief's recommended setup throughout, since canonical MP2 needs the
+O(N⁵) four-index AO→MO ERI transform while RI-MP2 needs only an O(N⁴)
+three-index transform (the remaining assembly is formally O(N⁵) with a
+small prefactor) and drifts from canonical by only a few 10⁻⁵ Ha on the
+standard bases.
 
 ## Canonical MP2 + RI-MP2
 
@@ -320,16 +449,54 @@ vibe-qc ships four double hybrids out of the box:
 | **revDSD-PBEP86-D4** | 0.69·HF + 0.31·PBE, 0.4210·P86 | 0.5922, 0.0636 | Santra-Sylvetsky-Martin 2019 |
 | **PWPB95** | 0.50·HF + 0.50·mPW(PW6), 0.731·B95 | 0.269, 0.0 | Goerigk-Grimme 2011 |
 
-All four are dispatched via name-specific wrappers (`run_b2plyp`,
-`run_dsd_pbep86`, `run_revdsd_pbep86`, `run_pwpb95`) or the generic
-`run_double_hybrid(mol, basis, "name", ...)`, and return a
-:class:`DoubleHybridResult` with the same shape.
+### Which entry points run a double hybrid
 
-For open-shell molecules, the double-hybrid dispatcher runs the
-spin-pure **ROKS** SCF half and then a semicanonical **ROHF-MP2**
-doubles correction. This includes the meta-GGA PWPB95 route; a direct
-`run_roks(..., functional="pwpb95")` still raises because the SCF
-energy alone is not the complete double-hybrid method.
+Three spellings run the complete method, and they return the same
+numbers:
+
+```python
+run_job(mol, basis="cc-pvdz", method="b2plyp", output="h2o")   # standard files
+run_b2plyp(mol, basis)                                          # named wrapper
+run_double_hybrid(mol, basis, "b2plyp")                         # generic
+```
+
+`run_job` takes `"b2plyp"`, `"dsd-pbep86"`, `"revdsd-pbep86"` and
+`"pwpb95"` as **methods**, because a double hybrid names a complete
+calculation rather than an XC functional. It writes the usual file set
+(`.out`, `.system`, `.bibtex`, `.references`, `.molden`, `.xyz`,
+population files, `.qvf`) and returns a `DoubleHybridResult`, the same
+object the wrappers return.
+
+One spelling does **not** run a double hybrid and raises instead:
+
+```python
+run_job(mol, basis="cc-pvdz", method="rks", functional="b2plyp")
+# NotImplementedError: ... would return only its SCF component and omit
+# the required perturbative correlation.
+```
+
+That request asks for the hybrid SCF step on its own. Its energy is not
+B2PLYP, and reporting it under the functional's name would be a wrong
+number under a right-looking label, so the low-level `run_rks`,
+`run_uks` and `run_roks` wrappers fail closed the same way.
+
+The `run_job` route is deliberately narrow: it carries the basis, grid,
+density-fitting, dispersion and output keywords, and **refuses** every
+other `run_job` feature (`optimize`, `hessian`, `tddft`, `solvent`,
+`frozen_core`, ...) rather than dropping it silently. The dispatcher has
+no geometry optimizer or response machinery, and a request that was
+ignored must not come back as a double-hybrid number.
+
+### Open-shell double hybrids
+
+For open-shell molecules the dispatcher runs the spin-pure **ROKS** SCF
+half and then a **semicanonical RI-ROHF-MP2** doubles-only correction
+(the singles term is excluded, as on the closed-shell path). This
+includes the meta-GGA PWPB95 route. The `.out` names the construction on
+its `Construction:` line, the `.system` manifest records
+`scf_reference = "ROKS"` and `correlation_method = "rohf-mp2"`, and the
+`.bibtex` adds the Roothaan ROHF and Knowles RMP2 papers alongside the
+functional's own. There is no UKS-reference double-hybrid route.
 
 ### B2PLYP
 
@@ -614,8 +781,7 @@ all live now; the maintainer has scoped the remaining work to a
 **self-consistent** ωB97M(2) variant (optimising the functional's own
 orbitals, not the published xDH form on ωB97M-V orbitals, which has no
 external parity anchor to validate against). What's left is the
-self-consistent SCF driver itself; see `handovers/HANDOVER_WB97M2.md`
-for the full recipe. `xc="wb97m(2)"` keeps its honest gate until that
+self-consistent SCF driver itself. `xc="wb97m(2)"` keeps its honest gate until that
 lands.
 
 ### Cross-code parity

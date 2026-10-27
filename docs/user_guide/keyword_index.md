@@ -33,7 +33,8 @@ See [scf_convergence](scf_convergence.md).
 | `use_diis` | `True` | Enable DIIS extrapolation. |
 | `diis_start_iter` | `2` | Iteration at which DIIS begins. |
 | `diis_subspace_size` | `8` | Number of stored vectors. EDIIS, ADIIS, and their hybrids accept 2-12; plain DIIS-family accelerators may use deeper histories. |
-| `ediis_diis_switch_threshold` | `0.1` | DIIS-error at which EDIIS hands over to plain DIIS. |
+| `ediis_diis_switch_threshold` | `0.1` | Intensive (RMS matrix-element) DIIS error at which EDIIS hands over to plain DIIS. |
+| `ediis_diis_switch_threshold_open_shell` | `1e-3` (UHF only) | Same, used instead when n_α ≠ n_β (#377). |
 | `diis_restart_tau` | `1e-4` | R_CDIIS restart parameter τ ∈ (0,1) (Chupin et al. 2021); smaller ⇒ deeper history. |
 | `diis_adaptive_delta` | `1e-4` | AD_CDIIS depth parameter δ > 0 (Chupin et al. 2021); smaller ⇒ deeper history. |
 | `damping` | `0.5` | Finite static density/Fock damping fraction in `[0, 1)`. |
@@ -71,7 +72,7 @@ the given threshold.
 
 | Keyword | Default | Meaning |
 |---|---|---|
-| `initial_guess` | `PATOM` (molecular); `AUTO` (periodic) | Starting density; one of `AUTO`, `HCORE`, `SAD`, `SAP`, `PATOM`, `HUECKEL` (`HUCKEL` alias), `MINAO`, `READ`, or molecular-only `FRAGMO`. |
+| `initial_guess` | `AUTO` (molecular and periodic) | Starting density; one of `AUTO`, `HCORE`, `SAD`, `SAP`, `PATOM`, `HUECKEL` (`HUCKEL` alias), `MINAO`, `READ`, or `FRAGMO` on supported molecular and periodic routes. |
 | `read_path` | `''` | File (`.qvf` / `.molden`) to read orbitals from, for `initial_guess=READ`. |
 
 See [initial_guess](initial_guess.md).
@@ -121,7 +122,7 @@ See [functionals](functionals.md) and [Microsoft SKALA-1.1](skala.md).
 | `angular` | `ProductGaussLegendre` | Angular quadrature; `ProductGaussLegendre` or `Lebedev`. |
 | `n_radial` | `75` | Radial quadrature points. |
 | `n_theta` / `n_phi` | `17` / `36` | Product-grid angular points. |
-| `lebedev_order` | `29` | Lebedev order (used when `angular=Lebedev`). |
+| `lebedev_order` | `29` | Lebedev order (used when `angular=Lebedev`): 5, 7, 11, 15, 17, 23, 27, 29, 31, 35, 41, 47, 53, and for convergence studies 59, 65, 77, 95 (1202 to 3074 points). See the [grid tutorial](../tutorial/dft_grid_convergence.md). |
 | `becke_k` | `3` | Becke partition smoothing order. |
 | `vv10_grid_factor` | `3.0` | VV10-paired functionals (`vv10`, `wb97x-v`, `wb97m-v`) evaluate the nonlocal double integral on a separate grid with the radial and angular resolution divided by this factor (Vydrov and Van Voorhis 2010 practice). `1.0` (or `0`) evaluates VV10 on the full XC grid, the bitwise pre-v0.16 reference. |
 | `atomic_grid_profile` | `Generic` | Coherent atom-specific grid contract. `"pyscf-level3"` or `"skala"` selects vibe-qc's pinned SKALA parity profile and overrides the individual radial, angular, pruning, and partition controls. |
@@ -152,27 +153,50 @@ Periodic jobs additionally expose:
 |---|---|---|
 | `jk_method` | `AUTO` *(argument of `run_periodic_job`)* | Coulomb route: `GDF`, `BIPOLE`, `GPW`, `GAPW`, `RSGDF`, and others. See [choosing a periodic method](../tutorial/periodic_methods_compared.md). The AICCM formulations are not `jk_method` values: select them with `method="aiccm"` and `variant=` (see [AICCM](aiccm.md)); with `method="aiccm"`, `jk_method` stays `AUTO` or must equal the variant's own route. |
 | `variant` | *(none; mandatory with `method="aiccm"`)* | AICCM formulation: `"real-gamma"`, `"neutral-bloch"`, `"chi"`, and `"four-center"`. All four runner arms are wired and experimental; each keeps its documented, fail-closed capability envelope. |
-| `scf_reference` | `None` *(argument of `run_periodic_job`, `method="aiccm"` only)* | `None` infers the SCF reference (`functional` decides HF versus KS; the multiplicity and electron parity decide restricted versus unrestricted); `"rohf"` / `"roks"` request the restricted open-shell references explicitly (no variant implements them yet; fails closed). |
+| `scf_reference` | `None` *(argument of `run_periodic_job`, `method="aiccm"` only)* | `None` infers the SCF reference (`functional` decides HF versus KS; the multiplicity and electron parity decide restricted versus unrestricted); `"rhf"` / `"uhf"` request a Hartree-Fock reference explicitly on every variant (no `functional`; `"uhf"` mainly for a closed-shell singlet, `"rhf"` refused on an odd electron count); `"rohf"` / `"roks"` request the restricted open-shell references explicitly (no variant implements them yet; fails closed). |
 | `aiccm_lattice_extension` | `None` *(argument of `run_periodic_job`)* | Born-von Karman torus `(N1, N2, N3)` for every AICCM variant; `kpoints` is the legacy Γ-centred alias for the torus mesh, never both. `aiccm_wigner_seitz_shells=s` is the odd-extension shorthand for `2s+1`. |
+| `aiccm_cderi_storage` | `None` *(argument of `run_periodic_job`, `variant="real-gamma"` only)* | How the real-Gamma producer holds its fitted integrals: `"dense"` (what `None` runs; memory grows as the cube of the torus size), `"block"` (one block per transfer of the block-circulant torus) or `"block-star"` (only the fits of the k-pair star plan). One operator in every storage; recorded as `cderi_storage_executed`. Not combinable with `correlation=`. See [AICCM](aiccm.md#storage-of-the-fitted-integrals). |
+| `aiccm_spin_state` | `None` *(argument of `run_periodic_job`, `variant="real-gamma"` or `"neutral-bloch"` only)* | The spin sector of the torus (#519 RG-14): `None` runs `"legacy"`, each producer's historical convention (real-Gamma pairs a doublet cell by supercell parity, neutral-Bloch replicates the cell's counts at every k point); `"per-cell"` replicates the cell's `(n_alpha, n_beta)` with spins aligned on both; an integer is the total torus multiplicity, which neutral-Bloch runs only when it is uniform per cell. Fixes `n_alpha - n_beta` only, never a broken-symmetry arrangement. Recorded as `aiccm_spin_policy` and `aiccm_spin_state` in the manifest. See [AICCM](aiccm.md#the-spin-sector-of-the-torus). |
 | `smearing_temperature` | `0.0` | Fermi-Dirac smearing temperature (Hartree); `0.0` is no smearing. |
 | `use_periodic_becke` | `True` (KS) | Use the periodic Becke partition for the XC grid. |
-| `becke_image_radius_bohr` | `10.0` (KS) | Minimum point-centered image radius for the periodic Becke partition; converge with the grid resolution. |
+| `becke_image_radius_bohr` | `10.0` (KS) | Minimum point-centered image radius for the periodic Becke partition; images beyond it switch off smoothly over a further 10 percent, so weights stay continuous as atoms move. Converge with the grid resolution. |
 | `lattice_opts` | *(`LatticeSumOptions`)* | Real-space cutoffs for the lattice sums (`cutoff_bohr`, `nuclear_cutoff_bohr`, ...). |
 | `bipole_cutoff_bohr` | `15.0` *(argument of `run_periodic_job`, BIPOLE route)* | Direct-lattice cutoff of the electronic BIPOLE Fock sums; raise until the reported Bloch-overlap fold drift is < 1e-4 (a drift ≥ 1e-2 refuses SCF). |
 | `use_exchange_ewald_split` | `None` *(auto)* | Corrected Ewald exchange split (`K = K_SR + K_LR + G=0` term). Auto-ON for 3D BIPOLE runs at Γ and Monkhorst-Pack multi-k; `False` restores the legacy Γ-locality gauge. |
 | `exchange_exxdiv` | `"ewald"` | Exact-exchange G=0 convention: `"ewald"` (probe-charge Madelung, PySCF-equivalent, already near the k-converged limit) or `"none"`. The two differ by exactly `½·N_e·ξ_M(BvK supercell)`; see [from_crystal](from_crystal.md) § Comparing total energies. |
 | `ewald_precision` | `1e-8` | Truncation target of the real/reciprocal Ewald lattice sums (BIPOLE route). |
+| `rcut_strategy` | `"pyscf_auto"` *(argument of the GDF drivers)* | Sizes the one-electron domain (pair complete, measured to 1e-16 of the largest overlap) and the KS exchange-correlation image domain (`2 r_ao + span`) from the basis; `"flat"` keeps `cutoff_bohr` everywhere. The fitted J/K sums use `cutoff_bohr` either way. See the [lattice-cutoff tutorial](../tutorial/periodic_lattice_cutoff_convergence.md). |
+| `fit_source` | `"auto"` *(argument of `run_periodic_job` and the GDF drivers)* | GDF fit: the default range-separated source, or `"classic"`. |
+| `classic_support_policy` | `None` (physical pairs) *(GDF drivers)* | AO-pair support of the classic fit; `"historical_index_ball"` replays the pre-#466 operator. A positive `fit_screen_threshold` needs the historical ball. |
+| `check_energy_sanity` | `True` *(GDF drivers)* | Raise `RuntimeError` on a converged total energy outside the physical range; `False` returns the raw value for diagnostics. |
+| `symmetry_reduce_k` | `False` *(argument of `run_periodic_job`)* | Build exact exchange on the irreducible wedge and transport it over each star (preview; needs `symmetry="attach"`, a multi-k mesh and exact exchange). See the [tutorial](../tutorial/symmetry_reduced_k_mesh.md). |
+| `conv_tol_grad` | `None` *(argument of `run_periodic_job`)* | Explicit SCF gradient tolerance, also on the BIPOLE routes; the executed value is printed in the `.out`. |
 
 See [periodic_methods](periodic_methods.md), [smearing](smearing.md),
 [multi_k_scf](multi_k_scf.md).
+
+## Correlation and integral-engine selection
+
+| Keyword | Default | Meaning |
+|---|---|---|
+| `dlpno_thresholds` | `None` (NormalPNO) *(argument of `run_job` and `run_periodic_job`)* | `"loose"`, `"normal"`, `"tight"` or a `DLPNOThresholds` record. See [DLPNO](dlpno_mp2.md). |
+| `dlpno_ccsd_options` | `None` | `LocalCCSDOptions` (RHF) or `LocalUCCSDOptions` (UHF); on crystals a `LocalUCCSDOptions` also selects a UHF reference. |
+| `frozen_core` | `None` (published count) | ORCA 6.1 count-only convention; `False` correlates all electrons; an integer is an explicit count (per cell on crystals). |
+| `integral_engine` | `None` *(argument of `run_job` and `run_periodic_job`)* | `IntegralEngineOptions(backend="libint" \| "manta", budget=...)`; experimental. See [integral engines](integral_engines.md). |
+| `coulomb` | `None` | `CoulombBuildOptions(algorithm="exact" \| "ri" \| "bupo" \| "ri_bupo", auxiliary_basis=...)`. |
+| `exchange` | `None` | `ExchangeBuildOptions(algorithm="exact" \| "ri")`. |
+| `periodic_integrals` | `None` *(argument of `run_periodic_job`)* | `PeriodicIntegralOptions(reciprocal_energy_cutoff, pair_cutoff_bohr, nuclear_cutoff_bohr, alpha=0.7)`; required with a periodic MANTA job. |
+| `periodic_xc` | `None` | `PeriodicXCOptions(xc_image_cutoff_bohr, radial_points=50, lebedev_order=29, ...)`; required for periodic MANTA RKS/UKS. |
+| `periodic_fitting` | `None` | `PeriodicFittingOptions(omega, auxiliary_cutoff_bohr, ...)`; required when a periodic MANTA J or K is RI. |
+| `symmetry_reduction` | `None` *(argument of `run_job`, `run_rhf`, `run_uhf`)* | Experimental molecular point-group reduction of the RHF/UHF J/K build: `MolecularSymmetryOptions`, `MolecularRISymmetryOptions` or a process-local `PreparedMolecularSymmetry`. Refuses geometry derivatives, response, correlation, solvation, dispersion and other engines. See the [developer reference](../developer_shared_symmetry.md) and [symmetry status](../symmetry_status.md). |
 
 ## Enumerations
 
 The values each option enum accepts (the default is marked):
 
-- **`InitialGuess`**: `AUTO` *(periodic default)*, `HCORE`, `SAD`, `SAP`,
-  `PATOM` *(molecular default)*, `HUECKEL` (`HUCKEL` alias), `MINAO`, `READ`,
-  `FRAGMO` *(molecular only)*.
+- **`InitialGuess`**: `AUTO` *(molecular and periodic default)*, `HCORE`, `SAD`,
+  `SAP`, `PATOM`, `HUECKEL` (`HUCKEL` alias), `MINAO`, `READ`, `FRAGMO`.
+  Availability depends on the [execution route](initial_guess.md#route-coverage).
 - **`SCFAccelerator`**: `DIIS`, `EDIIS`, `EDIIS_DIIS` *(molecular and periodic default)*,
   `ADIIS`, `ADIIS_DIIS`, `KDIIS`, `R_CDIIS`, `AD_CDIIS` *(adaptive-depth
   CDIIS, Chupin et al. 2021)*.

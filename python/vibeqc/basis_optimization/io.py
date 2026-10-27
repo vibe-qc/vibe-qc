@@ -86,19 +86,31 @@ class TempBasisLibrary:
 
     # ---- emission -----------------------------------------------------------
 
-    def write_g94(self, atoms: dict[str, "CrystalAtomBasis"], *,
+    def write_g94(self, atoms: "dict[str, CrystalAtomBasis] | Iterable[CrystalAtomBasis]", *,
                   basis_name: Optional[str] = None) -> str:
-        """Emit a fresh .g94 file from the atoms dict; return its basis name.
+        """Emit a fresh .g94 file from the atoms; return its basis name.
 
         The default basis name uuids one per call so libint's BasisSet
         constructor never returns a cached parse from a previous
-        iteration.
+        iteration. The file is stored under the name ``BasisSet`` looks
+        up -- ``basis_name`` folded by
+        :func:`vibeqc.basis_registry.canonical_basis_name` -- and that
+        folded name is returned (#321).
+
+        Atoms carrying an ECP (the ``200+Z`` pob records beyond Kr) also
+        get ``<name>.ecp`` beside the ``.g94``: the sidecar every SCF entry
+        point attaches (:func:`vibeqc.ecp_metadata.sidecar_path_for`).
+        Without it a candidate's valence shells would meet the full
+        nuclear charge.
         """
         if self.path is None:
             raise RuntimeError("TempBasisLibrary used outside its context")
-        from ..basis_crystal import emit_g94  # local import: optional dep
+        from ..basis_crystal import emit_ecp_sidecar, emit_g94  # local import: optional dep
+        from ..basis_registry import write_basis_file
+
+        atom_list = list(atoms.values()) if isinstance(atoms, dict) else list(atoms)
         name = basis_name or f"opt-{uuid.uuid4().hex[:8]}"
-        target = self.path / "basis" / f"{name}.g94"
-        text = emit_g94(list(atoms.values()))
-        target.write_text(text)
-        return name
+        stem = write_basis_file(self.path / "basis", name, emit_g94(atom_list))
+        if any(a.has_ecp and a.ecp is not None for a in atom_list):
+            (self.path / "basis" / f"{stem}.ecp").write_text(emit_ecp_sidecar(atom_list))
+        return stem

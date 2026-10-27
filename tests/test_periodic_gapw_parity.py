@@ -2,7 +2,7 @@
 
 This module pins the deviation of the experimental GAPW route
 (:func:`run_periodic_rhf_gapw`) from vibe-qc's own analytic all-electron
-periodic reference (:func:`run_rhf_periodic_gamma_gdf`, GDF) on CORE-BEARING
+periodic reference (:func:`run_pbc_gdf_rhf`, GDF with exxdiv="ewald") on CORE-BEARING
 systems, where the Gaussian augmentation is supposed to recover the
 all-electron accuracy that the soft FFT grid alone cannot resolve.
 
@@ -17,12 +17,16 @@ reproducible with
 ``examples/regression/gapw_parity/run_gapw_external_parity.py``; historical
 GPW-AUDIT labels are kept in comments for continuity.
 
-Published/reference context (CLAUDE.md §8) — He/STO-3G/12-bohr/Γ:
+Historical reference context (CLAUDE.md §8) — He/STO-3G/12-bohr/Γ:
   * PySCF.pbc.RHF.density_fit() (GDF, out-of-process) = -2.81044787 Ha.
-  * vibe-qc run_rhf_periodic_gamma_gdf                = -2.80778396 Ha.
-  The 2.66 mHa offset is the periodic-HF exchange-divergence (exxdiv /
-  Madelung) convention; it is immaterial to the Ha-scale GAPW gap measured
-  here and vanishes for DFT / matched conventions.
+  * retired compact run_rhf_periodic_gamma_gdf bridge = -2.80778396 Ha.
+  These are retained observations, not targets for the current producer.
+  QC468 replaces the rejected legacy reference with supported periodic GDF
+  using its standard exxdiv="ewald" convention. GAPW's molecular-limit
+  exchange is a different approximation; no equality of Hamiltonians or
+  attribution of their difference to exxdiv alone is assumed. The existing
+  improvement/error bounds remain the acceptance criteria and must be
+  measured against this supported reference, without retuning them.
 
 The aspherical-core H2O finding was resolved by making the already-validated
 fit-free analytic-ERI Hartree construction the HF default. The legacy block
@@ -81,13 +85,19 @@ def _gpw_energy(system, basis) -> float:
 
 
 def _gdf_energy(system, basis) -> float:
-    """Analytic all-electron GDF reference (same gauge as GAPW; CI-safe)."""
+    """Supported periodic all-electron reference, with explicit exxdiv.
+
+    Comparison with GAPW tests the retained error bounds; it does not
+    assert identical exchange Hamiltonians or a pre-measured new energy.
+    """
     opts = vq.PeriodicRHFOptions()
     opts.max_iter = 60
     opts.conv_tol_energy = 1e-9
-    return float(
-        vq.run_rhf_periodic_gamma_gdf(system, basis, opts, progress=False).energy
+    result = vq.run_pbc_gdf_rhf(
+        system, basis, opts, exxdiv="ewald", progress=False,
     )
+    assert result.converged, "all-electron periodic GDF reference did not converge"
+    return float(result.energy)
 
 
 @pytest.mark.parametrize("open_shell", [False, True])
@@ -212,7 +222,15 @@ def test_gapw_molecular_no_blowup_lih():
     points and amplified by the r^l multipole weight — detonated the ρ₀
     compensator. LiH/STO-3G gave E ≈ +9.8×10⁷ Ha (H |Q|max ≈ 2.3×10⁴) vs the
     GDF reference ≈ −7.86 Ha. Restricting n_A¹ to atom-A-centred AOs keeps
-    the augmentation physical: bonded LiH now lands within ~10 mHa of GDF.
+    the augmentation physical.
+
+    Measured 2026-10-21 (#98): GAPW −7.8094 Ha; the molecular RHF limit
+    −7.8620; the GDF reference −7.8698 (exxdiv='ewald', equal to PySCF). The
+    60 mHa deviation is 53 mHa of GAPW against the molecular limit, the
+    32^3 grid's incompleteness (next test), plus the reference's 8 mHa Ewald
+    exchange convention. The GDF reference read
+    −8.0789 until #98: its fit counted the Li–H pair across the boundary
+    that its one-electron terms did not.
     """
     L = 16.0
     c = L / 2.0
@@ -243,10 +261,49 @@ def test_gapw_molecular_no_blowup_lih():
     )
     # Physical + tracks the all-electron reference (the on-centre fix). The
     # < 0.1 Ha bound catches both the old +10⁸ Ha blow-up and any gross
-    # augmentation error; the actual deviation is ~8 mHa.
+    # augmentation error; the measured deviation is 60 mHa (see above).
     assert abs(e_gapw - e_gdf) < 0.1, (
         f"LiH GAPW deviates / blew up: E_GAPW={e_gapw:.4f}, E_GDF={e_gdf:.4f} Ha"
     )
+
+
+def test_gapw_lih_converges_to_the_molecular_limit_with_the_grid():
+    """The 53 mHa between LiH GAPW on the 32^3 grid and the molecular limit
+    is grid incompleteness, not an augmentation defect (#98).
+
+    Same 16-bohr box. GAPW's exchange is the molecular-limit one, so its
+    reference is the molecular RHF energy, -7.862009 Ha. Measured: 24^3
+    +391 mHa, 32^3 +52.6, 40^3 +4.1, 48^3 +1.9. A double count or a missing
+    compensator term would leave an offset that does not shrink with the
+    grid.
+    """
+    L = 16.0
+    c = L / 2.0
+    d = 3.015
+    pos = [[c - d / 2.0, c, c], [c + d / 2.0, c, c]]
+    system = core.PeriodicSystem()
+    system.dim = 3
+    system.lattice = np.eye(3) * L
+    system.unit_cell = [core.Atom(3, pos[0]), core.Atom(1, pos[1])]
+    mol = vq.Molecule([vq.Atom(3, pos[0]), vq.Atom(1, pos[1])], 0, 1)
+    basis = vq.BasisSet(mol, "sto-3g")
+    e_molecular = float(vq.run_rhf(mol, basis, vq.RHFOptions()).energy)
+    errors = []
+    for n in (32, 48):
+        e_gapw = float(
+            run_periodic_rhf_gapw(
+                system,
+                basis,
+                grid=PlaneWaveGrid(np.eye(3) * L, n, n, n),
+                conv_tol_energy=1e-8,
+                max_iter=60,
+                one_centre="block",
+                quiet=True,
+            ).energy
+        )
+        errors.append(e_gapw - e_molecular)
+    assert errors[1] > 0.0 and errors[1] < 0.1 * errors[0]
+    assert errors[1] < 5.0e-3
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,159 @@
+#pragma once
+#include "vibeqc/manta_periodic_ri_fitting_bounds.hpp"
+#include "vibeqc/manta_periodic_fock.hpp"
+
+namespace vibeqc::manta {
+// Assembly at stored physical components; source construction is not certified.
+struct PeriodicAssemblyRoundoff {
+    bool evaluated=false,paired_coulomb_included=false,retained_coulomb_included=false,direct_exchange_roundoff_included=false;
+    double direct_exchange_fock_bound=0.,direct_exchange_energy_bound=0.;
+    bool fitted_exchange_roundoff_included=false;
+    double fitted_exchange_fock_bound=0.,fitted_exchange_energy_bound=0.;
+    bool exchange_correction_roundoff_included=false;
+    double exchange_correction_fock_bound=0.,exchange_correction_energy_bound=0.;
+    double fock_bound=0.,energy_bound=0.;
+    double combined_fock_bound=0.,combined_energy_bound=0.;
+};
+struct PeriodicAssemblyPlan {
+    Count n_basis=0,momenta=0,spins=0;
+    Count modeled_peak_bytes=0,scalar_terms=0,kernel_terms=0;
+};
+struct PeriodicRIFockPlan {
+    bool has_j=true,has_k=true;
+    Count n_basis=0,n_auxiliary=0,momenta=0,channels=0;
+    Count retained_source_bytes=0,driver_live_bytes=0,modeled_peak_bytes=0;
+    Count metric_shell_calls=0,metric_primitive_products=0,build_shell_calls=0,build_primitive_products=0;
+    Count shell_calls=0,primitive_products=0,scalar_terms=0,kernel_terms=0;
+    PeriodicRIQPlan gamma,pair;
+};
+struct PeriodicRIFittingMetricTrial {
+    double cutoff=0.;
+    Count rank=0;
+    PeriodicRIFittingBoundReceipt bound;
+};
+struct PeriodicRIFittingReferenceTrial {
+    PeriodicBupoSourcePreparationReceipt preparation;
+    PeriodicRIFittingBoundReceipt bound;
+    bool ready=false;
+    std::string refinement="initial";
+};
+struct PeriodicRIFittingDomainTrial {
+    double pair_cutoff_bohr=0.,auxiliary_cutoff_bohr=0.,metric_cutoff=0.;
+    Count reciprocal_cube_radius=0,vectors=0,rank=0,domain_attempt=0,metric_refinement=0;
+    PeriodicRIFittingBoundReceipt bound;
+};
+struct PeriodicRIFittingAuxiliaryTrial {
+    Count candidate=0,functions=0;
+    std::string generation_identity,auxiliary_basis_identity;
+    PeriodicRIFittingDomainTrial source;
+};
+struct PeriodicRIFockInfo {
+    bool has_j=true,has_k=true;
+    std::string source_identity,frame_identity,weight_identity;
+    std::string exchange_kernel="coulomb";
+    double physical_omega=0.;
+    Count metric_shell_calls=0,metric_primitive_products=0;
+    double reverse_metric_residual=0.,reverse_projector_residual=0.,reverse_inverse_residual=0.;
+    // Gamma first; then, if K is selected, off-diagonal (target,source) pairs.
+    std::vector<PeriodicRIQMetricInfo> metrics;
+    PeriodicRIAccuracyReceipt accuracy;
+    std::optional<PeriodicRIFittingBoundReceipt> fitting_bound;
+    std::vector<PeriodicRIFittingMetricTrial> fitting_trials;
+    std::vector<PeriodicRIFittingReferenceTrial> reference_trials;
+    std::optional<PeriodicBupoSourcePreparationReceipt> fitting_reference;
+    std::optional<PeriodicRIFittingBoundPlan> reference_search;
+    std::vector<PeriodicRIFittingDomainTrial> domain_trials;
+    std::optional<PeriodicRIFockPlan> selected_fitting_plan;
+    std::vector<PeriodicRIFittingAuxiliaryTrial> auxiliary_trials;
+    std::optional<ProductAuxiliaryReceipt> selected_auxiliary_generation;
+};
+struct PeriodicRIFockReceipt : PeriodicFockReceipt {
+    PeriodicRIFockReceipt() { algorithm="streamed-periodic-ri-spin-fock"; }
+    bool has_j=true,has_k=true;
+    std::string frame_identity,weight_identity;
+    std::string exchange_kernel="coulomb";
+    double physical_omega=0.;
+    Count shell_calls=0,primitive_products=0,coupling_passes=0;
+    Count coupling_multipole_trials=0,coupling_multipole_images=0;
+    Count coupling_multipole_tree_nodes=0,coupling_multipole_far_blocks=0,coupling_multipole_translations=0;
+    Count coupling_multipole_moment_panels=0,coupling_multipole_envelope_evaluations=0;
+    Count coupling_multipole_reused_moment_panels=0,coupling_multipole_reused_extents=0;
+    Count coupling_multipole_global_pairs=0,coupling_multipole_global_pair_reuses=0,coupling_multipole_global_auxiliary=0,coupling_multipole_global_projections=0,coupling_multipole_global_auxiliary_projections=0,coupling_multipole_pair_groups=0;
+    Count coupling_multipole_partition_builds=0,coupling_multipole_partition_reuses=0,coupling_multipole_partition_bypasses=0;
+    Count coupling_multipole_compressed_pairs=0,coupling_multipole_compressed_nodes=0,coupling_multipole_action_products=0,coupling_multipole_action_translations=0;
+    std::string reference_coupling_identity;
+    double coupling_error_bound=0.,approximation_j_bound=0.,approximation_energy_bound=0.;
+    bool fitted_exchange_roundoff_evaluated=false;
+    double fitted_exchange_roundoff_bound=0.;
+    bool retained_j_roundoff_evaluated=false;
+    double retained_j_roundoff_bound=0.,retained_energy_roundoff_bound=0.;
+    bool coupling_roundoff_evaluated=false;
+    double coupling_forward_roundoff_bound=0.,coupling_adjoint_roundoff_bound=0.;
+    // Input construction is included only when paired_input_roundoff_included is true.
+    bool weighted_input_roundoff_evaluated=false,coupling_forward_input_error_included=false,paired_input_roundoff_included=false;
+    double weighted_input_roundoff_bound=0.;
+    bool forward_metric_roundoff_evaluated=false,paired_roundoff_evaluated=false;
+    double forward_metric_coefficient_roundoff_bound=0.,forward_metric_energy_roundoff_bound=0.;
+    double paired_j_roundoff_bound=0.,paired_energy_roundoff_bound=0.;
+    bool metric_roundoff_evaluated=false,metric_j_roundoff_evaluated=false;
+    double metric_projection_roundoff_bound=0.,metric_coefficient_roundoff_bound=0.,metric_energy_roundoff_bound=0.,metric_j_roundoff_bound=0.;
+};
+struct PeriodicRIFockResult {
+    Count n_basis=0,momenta=0;
+    PeriodicRIFockReceipt receipt;
+    std::vector<PeriodicRIQReceipt> components;
+    std::vector<std::complex<double>> values,J,K;
+    std::vector<double> K_roundoff_bounds;
+};
+PeriodicRIFockPlan plan_periodic_ri_fock(const BasisSet&,const BasisSet&,const PeriodicSystem&,
+    Count gamma_vectors,Count maximum_pair_vectors,Count momenta,
+    const PeriodicGDFShortRangeOptions&,const RIOptions&,const ResourceBudget&,
+    bool make_j=true,bool make_k=true,const PeriodicGDFKernelOptions& exchange_kernel = {},const PeriodicRIAccuracyOptions& accuracy = {});
+
+// A complete method reserves the largest allowed fitting source for every
+// SCF call. Count-only admission is independent of certificate outcomes.
+PeriodicRIFockPlan plan_periodic_ri_fock_capacity(const BasisSet&,const BasisSet&,const PeriodicSystem&,
+    Count,Count,Count,const PeriodicGDFShortRangeOptions&,const RIOptions&,const ResourceBudget&,
+    bool,bool,const PeriodicGDFKernelOptions&,const PeriodicRIAccuracyOptions&,const PeriodicRIFittingAccuracyOptions&);
+// Complete explicit-mesh RI J/K, with fixed metric/projector owners. Pair
+// vectors belong to G+k_source-k_target. Diagonal pair segments are empty:
+// the Gamma source supplies J and every diagonal K contribution together.
+// J-only requires an empty pair domain and owns only the Gamma projector.
+// K-only retains Gamma for the diagonal contributions, with no J contraction.
+// A physical erf/erfc source requires K-only selection. Its metric cannot
+// silently replace the separate bare-Coulomb J source of a physical method.
+// H is method-supplied; no nuclear/XC/exchange-singularity source is inferred.
+// Sun et al., JCP 147,164119 (2017), q-dependent periodic Gaussian fitting;
+// Neese, JCC 44,381 (2023), retained-factor spin J/K contractions.
+class PeriodicRIFockBuilder {
+public:
+    PeriodicRIFockBuilder(const BasisSet&,const BasisSet&,const PeriodicSystem&,
+        const md::Matrix& momenta,const std::vector<double>& weights,
+        const md::Matrix& gamma_vectors,const md::Matrix& pair_vectors,const std::vector<Count>& offsets,
+        const PeriodicGDFShortRangeOptions&,const RIOptions&,const ResourceBudget&,
+        bool make_j=true,bool make_k=true,const PeriodicGDFKernelOptions& exchange_kernel = {},const PeriodicRIAccuracyOptions& accuracy = {});
+    const PeriodicRIFockPlan& plan() const { return plan_; }
+    const PeriodicRIFockInfo& info() const { return info_; }
+    // Component action from the same q owners; no Coulomb-family admission.
+    PeriodicRIFockResult build_exchange(const std::vector<std::complex<double>>&,bool audit_arithmetic=false) const;
+    void certify_fitting(const PeriodicRIFittingAccuracyOptions&,const BoundedPeriodicDensityEnvelope&,const ResourceBudget&);
+    void certify_fitting(const PeriodicRIFittingAccuracyOptions&,const BoundedPeriodicDensityEnvelope&,
+        const ResourceBudget&,const PeriodicSystem&,const RegularKMesh&);
+    PeriodicRIFockResult build(const std::vector<std::complex<double>>& hcore,
+        const std::vector<std::complex<double>>& spin_densities,double exchange_scale=1.,bool audit_arithmetic=false) const;
+private:
+    friend struct PeriodicRIExchangeFittingDriver;
+    PeriodicRIFockResult build_impl(const std::vector<std::complex<double>>&,const std::vector<std::complex<double>>&,
+        double,bool,bool) const;
+    void refresh_source_identity();
+    void replace_gamma(std::shared_ptr<PeriodicRIQBuilder>);
+    void replace_gamma_auxiliary(std::shared_ptr<PeriodicRIQBuilder>,const PeriodicRIFockPlan&,const ProductAuxiliaryBasis&);
+    void replace_gamma_domains(std::shared_ptr<PeriodicRIQBuilder>,const PeriodicRIFockPlan&);
+    PeriodicRIFockPlan plan_;
+    PeriodicRIFockInfo info_;
+    std::vector<double> weights_;
+    std::shared_ptr<PeriodicRIQBuilder> gamma_;
+    std::unique_ptr<PeriodicRIFittingBoundSource> fitting_bound_;
+    std::vector<std::shared_ptr<PeriodicRIQBuilder>> pairs_;
+};
+} // namespace vibeqc::manta

@@ -99,6 +99,28 @@ class SCCDFTBSECCMResult:
     topology_fingerprint: str
     reference_geometry_fingerprint: str
     route_plan: SemiempiricalRoutePlan
+    #: Second-order kernel actually run: ``"klopman_ohno"`` or ``"elstner"``.
+    gamma_form: str = "klopman_ohno"
+    #: True when the Coulomb tail was summed into the gamma kernel
+    #: (``ewald_gamma=True``); ``route_plan.electrostatics_kernel`` then names
+    #: the dimensional Ewald channel (``ewald_gamma_wire_1d``, ...).
+    ewald_gamma: bool = False
+    #: True when the separate Madelung/Ewald embedding potential was applied.
+    madelung: bool = False
+    #: Charge mixer that produced the accepted state: ``"aitken"`` (the
+    #: default vector-Aitken relaxation), ``"diis"`` or ``"broyden"``.
+    scc_mixer: str = "aitken"
+    #: Smallest eigenvalue of the Wigner-Seitz-weighted cyclic overlap
+    #: :attr:`overlap`. It can be non-positive on small cells (Peintinger and
+    #: Bredow, J. Comput. Chem. 35, 839 (2014), "critical eigenvalues").
+    overlap_min_eigenvalue: float = float("nan")
+    #: Number of overlap modes at or below :attr:`overlap_screen_threshold`
+    #: that the route screened out by canonical orthogonalization (#151);
+    #: ``0`` when the overlap is positive definite and the generalized solve
+    #: ran unchanged. Recorded so a row on a screened metric says so (#423).
+    overlap_screened_modes: int = 0
+    #: Eigenvalue threshold (bohr-scaled geometry tolerance) of that screen.
+    overlap_screen_threshold: float = float("nan")
 
 
 def _frozen_array(value) -> np.ndarray:
@@ -150,9 +172,8 @@ def run_scc_dftb_seccm(
     truncation of the Klopman-Ohno remainder has no thermodynamic limit --
     an ``R^-3`` tail with a pair-dependent amplitude -- while the Elstner
     remainder decays exponentially, which is why 3-D embedding requires it
-    (issue #211). The default is unchanged pending the staged molecular
-    cutover (maintainer decision D1); see
-    ``handovers/HANDOVER_GFN2_PERIODIC_ELECTROSTATICS.md``.
+    (former-tracker issue 211). The default is unchanged pending the staged molecular
+    cutover (maintainer decision D1).
 
     ``ewald_gamma=True`` sums the Coulomb tail *into* the gamma kernel --
     full bare-Coulomb Ewald plus the WS-folded remainder and the on-site
@@ -181,7 +202,7 @@ def run_scc_dftb_seccm(
     ``compute_gradient=True`` differentiates the converged per-cell energy
     analytically on the frozen record set. Neutral cells use the
     fixed-charge form (same structure as the molecular SCC-DFTB gradient:
-    M = -W + D . 1/2 (kappa hbar - V_A - V_B) contracted with the live
+    M = -W + D . (kappa hbar - (V_A + V_B)/2) contracted with the live
     overlap derivatives, the WS-weighted repulsive derivative, and the
     gamma derivative over live record displacements). Embedded cells
     (``madelung=True``) add the fixed-charge Madelung derivative. The total
@@ -232,7 +253,7 @@ def run_scc_dftb_seccm(
         raise NotImplementedError(
             "SCC-DFTB-SECCM 3-D Madelung embedding is unavailable with the "
             "Klopman-Ohno gamma: its Ohno correction has no thermodynamic "
-            "limit. Pass gamma_form='elstner' for a kernel that does (#211)."
+            "limit. Pass gamma_form='elstner' for a kernel that does (former-tracker issue 211)."
         )
     if int(molecule.charge) != 0 and not madelung:
         raise NotImplementedError(
@@ -263,9 +284,16 @@ def run_scc_dftb_seccm(
         multiplicity=int(molecule.multiplicity),
     ).with_seccm_runtime(
         periodic_dimension=topology.dimensionality,
-        electrostatics_family="madelung" if madelung else "none",
+        # ``ewald_gamma`` is the same long-range physics as ``madelung`` by
+        # the other route (the Coulomb tail summed into the kernel); the run
+        # record and the citation surface name the kernel that executed.
+        electrostatics_family=(
+            "ewald_gamma" if ewald_gamma else "madelung" if madelung else "none"
+        ),
         electronic_temperature=electronic_temperature,
+        shell_gamma_form=gamma_form if ewald_gamma else None,
     )
+    scc_mixer = "diis" if use_diis else "broyden" if use_broyden else "aitken"
     (
         translations,
         central,
@@ -330,6 +358,12 @@ def run_scc_dftb_seccm(
     gradient_method = None
     if compute_gradient:
         gradient_method = "analytic"
+    # The native solve screens overlap modes at or below the same tolerance
+    # it validates hermiticity with (seccm_common.h canonical_orthogonalizer).
+    screen_threshold = float(group.geometry_tolerance) * (
+        topology_length_unit_scale(topology)
+    )
+    overlap_eigenvalues = np.linalg.eigvalsh(np.asarray(native.overlap))
     return SCCDFTBSECCMResult(
         energy=float(native.energy),
         e_electronic=float(native.e_electronic),
@@ -376,6 +410,15 @@ def run_scc_dftb_seccm(
         topology_fingerprint=topology.topology_fingerprint,
         reference_geometry_fingerprint=topology.reference_geometry_fingerprint,
         route_plan=route_plan,
+        gamma_form=gamma_form,
+        ewald_gamma=bool(ewald_gamma),
+        madelung=bool(madelung),
+        scc_mixer=scc_mixer,
+        overlap_min_eigenvalue=float(overlap_eigenvalues.min()),
+        overlap_screened_modes=int(
+            np.count_nonzero(overlap_eigenvalues <= screen_threshold)
+        ),
+        overlap_screen_threshold=screen_threshold,
     )
 
 

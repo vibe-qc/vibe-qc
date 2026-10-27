@@ -1,6 +1,9 @@
 #include <pybind11/eigen.h>
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
+
+#include <optional>
 #include "vibeqc/periodic_gdf_short_range.hpp"
 
 namespace py = pybind11;
@@ -75,6 +78,31 @@ void bind_periodic_gdf_short_range(py::module_& m) {
           py::arg("workspace_byte_cap") = 256U * 1024U * 1024U,
           py::arg("integral_screen_error") = 0.0,
           "Double-image erfc integrals in shared-q batches, shape (nk,naux,nao,nao).");
+    m.def("compute_gdf_sr_three_center_multi_q",
+          [](const vibeqc::BasisSet& orbital, const vibeqc::BasisSet& aux,
+             const vibeqc::PeriodicSystem& system,
+             const Eigen::Matrix<double, Eigen::Dynamic, 3, Eigen::RowMajor>& transfers,
+             const Eigen::MatrixXd& ket_kpoints, const std::vector<std::size_t>& ket_transfer,
+             double omega, double pair_cutoff, double auxiliary_cutoff,
+             std::size_t output_byte_cap, std::size_t image_candidate_cap,
+             std::size_t workspace_byte_cap, double integral_screen_error) {
+              vibeqc::GDFShortRangeBatch batch;
+              {
+                  py::gil_scoped_release release;
+                  batch = vibeqc::compute_gdf_sr_three_center_multi_q(
+                      orbital, aux, system, transfers, ket_kpoints, ket_transfer, omega,
+                      pair_cutoff, auxiliary_cutoff, output_byte_cap,
+                      image_candidate_cap, workspace_byte_cap, integral_screen_error);
+              }
+              return gdf_sr_batch_array(std::move(batch));
+          }, py::arg("orbital"), py::arg("aux"), py::arg("system"),
+          py::arg("transfers"), py::arg("ket_kpoints"), py::arg("ket_transfer"),
+          py::arg("omega"), py::arg("pair_cutoff"), py::arg("auxiliary_cutoff"),
+          py::arg("output_byte_cap"), py::arg("image_candidate_cap"),
+          py::arg("workspace_byte_cap") = 256U * 1024U * 1024U,
+          py::arg("integral_screen_error") = 0.0,
+          "SR three-center integrals for several transfers in one real-space pass; "
+          "row j of ket_kpoints uses transfers[ket_transfer[j]]. Shape (nk,naux,nao,nao).");
     m.def("compute_gdf_sr_metric_gradient_weighted",
           &vibeqc::compute_gdf_sr_metric_gradient_weighted,
           py::arg("aux"), py::arg("system"), py::arg("q"),
@@ -118,7 +146,8 @@ void bind_periodic_gdf_short_range(py::module_& m) {
              const Eigen::Ref<const Eigen::MatrixXcd>& metric_weight,
              const py::array_t<std::complex<double>, py::array::c_style>& three_center_weight,
              std::size_t output_byte_cap, std::size_t transient_byte_cap,
-             std::size_t image_candidate_cap, double integral_screen_error) {
+             std::size_t image_candidate_cap, double integral_screen_error,
+             const std::optional<Eigen::MatrixXd>& shell_pair_cutoffs) {
               if (three_center_weight.ndim() != 4
                   || three_center_weight.shape(2) != three_center_weight.shape(3))
                   throw std::invalid_argument("RSGDF derivative weight must have shape (nk,naux,nao,nao)");
@@ -130,13 +159,15 @@ void bind_periodic_gdf_short_range(py::module_& m) {
               return vibeqc::compute_gdf_range_separated_gradient_weighted(
                   orbital, aux, system, q, ket_kpoints, vectors, omega,
                   pair_cutoff, auxiliary_cutoff, metric_weight, view,
-                  output_byte_cap, transient_byte_cap, image_candidate_cap, integral_screen_error);
+                  output_byte_cap, transient_byte_cap, image_candidate_cap, integral_screen_error,
+                  shell_pair_cutoffs ? &*shell_pair_cutoffs : nullptr);
           }, py::arg("orbital"), py::arg("aux"), py::arg("system"),
           py::arg("q"), py::arg("ket_kpoints"), py::arg("vectors"),
           py::arg("omega"), py::arg("pair_cutoff"), py::arg("auxiliary_cutoff"),
           py::arg("metric_weight").noconvert(), py::arg("three_center_weight").noconvert(),
           py::arg("output_byte_cap"), py::arg("transient_byte_cap"), py::arg("image_candidate_cap"),
           py::arg("integral_screen_error") = 0.0,
+          py::arg("shell_pair_cutoffs") = std::nullopt,
           "Atomic derivative of weighted SR/LR Coulomb integrals, including the finite zero-mode overlap.");
     m.def("compute_gdf_range_separated_integrals",
           [](const vibeqc::BasisSet& orbital, const vibeqc::BasisSet& aux,
@@ -145,14 +176,31 @@ void bind_periodic_gdf_short_range(py::module_& m) {
              const Eigen::Matrix<double, Eigen::Dynamic, 3, Eigen::RowMajor>& vectors,
              double omega, double pair_cutoff, double auxiliary_cutoff,
              std::size_t output_byte_cap, std::size_t transient_byte_cap,
-             std::size_t image_candidate_cap, double integral_screen_error, bool compute_metric) {
+             std::size_t image_candidate_cap, double integral_screen_error, bool compute_metric,
+             const std::string& kernel, double omega_screen,
+             const std::optional<Eigen::MatrixXd>& shell_pair_cutoffs,
+             const std::optional<py::array_t<std::complex<double>, py::array::c_style>>& sr_three_center) {
               vibeqc::GDFRangeSeparatedIntegrals result;
+              std::optional<vibeqc::GDFShortRangeBatch> supplied;
+              if (sr_three_center) {
+                  const auto& array = *sr_three_center;
+                  if (array.ndim() != 4 || array.shape(2) != array.shape(3))
+                      throw std::invalid_argument("RSGDF SR source must have shape (nk,naux,nao,nao)");
+                  supplied.emplace();
+                  supplied->n_k = static_cast<std::size_t>(array.shape(0));
+                  supplied->n_aux = static_cast<std::size_t>(array.shape(1));
+                  supplied->n_orb = static_cast<std::size_t>(array.shape(2));
+                  supplied->data.assign(array.data(), array.data() + array.size());
+              }
               {
                   py::gil_scoped_release release;
                   result = vibeqc::compute_gdf_range_separated_integrals(
                       orbital, aux, system, q, ket_kpoints, vectors, omega,
                       pair_cutoff, auxiliary_cutoff, output_byte_cap,
-                      transient_byte_cap, image_candidate_cap, integral_screen_error, compute_metric);
+                      transient_byte_cap, image_candidate_cap, integral_screen_error, compute_metric,
+                      kernel, omega_screen,
+                      shell_pair_cutoffs ? &*shell_pair_cutoffs : nullptr,
+                      supplied ? &*supplied : nullptr);
               }
               return py::make_tuple(gdf_metric_array(std::move(result.metric)),
                   gdf_sr_batch_array(std::move(result.three_center)), result.reciprocal_vector_count);
@@ -162,8 +210,13 @@ void bind_periodic_gdf_short_range(py::module_& m) {
           py::arg("output_byte_cap"), py::arg("transient_byte_cap"), py::arg("image_candidate_cap"),
           py::arg("integral_screen_error") = 0.0,
           py::arg("compute_metric") = true,
+          py::arg("kernel") = "coulomb", py::arg("omega_screen") = 0.0,
+          py::arg("shell_pair_cutoffs") = std::nullopt,
+          py::arg("sr_three_center") = std::nullopt,
           "Periodic Coulomb (M,T,nG) from real-space erfc plus compact reciprocal erf integrals. "
-          "compute_metric=False returns an empty M when the caller already owns this q metric.");
+          "compute_metric=False returns an empty M when the caller already owns this q metric. "
+          "kernel selects independently fitted coulomb/erfc/erf at physical omega_screen; "
+          "omega remains the numerical split. All kernels omit p=0; exchange constants are external.");
     m.def("_compute_gdf_plane_wave_projection",
           [](const vibeqc::BasisSet& orbital, const vibeqc::BasisSet& aux,
              const vibeqc::PeriodicSystem& system, const Eigen::Vector3d& q,

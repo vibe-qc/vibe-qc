@@ -1,4 +1,6 @@
 #include "vibeqc/gradient.hpp"
+#include "vibeqc/manta_scf.hpp"
+#include "vibeqc/manta_gradient.hpp"
 
 #include <libint2/atom.h>
 #include <libint2/engine.h>
@@ -19,6 +21,88 @@
 namespace vibeqc {
 
 namespace {
+
+// A selected engine result must never enter a legacy derivative source by
+// accident. RI uses its owned fitting context; BUPO geometry remains gated.
+bool selected_manta_gradient(const Molecule& mol,const BasisSet& basis,
+    const std::optional<manta::MolecularEngineProvenance>& selected,const GradientOptions& options) {
+    if(!selected) return false;
+    const auto& p=*selected;
+    if(p.method!="rhf" && p.method!="uhf")
+        throw std::invalid_argument("Selected KS source cannot be differentiated as a Hartree-Fock reference");
+    if(!manta::matches_molecular_engine_source(mol,basis,p))
+        throw std::invalid_argument("Selected-engine gradient molecule/basis differs from the SCF source");
+    if(p.coulomb_algorithm=="bupo" || p.coulomb_algorithm=="ri_bupo")
+        throw std::invalid_argument("Selected BUPO gradients require matching moment, translation and partition derivatives");
+    if((p.coulomb_algorithm!="exact" && p.coulomb_algorithm!="ri") || (p.exchange_algorithm!="exact" && p.exchange_algorithm!="ri"))
+        throw std::invalid_argument("Selected-engine gradient has an unsupported J/K source");
+    if(options.density_fit || options.cosx || !options.aux_basis.empty())
+        throw std::invalid_argument("Selected engine gradient conflicts with derivative options (legacy fitting)");
+    if(p.ecp_route!="none") {
+        // Every selected ECP result stays on the selected Lagrangian gradient:
+        // V_ne(Z_eff) and the effective nuclear repulsion are differentiated
+        // with the SCF's effective charges, and the ECP operator's derivative
+        // comes from the ECP provider that composed it
+        // (selected_hf_gradient_values). The derivative options must carry
+        // the SCF's ECP route; dropping it is refused, not differentiated as
+        // an all-electron Hamiltonian.
+        const bool inline_route=!options.ecp_primitive_blocks.empty(),xml_route=!options.ecp_centers.empty();
+        if((p.ecp_route=="inline-primitives" && !inline_route) || (p.ecp_route=="xml-library" && !xml_route)
+           || (!inline_route && !xml_route))
+            throw std::invalid_argument("Selected engine ECP gradient requires derivative options carrying the SCF's ECP route");
+    } else if(!options.ecp_centers.empty() || !options.ecp_library.empty() || !options.ecp_primitive_blocks.empty()
+       || !options.ecp_primitive_centers.empty() || !options.ecp_effective_charges.empty() || options.ecp_total_ncore)
+        throw std::invalid_argument("Selected all-electron engine gradient conflicts with derivative options");
+    if(!p.full_build_confirmed || !p.stationarity_confirmed)
+        throw std::invalid_argument("Selected-engine gradient requires a confirmed stationary final density");
+    if(p.one_electron_provider!="manta") return false;
+    if(!p.gradient_source) throw std::invalid_argument("Selected-engine gradient is missing its owned fitting configuration");
+    const auto& source=*p.gradient_source;
+    if(source.coulomb!=p.coulomb_algorithm || source.exchange!=p.exchange_algorithm)
+        throw std::invalid_argument("Selected-engine gradient configuration differs from the SCF source");
+    const bool fit_j=p.coulomb_algorithm=="ri",fit_k=p.exchange_algorithm=="ri";
+    if(fit_j || fit_k) {
+        if(!source.auxiliary) throw std::invalid_argument("Selected RI gradient is missing its owned auxiliary basis");
+        manta::plan_hf_ri_lagrangian_gradient(mol,basis,*source.auxiliary,source.ri,fit_j,fit_k,source.budget);
+    } else manta::plan_hf_lagrangian_gradient(mol,basis,source.budget);
+    return true;
+}
+Eigen::MatrixXd selected_hf_gradient_values(const Molecule& mol,const BasisSet& basis,
+    const manta::MolecularEngineProvenance& p,const Eigen::MatrixXd& alpha,const Eigen::MatrixXd& beta,const Eigen::MatrixXd& w,
+    const GradientOptions& options) {
+    if(!manta::matches_molecular_engine_density(alpha,beta,p))
+        throw std::invalid_argument("Selected-engine gradient density differs from the confirmed terminal density");
+    const auto& source=*p.gradient_source;
+    const bool fit_j=p.coulomb_algorithm=="ri",fit_k=p.exchange_algorithm=="ri";
+    // ECP Hamiltonian (selected_manta_gradient admitted the route): the
+    // effective charges replace Z in the selected nuclear and attraction
+    // derivatives, and the ECP operator derivative is the ECP provider's own
+    // (libecpint), the same provider the selected SCF composed into H_core.
+    std::vector<double> charges; Eigen::MatrixXd ecp;
+    if(p.ecp_route!="none") {
+        const Eigen::MatrixXd density=alpha+beta;
+        if(!options.ecp_primitive_blocks.empty()) {
+            charges=options.ecp_effective_charges;
+            ecp=compute_ecp_gradient_contribution_from_primitives(basis,mol,options.ecp_primitive_centers,options.ecp_primitive_blocks,density);
+        } else {
+            const std::string lib=options.ecp_library.empty()?std::string("ecp10mdf"):options.ecp_library;
+            charges=ecp_effective_charges(mol,options.ecp_centers,lib,"");
+            ecp=compute_ecp_gradient_contribution(basis,mol,options.ecp_centers,density,lib,"");
+        }
+    }
+    Eigen::MatrixXd values;
+    if(!fit_j && !fit_k) values=manta::compute_hf_lagrangian_gradient(mol,basis,alpha,beta,w,source.budget,charges).values;
+    else {
+        auto gradient=manta::compute_hf_ri_lagrangian_gradient(mol,basis,*source.auxiliary,alpha,beta,w,
+                                                            source.ri,fit_j,fit_k,source.budget,charges);
+        if((fit_j && gradient.coulomb_ri->ri_source_identity!=p.coulomb_source_identity)
+           || (fit_k && gradient.exchange_ri->ri_source_identity!=p.exchange_source_identity))
+            throw std::invalid_argument("Selected RI gradient factor/source differs from the SCF source");
+        values=std::move(gradient.values);
+    }
+    if(ecp.size()) values+=ecp;
+    return values;
+}
 
 // Same helper used by integrals.cpp — kept private here to avoid coupling.
 std::vector<libint2::Atom> to_libint_atoms(const Molecule& mol) {
@@ -559,8 +643,7 @@ Eigen::MatrixXd two_electron_gradient_contribution(const BasisSet& basis,
     // L-canonical reorder before engine.compute() avoids libint's
     // internal swap_tbra / swap_tket / swap_braket + DerivMapGenerator
     // unscramble path, which has a buggy derivative-to-atom routing for
-    // high-l mixed-l shell quartets (the v0.7.3 f-shell bug; see
-    // HANDOVER_0.7.4.md and the keen-edison investigation report). For
+    // high-l mixed-l shell quartets (the v0.7.3 f-shell bug). For
     // libint's BraKet::xx_xx with standard angular-momentum ordering
     // (third_party/libint/.../engine.impl.h:1215-1219):
     //   swap_tbra = (l1 < l2)         — want l1 >= l2
@@ -676,6 +759,7 @@ Eigen::MatrixXd compute_gradient(const Molecule& mol,
                                  const RHFResult& result,
                                  const GradientOptions& options) {
     validate_gradient_ecp_dispatch(options, "compute_gradient");
+    const bool manta_gradient=selected_manta_gradient(mol,basis,result.engine_provenance,options);
     if (!result.converged) {
         throw std::runtime_error(
             "compute_gradient: RHF result is not converged");
@@ -692,6 +776,7 @@ Eigen::MatrixXd compute_gradient(const Molecule& mol,
         W += 2.0 * result.mo_energies(i) * Ci * Ci.transpose();
     }
     const Eigen::MatrixXd& D = result.density;
+    if(manta_gradient) return selected_hf_gradient_values(mol,basis,*result.engine_provenance,.5*D,.5*D,W,options);
 
     // Two paths for the two-electron gradient:
     //   density_fit=false: four-index ERI derivative (default).
@@ -1098,6 +1183,8 @@ Eigen::MatrixXd compute_gradient_rks(const Molecule& mol,
                                      const GridOptions& grid_options,
                                      const GradientOptions& options) {
     validate_gradient_ecp_dispatch(options, "compute_gradient_rks");
+    if(result.engine_provenance)
+        throw std::invalid_argument("Selected KS engine gradients require matching integral, XC and grid derivatives; legacy derivative substitution is unavailable");
     if (!result.converged) {
         throw std::runtime_error(
             "compute_gradient_rks: RKS result is not converged");
@@ -1499,6 +1586,8 @@ Eigen::MatrixXd compute_gradient_uks(const Molecule& mol,
                                      const GridOptions& grid_options,
                                      const GradientOptions& options) {
     validate_gradient_ecp_dispatch(options, "compute_gradient_uks");
+    if(result.engine_provenance)
+        throw std::invalid_argument("Selected KS engine gradients require matching integral, XC and grid derivatives; legacy derivative substitution is unavailable");
     if (!result.converged) {
         throw std::runtime_error(
             "compute_gradient_uks: UKS result is not converged");
@@ -1617,6 +1706,7 @@ Eigen::MatrixXd compute_gradient_uhf(const Molecule& mol,
                                      const UHFResult& result,
                                      const GradientOptions& options) {
     validate_gradient_ecp_dispatch(options, "compute_gradient_uhf");
+    const bool manta_gradient=selected_manta_gradient(mol,basis,result.engine_provenance,options);
     if (!result.converged) {
         throw std::runtime_error(
             "compute_gradient_uhf: UHF result is not converged");
@@ -1649,6 +1739,8 @@ Eigen::MatrixXd compute_gradient_uhf(const Molecule& mol,
     const Eigen::MatrixXd& D_alpha = result.density_alpha;
     const Eigen::MatrixXd& D_beta  = result.density_beta;
     const Eigen::MatrixXd D_total = D_alpha + D_beta;
+
+    if(manta_gradient) return selected_hf_gradient_values(mol,basis,*result.engine_provenance,D_alpha,D_beta,W_total,options);
 
     Eigen::MatrixXd grad_2e;
     if (options.density_fit) {

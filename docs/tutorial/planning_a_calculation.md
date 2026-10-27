@@ -148,9 +148,11 @@ $$
 M_\mathrm{ERI} = 8N_\mathrm{bf}^4\ \text{bytes}.
 $$
 
-Direct SCF avoids retaining that tensor and recomputes screened shell
-quartets during Fock builds. That choice trades memory for integral work; it
-does not change the Hartree-Fock model. The measured H2O2/cc-pVQZ example and
+Direct SCF ({vibeqc-cite}`almlof_direct_scf_1982`) avoids retaining that
+tensor and recomputes screened shell quartets during Fock builds
+(Schwarz screening, {vibeqc-cite}`haser_ahlrichs_schwarz_1989`). That
+choice trades memory for integral work; it does not change the
+Hartree-Fock model. The measured H2O2/cc-pVQZ example and
 a safe crossover sweep are in
 [Direct SCF or in-core integrals?](direct_scf_memory_tradeoff.md).
 
@@ -194,7 +196,9 @@ Check the controls relevant to the chosen method:
   is energy or free energy;
 - geometry force and displacement criteria.
 
-The SCF convergence criterion can be written schematically as
+The SCF convergence criterion can be written schematically (the
+commutator form is Pulay's DIIS error vector,
+{vibeqc-cite}`pulay_diis_1982`) as
 
 $$
 |E^{(n)}-E^{(n-1)}| < \tau_E,
@@ -233,7 +237,7 @@ worked example.
 
 At minimum, check:
 
-- `converged` and the final SCF residual;
+- `converged`, the final SCF residual, and the stage-specific verdict;
 - electron count, charge, multiplicity, and occupation pattern;
 - orbital or overlap diagnostics appropriate to the method;
 - spin contamination for unrestricted references;
@@ -244,6 +248,17 @@ At minimum, check:
 
 A plausible energy with the wrong state, wrong units, or unconverged sampling
 is not a successful calculation.
+
+For high-level runs, inspect the manifest's `[verdict]` as well as file delivery.
+`[outputs].status = "complete"` says that the output plan was fulfilled, not
+that the calculation is scientifically usable. Missing verdict fields in an
+older result mean unknown. The [manifest inspection example](../user_guide/output_files.md#inspect-a-manifest-before-analysis)
+shows how to read these fields without starting another calculation.
+
+Keep numerical convergence distinct from method validation: a converged SCF
+and a usable driver verdict still require the model and reference comparisons
+chosen in the planning worksheet. Record omitted or unavailable checks rather
+than turning them into a success label.
 
 ## Step 8: retain provenance
 

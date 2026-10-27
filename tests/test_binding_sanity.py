@@ -15,9 +15,7 @@ assert every requested name is present on the loaded extension module.
 If a chat's ``.so`` is stale, the test fails on the first missing symbol
 with a clear ``rebuild required`` message naming what to do.
 
-Per CLAUDE.md §9 (every commit ships green) and the integrals-chat
-notes now retained in ``handovers/HANDOVER_GDF_V0_11_2026_05_29.md``
-(Item 2b).
+This pins the native binding contract for every green commit.
 """
 
 from __future__ import annotations
@@ -152,3 +150,48 @@ def test_init_reexports_match_native_module() -> None:
                 f"_vibeqc_core.{name} — possible stale reload"
             )
     assert mismatches == [], "\n".join(mismatches)
+
+
+def _unconverted_signature_lines() -> list[str]:
+    """Core signatures that still name a raw C++ type.
+
+    pybind11 prints the C++ type in a signature when the translation unit
+    that registered it has no converter for that type. Since the binding
+    registration units compile separately (#651), a unit without
+    ``pybind11/stl.h`` silently binds a ``std::array`` field that raises
+    ``TypeError`` only when read.
+    """
+    import inspect
+    import re
+
+    raw = re.compile(r"\b(?:std|Eigen)::")
+    found: list[str] = []
+
+    def check(owner: str, name: str, obj) -> None:
+        for line in (getattr(obj, "__doc__", None) or "").splitlines():
+            if raw.search(line) and "(" in line:
+                found.append(f"{owner}.{name}: {line.strip()}")
+                return
+
+    for name, obj in vars(core).items():
+        if not inspect.isclass(obj):
+            check("_vibeqc_core", name, obj)
+            continue
+        for attr_name, attr in vars(obj).items():
+            if isinstance(attr, property):
+                for accessor in (attr.fget, attr.fset):
+                    if accessor is not None:
+                        check(name, attr_name, accessor)
+            else:
+                check(name, attr_name, attr)
+    return found
+
+
+def test_every_native_signature_has_a_python_converter() -> None:
+    """No ``_vibeqc_core`` signature may name an unconverted C++ type.
+
+    The fix is the missing pybind11 converter header (``stl.h``,
+    ``eigen.h``, ``functional.h`` or ``complex.h``) in the registration
+    unit that binds the named function or attribute.
+    """
+    assert _unconverted_signature_lines() == []

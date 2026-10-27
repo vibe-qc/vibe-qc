@@ -3,6 +3,15 @@
 The simplest non-trivial periodic system: a one-dimensional chain of
 H₂ dimers.
 
+## Run the baseline
+
+Use a working engine installation and an empty run directory outside the
+checkout; see [Running vibe-qc](../running.md). Coordinates and lattice lengths
+below are in bohr. The calculation uses a three-dimensional periodic array
+with transverse vacuum, not a true one-dimensional Coulomb boundary condition.
+The chosen vacuum and mesh are starting settings to converge, not certified
+values for an isolated chain.
+
 ```python
 import numpy as np
 import vibeqc as vq
@@ -11,42 +20,81 @@ from vibeqc import (
 )
 
 # Unit cell: H2 oriented along the chain, 4.0 bohr between unit cells.
-unit_cell = [Atom(1, [0, 0, 0]), Atom(1, [0, 0, 1.4])]
-lattice = np.diag([4.0, 30.0, 30.0])   # 1D axis on x; y, z are vacuum
+unit_cell = [Atom(1, [0, 0, 0]), Atom(1, [1.4, 0, 0])]
+
+# Chain axis on x. A wire that needs k sampling is run as a dim=3 cell
+# with vacuum on y and z (15 bohr here); converge the energy with it.
+lattice = np.diag([4.0, 15.0, 15.0])
 
 sysp = PeriodicSystem(
-    dim=1,
+    dim=3,
     lattice=lattice,
     unit_cell=unit_cell,
 )
 
 basis = BasisSet(sysp.unit_cell_molecule(), "pob-tzvp")
-kpoints = KPoints.monkhorst_pack(sysp, [6, 1, 1])
+kpoints = KPoints.monkhorst_pack(sysp, [4, 1, 1])
 
 result = run_periodic_job(
     sysp,
     basis,
     method="RHF",
-    jk_method="gdf",       # maintained 1D Coulomb route
+    jk_method="gdf",
     kpoints=kpoints,
     conv_tol_energy=1e-10,
+    output="h-chain-rhf-k4-vac15",
 )
+if not result.converged:
+    raise RuntimeError("Periodic RHF did not converge; inspect the output and SCF trace")
 print(f"E_RHF per cell = {result.energy:.10f}  ({result.n_iter} iters)")
 ```
 
-``run_periodic_job`` is the recommended user-facing dispatcher. For 1D
-wires, ``jk_method="auto"`` also selects GDF; spelling it explicitly here
-makes the Coulomb objective reproducible in the example. The historical
-``run_rhf_periodic_scf`` direct-truncated branch is retained only for
-vacuum-padded molecular-limit diagnostics, not quantitative 1D solids.
-For a Gamma-only calculation, pass ``KPoints.gamma(sysp)``.
+``run_periodic_job`` is the recommended user-facing dispatcher. The chain is
+modelled as a ``dim=3`` cell with transverse vacuum because the native GDF
+route ({vibeqc-cite}`sun_berkelbach_gdf_2017`) has no consistent Coulomb gauge for a true ``dim=1`` cell:
+``PeriodicSystem(dim=1, ...)`` with ``jk_method="gdf"`` raises
+``NotImplementedError`` at Gamma and with a k mesh, and ``jk_method="auto"``
+refuses a ``dim=1`` system before any setup. (The Gamma-only form used to run,
+but its total energy depended on the lattice-sum cutoff.) The cost of the
+vacuum-box form grows with
+the box volume, so start with a modest vacuum and check how the energy per cell
+changes as it grows. The historical ``run_rhf_periodic_scf`` direct-truncated
+branch is retained only for vacuum-padded molecular-limit diagnostics, not
+quantitative 1D solids. For a Gamma-only calculation, pass
+``KPoints.gamma(sysp)``.
+
+## Turn the baseline into a convergence study
+
+Keep the atomic geometry and chain repeat length fixed while studying one
+numerical choice at a time. For each point, rebuild the `PeriodicSystem`, basis
+and k-point object together if the lattice changes, and use a distinct output
+stem. A k-point object belongs to the cell from which it was constructed.
+
+| Study | Change | Hold fixed |
+|---|---|---|
+| Chain sampling | mesh along x | transverse mesh components at 1, vacuum, basis and route |
+| Transverse separation | y and z lattice lengths | chain geometry, x mesh and numerical controls |
+| Lattice/fit support | the selected route's documented cutoffs | cell, basis and k mesh |
+
+Record energy per simulation cell, increments, convergence and resource use.
+Changing vacuum or k sampling can change cost substantially. Do not interpret
+an SCF stopping criterion as convergence of the vacuum, basis or lattice sums.
+See [periodic method routes](periodic_methods_compared.md) and
+[lattice-cutoff convergence](periodic_lattice_cutoff_convergence.md).
 
 ## Other ways to build a k-mesh, `vibeqc.KPoints`
 
 The `KPoints` builder fronts every common k-point input mode in a
-single API. The five most useful for everyday work:
+single API. The following are alternative constructor examples, not a sequence
+of calculations to append to the chain run. Three-dimensional meshes and
+auto-density meshes can add unwanted transverse sampling to a vacuum cell;
+keep `[N, 1, 1]` for the chain study. Symmetry and band-path helpers also need
+their optional dependencies. See the [k-point guide](../user_guide/k_points.md).
+
+The five most useful for everyday work:
 
 ```python
+# doc-audit: skip - alternative constructors using sysp and imports from the baseline
 # 1. Monkhorst-Pack (classical convention; auto-shifts even meshes by ½)
 kp = KPoints.monkhorst_pack(sysp, [6, 1, 1])
 
@@ -74,6 +122,12 @@ band = KPoints.band_path(sysp)
 print(' → '.join(label for _, label in band.labels))
 ```
 
+The conventions behind these modes are the Monkhorst-Pack mesh
+({vibeqc-cite}`monkhorst_pack_1976`), spglib symmetry detection
+({vibeqc-cite}`togo_shinohara_tanaka_2024`), the AFLOW KPPRA density
+({vibeqc-cite}`curtarolo_aflow_2012`) and the HPKOT band path
+({vibeqc-cite}`hinuma_seekpath_2017`).
+
 The legacy free-function ``vq.monkhorst_pack(sysp, [N, M, L])`` is
 still supported and returns a raw ``BlochKMesh``, the periodic
 SCF entry points accept both. For new code, prefer ``KPoints``:
@@ -89,8 +143,10 @@ The full reference is [user_guide/k_points.md](../user_guide/k_points.md).
 
 * `PeriodicSystem.dim`, number of periodic axes. `dim=1` makes only
   `lattice.col(0)` a lattice vector; the other two columns are
-  interpreted as vacuum with enough separation (30 bohr here) that
-  images don't overlap. `dim=2` treats cols 0 and 1 as in-plane
+  interpreted as vacuum with enough separation that images don't overlap. The
+  native GDF route raises `NotImplementedError` for a `dim=1` cell, at Gamma
+  and with a k mesh, so the example above pads a `dim=3` cell with vacuum
+  instead. `dim=2` treats cols 0 and 1 as in-plane
   lattice vectors; col 2 is synthesized bookkeeping, not a vacuum gap,
   and the slab energy is invariant to it (build these with
   `vq.slab_2d`). `dim=3` is full bulk.
@@ -100,6 +156,59 @@ The full reference is [user_guide/k_points.md](../user_guide/k_points.md).
 * `lattice_opts.nuclear_cutoff_bohr`, separate, usually larger,
   cutoff for the nuclear-attraction term (1/r tail decays more slowly
   than AO overlap).
+* `lattice_opts.gamma_only_0`, off by default. Set it only when you
+  mean the molecular limit: one unit cell, no periodic image coupling.
+  Image cells are selected by `|g| <= cutoff_bohr`, so if your shortest
+  lattice vector is *longer* than the cutoff, no image survives and the
+  calculation is a free-boundary cluster wearing a periodic label: it
+  converges, it returns the isolated molecule's energy, and it is
+  exactly k-independent, so refining the mesh only confirms a stable
+  wrong answer. The driver therefore refuses that cell list unless you
+  set this flag. If the refusal surprises you, raise `cutoff_bohr` or
+  use a primitive cell with a matched k mesh; if you really did mean a
+  molecule in a vacuum box (the big-box case below), set the flag. It
+  declares intent and changes no sum.
+
+## Direct native Gamma operator
+
+`run_rhf_periodic_gamma_scf` resolves physical support for its 3D native
+RHF calculation. A single Gamma quadrature point gives the same real-space
+density matrix at every lattice displacement. Both density indices therefore
+participate in the J/K image sum. Treating the inner density as zero away from
+the home cell while folding every outer image does not give the derivative of
+the corresponding Gamma energy.
+
+The finite operator uses the following support, with the requested radii:
+
+- Overlap, kinetic and nuclear attraction retain AO pairs whose centers are
+  within `cutoff_bohr`.
+- Nuclear charges and ECP projector centers lie within
+  `nuclear_cutoff_bohr` of each AO-pair midpoint.
+- Each two-electron product has center separation at most `cutoff_bohr`;
+  the two product midpoints are within `eri_interaction_cutoff_bohr`, or
+  `cutoff_bohr` when that option is zero. The enumeration includes the
+  translated counterparts of all retained terms and their density blocks.
+- Direct ionic repulsion uses the same physical nuclear radius.
+
+These domains are closed under the integral permutations and common
+translations required for a Hermitian operator and reciprocal density response.
+The builder returns raw J/K sums; it does not repair them by averaging matrix
+triangles. The public `build_jk_gamma_physical` function uses this two-electron
+domain without changing the supplied options.
+
+This is a formulation correction to the previous independent translation
+balls and home-cell-only inner density, so finite-cutoff energies can change.
+It is still a finite direct approximation: cutoff and k-point convergence, and
+the choice of electrostatic treatment, require separate validation. The
+explicitly named `build_jk_gamma_molecular_limit` helper and lower-dimensional
+native Gamma driver retain their existing formulation. GDF, BIPOLE and the
+native multi-k driver are separate routes.
+
+The density convention follows Pisani and Dovesi (1980),
+[Equations (1), (5)-(8)](https://doi.org/10.1002/qua.560170311), and Causa et al.
+(1988), [Equations (1)-(2)](https://doi.org/10.1021/j100315a010). The latter also
+explains why finite Gamma sampling does not establish the correct asymptotic
+exchange density of a bulk crystal.
 
 ## Choosing a k-mesh
 
@@ -113,9 +222,11 @@ starting point.
 
 ## What's validated today
 
-* **Molecular limit**: a big-box (50 bohr) unit cell produces the same
-  energy as molecular RHF, machine precision across dim ∈ {1, 2, 3}
-  and multiple k-mesh sizes.
+* **Molecular limit**: a big-box (50 bohr) unit cell with
+  `lattice_opts.gamma_only_0 = True` produces the same energy as
+  molecular RHF, machine precision across dim ∈ {1, 2, 3} and multiple
+  k-mesh sizes. Without the declaration the driver refuses the box, by
+  design; see the option above.
 * **Bloch-sum machinery**: kinetic-only folding equivalence between
   1-cell × K k-points and K-cell × Γ, machine precision.
 * **Non-trivial 1D SCF convergence** at tight cell spacings.
@@ -169,7 +280,9 @@ $$
 
 These Bloch-summed AOs are the natural basis for crystalline
 orbitals in the Roothaan-style framework (CRYSTAL, vibe-qc's
-periodic driver, QE's hybrid-DFT implementation all do this).
+periodic driver, QE's hybrid-DFT implementation all do this;
+{vibeqc-cite}`pisani_dovesi_lattice_truncation_1980`,
+{vibeqc-cite}`pisani_crystal_1988`).
 
 ### The generalised eigenvalue problem at every k
 
@@ -196,7 +309,8 @@ Fock contributions in real space (lattice-summed one- and
 two-electron integrals), transform to $\mathbf{k}$-space, diagonalize
 per $\mathbf{k}$, inverse-transform the density back to real space.
 This "real-space build, $\mathbf{k}$-space diagonalize" pattern is
-what CRYSTAL pioneered for Gaussian crystalline orbitals.
+what CRYSTAL pioneered for Gaussian crystalline orbitals
+({vibeqc-cite}`pisani_crystal_1988`, {vibeqc-cite}`dovesi_crystal14_2014`).
 
 ### Monkhorst-Pack k-sampling
 
@@ -207,18 +321,22 @@ $$
 $$
 
 - are replaced by weighted sums over a discrete mesh. The
-**Monkhorst-Pack scheme** constructs a uniform grid of k-points
+**Monkhorst-Pack scheme** ({vibeqc-cite}`monkhorst_pack_1976`)
+constructs a uniform grid of k-points
 offset from the BZ origin, optionally reduced to the irreducible
-wedge by the space-group operations. `monkhorst_pack(sysp, [N, M, L])`
+wedge by the space-group operations
+({vibeqc-cite}`dovesi_symmetry_lcao_1986`). `monkhorst_pack(sysp, [N, M, L])`
 builds the grid with $N \times M \times L$ points along each
 reciprocal-lattice direction.
 
 For insulators, convergence with $N$ is exponential, the error
 shrinks as $e^{-\alpha N}$ because the occupied bands are well
 separated from the virtual ones. For metals, convergence degrades
-to a power law because the Fermi surface cuts bands; smearing or
-tetrahedron methods (not yet in vibe-qc) accelerate convergence
-there.
+to a power law because the Fermi surface cuts bands;
+[smearing](../user_guide/smearing.md) or the parameter-free
+Gilat-Raubenheimer net, a tetrahedron-family integrator
+([metallic BZ integration](../user_guide/metallic_bz_integration.md)),
+accelerate convergence there.
 
 ### The Γ-only limit and molecular-limit validation
 
@@ -247,10 +365,13 @@ $$
 $$
 
 is **conditionally convergent**: direct truncation gives shape-
-dependent answers (see [Madelung constants via Ewald summation](madelung_with_ewald.md) for
+dependent answers ({vibeqc-cite}`ewald_lattice_sum_1921`,
+{vibeqc-cite}`dovesi_coulomb_multipole_1983`; see [Madelung constants via Ewald summation](madelung_with_ewald.md) for
 the full story). Mixed-boundary 1D and 2D systems also require
-dimension-specific Coulomb kernels. The public routes use GDF for 1D and
-``SLAB_EWALD_2D`` (or explicit slab GDF) for 2D. ``DIRECT_TRUNCATED`` is
+dimension-specific Coulomb kernels. No public route has one for 1D yet (pad a
+``dim=3`` cell with vacuum); 2D uses ``SLAB_EWALD_2D`` ({vibeqc-cite}`parry_2d_ewald_1975`,
+{vibeqc-cite}`de_leeuw_perram_2d_ewald_1979`) or explicit slab
+GDF. ``DIRECT_TRUNCATED`` is
 only a vacuum-padded molecular-limit diagnostic. For 3D, set
 ``opts.lattice_opts.coulomb_method = vq.CoulombMethod.EWALD_3D``;
 the dispatcher routes to vibe-qc's full-metric Ewald backend, with exact
@@ -261,7 +382,11 @@ long-range solver supports skew-cell metrics; FFTDF/GDF parity is
 the active production path for tight 3D ionic crystals.
 
 For the full menu of periodic Coulomb/exchange routes that tame this sum
-(BIPOLE, GDF, GPW / GAPW) and which external program validates each, see
+(BIPOLE: {vibeqc-cite}`saunders_bipole_1992`; GDF:
+{vibeqc-cite}`sun_berkelbach_gdf_2017`; GPW / GAPW:
+{vibeqc-cite}`lippert_hutter_gpw_1997`,
+{vibeqc-cite}`lippert_hutter_parrinello_gapw_1999`) and which external
+program validates each, see
 [periodic-SCF methods](../user_guide/periodic_methods.md) and the
 [periodic JK routes & parity policy](../periodic_jk_routes.md).
 

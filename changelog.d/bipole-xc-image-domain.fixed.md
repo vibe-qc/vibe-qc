@@ -1,0 +1,1 @@
+- Grow default physical 3D BIPOLE RKS/UKS XC image support from the basis envelope independently of integral cutoffs. Preserve explicit finite-density radii, record the executed XC domain, and refuse analytic gradients that cannot reproduce the expanded operator.

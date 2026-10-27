@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Stage 2: DLPNO-CCSD(T) on the MACE-optimized water geometry.
 
-First run ``06_optimize_water_off23_for_dlpno.py --accept-asl`` in a
-Python <= 3.13 MACE environment. Then run this input in a normal VibeQC
-environment:
+First run ``06_optimize_water_off23_for_dlpno.py --accept-asl`` in the
+same Python 3.14 VibeQC environment with the MACE extra. Then run:
 
     .venv/bin/python examples/mlip/07_dlpno_ccsdt_on_mace_geometry.py
 

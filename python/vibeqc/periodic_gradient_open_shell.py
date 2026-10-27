@@ -157,10 +157,43 @@ def compute_gradient_periodic_uks_multi_k(
     Hybrid UKS remains fail closed pending dedicated full-range and screened-
     exchange regressions. Fractional-occupation UKS remains fail closed until
     the result retains the per-k spin occupations needed by the Pulay density.
+    ECP derivatives require a retained SCF source, uniform integer valence
+    occupations and atom-following projector centers. Their integral terms
+    are analytic; the moving XC quadrature uses the existing fixed-density
+    central-difference correction (1e-3 bohr), without displaced SCF solves.
     """
     if not result.converged:
         raise ValueError(
             "compute_gradient_periodic_uks_multi_k: result is not converged."
+        )
+    ecp_active = (
+        bool(getattr(result, "ecp_operator", False))
+        or int(getattr(result, "ecp_total_ncore", 0) or 0) != 0
+        # A retained ECP source cannot be disabled by changing public flags.
+        or getattr(result, "ecp_derivative_source", None) is not None
+    )
+    if not ecp_active:
+        # Missing or cleared result metadata cannot turn an ECP basis into
+        # an all-electron Hamiltonian. Inspect the per-element records,
+        # including zero-core sidecar potentials, even for an explicit False;
+        # a light all-electron atom in an ECP-capable family remains allowed.
+        from .basis_registry import basis_replaces_core
+        from .ecp_metadata import basis_sidecar_has_ecp_operator
+
+        ecp_active = basis_replaces_core(
+            basis.name, {int(atom.Z) for atom in system.unit_cell},
+        ) or basis_sidecar_has_ecp_operator(system.unit_cell_molecule(), basis)
+    if ecp_active and getattr(result, "ecp_derivative_source", None) is None:
+        # Shaw & Hill, JCP 147, 074108 (2017), Eq. (3),
+        # doi:10.1063/1.4986887: Hcore uses Z_eff and U_ECP. Differentiating
+        # the bare-Z operator with full-electron Pulay occupations does not
+        # differentiate the valence SCF energy, even when it is converged.
+        raise NotImplementedError(
+            "compute_gradient_periodic_uks_multi_k: ECP analytic gradients "
+            "require the retained SCF source with valence occupations, "
+            "effective nuclear charges and ECP operator. Rerun the SCF "
+            "to retain that source, or use finite differences of the same "
+            "ECP SCF energy, moving ECP centers with their atoms."
         )
     from .periodic_gradient_multi_k import (
         _resolve_gradient_lattice_opts,
@@ -173,12 +206,14 @@ def compute_gradient_periodic_uks_multi_k(
         lattice_opts,
         where="compute_gradient_periodic_uks_multi_k",
     )
-    if grid_options is None:
+    if grid_options is None and not ecp_active:
         grid_options = GridOptions()
 
     func = Functional(result.functional)
+    if ecp_active and bool(getattr(func, "is_external", False)):
+        raise NotImplementedError("ECP gradients require a supported built-in XC functional")
     alpha_hf = func.hf_exchange_fraction
-    if alpha_hf != 0.0:
+    if alpha_hf != 0.0 or bool(getattr(func, "is_range_separated", False)):
         # The corrected core is spin resolved, but screened/range-separated
         # exchange needs its own derivative mapping and global hybrids still
         # need dedicated public-surface FD regressions. Keep the existing
@@ -208,6 +243,16 @@ def compute_gradient_periodic_uks_multi_k(
         and lattice_opts.coulomb_method == CoulombMethod.EWALD_3D
         and ewald_alpha > 0.0
     )
+    ecp_context = None
+    if ecp_active:
+        if not is_corrected_ewald:
+            raise NotImplementedError("ECP gradients require the 3D corrected-Ewald source")
+        from .periodic_ecp_source import resolve_ewald_uks_ecp_source
+
+        ecp_context = resolve_ewald_uks_ecp_source(
+            system, basis, result, kmesh, lattice_opts, grid_options,
+        )
+        ionic_system, _, _, lattice_opts, grid_options, _, _ = ecp_context
     if is_corrected_ewald:
         _validate_corrected_ewald_gradient_mesh(kmesh)
         from .bipole_gradient import _compute_bipole_gradient_corrected_multi_k
@@ -222,7 +267,7 @@ def compute_gradient_periodic_uks_multi_k(
             volume, ewald_alpha
         )
         grad = _compute_bipole_gradient_corrected_multi_k(
-            system,
+            system if ecp_context is None else ionic_system,
             basis,
             result,
             kmesh,
@@ -232,7 +277,36 @@ def compute_gradient_periodic_uks_multi_k(
             reciprocal_cutoff_bohr_inv=reciprocal_cutoff,
             # The SCF's J is the exact analytic-FT Hartree matrix (#575).
             j_sr_alpha_image_ball=True,
+            exact_ft_hartree_ke_cutoff=200.0 if ecp_context is not None else None,
         )
+        if ecp_context is not None:
+            # Shaw & Hill, JCP 147, 074108 (2017), Eqs. (1)-(3):
+            # differentiate Z_eff and U_ECP on the valence Hamiltonian.
+            from ._vibeqc_core import (
+                ecp_lattice_gradient_contribution_from_primitives,
+            )
+            from .periodic_k_symmetry import density_set_from_k_matrices
+            from .bipole_gradient import _periodic_xc_grid_motion_correction_uks
+
+            _, blocks, centers, _, _, periodic_grid, radius = ecp_context
+            density = density_set_from_k_matrices(
+                system, basis, lattice_opts, kmesh,
+                [a + b for a, b in zip(result.density_alpha_k, result.density_beta_k)],
+            )
+            from .periodic_k_gdf import _ecp_projector_options
+            projector_opts, physical = _ecp_projector_options(system, lattice_opts)
+            grad += np.asarray(ecp_lattice_gradient_contribution_from_primitives(
+                basis, system, density, projector_opts, centers, blocks,
+                physical_pair_support=physical,
+            ))
+            # The helper returns moving-XC minus its supplied fixed-grid
+            # gradient. Supply zero to obtain the full fixed-density XC
+            # derivative without building an analytic term that cancels.
+            return np.asarray(grad) + _periodic_xc_grid_motion_correction_uks(
+                system, basis, result.density_alpha, result.density_beta,
+                result.functional, lattice_opts, grid_options, periodic_grid,
+                radius, np.zeros_like(grad),
+            )
         return np.asarray(grad) + _compute_uks_xc_gradient(
             system,
             basis,

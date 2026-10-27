@@ -129,3 +129,108 @@ def test_viewer_gpu_extra_pins_the_independent_vibeview_distribution() -> None:
         "a vibe-view/ directory reappeared in the core checkout; the viewer "
         "is an independent repository (project 35)"
     )
+
+
+def test_optional_mace_lock_preserves_standard_runtime():
+    import json
+    import re
+    normalize = lambda name: re.sub(r'[-_.]+', '-', name).lower()
+    standard = json.loads((ROOT / 'packaging/macos/runtime.lock.json').read_text())
+    mace = json.loads((ROOT / 'packaging/macos/runtime-mace.lock.json').read_text())
+    packages = {normalize(p['name']): p['version'] for p in mace['wheels']}
+    for package in standard['wheels']:
+        assert packages[normalize(package['name'])] == package['version']
+    assert mace['appName'] != standard['appName']
+    assert mace['bundleId'] != standard['bundleId']
+    assert mace['pythonMinor'] == '3.14'
+    assert {'mace-torch', 'torch', 'e3nn', 'setuptools'} <= packages.keys()
+    assert 'mace' not in standard['extras']
+    assert all(not p['filename'].endswith('.model') for p in mace['wheels'])
+
+
+def test_final_runtime_check_detects_removed_requirement(monkeypatch):
+    import importlib.util
+    from types import SimpleNamespace
+    import pytest
+    spec = importlib.util.spec_from_file_location('check_runtime', ROOT / 'packaging/check_runtime.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.setattr(module, 'distributions', lambda: [SimpleNamespace(name='torch', requires=['setuptools>=77'])])
+    monkeypatch.setattr(module, 'version', lambda name: '84.0.0')
+    module.check()
+    def missing(name):
+        raise module.PackageNotFoundError(name)
+    monkeypatch.setattr(module, 'version', missing)
+    with pytest.raises(RuntimeError, match='torch requires missing setuptools'):
+        module.check()
+
+
+def test_linux_mace_profile_has_one_python_and_cpu_torch():
+    import json
+    lock = json.loads((ROOT / 'packaging/linux/runtime-mace.lock.json').read_text())
+    assert lock['profile'] == 'mace' and lock['pythonVersion'].startswith('3.14.')
+    assert any(name.startswith('torch-2.14.1+cpu-cp314-') for name in lock['wheels'])
+    assert any(name.startswith('setuptools-') for name in lock['wheels'])
+    assert not any(name.startswith('nvidia_') for name in lock['wheels'])
+    assert lock['sourcePackages'] == ['python_hostlist-2.3.0.tar.gz']
+    assert all('cp313' not in name for name in lock['wheels'])
+
+
+def test_linux_wheel_helper_keeps_and_finds_adjacent_libraries(tmp_path):
+    import importlib.util
+    import platform
+    import shutil
+    import subprocess
+    if platform.system() != 'Linux' or not all(shutil.which(x) for x in ('cc', 'patchelf', 'ldd')):
+        import pytest
+        pytest.skip('Native Linux ELF packaging check')
+    spec = importlib.util.spec_from_file_location('linux_native', ROOT / 'packaging/linux/native.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    root = tmp_path / 'runtime'
+    wheel = root / 'python/lib/site-packages/example'
+    (wheel / 'lib').mkdir(parents=True)
+    (wheel / 'bin').mkdir()
+    source = tmp_path / 'library.c'
+    source.write_text('int answer(void) { return 42; }\n')
+    main = tmp_path / 'helper.c'
+    main.write_text('extern int answer(void); int main(void) { return answer() != 42; }\n')
+    library = wheel / 'lib/libexample.so'
+    helper = wheel / 'bin/helper'
+    subprocess.run(['cc', '-shared', '-fPIC', str(source), '-o', str(library)], check=True)
+    subprocess.run(['cc', str(main), '-L' + str(wheel / 'lib'), '-lexample', '-o', str(helper)], check=True)
+    assert 'not found' in subprocess.check_output(['ldd', str(helper)], text=True)
+    module.collect(root)
+    assert helper.is_file()
+    subprocess.run([str(helper)], check=True)
+    assert '$ORIGIN/../lib' in subprocess.check_output(['patchelf', '--print-rpath', str(helper)], text=True)
+
+
+def test_packaged_ca_fallback_preserves_user_and_system_trust(monkeypatch, tmp_path):
+    import importlib.util
+    import os
+    import sys
+    from types import SimpleNamespace
+    spec = importlib.util.spec_from_file_location('packaged_trust', ROOT / 'packaging/linux/runtime_sitecustomize.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.setattr(module.os, 'environ', {})
+    monkeypatch.setitem(sys.modules, 'certifi', SimpleNamespace(where=lambda: '/bundled/cacert.pem'))
+    monkeypatch.delenv('SSL_CERT_FILE', raising=False)
+    monkeypatch.delenv('SSL_CERT_DIR', raising=False)
+    monkeypatch.setattr(module.ssl, 'get_default_verify_paths', lambda: SimpleNamespace(cafile=None, capath=None))
+    module.configure_trust()
+    assert os.environ['SSL_CERT_FILE'] == '/bundled/cacert.pem'
+    monkeypatch.setenv('SSL_CERT_FILE', '/chosen/certificates.pem')
+    module.configure_trust()
+    assert os.environ['SSL_CERT_FILE'] == '/chosen/certificates.pem'
+    monkeypatch.delenv('SSL_CERT_FILE')
+    monkeypatch.setenv('SSL_CERT_DIR', '/chosen/certificates')
+    module.configure_trust()
+    assert 'SSL_CERT_FILE' not in os.environ
+    monkeypatch.delenv('SSL_CERT_DIR')
+    system = tmp_path / 'system.pem'
+    system.write_text('system certificates')
+    monkeypatch.setattr(module.ssl, 'get_default_verify_paths', lambda: SimpleNamespace(cafile=str(system), capath=None))
+    module.configure_trust()
+    assert 'SSL_CERT_FILE' not in os.environ

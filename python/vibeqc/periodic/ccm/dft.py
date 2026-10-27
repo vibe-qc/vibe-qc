@@ -110,7 +110,26 @@ class CCMKSResult:
     #: caller-supplied ``cderi`` carries its own tail, which this route cannot
     #: observe, so the field stays ``None`` there.
     rsgdf_tail_ke_cutoff: float | None = None
+    #: The terminal evaluated state as a :class:`~vibeqc.fock_state.FockBuild`
+    #: (#472), set by the neutral real-Gamma KS producer (#519, RG-3).
+    fock_build: object = None
+    #: Which implementation of ``gdf_method="rsgdf"`` built the fitted
+    #: operator this result was evaluated on: ``"classic"`` for the neutral
+    #: direct producers (their fold and supercell builders are the classic
+    #: all-reciprocal FFT fit), ``"injected"`` for a caller-supplied cderi,
+    #: empty where no density fit is involved (#378).
+    fit_source: str = ""
+    #: Executed primitive-cell XC image cutoff (zero where not recorded).
+    xc_lattice_cutoff_bohr: float = 0.0
     guess_selection: object = None
+    #: IID 291 / ruling R6: whether the producer was asked to run a cell
+    #: measured as vacuum-padded (``allow_vacuum_padding=True``) and which
+    #: 1-based lattice directions measured as vacuum. ``(False, ())`` on
+    #: every cell measured as genuinely 3-D, and on the four-centre routes,
+    #: which carry no such gate. A padded-regime energy is never reportable
+    #: without the padding it was computed at.
+    vacuum_padding_allowed: bool = False
+    vacuum_padded_axes: tuple = ()
 
     @property
     def parity_held(self) -> bool:
@@ -335,16 +354,10 @@ def _external_uks_loop(
         _require_retained_occ,
     )
 
-    n_elec = int(ccm.supercell.n_electrons())
-    multiplicity = int(ccm.supercell.multiplicity)
-    n_unpaired = multiplicity - 1
-    if (n_elec - n_unpaired) % 2 != 0 or n_unpaired > n_elec:
-        raise ValueError(
-            f"cluster electron count {n_elec} and multiplicity "
-            f"{multiplicity} are incompatible."
-        )
-    n_alpha = (n_elec + n_unpaired) // 2
-    n_beta = n_elec - n_alpha
+    from .spin_state import supercell_spin_counts
+
+    # The torus spin sector resolved on the cluster (#519 RG-14).
+    n_alpha, n_beta, spin_state = supercell_spin_counts(ccm, who="run_ccm_uks")
     X = _orthonormaliser(S, lindep_tol)
     _require_retained_occ(
         X, max(n_alpha, n_beta), who="run_ccm_uks", lindep_tol=lindep_tol

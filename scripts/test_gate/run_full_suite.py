@@ -21,6 +21,10 @@ Classification:
   TIMEOUT     our per-file wall-clock killed it (possible infinite loop)
   NOTESTS     rc==5 (no tests collected)
   COLLECT_ERR rc in (2,3,4) (usage/collection/internal error)
+  CORE_PROVENANCE_ERROR rc==96 (invalid xdist worker provenance; no verdict)
+  STALE_CORE  rc==97 — tests/conftest.py refused the session because the
+              compiled core predates cpp/. The aggregate cannot certify every
+              worker; this is never a verdict on the code (#285)
   OTHER_SIGNAL rc<0 other
 
 Usage:
@@ -183,11 +187,23 @@ def oom_evidence(peak_rss_mb, memory_total_mb, oom_fraction=DEFAULT_OOM_FRACTION
     }
 
 
+#: Mirrors ``tests/conftest.py::STALE_CORE_EXIT_STATUS``. Kept as a literal
+#: rather than imported: this runner spawns pytest in a separate process and
+#: must stay importable without the test suite's conftest on the path (#285).
+STALE_CORE_EXIT_STATUS = 97
+CORE_PROVENANCE_ERROR_EXIT_STATUS = 96
+
+
 def classify(rc, timed_out, counts, evidence=None) -> str:
     """Map a target's exit to a status label.
 
     ``evidence`` is the :func:`oom_evidence` dict; without it a SIGKILL is
     ``SIGKILLED`` (cause unassigned), never ``OOM_KILLED``.
+
+    ``STALE_CORE`` is separated from ``FAIL`` on purpose. A lane that exits 97
+    cannot certify every participating worker, so reporting it as a failure
+    would charge the code for a build condition on the host, the exact
+    misreading #285 was filed for.
     """
     if timed_out:
         return "TIMEOUT"
@@ -199,6 +215,10 @@ def classify(rc, timed_out, counts, evidence=None) -> str:
         return "NOTESTS"
     if rc in (2, 3, 4):
         return "COLLECT_ERR"
+    if rc == CORE_PROVENANCE_ERROR_EXIT_STATUS:
+        return "CORE_PROVENANCE_ERROR"
+    if rc == STALE_CORE_EXIT_STATUS:
+        return "STALE_CORE"
     if rc is not None and rc < 0:
         sig = -rc
         if sig == 9:
@@ -603,14 +623,46 @@ def combined_lane_defaults(lanes: list[dict], explicit_markexpr: bool = False) -
         for lane in lanes
         if lane.get("test_timeout_s") is not None
     ]
+    overrides: dict[str, float] = {}
+    for lane in lanes:
+        for rel, seconds in lane_file_timeout_overrides(lane).items():
+            overrides[rel] = max(seconds, overrides.get(rel, 0.0))
     merged = {
         "markexpr": next(iter(markexprs)) if len(markexprs) == 1 else "",
         "jobs": min(jobs) if jobs else None,
         "file_timeout_s": max(file_timeouts) if file_timeouts else None,
         "test_timeout_s": max(test_timeouts) if test_timeouts else None,
         "heavy_env": any(bool(lane.get("heavy_env")) for lane in lanes),
+        "file_timeout_overrides_s": overrides,
     }
     return merged
+
+
+def lane_file_timeout_overrides(lane: dict) -> dict[str, float]:
+    """Return a lane's per-file wall caps, keyed by repo-relative test file.
+
+    A lane's ``file_timeout_s`` is one cap for every file it selects. A file
+    whose measured cost exceeds it would be killed on every run however
+    healthy it is (#397), so the lane names that file in
+    ``file_timeout_overrides_s`` with the cap its measurement needs.
+    """
+    raw = lane.get("file_timeout_overrides_s") or {}
+    if not isinstance(raw, dict):
+        raise ValueError("file_timeout_overrides_s must map test files to seconds")
+    overrides = {}
+    for rel, seconds in raw.items():
+        if not (isinstance(rel, str) and rel.startswith("tests/") and rel.endswith(".py")):
+            raise ValueError(f"file_timeout_overrides_s key {rel!r} is not a tests/*.py file")
+        if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or seconds <= 0:
+            raise ValueError(f"file_timeout_overrides_s[{rel!r}] must be a positive number")
+        overrides[rel] = float(seconds)
+    return overrides
+
+
+def target_file_timeout(target: str, args) -> float:
+    """Return the wall cap for one target: its lane override, else the run's cap."""
+    overrides = getattr(args, "file_timeout_overrides", None) or {}
+    return max(args.file_timeout, overrides.get(_node_file_part(target), 0.0))
 
 
 def git_changed_paths(wt: Path, ref: str) -> list[str]:
@@ -673,12 +725,19 @@ def print_affected_lanes(ref: str, changed_paths: list[str], lanes: list[str]) -
 
 
 def apply_lane_defaults(args, lane: dict | None):
-    """Fill unset runtime knobs from a lane record, then global defaults."""
+    """Fill unset runtime knobs from a lane record, then global defaults.
+
+    A lane's per-file overrides apply only when the file cap comes from the
+    lane: an explicit ``--file-timeout`` is the cap for every file.
+    """
+    args.file_timeout_overrides = {}
     if lane:
         if not args.markexpr and lane.get("markexpr"):
             args.markexpr = str(lane["markexpr"])
         if args.jobs is None and lane.get("jobs") is not None:
             args.jobs = int(lane["jobs"])
+        if args.file_timeout is None:
+            args.file_timeout_overrides = lane_file_timeout_overrides(lane)
         if args.file_timeout is None and lane.get("file_timeout_s") is not None:
             args.file_timeout = float(lane["file_timeout_s"])
         if args.test_timeout is None and lane.get("test_timeout_s") is not None:
@@ -760,8 +819,13 @@ def _resolved_test_target_file(wt: Path, target: str) -> Path:
 
 @contextlib.contextmanager
 def _isolated_test_environment(wt: Path, target: str) -> Iterator[dict[str, str]]:
-    """Give each vq pytest child no route to caller-owned persistent state."""
+    """Enforce gate provenance and isolate vq's persistent state per child."""
     env = dict(os.environ)
+    # The override is useful for direct diagnostic pytest sessions, but their
+    # results cannot certify this source tree. Both suite runs and isolated
+    # verdict re-verification use this boundary: let the unchanged guard
+    # refuse a stale core before collection instead of recording a false PASS.
+    env.pop("VIBEQC_ALLOW_STALE_CORE", None)
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     env.setdefault("OMP_NUM_THREADS", "2")
     env.setdefault("OPENBLAS_NUM_THREADS", "2")
@@ -771,7 +835,8 @@ def _isolated_test_environment(wt: Path, target: str) -> Iterator[dict[str, str]
         target_file.relative_to(vq_root)
     except ValueError:
         # #527 concerns vq persistence. Preserve the established environment
-        # contract for every unrelated core/basis/view test-gate target.
+        # contract for unrelated core/basis/view targets, except the diagnostic
+        # stale-core override removed above for every gate child.
         yield env
         return
 
@@ -1070,6 +1135,8 @@ def main():
         f"test_timeout={args.test_timeout}s",
         flush=True,
     )
+    for rel, seconds in sorted(args.file_timeout_overrides.items()):
+        print(f"[triage] file_timeout override {rel}: {seconds:g}s", flush=True)
 
     lock = __import__("threading").Lock()
     n_done = 0
@@ -1080,7 +1147,7 @@ def main():
                 target,
                 wt,
                 args.py,
-                args.file_timeout,
+                target_file_timeout(target, args),
                 args.test_timeout,
                 args.markexpr,
                 args.heavy_env,

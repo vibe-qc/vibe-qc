@@ -30,6 +30,11 @@ slight excesses do occur; the invariant is the total, "necessarily an integer".
 The Mg excursion here is -0.0023 e of gross population on a single-s-shell
 atom, the total is exact, and the density is N-representable, so a raw
 ``|q| <= n_val`` acceptance gate has no basis in the source.
+
+Post-#373/#478 (re-baselined under #423): the corrected basis and the
+Wolfsberg-Helmholz hopping without the duplicated 1/2 make the L3 row an
+ordinary gapped row at T = 0.005 Ha. The pins below describe that state and
+the screened, indefinite Wigner-Seitz overlap it is solved on.
 """
 
 from __future__ import annotations
@@ -189,8 +194,8 @@ def _aufbau_deviation(molecule, result) -> float:
     return float(np.abs(occupations - aufbau).max())
 
 
-def _mgo100_l3_metallic_row():
-    """The one issue-302 row that still returns with no diagnostic set."""
+def _mgo100_l3_row():
+    """The issue-302 MgO(100) L3 row (unembedded, DIIS, T = 0.005 Ha)."""
     molecule, topology = _rocksalt100_slab(4.000, 3)
     with pytest.warns(DFTB0RepulsivePlaceholderWarning, match=_PLACEHOLDER):
         result = run_scc_dftb_seccm(
@@ -204,67 +209,93 @@ def _mgo100_l3_metallic_row():
     return molecule, result
 
 
-def test_mgo100_l3_metallic_row_is_accepted_with_a_fractional_frontier():
-    """Pin the accepted state itself, independently of how it is reported.
+def test_mgo100_l3_row_is_a_gapped_smeared_row_on_a_screened_overlap():
+    """Pin the accepted post-#478 state of the issue-302 L3 row (#423).
 
-    Every number here was measured on main at 0.15.159 and is what makes this
-    row the live half of issue 302: the route accepts it, the gap guard does
-    not fire on it, its frontier is equally and fractionally occupied, and one
-    sublattice carries a gross Mulliken population below zero.
+    Until #373/#478 this row was metallic: an equally occupied frontier with
+    the chemical potential past the Aufbau LUMO and one sublattice past its
+    valence count. With the corrected basis (#373) and the Wolfsberg-
+    Helmholz hopping without the duplicated 1/2 (#478) it is an ordinary
+    gapped row evaluated at finite temperature: the chemical potential stays
+    inside a 0.019 Ha gap and no atom passes its valence count. The maintainer
+    decision on #423 (2026-10-23) re-pins it as that row instead of keeping
+    the strict xfail.
+
+    The Wigner-Seitz-truncated cyclic overlap does not depend on H0 and stays
+    indefinite (one mode at -0.455). Under the #151 decision the route screens
+    it by canonical orthogonalization (Peintinger and Bredow, J. Comput. Chem.
+    35, 839 (2014), eq. 5) and refuses only when the kept subspace cannot hold
+    the occupied manifold, so the result records the screen and the state is
+    checked in the kept metric. The criteria are state, occupation, spectrum
+    and energy, not an iteration count or a roundoff-scale gap tolerance; the
+    energy is mixer independent (Aitken reaches the same state to 3e-14 Ha).
+    Measured 2026-10-25 on main ba24de70.
     """
-    molecule, result = _mgo100_l3_metallic_row()
+    molecule, result = _mgo100_l3_row()
 
     assert result.converged is True
-    assert result.n_iter == 92
-    assert result.homo_lumo_gap == pytest.approx(2.441871e-08, rel=1.0e-5)
+    assert result.energy == pytest.approx(-11.24499047116076, abs=1.0e-8)
+    assert result.free_energy == result.energy
+    assert result.smearing_temperature == pytest.approx(0.005, abs=0.0)
 
-    # The gap guard does not fire: the gap is 2.4x the absolute epsilon, so
-    # by that test alone the row is an ordinary gapped row.
-    assert result.homo_lumo_gap > result.finite_torus_gap_tolerance
+    # Gapped: the gap guard has nothing to waive.
+    assert result.homo_lumo_gap == pytest.approx(0.019242666925, rel=1.0e-6)
+    assert result.homo_lumo_gap > 1.0e3 * result.finite_torus_gap_tolerance
     assert result.gap_guard_waived is False
 
-    # It is not.  The frontier is equally occupied to six decimal places,
-    # i.e. the applied occupation cannot resolve HOMO from LUMO at all.
+    # Thermally broadened, not metallic: the chemical potential lies inside
+    # the gap, so the Aufbau LUMO holds less than one electron.
     occupations = _applied_occupations(molecule, result)
-    f_homo = occupations[result.n_occ - 1]
-    f_lumo = occupations[result.n_occ]
-    assert f_homo == pytest.approx(1.3370094, abs=1.0e-6)
-    assert f_lumo == pytest.approx(1.3370072, abs=1.0e-6)
-    assert f_homo - f_lumo < 1.0e-5
-    # More than one electron sits in the Aufbau LUMO: the chemical potential
-    # has passed it, which no thermally broadened insulator can do.
-    assert f_lumo > 1.0
+    assert occupations[result.n_occ - 1] == pytest.approx(1.8755227446, abs=1.0e-6)
+    assert occupations[result.n_occ] == pytest.approx(0.4861060042, abs=1.0e-6)
+    assert occupations[result.n_occ] < 1.0
+    assert result.aufbau_occupation is False
+    assert result.aufbau_occupation_deviation == pytest.approx(
+        occupations[result.n_occ], abs=1.0e-9
+    )
 
-    # The filed charge symptom, reproduced exactly.  Mg carries two valence
-    # electrons in the deployed parameter set, and one sublattice is past it.
+    # Mulliken populations: neutral cell, no atom past its valence count
+    # (the filed excursion is gone), outer and middle planes distinct.
     params = default_parameters()
     charges = np.asarray(result.charges)
     valence = np.array(
         [params.valence_electrons(atom.Z) for atom in molecule.atoms], float
     )
-    assert charges.max() == pytest.approx(2.002335, abs=1.0e-6)
-    assert np.count_nonzero(charges > valence) == 8
+    assert charges.sum() == pytest.approx(0.0, abs=1.0e-9)
+    assert np.count_nonzero(charges > valence) == 0
+    assert charges.max() == pytest.approx(1.822074, abs=1.0e-5)
+    assert charges.min() == pytest.approx(-1.891986, abs=1.0e-5)
 
-    # It is not an arithmetic defect.  The total is exact, the WS overlap is
-    # positive definite so the issue-207 screened metric is never engaged,
-    # and the density is N-representable -- so the excursion is the Mulliken
-    # partitioning artefact documented in Mulliken 1955, Section 3 p. 1835,
-    # not a population read against the wrong metric.
+    # The indefinite WS overlap and its recorded screen.
     overlap = np.asarray(result.overlap)
-    density = np.asarray(result.density)
-    assert np.trace(density @ overlap) == pytest.approx(
-        valence.sum(), abs=1.0e-9
+    eigenvalues = np.linalg.eigvalsh(overlap)
+    assert result.overlap_min_eigenvalue == pytest.approx(eigenvalues.min(), abs=0.0)
+    assert result.overlap_min_eigenvalue == pytest.approx(-0.45470979756, abs=1.0e-8)
+    assert result.overlap_screen_threshold == pytest.approx(1.0e-9, abs=0.0)
+    assert result.overlap_screened_modes == 1
+    assert result.overlap_screened_modes == np.count_nonzero(
+        eigenvalues <= result.overlap_screen_threshold
     )
-    overlap_eigenvalues = np.linalg.eigvalsh(overlap)
-    assert overlap_eigenvalues.min() > 0.87
-    eigenvalues, vectors = np.linalg.eigh(overlap)
-    root = vectors @ np.diag(np.sqrt(eigenvalues)) @ vectors.T
-    natural = np.linalg.eigvalsh(root @ density @ root)
-    assert natural.min() > -1.0e-9
-    assert natural.max() < 2.0 + 1.0e-9
+
+    # The spectrum lives in the kept subspace: n_basis - 1 orbitals,
+    # orthonormal in S, occupations in [0, 2], and the density they build
+    # carries the exact electron count. That is the N-representability check
+    # an indefinite S still admits.
+    coefficients = np.asarray(result.mo_coeffs)
+    applied = np.asarray(result.occupations)
+    assert coefficients.shape == (result.n_basis, result.n_basis - 1)
+    assert np.asarray(result.mo_energies).size == result.n_basis - 1
+    assert np.abs(
+        coefficients.T @ overlap @ coefficients - np.eye(coefficients.shape[1])
+    ).max() < 1.0e-10
+    assert applied.min() >= 0.0
+    assert applied.max() <= 2.0 + 1.0e-12
+    density = np.asarray(result.density)
+    assert np.abs(coefficients @ np.diag(applied) @ coefficients.T - density).max() < 1.0e-10
+    assert np.trace(density @ overlap) == pytest.approx(valence.sum(), abs=1.0e-9)
 
 
-def test_metallic_row_records_that_its_occupation_is_not_aufbau():
+def test_l3_smeared_row_records_that_its_occupation_is_not_aufbau():
     """The route must say on the record that this row is not an Aufbau row.
 
     Weinert and Davenport, Phys. Rev. B 45, 13709 (1992), Eqs. (8) and (10'):
@@ -273,20 +304,20 @@ def test_metallic_row_records_that_its_occupation_is_not_aufbau():
     whose applied occupations are not the Aufbau integers is not on the same
     energy surface as an Aufbau row and must not be compared with one.
     ``max_i |f_i - f_i^Aufbau|`` is zero exactly when the two coincide, which
-    makes it the threshold-free quantity to record.
+    makes it the threshold-free quantity to record. Since #478 the L3 row is
+    gapped (deviation 0.486 < 1: the chemical potential is inside the gap),
+    but at T = 0.005 Ha it is still a Mermin row and must say so (#423).
     """
-    molecule, result = _mgo100_l3_metallic_row()
+    molecule, result = _mgo100_l3_row()
 
     assert result.aufbau_occupation is False
     assert result.aufbau_occupation_deviation == pytest.approx(
         _aufbau_deviation(molecule, result), abs=1.0e-9
     )
-    # A deviation at or above 1 means the chemical potential has reached the
-    # Aufbau LUMO: the frontier is unresolved, not merely thermally broadened.
-    assert result.aufbau_occupation_deviation > 1.0
     assert result.aufbau_occupation_deviation == pytest.approx(
-        1.337007, abs=1.0e-5
+        0.4861060041766214, abs=1.0e-6
     )
+    assert result.aufbau_occupation_deviation < 1.0
 
     # The verdict must be reproducible from the record alone, the way
     # finite_torus_gap_tolerance already makes the gap verdict reproducible.
@@ -304,11 +335,12 @@ def test_metallic_row_records_that_its_occupation_is_not_aufbau():
 def test_ordinary_smeared_row_is_also_recorded_as_non_aufbau():
     """A thermally broadened gapped row is a Mermin row too, and says so.
 
-    This is the discrimination the record has to get right: the HLi chain is
-    an ordinary gapped cell (gap 1.8e-2 Ha, 60x the smearing width), so it is
-    *not* the pathology of the slab above -- but it is still evaluated with
-    fractional occupations, so it is still not comparable with an Aufbau row.
-    Its deviation is 0.31, well below the slab's 1.34.
+    The HLi chain is an ordinary gapped cell: since #478 its gap is 0.131 Ha,
+    26x the smearing width, so its LUMO holds only 4.2e-6 electrons. That is
+    far from metallic, but it is still not the integer Aufbau occupation, so
+    the row is still not comparable with an Aufbau row and must say so. The
+    deviation is the LUMO population, set by the gap; checked as a relative
+    pin together with the gap that sets it (#423).
     """
     molecule, topology = _hli_chain(2)
 
@@ -318,9 +350,15 @@ def test_ordinary_smeared_row_is_also_recorded_as_non_aufbau():
 
     assert result.converged is True
     assert result.gap_guard_waived is False
+    assert result.homo_lumo_gap == pytest.approx(0.13064707313, rel=1.0e-6)
+    assert result.energy == pytest.approx(-0.439392810178657, abs=1.0e-8)
     assert result.aufbau_occupation is False
     assert result.aufbau_occupation_deviation == pytest.approx(
-        0.3113005, abs=1.0e-6
+        4.237445748e-06, rel=1.0e-4
+    )
+    assert (
+        result.aufbau_occupation_deviation
+        > 100.0 * result.aufbau_occupation_tolerance
     )
     # Strictly below 1: the chemical potential is still inside the gap, so
     # this row is broadened, not metallic.
@@ -333,35 +371,31 @@ def test_zero_temperature_rows_are_exactly_aufbau():
     The T = 0 branch fills the Aufbau manifold by construction, so the
     deviation is exactly zero -- asserted exactly, not within a band -- and
     the reported energies are unchanged by this issue's record fields.
+
+    The MgO(100) slab is the T = 0 fixture. The HLi chain that held this
+    role until #373 is now a frontier near-degeneracy under the corrected
+    Stewart basis: its T = 0 integer-occupation SCC map has no stable fixed
+    point (non-convergent even at 20k iterations), whereas the slab still
+    fills its Aufbau manifold cleanly at T = 0.
     """
-    molecule, topology = _hli_chain(2)
-    chain = run_scc_dftb_seccm(molecule, topology, use_diis=True)
-
-    assert chain.converged is True
-    assert chain.smearing_temperature == 0.0
-    assert chain.aufbau_occupation is True
-    assert chain.aufbau_occupation_deviation == 0.0
-    assert np.asarray(chain.occupations)[: chain.n_occ].tolist() == [2.0] * chain.n_occ
-    assert np.asarray(chain.occupations)[chain.n_occ :].tolist() == [0.0] * (
-        np.asarray(chain.mo_energies).size - chain.n_occ
-    )
-    # Bit-identical to the value this route returned before the record grew.
-    assert chain.energy == pytest.approx(-0.399870251653, abs=1.0e-12)
-
     slab_molecule, slab_topology = _rocksalt100_slab(4.212, 2)
     with pytest.warns(DFTB0RepulsivePlaceholderWarning, match=_PLACEHOLDER):
-        slab = run_scc_dftb_seccm(slab_molecule, slab_topology, max_iter=3000)
+        slab = run_scc_dftb_seccm(slab_molecule, slab_topology, max_iter=10000)
 
     assert slab.converged is True
-    assert slab.n_iter == 19
+    # State, occupation, spectrum and energy criteria (#423); the iteration
+    # count is a property of the mixer, not of the state, and is not pinned.
+    assert slab.smearing_temperature == 0.0
     assert slab.aufbau_occupation is True
     assert slab.aufbau_occupation_deviation == 0.0
-    assert slab.energy == pytest.approx(-7.2616647227738103, abs=1.0e-12)
-    # Bit-identical to the frontier gap that
-    # tests/test_ccm_semiempirical.py::
-    # test_scc_dftb_seccm_genuine_b1_mgo100_separates_repulsive_limit
-    # pinned on this same slab before this issue's record fields existed:
-    # the accepted state is untouched, only its self-description grew.
-    assert slab.homo_lumo_gap == pytest.approx(
-        0.00428369951148803, abs=1.0e-16
-    )
+    # Re-measured after #478 (2026-10-25, main ba24de70): the default Aitken
+    # and DIIS mixers reach the same state to roundoff.
+    assert slab.energy == pytest.approx(-7.38649751980566, abs=1.0e-8)
+    assert slab.homo_lumo_gap == pytest.approx(0.0872445071773, rel=1.0e-6)
+    assert slab.homo_lumo_gap > 1.0e3 * slab.finite_torus_gap_tolerance
+    charges = np.asarray(slab.charges)
+    assert charges.sum() == pytest.approx(0.0, abs=1.0e-9)
+    # Equivalent Mg (and O) sites carry one charge: no symmetry-broken state.
+    assert np.ptp(charges[0::2]) < 1.0e-9
+    assert np.ptp(charges[1::2]) < 1.0e-9
+    assert charges[0] == pytest.approx(1.59294, abs=1.0e-5)

@@ -215,19 +215,41 @@ PeriodicRHFResult run_rhf_periodic_gamma(const PeriodicSystem& system,
 
     const int nocc = n_elec / 2;
 
+    // A one-point Gamma quadrature has P(h) = P_Gamma for every image h,
+    // not P_Gamma delta(h,0). Use one physical finite domain for all 3D
+    // operators. The legacy lower-dimensional driver is a separate scope.
+    // Pisani--Dovesi (1980), doi:10.1002/qua.560170311, Eqs. (1), (5)--(8).
+    auto lattice_opts = opts.lattice_opts;
+    const bool physical_gamma = system.dim == 3;
+    if (physical_gamma) lattice_opts.pair_complete_1e = true;
+    const auto build_gamma_jk = [&](const Eigen::MatrixXd& density) {
+        return physical_gamma
+            ? build_jk_gamma_physical(basis, system, lattice_opts, density)
+            : build_jk_gamma_molecular_limit(basis, system, lattice_opts, density);
+    };
+
+    // Preserve the explicit molecular-limit admission rule (#133). The
+    // physical pair enclosure can be larger than this translation ball, but
+    // it does not waive the caller's existing nonzero-image declaration.
+    if (!lattice_opts.gamma_only_0) {
+        require_nonzero_lattice_image(
+            direct_lattice_cells(system, lattice_opts.cutoff_bohr),
+            lattice_opts.cutoff_bohr, "run_rhf_periodic_gamma");
+    }
+
     // ---- One-electron integrals (real-space, folded to Γ) ------------------
-    const auto S_set = compute_overlap_lattice(basis, system, opts.lattice_opts);
-    const auto T_set = compute_kinetic_lattice(basis, system, opts.lattice_opts);
+    const auto S_set = compute_overlap_lattice(basis, system, lattice_opts);
+    const auto T_set = compute_kinetic_lattice(basis, system, lattice_opts);
     const auto V_set = guess_ecp.active()
         ? compute_nuclear_lattice_with_charges(
-            basis, system, opts.lattice_opts, guess_ecp.effective_charges)
-        : compute_nuclear_lattice(basis, system, opts.lattice_opts);
+            basis, system, lattice_opts, guess_ecp.effective_charges)
+        : compute_nuclear_lattice(basis, system, lattice_opts);
 
     const Eigen::MatrixXd S = fold_gamma_real(S_set);
     Eigen::MatrixXd Hcore = fold_gamma_real(T_set) + fold_gamma_real(V_set);
     if (guess_ecp.active()) Hcore += fold_gamma_real(compute_ecp_lattice_from_primitives(
-        basis, system, opts.lattice_opts, guess_ecp.primitive_centers,
-        guess_ecp.primitive_blocks));
+        basis, system, lattice_opts, guess_ecp.primitive_centers,
+        guess_ecp.primitive_blocks, physical_gamma));
     const Eigen::MatrixXd X = s_inverse_sqrt(S);
 
     const bool use_davidson_here =
@@ -257,9 +279,9 @@ PeriodicRHFResult run_rhf_periodic_gamma(const PeriodicSystem& system,
     };
 
     // ---- Initial guess (via the unified GuessEngine) ----------------------
-    // For periodic, SAD lives at g=0 only — D depends on the unit-cell
-    // atoms, not the lattice. HCORE / AUTO fall through to the Hcore-diag
-    // path below.
+    // SAD is assembled from unit-cell atomic blocks, then normalized in
+    // S(Gamma). In the 3D Gamma operator this seed supplies P(h) at every
+    // displacement, just like subsequent SCF density matrices.
     //
     // The Hcore diagonalisation is run unconditionally because KDIIS's
     // MO-basis error vector needs the initial C/eps, regardless of which
@@ -285,8 +307,8 @@ PeriodicRHFResult run_rhf_periodic_gamma(const PeriodicSystem& system,
         // the sharp on-site structure.
         const Grid grid = build_grid(system.unit_cell_molecule());
         const auto Vsap_set = guess_ecp.active()
-            ? compute_vsap_ecp_lattice(basis, system, opts.lattice_opts, guess_ecp)
-            : compute_vsap_lattice(basis, system, grid, "sap_helfem_large", opts.lattice_opts);
+            ? compute_vsap_ecp_lattice(basis, system, lattice_opts, guess_ecp)
+            : compute_vsap_lattice(basis, system, grid, "sap_helfem_large", lattice_opts);
         const Eigen::MatrixXd F_sap =
             fold_gamma_real(T_set) + fold_gamma_real(Vsap_set);
         D = build_density(diag(F_sap).first, nocc);
@@ -301,15 +323,15 @@ PeriodicRHFResult run_rhf_periodic_gamma(const PeriodicSystem& system,
         // Periodic MINAO: project the ANO-RCC minimal-basis reference density
         // onto the working basis using the lattice-summed Γ overlaps
         // (S(Γ) and the lattice-summed cross overlap S_tm(Γ)). Density-mode
-        // guess, like SAD — D is the on-site g=0 block.
+        // guess, like SAD, supplying the common Gamma density block.
         D = compute_minao_density_periodic(
             system.unit_cell_molecule(), basis, system, S, 2 * nocc,
-            opts.lattice_opts, guess_ecp);
+            lattice_opts, guess_ecp);
     } else if (effective_guess == InitialGuess::PATOM) {
         // Periodic PATOM: start from the SAD density and run the one-step
         // in-field re-polarisation with the Gamma periodic J/K builder.
         auto jk_guess = make_periodic_gamma_jk_builder(
-            basis, system, opts.lattice_opts);
+            basis, system, lattice_opts);
         const auto g = GuessEngine::build_closed_shell(
             system.unit_cell_molecule(), basis, nocc,
             effective_guess, &S, &Hcore, jk_guess.get(),
@@ -335,7 +357,7 @@ PeriodicRHFResult run_rhf_periodic_gamma(const PeriodicSystem& system,
         for (std::size_t a = 0; a < ionic_system.unit_cell.size(); ++a)
             ionic_system.unit_cell[a].Z = static_cast<int>(std::round(guess_ecp.effective_charges[a]));
     }
-    const double e_nuc = nuclear_repulsion_per_cell(ionic_system, opts.lattice_opts);
+    const double e_nuc = nuclear_repulsion_per_cell(ionic_system, lattice_opts);
 
     // ---- SCF loop ---------------------------------------------------------
     PeriodicRHFResult result;
@@ -369,6 +391,40 @@ PeriodicRHFResult run_rhf_periodic_gamma(const PeriodicSystem& system,
     Eigen::MatrixXd C_prev_mo = C0;
     Eigen::VectorXd eps_prev_mo = eps0;
 
+    // max_iter = 0 is ORCA's NOITER (#649): evaluate the starting guess once,
+    // with iteration 1's Fock and energy, and return it explicitly
+    // unconverged with no iteration. The density is the guess itself and the
+    // orbitals diagonalise its Fock. Without this the loop never ran and the
+    // result kept its default energy of 0.0.
+    if (opts.max_iter < 0) {
+        throw std::invalid_argument(
+            "run_rhf_periodic_gamma: max_iter must be >= 0 (0 evaluates the "
+            "initial guess only)");
+    }
+    if (opts.max_iter == 0) {
+        const JKMatrices jk = build_gamma_jk(D);
+        Eigen::MatrixXd F = Hcore + jk.J - 0.5 * jk.K;
+        const double E_elec = 0.5 * (D.array() * (Hcore + F).array()).sum();
+        double e_dft_plus_u = 0.0;
+        if (!opts.dft_plus_u_sites.empty()) {
+            const auto vu = compute_dft_plus_u(
+                opts.dft_plus_u_sites, opts.dft_plus_u_ao_groups, 0.5 * D, S);
+            F += vu.V;
+            e_dft_plus_u = 2.0 * vu.energy;
+        }
+        auto [C_g, eps_g] = diag(F);
+        result.mo_energies = eps_g;
+        result.mo_coeffs = C_g;
+        result.density = D;
+        result.fock = F;
+        result.e_electronic = E_elec;
+        result.e_dft_plus_u = e_dft_plus_u;
+        result.energy = E_elec + e_nuc + e_dft_plus_u;
+        result.n_iter = 0;
+        result.converged = false;
+        return result;
+    }
+
     for (int iter = 1; iter <= opts.max_iter; ++iter) {
         const bool diis_active =
             opts.use_diis && iter >= opts.diis_start_iter;
@@ -378,8 +434,7 @@ PeriodicRHFResult run_rhf_periodic_gamma(const PeriodicSystem& system,
                 : (current_damping * D_prev + (1.0 - current_damping) * D);
 
         const JKMatrices jk =
-            build_jk_gamma_molecular_limit(basis, system, opts.lattice_opts,
-                                           D_used);
+            build_gamma_jk(D_used);
         Eigen::MatrixXd F = Hcore + jk.J - 0.5 * jk.K;
 
         // E_elec from the +U-free F first (same double-counting
@@ -519,8 +574,7 @@ PeriodicRHFResult run_rhf_periodic_gamma(const PeriodicSystem& system,
             // Self-consistency pass on the fresh density (matches molecular
             // RHF convention for clean MO-energy output).
             const auto jk_f =
-                build_jk_gamma_molecular_limit(basis, system,
-                                               opts.lattice_opts, D);
+                build_gamma_jk(D);
             Eigen::MatrixXd F_final =
                 Hcore + jk_f.J - 0.5 * jk_f.K;
             const double e_elec_final =

@@ -1,0 +1,26 @@
+{
+  "product": "vibe-qc",
+  "version": "0.18.0",
+  "sourceCommit": "5dfc97f0ec269e681c84bfda9531a0336b2f19f6",
+  "artifacts": {
+    "macos": {
+      "filename": "vibe-qc-mace-0.18.0-arm64.dmg",
+      "sha256": "1e33a72d7d4f338f10d4697d011d73f891f7472f2ec595809f3b5e78ca7106b4",
+      "size": 1033869786,
+      "url": "/updates/vibe-qc/variants/mace/releases/0.18.0/vibe-qc-mace-0.18.0-arm64.dmg"
+    },
+    "linux": {
+      "filename": "vibe-qc-mace-0.18.0-x86_64.tar.gz",
+      "sha256": "087c67ad6075a81ab2e920741a83454a5d1c42e743a380942c67b9c71730b965",
+      "size": 938169293,
+      "url": "/updates/vibe-qc/variants/mace/releases/0.18.0/vibe-qc-mace-0.18.0-x86_64.tar.gz"
+    },
+    "source": {
+      "filename": "vibe-qc-mace-0.18.0-source.tar.gz",
+      "sha256": "cdec26a5166c2f4e492cf5fa877abdb2c1d12b7e59d019028f92cad71e2d0270",
+      "size": 126032884,
+      "url": "/updates/vibe-qc/variants/mace/releases/0.18.0/vibe-qc-mace-0.18.0-source.tar.gz"
+    }
+  },
+  "profile": "mace"
+}

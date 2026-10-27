@@ -88,7 +88,8 @@ std::vector<Eigen::MatrixXcd> inverse_bloch_multi_k(
     #pragma omp parallel for schedule(static)
 #endif
     for (std::size_t ik = 0; ik < k_vectors.size(); ++ik) {
-        D_k_list[ik] = 0.5 * (D_k_list[ik] + D_k_list[ik].adjoint());
+        // Evaluate before assignment: adjoint reads entries overwritten in place.
+        D_k_list[ik] = (0.5 * (D_k_list[ik] + D_k_list[ik].adjoint())).eval();
     }
     return D_k_list;
 }

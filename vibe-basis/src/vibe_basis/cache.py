@@ -7,7 +7,7 @@ remote queue. Two properties decide whether that is affordable:
 the free-atom energies of its elements, the element set across a test
 set is small, and atoms are the *expensive* part -- in the GPAW
 PW-limit work a single free F atom cost 100-240 s while the solid was
-quick (``handovers/HANDOVER_GPAW_PW_REFERENCE.md``). Recomputing O for
+quick (the original investigation). Recomputing O for
 MgO, CaO, BaO and Li2O separately would dominate the campaign. Keying
 atom entries without a system identifier makes the sharing automatic.
 

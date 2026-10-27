@@ -24,15 +24,16 @@
 #                               --current.
 #     --extras GROUP            Pip extras group: test (default), dev,
 #                               docs, viewer, viewer-gpu, basisopt, ase,
-#                               dispersion, mpi, dispersion,mpi, mace, all,
-#                               none. `all`
+#                               dispersion, mpi, mace, all, none, or a
+#                               comma-separated combination of the pip
+#                               groups (e.g. dispersion,mpi,test). `all`
 #                               installs dev + docs + viewer; `mace` adds
-#                               the heavy, Python <=3.13-only MACE MLIP
+#                               the heavy, optional MACE MLIP
 #                               stack (deliberately not in `all`); `none`
 #                               skips the [...] suffix.
 #     --python BIN              Python interpreter to base the venv on
 #                               (default: python3). Use to force a
-#                               specific version, e.g. `--python python3.13`.
+#                               specific version, e.g. `--python python3.14`.
 #     --venv PATH               Where to create the venv
 #                               (default: .venv in the repo root).
 #                               Useful for keeping per-branch venvs
@@ -42,6 +43,11 @@
 #                               WITH_OPENBLAS=1 for setup_native_deps.sh).
 #                               Use when system BLAS is reference netlib
 #                               or absent.
+#     --with-opentrustregion    Fetch and compile the pinned optional orbital
+#                               optimizer. Requires a Fortran compiler and
+#                               LP64 BLAS/LAPACK; verified after installation.
+#     --without-opentrustregion Disable it, including in an existing build.
+#                               Otherwise preserve the last build selection.
 #     --libint-max-am SPEC      libint's max angular momentum per
 #                               derivative order, as N_N_N for orders
 #                               0/1/2. Each part 1..6. Default 5_4_4.
@@ -86,8 +92,8 @@
 #     ./scripts/install.sh --extras basisopt             # + co-located vibe-basis
 #     ./scripts/install.sh --extras mpi                 # + mpi4py
 #     ./scripts/install.sh --extras dispersion,mpi      # dispersion + mpi4py
-#     ./scripts/install.sh --extras mace                # + MACE MLIP stack (Python <=3.13)
-#     ./scripts/install.sh --python python3.13          # force 3.13 over default python3
+#     ./scripts/install.sh --extras mace                # + MACE MLIP stack (Python 3.14 supported)
+#     ./scripts/install.sh --python python3.14          # force 3.14 over default python3
 #     ./scripts/install.sh --venv .venv-bsd --branch basissetdev   # side-by-side
 #     ./scripts/install.sh --force                      # replace existing .venv safely
 #     ./scripts/install.sh --with-openblas              # vendor OpenBLAS
@@ -122,6 +128,8 @@ _INSTALL_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # update_native_deps.sh / build_libint.sh).
 # shellcheck source=_libint_max_am.sh
 . "$_INSTALL_SCRIPT_DIR/_libint_max_am.sh"
+# shellcheck source=_opentrustregion.sh
+. "$_INSTALL_SCRIPT_DIR/_opentrustregion.sh"
 
 # ---------------------------------------------------------------------------
 # Argv parsing — defer the heavier _safe_build_env sourcing until after,
@@ -185,6 +193,8 @@ while [ $# -gt 0 ]; do
             shift 2
             ;;
         --with-openblas)      WITH_OPENBLAS=1;        shift ;;
+        --with-opentrustregion) vibeqc_otr_select ON; shift ;;
+        --without-opentrustregion) vibeqc_otr_select OFF; shift ;;
         --libint-max-am)
             require_value "$1" "max_am spec" "${2-}"
             vibeqc_libint_max_am_accept "$2" || exit 1
@@ -273,6 +283,7 @@ echo "    extras:       $EXTRAS_GROUP  (pip suffix: '${EXTRAS_SPEC:-<none>}')"
 [ -z "$VIBEQC_COLOCATED_EXTRA" ] || \
     echo "    companion:    local $VIBEQC_COLOCATED_EXTRA project"
 echo "    python:       $PYTHON_BIN"
+vibeqc_otr_configure "$VENV_PATH" "${INSPECTION_PYTHON:-python3}"
 if [ -n "$BRANCH" ]; then
     echo "    branch:       $BRANCH"
 else
@@ -406,6 +417,7 @@ fi
 # Validate every destructive/input prerequisite before checkout or native
 # build work. A bad interpreter or unsafe/non-venv target must leave Git and
 # third_party untouched.
+vibeqc_otr_preflight "${INSPECTION_PYTHON:-python3}"
 vibeqc_acquire_lifecycle_lock "$VENV_PATH" "$REPO_ROOT" install "$PYTHON_BIN"
 trap 'vibeqc_lifecycle_cleanup' EXIT
 vibeqc_resolve_base_python PYTHON_BIN "$PYTHON_BIN"
@@ -525,10 +537,12 @@ if [ "$SKIP_NATIVE_DEPS" = "1" ]; then
     echo
 else
     echo "==> Running setup_native_deps.sh (libint max_am $(vibeqc_libint_max_am_spec)) ..."
+    # The venv does not exist yet; the basis-overlay step needs the
+    # resolved Python 3.11+ interpreter rather than python3 on PATH (#516).
     if [ "$WITH_OPENBLAS" = "1" ]; then
-        WITH_OPENBLAS=1 "$SCRIPT_DIR/setup_native_deps.sh"
+        WITH_OPENBLAS=1 PYTHON_BIN="$PYTHON_BIN" "$SCRIPT_DIR/setup_native_deps.sh"
     else
-        "$SCRIPT_DIR/setup_native_deps.sh"
+        PYTHON_BIN="$PYTHON_BIN" "$SCRIPT_DIR/setup_native_deps.sh"
     fi
     echo
 fi
@@ -559,6 +573,7 @@ vibeqc_install_colocated_extra \
 echo
 echo "==> Verifying:"
 vibeqc_verify_install "$VENV_PATH/bin/python" "$EXTRAS_GROUP"
+vibeqc_otr_verify "$VENV_PATH/bin/python" "$VENV_PATH"
 vibeqc_mark_owned_venv "$VENV_PATH" "$REPO_ROOT" "$PYTHON_BIN"
 vibeqc_commit_venv_replacement
 vibeqc_release_lifecycle_lock

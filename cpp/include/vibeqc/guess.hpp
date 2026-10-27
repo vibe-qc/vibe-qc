@@ -210,6 +210,8 @@ struct GuessSelection {
 // All native entry points validate even enum values constructed by a foreign
 // binding or a cast. READ payload precedence never exempts the selector.
 void validate_initial_guess(InitialGuess kind);
+// Upper-case enumerator name for logs and provenance ("HCORE", "SAD", ...).
+const char* initial_guess_name(InitialGuess kind);
 void validate_atomic_spin_selection(
     const Molecule* mol, InitialGuess effective, const std::vector<int>& tags);
 

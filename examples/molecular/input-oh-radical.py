@@ -1,4 +1,4 @@
-"""Open-shell UHF single-point on OH radical (doublet).
+"""Open-shell UHF single-point on the OH radical (doublet) at 6-31G*.
 
 Run:
     .venv/bin/python input-oh-radical.py

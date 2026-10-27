@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -45,7 +46,7 @@ from vibeqc.semiempirical.runner import _gfn2_parameter_provenance
 # 3-cycle). It manifested as an H0/band-channel error that grew with
 # distance: Cu2 deviated from xtb by +35.8/+56.8/+139.5 mHa at
 # d = 2.2/2.5/3.0 A, free Cu8/Cu16 never converged, and fcc Cu SECCM
-# cells fell into a spurious charge-density-wave basin (issue #130).
+# cells fell into a spurious charge-density-wave basin (former-tracker issue 130).
 #
 # Nothing else in the hashed content moved. Rotating ONLY kcn/poly back
 # to positional order on those 41 elements reproduces the old digest
@@ -78,8 +79,20 @@ from vibeqc.semiempirical.runner import _gfn2_parameter_provenance
 # tests/test_gfn2_xtb.py::TestGFN2DFirstParameterProjection and the
 # "Published-parameter identity" section of
 # docs/user_guide/semiempirical.md.
+#
+# 2026-10-12 RE-ATTESTATION. The previous pin,
+#   0b3c70a5a7a8dec49953a59e72e8709a9b6e9a58ec55fb063f7d08a3067cc8ef
+# hashed a load whose faithful-AES multipole tables (mp_rad, mp_vcn:
+# the R0_A and N_val,A of Eq. 29) covered Z <= 10 only; every heavier
+# element carried 0.0 and the native path fell back to R0 = 3.0 bohr,
+# N_val = 0. The converter now carries the full Z <= 86 tables (xtb
+# src/xtb/data.f90 multiRad / valenceCN, tblite p_rad / p_vcn), compared
+# element by element against xtb 6.7.0. Measured effect on closed-shell
+# fluorides against xtb, electronic + repulsion: NaF +4497 -> -0.3 uHa,
+# KF +3622 -> 0.0, MgF2 +665 -> +0.3, ZnF2 +1487 -> +0.6, SiF4 -1222 ->
+# +1.8, CdF2 +1979 -> +1.5. Period-2 rows are unchanged.
 GFN2_PUBLISHED_SHA256 = (
-    "0b3c70a5a7a8dec49953a59e72e8709a9b6e9a58ec55fb063f7d08a3067cc8ef"
+    "7c42ae77765f39d2fa73fad23184eb7391d442605229e0110e22be1be1dd7fd2"
 )
 GFN2_PUBLISHED_IDENTITY = "published:gfn2-xtb-2019-v1"
 
@@ -179,6 +192,100 @@ def _fake_native_result(params: _xtb.GFN2ParameterSet) -> SimpleNamespace:
         parameter_identity=params.parameter_identity(),
         parameter_sha256=params.content_sha256(),
     )
+
+
+@pytest.fixture
+def synthetic_published_d4_cache(tmp_path, monkeypatch):
+    from vibeqc.dispersion_d4_reference_data import D4ReferenceDataset, _PerElement
+    from vibeqc.semiempirical.methods import gfn2_d4_params as data
+
+    records = {name: f"synthetic {name}".encode() for name in data.SOURCES}
+    for name, raw in records.items():
+        (tmp_path / Path(name).name).write_bytes(raw)
+    monkeypatch.setenv("VIBEQC_GFN2_D4_CACHE_DIR", str(tmp_path))
+    monkeypatch.setenv("VIBEQC_GFN2_OFFLINE", "1")
+    monkeypatch.setattr(data, "REVISION", "synthetic-revision")
+    monkeypatch.setattr(data, "SOURCES", {
+        name: hashlib.sha256(raw).hexdigest() for name, raw in records.items()
+    })
+    dataset = D4ReferenceDataset(elements={
+        1: _PerElement(1, [0.], [0.], np.ones((1, 23)), np.ones((1, 1)), [1]),
+    }, c6_cross={})
+    monkeypatch.setattr(data, "_convert", lambda raw: dataset)
+    return data, records, dataset, tmp_path
+
+
+def test_published_d4_source_identity_keeps_exact_conversion_bits(
+    synthetic_published_d4_cache,
+):
+    data, records, dataset, _ = synthetic_published_d4_cache
+    first = _gfn2_method._gfn2_d4_execution_snapshot(published=True)
+    # A one-ULP conversion difference must remain visible in execution identity.
+    dataset.elements[1].c6_self[0, 0] = np.nextafter(1., 2.)
+    second = _gfn2_method._gfn2_d4_execution_snapshot(published=True)
+    expected = hashlib.sha256(json.dumps({
+        "revision": data.REVISION,
+        "sources": {name: hashlib.sha256(raw).hexdigest()
+                    for name, raw in records.items()},
+    }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    assert first.refdata_sha256 != second.refdata_sha256
+    assert first.refdata_sources_sha256 == second.refdata_sources_sha256 == expected
+    assert first.refdata_revision == second.refdata_revision == "synthetic-revision"
+    legacy = _gfn2_method._gfn2_d4_execution_snapshot()
+    assert legacy.refdata_revision == legacy.refdata_sources_sha256 == "unavailable"
+
+
+@pytest.mark.parametrize("changed", [
+    "include/param_ref.fh", "src/disp/ncoord.f90", "COPYING", "COPYING.LESSER",
+    "revision",
+])
+def test_published_d4_source_identity_covers_every_input(
+    synthetic_published_d4_cache, monkeypatch, changed,
+):
+    data, _, _, root = synthetic_published_d4_cache
+    before = _gfn2_method._gfn2_d4_execution_snapshot(published=True)
+    if changed == "revision":
+        monkeypatch.setattr(data, "REVISION", "another-synthetic-revision")
+    else:
+        raw = b"another synthetic input"
+        (root / Path(changed).name).write_bytes(raw)
+        with pytest.raises(RuntimeError, match="missing or invalid"):
+            data.load_gfn2_d4_reference_data(allow_fetch=False)
+        # Simulate a deliberately revised pin after verifying tampering fails.
+        monkeypatch.setitem(data.SOURCES, changed, hashlib.sha256(raw).hexdigest())
+    after = _gfn2_method._gfn2_d4_execution_snapshot(published=True)
+    assert before.refdata_sources_sha256 != after.refdata_sources_sha256
+
+
+def test_published_d4_output_retains_preexecution_source_identity(
+    synthetic_published_d4_cache, monkeypatch,
+):
+    from vibeqc.semiempirical.methods import gfn2_dispersion
+
+    data, _, _, root = synthetic_published_d4_cache
+    expected = _gfn2_method._gfn2_d4_execution_snapshot(published=True)
+    model = GFN2Model(_h2(), _compact_parameters(), warn=False)
+    # Exercise source capture and runner projection without invoking an SCF.
+    monkeypatch.setattr(data, "coordination_numbers_and_jacobian", lambda mol: None)
+    monkeypatch.setattr(gfn2_dispersion, "build_d4_charge_functional",
+                        lambda *a, **k: SimpleNamespace(
+                            to_native=lambda: SimpleNamespace(sha256="test-operands")))
+
+    def fake_run(mol, params, options, dispersion):
+        monkeypatch.setattr(data, "REVISION", "changed-after-capture")
+        (root / "ncoord.f90").write_bytes(b"changed-after-capture")
+        result = _fake_native_result(params)
+        result.dispersion_sha256 = dispersion.sha256
+        return result
+
+    monkeypatch.setattr(_gfn2_method._xtb, "run_gfn2_xtb", fake_run)
+    model._run_scc_at(_h2())
+    provenance = _gfn2_parameter_provenance(model)
+    assert provenance["gfn2_d4_refdata_revision"] == expected.refdata_revision
+    assert provenance["gfn2_d4_refdata_sources_sha256"] == expected.refdata_sources_sha256
+    assert provenance["gfn2_d4_refdata_sha256"] == expected.refdata_sha256
+    assert provenance["gfn2_d4_refdata_source_sha256"] == expected.refdata_source_sha256
+    assert all(isinstance(value, (str, int, float, bool)) for value in provenance.values())
 
 
 def test_loader_has_exact_published_identity(
@@ -326,10 +433,23 @@ def test_gradient_rejects_result_parameter_mismatch(
         _se.compute_gfn2_gradient(molecule, result, published_params)
 
 
+@pytest.mark.parametrize(
+    ("cache_directory", "expected_cache_path"),
+    [
+        ("home/cache", "~/cache/gfn2.toml"),
+        ("external-cache", "<gfn2-parameter-cache>/gfn2.toml"),
+    ],
+)
 def test_execution_provenance_freezes_every_scc_control_and_d4_input(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    cache_directory: str,
+    expected_cache_path: str,
 ) -> None:
+    # Pin the path contract independently of pytest's --basetemp location.
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
     params = _compact_parameters()
     molecule = _h2()
     model = GFN2Model(molecule, params, warn=False)
@@ -373,7 +493,8 @@ def test_execution_provenance_freezes_every_scc_control_and_d4_input(
     original_cache = (
         f'# source_sha256 = "{source_sha256}"\noriginal-cache\n'.encode()
     )
-    cache_path = tmp_path / "gfn2.toml"
+    cache_path = tmp_path / cache_directory / "gfn2.toml"
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_bytes(original_cache)
     monkeypatch.setattr(
         _gfn2_params,
@@ -443,11 +564,32 @@ def test_execution_provenance_freezes_every_scc_control_and_d4_input(
     assert provenance["gfn2_d4_refdata_source_sha256"] == "b" * 64
     assert not any(key.startswith("gfn2_parameter_d4_") for key in provenance)
 
-    assert provenance["gfn2_cache_path"] == "<gfn2-parameter-cache>/gfn2.toml"
+    assert provenance["gfn2_cache_path"] == expected_cache_path
     assert provenance["gfn2_cache_sha256"] == hashlib.sha256(
         original_cache
     ).hexdigest()
     assert provenance["gfn2_cache_source_sha256"] == source_sha256
+
+
+@pytest.mark.parametrize(
+    ("cache_directory", "expected"),
+    [
+        ("home/cache", "~/cache/gfn2.toml"),
+        ("external-cache", "<gfn2-parameter-cache>/gfn2.toml"),
+        ("home-neighbor/cache", "<gfn2-parameter-cache>/gfn2.toml"),
+    ],
+)
+def test_portable_gfn2_cache_path_preserves_home_relative_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    cache_directory: str,
+    expected: str,
+) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    cache_path = tmp_path / cache_directory / "gfn2.toml"
+
+    assert _gfn2_method._portable_gfn2_cache_path(cache_path) == expected
 
 
 def test_d4_source_hash_is_bound_to_the_exact_parsed_bytes(
@@ -562,3 +704,33 @@ def test_captured_d4_row_determines_energy_after_global_row_mutation(
 
     assert frozen_energy == pytest.approx(baseline, abs=0.0)
     assert mutated_energy != pytest.approx(baseline, rel=1e-8, abs=1e-12)
+
+
+@pytest.mark.parametrize("explicit_counts", [False, True])
+def test_frozen_d4_retains_gaussian_counts_and_binds_their_identity(explicit_counts):
+    from vibeqc.dispersion_d4_model import compute_d4_c6_pair
+    from vibeqc.dispersion_d4_reference_data import D4ReferenceDataset
+
+    payload = json.loads(_gfn2_method._gfn2_d4_refdata_bytes())
+    for record in payload["elements"].values():
+        record.pop("n_gaussian", None)
+    source = D4ReferenceDataset.from_dict(payload)
+    original_hash = _gfn2_method._gfn2_d4_reference_content_sha256(source)
+    if explicit_counts:
+        source.elements[6].n_gaussian = list(range(1, source.elements[6].n_ref + 1))
+    frozen = _gfn2_method._FrozenD4ReferenceDataset.from_dataset(source)
+    assert frozen.to_dict() == source.to_dict()
+    digest = _gfn2_method._gfn2_d4_reference_content_sha256(frozen)
+    assert (digest != original_hash) is explicit_counts
+    args = (1.35, -.2, 6, 1.65, .1, 8)
+    value = compute_d4_c6_pair(*args, frozen)
+    assert value == pytest.approx(compute_d4_c6_pair(*args, source), abs=1e-13)
+    if explicit_counts:
+        expected_counts = tuple(source.elements[6].n_gaussian)
+        source.elements[6].n_gaussian[0] = 20
+        assert frozen.get_n_gaussian(6) == expected_counts
+        assert _gfn2_method._gfn2_d4_reference_content_sha256(frozen) == digest
+        assert compute_d4_c6_pair(*args, frozen) == value
+        assert abs(compute_d4_c6_pair(*args, source) - value) > 1e-8
+    else:
+        assert frozen.get_n_gaussian(6) is None

@@ -1,0 +1,1 @@
+- Improve correlated-method tutorials with explicit setup, separate SCF/solver convergence checks, unique output stems, a bounded method ladder and an executable RI auxiliary-basis comparison.

@@ -282,3 +282,43 @@ def test_dry_run_manifest_default_prints_summary(
     captured = capsys.readouterr()
     assert "vibe-qc dry-run" in captured.out
     assert "RKS" in captured.out
+
+
+def test_resource_evidence_records_returned_bytes_and_scope(tmp_path):
+    import hashlib
+    from vibeqc.output.resource_evidence import (
+        read_resource_input, resource_evidence, resource_input_reads,
+    )
+
+    path = tmp_path / "geometry.xyz"
+    path.write_bytes(b"first input")
+    with resource_input_reads():
+        data = read_resource_input(path)
+        path.write_bytes(b"changed after reading")
+        evidence = resource_evidence({"method": "RHF", "nbf": 7, "naux": None})
+        assert evidence["input_sha256"] == [hashlib.sha256(data).hexdigest()]
+        assert evidence["input_coverage"] == "explicit_reads"
+        assert evidence["nbf"] == 7
+        assert "naux" not in evidence
+        with resource_input_reads():
+            assert resource_evidence({})["input_sha256"] == []
+        assert resource_evidence({})["input_sha256"] == evidence["input_sha256"]
+    assert resource_evidence({})["input_sha256"] == []
+    with pytest.raises(RuntimeError, match="requires"):
+        read_resource_input(path)
+
+
+def test_product_resource_table_is_valid_toml_with_absent_dimensions(tmp_path):
+    from vibeqc.output.resource_evidence import read_resource_input, resource_input_reads
+
+    source = tmp_path / "input.xyz"
+    source.write_bytes(b"observed geometry")
+    with resource_input_reads():
+        read_resource_input(source)
+        path = dry_run_manifest(_plan(tmp_path), print_summary=False,
+                                resolved_resource_features={"method": "RHF", "nbf": 7})
+    evidence = tomllib.loads(path.read_text())["resource_evidence"]
+    assert evidence["nbf"] == 7
+    assert evidence["schema"] == "vibeqc.resource-evidence/1"
+    assert len(evidence["input_sha256"]) == 1
+    assert "naux" not in evidence

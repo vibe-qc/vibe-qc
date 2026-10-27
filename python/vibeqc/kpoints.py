@@ -45,6 +45,7 @@ entry point continues to accept either a raw ``BlochKMesh`` or a
 For ``PeriodicSystem.dim < 3``, mesh builders accept either active-axis
 specs (``[n]`` for 1D, ``[n1, n2]`` for 2D) or full three-axis specs.
 Inactive axes are pinned to Γ and stored as mesh size 1 / shift 0.
+Mesh entries must be exact integers; no float, bool or string coercion is used.
 """
 
 from __future__ import annotations
@@ -52,6 +53,7 @@ from __future__ import annotations
 from collections.abc import Sequence as SequenceABC
 from dataclasses import dataclass, field
 from itertools import product
+from operator import index
 from typing import Callable, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
@@ -117,6 +119,9 @@ GAMMA_ONLY_CELL_VOLUME_BOHR3 = 12000.0
 TOLERANCE_MEV_PER_ATOM_DEFAULT = 1.0
 LADDER_SPACING_FACTOR = float(np.sqrt(2.0))  # AUTO/√2, AUTO, AUTO.√2 ...
 VERIFY_MAX_REFINE_STEPS = 4
+# Spacing reductions (by LADDER_SPACING_FACTOR) a refinement may take to leave
+# a repeated mesh behind.
+VERIFY_MAX_REPEAT_SKIPS = 8
 
 
 @dataclass(frozen=True)
@@ -833,7 +838,10 @@ class KPoints:
         gamma_centred:
             ``None`` (default) lets AUTO choose -- Γ-centred for
             hexagonal/trigonal lattices, classical MP auto-shift
-            otherwise. Pass ``True``/``False`` to force.
+            otherwise. Pass ``True``/``False`` to force. A Γ-centred
+            mesh on a cell with a hexagonal plane takes multiples of 3
+            along that plane, here and on every ``verify`` rung, so it
+            samples the zone corners K and K' (#129).
         symmetry:
             Reduce to the irreducible BZ via spglib (default ``True``).
             Best-effort: if symmetry can't be attached (e.g. some
@@ -869,8 +877,13 @@ class KPoints:
             the built-in cheap pre-SCF classifier (resolution step 3).
             ``"pre-scf"`` runs a few-cycle Gamma-only GDF SCF with the
             user-supplied ``basis``, extracts the HOMO-LUMO gap, and
-            classifies from it.  Requires ``basis=``.  Explicitly
-            gated -- the default is the SAFE metallic fallback.
+            classifies from it. Requires ``basis=``. A compact 3D cell
+            runs the bulk GDF Hamiltonian at Gamma (#468). If no gap can be read
+            from the result, the recommendation falls back with a warning
+            to the SAFE metallic default. Supply
+            ``band_gap``, ``is_metal`` or a qualified ``scf_result`` when
+            the electronic character is known. The SAFE default is a
+            conservative mesh choice, not a measured metallic state.
         predictor, ml_predictor:
             Optional ML Δk predictor (advanced path). ``predictor`` is a
             callable ``predictor(features) -> (Δk, s)`` or the string
@@ -996,8 +1009,8 @@ class KPoints:
                 # choice -- never under-sample an unknown system.
                 character, gap_ev = "metal", 0.0
                 warnings.warn(
-                    "KPoints.recommend: no band_gap / is_metal hint and no "
-                    "classifier supplied -- assuming METALLIC (the safe, "
+                    "KPoints.recommend: no usable band_gap / is_metal hint "
+                    "or classifier result -- assuming METALLIC (the safe, "
                     "dense default) and recommending smearing. Pass "
                     "band_gap=<eV> or is_metal=<bool> to refine.",
                     UserWarning,
@@ -1059,6 +1072,9 @@ class KPoints:
             )
         if do_sym:
             do_sym = _ensure_symmetry_attached(system, notes)
+        # K and K' on the mesh (#129): Gamma-centred hexagonal meshes take
+        # multiples of 3 along the hexagonal plane.
+        k_commensurate = bool(hex_like and use_gamma and _hexagonal_plane_axes(system))
 
         # 5) Large-cell Γ-only collapse (3D only -- a vacuum axis would
         #    inflate a det-based volume on slabs/wires).
@@ -1081,13 +1097,16 @@ class KPoints:
                 symmetry=do_sym,
             )
         else:
-            kp = cls.from_kspacing(
+            kp = _recommended_kspacing_mesh(
+                cls,
                 system,
                 dk,
-                units="angstrom",
-                gamma_centred=use_gamma,
-                symmetry=do_sym,
+                use_gamma=use_gamma,
+                do_sym=do_sym,
+                k_commensurate=k_commensurate,
             )
+            if k_commensurate and not _mesh_is_gamma_only(kp.mesh, int(system.dim)):
+                notes.append("K-commensurate (hexagonal-plane mesh in multiples of 3)")
             if _mesh_is_gamma_only(kp.mesh, int(system.dim)):
                 notes.append("Γ-only (small BZ -- Δk yields a 1x1x1 mesh)")
 
@@ -1152,13 +1171,15 @@ class KPoints:
                 energy_fn=scf_energy_fn,
                 n_atoms=n_atoms,
                 ev_per_hartree=EV_PER_HARTREE,
+                k_commensurate=k_commensurate,
             )
-            kp = cls.from_kspacing(
+            kp = _recommended_kspacing_mesh(
+                cls,
                 system,
                 conv.chosen_delta_k,
-                units="angstrom",
-                gamma_centred=use_gamma,
-                symmetry=do_sym,
+                use_gamma=use_gamma,
+                do_sym=do_sym,
+                k_commensurate=k_commensurate,
             )
             kp.smearing = smearing
             kp.bz_integration = bz_integration
@@ -1653,11 +1674,63 @@ def _system_dim(system: PeriodicSystem) -> int:
     return dim
 
 
+def _count_failure_mode(value) -> str | None:
+    """Why ``value`` is not an exact integer count, in words, or ``None``."""
+    if isinstance(value, (bool, np.bool_)):
+        return "a boolean"
+    if isinstance(value, (str, bytes)):
+        return f"a {type(value).__name__}, not a number"
+    try:
+        index(value)
+    except TypeError:
+        if isinstance(value, (complex, np.complexfloating)):
+            return "a complex number"
+        if isinstance(value, (float, np.floating)):
+            return "a non-integral number"
+        return f"of type {type(value).__name__}, not an integer"
+    return None
+
+
+def _integer_counts(counts, *, name: str, repeat: int | None = None) -> list[int]:
+    """Read exact counts; optionally repeat a scalar over active directions.
+
+    Every refusal names the failure mode the caller hit (a boolean, a
+    non-integral number, a value of another type) and keeps the contract
+    phrase "must contain integers". Positivity is the caller's own check.
+    """
+
+    def _refuse(value, mode: str, position: int | None = None) -> ValueError:
+        where = "" if position is None else f" entry {position}"
+        return ValueError(
+            f"{name}{where} = {value!r} is {mode}; {name} must contain integers"
+        )
+
+    scalar_mode = _count_failure_mode(counts)
+    if isinstance(counts, (bool, np.bool_, str, bytes)):
+        raise _refuse(counts, scalar_mode or "not an integer")
+    if repeat is not None:
+        try:
+            return [index(counts)] * repeat
+        except TypeError:
+            pass
+    try:
+        values = list(counts)
+    except TypeError:
+        raise _refuse(counts, scalar_mode or "not a sequence of integers") from None
+    checked = []
+    for position, value in enumerate(values):
+        mode = _count_failure_mode(value)
+        if mode is not None:
+            raise _refuse(value, mode, position)
+        checked.append(index(value))
+    return checked
+
+
 def _mesh_tuple(mesh: Sequence[int]) -> Tuple[int, int, int]:
-    arr = list(mesh)
+    arr = _integer_counts(mesh, name="mesh")
     if len(arr) != 3:
         raise ValueError(f"mesh must have length 3, got {arr!r}")
-    out = tuple(int(m) for m in arr)
+    out = tuple(arr)
     if any(m < 1 for m in out):
         raise ValueError(f"mesh entries must be >= 1, got {arr!r}")
     return out  # type: ignore[return-value]
@@ -1668,7 +1741,7 @@ def _mesh_tuple_for_system(
     mesh: Sequence[int],
 ) -> Tuple[int, int, int]:
     dim = _system_dim(system)
-    arr = list(mesh)
+    arr = _integer_counts(mesh, name="mesh")
     if len(arr) == dim:
         arr = arr + [1] * (3 - dim)
     elif len(arr) != 3:
@@ -1676,7 +1749,7 @@ def _mesh_tuple_for_system(
             f"mesh must have length {dim} for dim={dim} systems or "
             f"length 3; got {arr!r}"
         )
-    out = tuple(int(m) for m in arr)
+    out = tuple(arr)
     if any(m < 1 for m in out):
         raise ValueError(f"mesh entries must be >= 1, got {arr!r}")
     return tuple(out[i] if i < dim else 1 for i in range(3))
@@ -2205,13 +2278,14 @@ def _classify_pre_scf(
     basis,
     warnings_mod,
 ) -> Tuple[Optional[str], Optional[float]]:
-    """Cheap Γ-only pre-SCF classifier (Hcore diagonalization).
+    """Cheap Γ-only pre-SCF classifier using at most three SCF cycles.
 
-    Lazy-imports the periodic SCF machinery.  Runs a single
-    Γ-point Hcore diagonalization (no SCF iterations) with the
-    user-supplied basis, then classifies the HOMO-LUMO gap.  Returns
-    ``(None, None)`` on any failure (basis missing, import error,
-    etc.) so the caller can fall through to the SAFE default.
+    Lazy-imports the Gamma GDF driver, which runs the bulk GDF Hamiltonian
+    on a compact 3D cell (#468), and classifies the HOMO-LUMO gap of the
+    three-cycle result; the gap is not required to be converged. Returns
+    ``(None, None)`` when no gap can be read or on any other failure, so
+    the caller can fall through to the SAFE metallic recommendation.
+    That fallback does not classify the material itself as metallic.
     """
     if basis is None:
         warnings_mod.warn(
@@ -2444,6 +2518,74 @@ def _geometric_hexagonal(system: PeriodicSystem) -> bool:
     return False
 
 
+def _hexagonal_plane_axes(system: PeriodicSystem) -> Tuple[int, ...]:
+    """The two periodic axes spanning a hexagonal plane, or ``()``.
+
+    A hexagonal plane is a pair of lattice vectors of equal length at 60 or
+    120 degrees. Exactly one such pair is required: an FCC or rhombohedral
+    primitive cell, where all three pairs qualify, has no single hexagonal
+    plane.
+    """
+    dim = int(system.dim)
+    A = np.asarray(system.lattice, dtype=np.float64)  # columns = a_i
+    pairs = []
+    for i in range(dim):
+        for j in range(i + 1, dim):
+            ni = float(np.linalg.norm(A[:, i]))
+            nj = float(np.linalg.norm(A[:, j]))
+            if ni < 1e-12 or nj < 1e-12 or abs(ni - nj) > 1e-6 * max(ni, nj):
+                continue
+            cos = max(-1.0, min(1.0, float(np.dot(A[:, i], A[:, j]) / (ni * nj))))
+            ang = float(np.degrees(np.arccos(cos)))
+            if (abs(ang - 120.0) <= HEX_ANGLE_TOL_DEG
+                    or abs(ang - 60.0) <= HEX_ANGLE_TOL_DEG):
+                pairs.append((i, j))
+    return pairs[0] if len(pairs) == 1 else ()
+
+
+def _k_commensurate_mesh(
+    system: PeriodicSystem, mesh: Tuple[int, int, int],
+) -> Tuple[int, int, int]:
+    """``mesh`` with its hexagonal-plane counts rounded up to multiples of 3.
+
+    The zone-corner points K and K' = (1/3, 1/3) and (2/3, 2/3) lie on a
+    Gamma-centred n x n mesh only when 3 divides n. Without them the energy
+    of a semimetal such as graphene alternates along a mesh ladder as
+    successive meshes include and miss the Dirac point (#129). A Gamma-only
+    axis (n = 1) is left alone.
+    """
+    out = list(mesh)
+    for axis in _hexagonal_plane_axes(system):
+        if out[axis] > 1:
+            out[axis] = 3 * int(np.ceil(out[axis] / 3.0))
+    return tuple(out)
+
+
+def _recommended_kspacing_mesh(
+    builder_cls,
+    system: PeriodicSystem,
+    delta_k: float,
+    *,
+    use_gamma: bool,
+    do_sym: bool,
+    k_commensurate: bool,
+) -> "KPoints":
+    """``from_kspacing`` at ``delta_k``, K-commensurate when asked."""
+    kp = builder_cls.from_kspacing(
+        system,
+        delta_k,
+        units="angstrom",
+        gamma_centred=use_gamma,
+        symmetry=do_sym,
+    )
+    if not k_commensurate:
+        return kp
+    mesh = _k_commensurate_mesh(system, tuple(kp.mesh))
+    if mesh == tuple(kp.mesh):
+        return kp
+    return builder_cls.monkhorst_pack(system, mesh, shift=(0, 0, 0), symmetry=do_sym)
+
+
 def _ensure_symmetry_attached(
     system: PeriodicSystem,
     notes: List[str],
@@ -2535,6 +2677,7 @@ def _converge_kmesh(
     energy_fn,
     n_atoms: int,
     ev_per_hartree: float,
+    k_commensurate: bool = False,
 ) -> "KPointConvergence":
     """Convergence ladder around ``base_delta_k``.
 
@@ -2543,18 +2686,22 @@ def _converge_kmesh(
     less than ``tol_meV`` between successive rungs or the refinement cap
     is hit. The coarsest rung within tolerance of the next-finer one is
     chosen. Energies are cached by mesh so repeated meshes (small cells)
-    cost a single SCF.
+    cost a single SCF. A refinement that lands on the previous rung's
+    mesh would compare a mesh with itself, so the spacing keeps shrinking
+    until the mesh changes. ``k_commensurate`` builds every rung with
+    :func:`_k_commensurate_mesh` (#129).
     """
     f = LADDER_SPACING_FACTOR
     cache: dict = {}
 
     def energy_at(spacing: float):
-        kp = builder_cls.from_kspacing(
+        kp = _recommended_kspacing_mesh(
+            builder_cls,
             system,
             spacing,
-            units="angstrom",
-            gamma_centred=use_gamma,
-            symmetry=do_sym,
+            use_gamma=use_gamma,
+            do_sym=do_sym,
+            k_commensurate=k_commensurate,
         )
         mesh = kp.mesh
         if mesh in cache:
@@ -2579,6 +2726,11 @@ def _converge_kmesh(
     for _ in range(VERIFY_MAX_REFINE_STEPS):
         fine_dk = prev_dk / f
         e_fine, kp_fine = energy_at(fine_dk)
+        for _repeat in range(VERIFY_MAX_REPEAT_SKIPS):
+            if tuple(kp_fine.mesh) != prev_mesh:
+                break
+            fine_dk /= f
+            e_fine, kp_fine = energy_at(fine_dk)
         rungs.append((fine_dk, tuple(kp_fine.mesh), e_fine))
         if per_atom_meV(prev_e, e_fine) <= tol_meV:
             converged = True

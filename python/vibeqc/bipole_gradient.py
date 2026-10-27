@@ -161,6 +161,33 @@ __all__ = [
 ]
 
 
+def _reject_range_separated_analytic_gradient(result, method: str) -> None:
+    """Fail closed for a range-separated hybrid (#667).
+
+    The KS gradient scales the exchange block by
+    ``Functional.hf_exchange_fraction``, which for a screened hybrid is
+    ``cam_alpha`` (hse06: 0.25). The SCF energy instead carries
+    ``cam_alpha * K_full + cam_beta * K_erf(omega)`` (hse06: short-range
+    exchange only), so the analytic gradient differentiated a different
+    energy: H2/STO-3G in a 6-bohr cube gave -0.1034 Ha/bohr against a
+    -0.0442 central difference.
+    """
+    from ._vibeqc_core import Functional
+
+    name = str(getattr(result, "functional", "") or "")
+    if not name:
+        return
+    spin = 1 if method == "rks" else 2
+    if bool(getattr(Functional(name, spin), "is_range_separated", False)):
+        raise NotImplementedError(
+            f"compute_bipole_gradient_{method}: functional {name!r} is "
+            "range-separated, and the analytic BIPOLE gradient has no "
+            "erf-attenuated exchange term (it would differentiate the "
+            "full-range hybrid instead). Use compute_bipole_gradient_fd "
+            "(the production force path) for this functional."
+        )
+
+
 def _reject_m5_domain_analytic_gradient(result, method: str) -> None:
     """Fail closed until derivatives support the M5 Fock domains."""
     # BIPOLE-EXACT-ZONE increment 1: a restricted exact output zone has
@@ -1108,7 +1135,7 @@ def _matching_ewald_options(
         float(reciprocal_cutoff_bohr_inv)
         if reciprocal_cutoff_bohr_inv is not None
         and float(reciprocal_cutoff_bohr_inv) > 0.0
-        else float(bipole_ewald_reciprocal_cutoff(V_cell, float(ewald_alpha)))
+        else float(bipole_ewald_reciprocal_cutoff(V_cell, float(ewald_alpha), tolerance=tolerance))
     )
     return _crystal_ewald_options(
         lattice_opts,
@@ -1196,7 +1223,7 @@ def _v_ne_ewald_gradient(
         float(reciprocal_cutoff_bohr_inv)
         if reciprocal_cutoff_bohr_inv is not None
         and float(reciprocal_cutoff_bohr_inv) > 0.0
-        else float(bipole_ewald_reciprocal_cutoff(V_cell, alpha))
+        else float(bipole_ewald_reciprocal_cutoff(V_cell, alpha, tolerance=precision))
     )
 
     cells_r_cart = np.array(
@@ -1338,7 +1365,7 @@ def _j_long_range_ewald_gradient(
     alpha = float(ewald_alpha)
     a_lat = np.asarray(system.lattice, dtype=float)
     V_cell = float(abs(np.linalg.det(a_lat)))
-    K_max = float(bipole_ewald_reciprocal_cutoff(V_cell, alpha))
+    K_max = float(bipole_ewald_reciprocal_cutoff(V_cell, alpha, tolerance=precision))
 
     cells_r_cart = np.array(
         [np.asarray(c.r_cart, dtype=float) for c in D_real.cells], dtype=float
@@ -1432,7 +1459,7 @@ def _k_long_range_ewald_gradient(
     alpha = float(ewald_alpha)
     a_lat = np.asarray(system.lattice, dtype=float)
     V_cell = float(abs(np.linalg.det(a_lat)))
-    K_max = float(bipole_ewald_reciprocal_cutoff(V_cell, alpha))
+    K_max = float(bipole_ewald_reciprocal_cutoff(V_cell, alpha, tolerance=precision))
     cells_r_cart = np.array(
         [np.asarray(c.r_cart, dtype=float) for c in D_real.cells], dtype=float
     )
@@ -1672,7 +1699,7 @@ def _bipole_de_dp_home_block(
     alpha = float(ewald_alpha)
     V = float(abs(np.linalg.det(np.asarray(system.lattice, dtype=float))))
     n_elec = int(system.n_electrons())
-    K_max = float(bipole_ewald_reciprocal_cutoff(V, alpha))
+    K_max = float(bipole_ewald_reciprocal_cutoff(V, alpha, tolerance=ewald_precision))
     v_bg = -np.pi * float(n_elec) / (alpha * alpha * V)
 
     cells = list(D_real.cells)
@@ -1969,7 +1996,7 @@ def _build_multi_k_bipole_b0_closed(
 
     alpha = float(ewald_alpha)
     V = float(abs(np.linalg.det(np.asarray(system.lattice, dtype=float))))
-    K_max = float(bipole_ewald_reciprocal_cutoff(V, alpha))
+    K_max = float(bipole_ewald_reciprocal_cutoff(V, alpha, tolerance=ewald_precision))
     S_lat = compute_overlap_lattice(basis, system, lattice_opts)
     T_lat = compute_kinetic_lattice(basis, system, lattice_opts)
     ew = _crystal_ewald_options(
@@ -2193,7 +2220,7 @@ def _build_multi_k_bipole_b0_open(
     alpha = float(ewald_alpha)
     a_hf = float(alpha_hf)
     V = float(abs(np.linalg.det(np.asarray(system.lattice, dtype=float))))
-    K_max = float(bipole_ewald_reciprocal_cutoff(V, alpha))
+    K_max = float(bipole_ewald_reciprocal_cutoff(V, alpha, tolerance=ewald_precision))
     S_lat = compute_overlap_lattice(basis, system, lattice_opts)
     T_lat = compute_kinetic_lattice(basis, system, lattice_opts)
     ew = _crystal_ewald_options(
@@ -2709,6 +2736,9 @@ def _multi_k_orbital_relaxation_ks_closed_diag(
     ewald_alpha: float,
     func_name: str,
     *,
+    grid_options=None,
+    use_periodic_becke: bool = True,
+    becke_image_radius_bohr: float = 10.0,
     step_bohr: float = 1e-4,
     ewald_precision: float = 1e-8,
 ) -> np.ndarray:
@@ -2737,7 +2767,6 @@ def _multi_k_orbital_relaxation_ks_closed_diag(
         _crystal_ewald_options,
     )
     from .pbc_bipole_common import _bloch_sum_blocks
-    from .periodic_grid import build_periodic_becke_grid
 
     n_atoms = len(system.unit_cell)
     if system.dim != 3 or kmesh is None:
@@ -2770,8 +2799,10 @@ def _multi_k_orbital_relaxation_ks_closed_diag(
         z_list.append(b / ediff)
 
     # Build KS grid and Fock for B0 differentiation.
-    K_max = float(bipole_ewald_reciprocal_cutoff(V, alpha))
-    grid = build_periodic_becke_grid(system, image_radius_bohr=10.0)
+    K_max = float(bipole_ewald_reciprocal_cutoff(V, alpha, tolerance=ewald_precision))
+    grid = _build_ks_grid(
+        system, grid_options, use_periodic_becke, becke_image_radius_bohr
+    )
     func = Functional(func_name, 1)
     T_lat = compute_kinetic_lattice(basis, system, lattice_opts)
     ew = _crystal_ewald_options(
@@ -2890,6 +2921,9 @@ def _multi_k_orbital_relaxation_ks_open_diag(
     ewald_alpha: float,
     func_name: str,
     *,
+    grid_options=None,
+    use_periodic_becke: bool = True,
+    becke_image_radius_bohr: float = 10.0,
     step_bohr: float = 1e-4,
     ewald_precision: float = 1e-8,
 ) -> np.ndarray:
@@ -2912,7 +2946,6 @@ def _multi_k_orbital_relaxation_ks_open_diag(
         _crystal_ewald_options,
     )
     from .pbc_bipole_common import _bloch_sum_blocks
-    from .periodic_grid import build_periodic_becke_grid
 
     n_atoms = len(system.unit_cell)
     if system.dim != 3 or kmesh is None:
@@ -2951,8 +2984,10 @@ def _multi_k_orbital_relaxation_ks_open_diag(
             ediff = evec[nocc:][None, :] - evec[:nocc, None]
             zstore.append(b / ediff)
 
-    K_max = float(bipole_ewald_reciprocal_cutoff(V, alpha))
-    grid = build_periodic_becke_grid(system, image_radius_bohr=10.0)
+    K_max = float(bipole_ewald_reciprocal_cutoff(V, alpha, tolerance=ewald_precision))
+    grid = _build_ks_grid(
+        system, grid_options, use_periodic_becke, becke_image_radius_bohr
+    )
     func = Functional(func_name, 2)
     T_lat = compute_kinetic_lattice(basis, system, lattice_opts)
     ew = _crystal_ewald_options(
@@ -3252,7 +3287,7 @@ def _multi_k_orbital_relaxation_open(
         return np.zeros((n_atoms, 3), dtype=np.float64)
 
     nbf = int(basis.nbasis)
-    K_max = float(bipole_ewald_reciprocal_cutoff(V, alpha))
+    K_max = float(bipole_ewald_reciprocal_cutoff(V, alpha, tolerance=ewald_precision))
     cells_r = np.array(
         [np.asarray(c.r_cart, dtype=float) for c in S_lat.cells], dtype=float
     )
@@ -3660,7 +3695,7 @@ def _reconstruct_bipole_fock_gamma_builder(
     a_hf = float(alpha_hf)
     nbf = int(basis.nbasis)
     V = float(abs(np.linalg.det(np.asarray(system.lattice, dtype=float))))
-    K_max = float(bipole_ewald_reciprocal_cutoff(V, alpha))
+    K_max = float(bipole_ewald_reciprocal_cutoff(V, alpha, tolerance=ewald_precision))
     S = compute_overlap_lattice(basis, system, lattice_opts)
     cells = list(S.cells)
     n_cells = len(cells)
@@ -3798,7 +3833,7 @@ def _bloch_cphf_rhs_analytic(
     V = float(abs(np.linalg.det(np.asarray(system.lattice, dtype=float))))
     n_elec = int(system.n_electrons())
     v_bg = -np.pi * float(n_elec) / (alpha * alpha * V)
-    K_max = float(bipole_ewald_reciprocal_cutoff(V, alpha))
+    K_max = float(bipole_ewald_reciprocal_cutoff(V, alpha, tolerance=ewald_precision))
 
     # MO-derived response densities (home blocks).
     Pz = C_vir @ z.T @ C_occ.T
@@ -4619,7 +4654,7 @@ def _bloch_cphf_rhs_analytic_open(
     V = float(abs(np.linalg.det(np.asarray(system.lattice, dtype=float))))
     n_elec = int(system.n_electrons())
     v_bg = -np.pi * float(n_elec) / (alpha * alpha * V)
-    K_max = float(bipole_ewald_reciprocal_cutoff(V, alpha))
+    K_max = float(bipole_ewald_reciprocal_cutoff(V, alpha, tolerance=ewald_precision))
     nva = Cavir.shape[1]
     nvb = Cbvir.shape[1]
 
@@ -5112,7 +5147,7 @@ def _j_long_range_ewald_gradient_multi_k(
         float(reciprocal_cutoff_bohr_inv)
         if reciprocal_cutoff_bohr_inv is not None
         and float(reciprocal_cutoff_bohr_inv) > 0.0
-        else float(bipole_ewald_reciprocal_cutoff(V_cell, alpha))
+        else float(bipole_ewald_reciprocal_cutoff(V_cell, alpha, tolerance=precision))
     )
 
     cells = list(D_real.cells)
@@ -5618,6 +5653,16 @@ def _compute_bipole_gradient_corrected_gamma(
     if sr_image_extent_bohr is None:
         Dg_sr = Dg
         sr_output_cells = []
+        if lat.pair_complete_1e:
+            # Even without automatic SR padding, physical exchange outputs
+            # extend beyond the one-electron pair list. Use the same finite
+            # enclosure as the SCF for both contracting density occurrences.
+            sr_internal_cells = list(_sr_internal_cells(basis, system, lat, None))
+            sr_output_cells = sr_internal_cells
+            Dg_sr = make_lattice_matrix_set(
+                int(nbf), sr_internal_cells,
+                [D_home.copy() for _ in sr_internal_cells],
+            )
     else:
         density_cells = list(sr_density_cells)
         Dg_sr = make_lattice_matrix_set(
@@ -5685,10 +5730,10 @@ def _compute_bipole_gradient_corrected_gamma(
                     [blk.copy() for _ in lr_output_cells],
                 )
             )
-            if sr_image_extent_bohr is None:
+            if sr_image_extent_bohr is None and not lat.pair_complete_1e:
                 Dgx_sr = Dgx_lr
             else:
-                density_cells = list(sr_density_cells)
+                density_cells = list(Dg_sr.cells)
                 Dgx_sr = make_lattice_matrix_set(
                     int(nbf),
                     density_cells,
@@ -5803,7 +5848,7 @@ def _k_long_range_ewald_gradient_multi_k(
         float(reciprocal_cutoff_bohr_inv)
         if reciprocal_cutoff_bohr_inv is not None
         and float(reciprocal_cutoff_bohr_inv) > 0.0
-        else float(bipole_ewald_reciprocal_cutoff(V_cell, alpha))
+        else float(bipole_ewald_reciprocal_cutoff(V_cell, alpha, tolerance=precision))
     )
     cells_r = np.array(
         [
@@ -5924,6 +5969,7 @@ def _compute_bipole_gradient_corrected_multi_k(
     reciprocal_cutoff_bohr_inv: Optional[float] = None,
     j_sr_alpha_image_ball: bool = False,
     ewald_precision: float = 1e-8,
+    exact_ft_hartree_ke_cutoff: Optional[float] = None,
 ) -> np.ndarray:
     """Multi-k corrected-gauge (Ewald-exchange-split) BIPOLE RHF/UHF gradient.
 
@@ -5933,12 +5979,14 @@ def _compute_bipole_gradient_corrected_multi_k(
     K_LR(recip, per-q) + Madelung(per-k)``.
 
     **Density convention (the multi-k analogue of the Γ homogeneous-on-template
-    trap).** Every real-space-density term -- kinetic, V_ne, jellium, J_SR,
-    K_SR, *and* J^LR -- consumes ``D_grad``, the per-k density inverse-Bloch-
-    folded onto the GRADIENT template (``density_set_from_k_matrices``), NOT
-    ``result.density`` (whose 2x-cutoff cell list over-counts the lattice-
-    summed 2e gradient -- feeding J^LR ``result.density`` was a 2.78e-3 error).
-    The per-q K_LR + per-k Madelung kernels take the raw per-k ``D(k)``.
+    trap).** Kinetic, V_ne, jellium and J^LR consume ``D_grad``, the per-k
+    density inverse-Bloch-
+    folded onto the GRADIENT template (``density_set_from_k_matrices``).
+    The SR J/K terms instead use the physical exchange enclosure when that
+    policy is active, including without automatic SR padding. Reciprocal J
+    retains the pair template: feeding it the wider ``result.density`` would
+    over-count (the historical error was 2.78e-3 Ha/bohr). The per-q K_LR and
+    per-k Madelung kernels take the raw per-k ``D(k)``.
 
     Handles closed-shell (RHF / RKS-HF-part) and open-shell (UHF / UKS-HF-part)
     automatically from the result's shell type: open-shell builds per-spin per-k
@@ -5954,7 +6002,24 @@ def _compute_bipole_gradient_corrected_multi_k(
     the ``J_SR`` derivative to the radius where ``erfc(alpha R)`` has decayed,
     keeping the density support as the output domain. Ignored when a BIPOLE
     ``sr_image_extent_bohr`` padded traversal is supplied.
+
+    ``exact_ft_hartree_ke_cutoff`` selects the actual finite reciprocal
+    Hartree derivative instead of that split. It is admitted only for the
+    unpadded pure-DFT analytic-FT source; its G=0 convention already contains
+    the Hartree background, so no separate overlap background is added.
     """
+    if exact_ft_hartree_ke_cutoff is not None:
+        if not j_sr_alpha_image_ball or sr_image_extent_bohr is not None:
+            raise ValueError("exact-FT Hartree gradient requires the unpadded analytic-FT source")
+        if alpha_hf != 0.0:
+            raise NotImplementedError("exact-FT Hartree derivative composition is qualified for pure DFT only")
+    if (j_sr_alpha_image_ball and lattice_opts.pair_complete_1e
+            and exact_ft_hartree_ke_cutoff is None):
+        raise NotImplementedError(
+            "The analytic-FT Hartree gradient with physical pair support is "
+            "not validated by the finite BIPOLE SR derivative. Use finite "
+            "differences of the same periodic SCF energy."
+        )
     if sr_image_extent_bohr is not None and lattice_opts.pair_complete_1e:
         lattice_opts = _sr_padded_lat_opts(lattice_opts, sr_image_extent_bohr)
     from .periodic_k_symmetry import density_set_from_k_matrices
@@ -6089,9 +6154,22 @@ def _compute_bipole_gradient_corrected_multi_k(
         if sr_image_extent_bohr is None
         else list(_sr_internal_cells(basis, system, lattice_opts, sr_image_extent_bohr))
     )
+    def _unpad_physical_sr_density(per_k_density):
+        template = make_lattice_matrix_set(
+            int(basis.nbasis), sr_internal_cells,
+            [np.zeros((basis.nbasis, basis.nbasis)) for _ in sr_internal_cells],
+        )
+        return _bloch_fold_w_matrices(per_k_density, kmesh, template)
+
     if sr_image_extent_bohr is None:
         D_sr_total = D_grad
         sr_output_cells = []
+        if lat.pair_complete_1e and exact_ft_hartree_ke_cutoff is None:
+            # Keep kinetic/overlap/reciprocal contractions on D_grad, but
+            # reconstruct SR density on the SCF's wider exchange enclosure.
+            sr_internal_cells = list(_sr_internal_cells(basis, system, lat, None))
+            sr_output_cells = sr_internal_cells
+            D_sr_total = _unpad_physical_sr_density(per_k_D_total)
     else:
         if sr_density is None:
             raise ValueError(
@@ -6130,7 +6208,8 @@ def _compute_bipole_gradient_corrected_multi_k(
     # traversal (sr_image_extent_bohr) and are not affected.
     j_sr_internal_cells = sr_internal_cells
     j_sr_output_cells = sr_output_cells
-    if sr_image_extent_bohr is None and j_sr_alpha_image_ball:
+    if (sr_image_extent_bohr is None and j_sr_alpha_image_ball
+            and exact_ft_hartree_ke_cutoff is None):
         from .pbc_bipole_common import ewald_real_cutoff_for_alpha
 
         j_sr_radius = max(
@@ -6169,13 +6248,14 @@ def _compute_bipole_gradient_corrected_multi_k(
     )
     # FULL jellium (-pi N_e^2/(2w^2V) is quadratic in N_e=Tr[DS]; the W carries the
     # +v_bg per-orbital shift that supplies the cancelling overlap term).
-    v_bg = -math.pi * float(n_elec) / (alpha * alpha * V_cell)
-    D_bg = compute_overlap_lattice(basis, system, lat)
-    for c in range(len(D_bg.cells)):
-        D_bg.set_block(c, v_bg * np.asarray(D_grad.blocks[c], dtype=float))
-    grad += -1.0 * np.asarray(
-        overlap_lattice_gradient_contribution(basis, system, D_bg, lat)
-    )
+    if exact_ft_hartree_ke_cutoff is None:
+        v_bg = -math.pi * float(n_elec) / (alpha * alpha * V_cell)
+        D_bg = compute_overlap_lattice(basis, system, lat)
+        for c in range(len(D_bg.cells)):
+            D_bg.set_block(c, v_bg * np.asarray(D_grad.blocks[c], dtype=float))
+        grad += -1.0 * np.asarray(
+            overlap_lattice_gradient_contribution(basis, system, D_bg, lat)
+        )
 
     # corrected-gauge exchange: K_SR(erfc) + per-q K_LR(recip) + per-k Madelung,
     # each on the gradient-template fold of the contracting density. Closed
@@ -6185,6 +6265,8 @@ def _compute_bipole_gradient_corrected_multi_k(
         def _exchange_grad_multi_k(per_k_Dx, sr_density_override=None):
             Dx_grad = density_set_from_k_matrices(system, basis, lat, kmesh, per_k_Dx)
             Dx_sr = Dx_grad
+            if sr_image_extent_bohr is None and lat.pair_complete_1e:
+                Dx_sr = _unpad_physical_sr_density(per_k_Dx)
             if sr_image_extent_bohr is not None:
                 if sr_density_override is None:
                     raise ValueError(
@@ -6236,6 +6318,16 @@ def _compute_bipole_gradient_corrected_multi_k(
                         else None
                     ),
                 )
+    if exact_ft_hartree_ke_cutoff is not None:
+        from .ewald_composed import compute_j_ewald_3d_ft_lattice_gradient
+
+        # The finite G=0-dropped objective already includes the complete
+        # Hartree gauge; adding the split's background dS would count it twice.
+        grad += compute_j_ewald_3d_ft_lattice_gradient(
+            basis, system, D_grad, lattice_opts=lat,
+            ke_cutoff=exact_ft_hartree_ke_cutoff,
+        )
+        return grad
     # Coulomb: J_SR(erfc) + J^LR(reciprocal, multi-k) -- total density.
     grad += np.asarray(
         eri_lattice_gradient_contribution(
@@ -6413,6 +6505,108 @@ def _add_dft_plus_u_pulay(
     return grad + np.asarray(extra, dtype=np.float64)
 
 
+def _gradient_domain_options(result, lattice_opts, *, system=None, basis=None):
+    """Use the SCF snapshot; explicit options may not select another operator."""
+    domain = getattr(result, "resolved_domain", None)
+    if domain is None:
+        return lattice_opts
+    # Pulay, grid-motion and orbital-response helpers currently use the native
+    # AUTO density-domain default. Do not differentiate a different SCF choice
+    # until every one of those consumers forwards it consistently.
+    if domain.xc_density_domain not in (
+        None, ("enum", "PeriodicXCDensityDomain", "AUTO"),
+    ):
+        raise NotImplementedError(
+            "BIPOLE analytic gradient does not support the recorded non-AUTO "
+            "XC density domain; use compute_bipole_gradient_fd with the same "
+            "xc_density_domain and SCF options."
+        )
+    if domain.v_ne_grid is not None or domain.exact_j_ke_cutoff is not None:
+        raise NotImplementedError(
+            "BIPOLE analytic gradient does not differentiate an explicit V_ne grid "
+            "or exact-FT J oracle; use the finite-difference gradient with the "
+            "same SCF options."
+        )
+    for field in ("ewald_alpha_bohr_inv", "ewald_precision", "sr_image_extent_bohr",
+                  "exact_zone_bohr", "exchange_ewald_split"):
+        if getattr(result, field) != getattr(domain, field):
+            raise ValueError(f"BIPOLE gradient: result {field} differs from its domain")
+    requested_match = False
+    if lattice_opts is not None and domain.requested_lattice is not None:
+        try:
+            domain.requested_lattice.require_match(
+                lattice_opts, context="BIPOLE requested gradient options",
+                ignore=("coulomb_method",),
+            )
+            requested_match = True
+        except ValueError:
+            pass  # A caller may instead supply the already resolved options.
+    if lattice_opts is not None and not requested_match:
+        if system is not None:
+            from .pbc_bipole_common import (
+                copy_bipole_lattice_options, clamp_bipole_nuclear_cutoff,
+            )
+            from .progress import resolve_progress
+
+            # Callers may pass the original SCF options, which drivers no
+            # longer mutate. Apply the same neutral-cell preparation on a
+            # private copy before comparing the effective operator.
+            lattice_opts = copy_bipole_lattice_options(lattice_opts)
+            clamp_bipole_nuclear_cutoff(
+                system, lattice_opts, domain.use_ewald_j_split, resolve_progress(False),
+            )
+        domain.lattice_2e.require_match(
+            lattice_opts, context="BIPOLE gradient", ignore=("coulomb_method",),
+        )
+    restored = domain.lattice_2e.restore(LatticeSumOptions)
+    if system is not None and domain.ewald_alpha_bohr_inv is not None:
+        from .bipole_ext_el_pole import bipole_ewald_reciprocal_cutoff
+        volume = float(abs(np.linalg.det(np.asarray(system.lattice, dtype=float))))
+        reciprocal = bipole_ewald_reciprocal_cutoff(volume, domain.ewald_alpha_bohr_inv, tolerance=domain.ewald_precision)
+        if reciprocal != domain.reciprocal_cutoff_bohr_inv:
+            raise ValueError("BIPOLE gradient reciprocal reach differs from the SCF domain")
+        # Every E_nn derivative uses this shared constructor. Validate the
+        # real radius too: reciprocal agreement alone does not identify the
+        # finite Ewald operator differentiated below.
+        domain.require_ewald_options(
+            _matching_ewald_options(
+                system, restored, domain.ewald_alpha_bohr_inv,
+                reciprocal_cutoff_bohr_inv=domain.reciprocal_cutoff_bohr_inv,
+                tolerance=domain.ewald_precision,
+            ),
+            context="BIPOLE nuclear gradient",
+        )
+        if domain.nuclear_erfc is not None:
+            from .pbc_bipole_common import ewald_erfc_lattice_options
+            erfc = ewald_erfc_lattice_options(
+                restored, domain.ewald_alpha_bohr_inv, domain.ewald_precision,
+                basis=basis, system=system,
+            )
+            domain.nuclear_erfc.require_match(
+                erfc, context="BIPOLE nuclear gradient",
+                ignore=("coulomb_method", "becke_image_radius_bohr", "sr_range_screening"),
+            )
+    return restored
+
+
+def _gradient_domain_grid(result, grid_options, use_periodic_becke, image_radius):
+    """Recover omitted grid controls and refuse explicit energy/force drift."""
+    domain = getattr(result, "resolved_domain", None)
+    if domain is None or domain.xc_grid is None:
+        return (grid_options, True if use_periodic_becke is None else use_periodic_becke,
+                10.0 if image_radius is None else image_radius)
+    if grid_options is not None:
+        domain.xc_grid.require_match(grid_options, context="BIPOLE XC gradient")
+    for name, value in (("use_periodic_becke", use_periodic_becke),
+                        ("becke_image_radius_bohr", image_radius)):
+        if value is not None and value != getattr(domain, name):
+            raise ValueError(f"BIPOLE XC gradient: {name} differs from the SCF domain")
+    from ._vibeqc_core import GridOptions
+
+    return (domain.xc_grid.restore(GridOptions), domain.use_periodic_becke,
+            domain.becke_image_radius_bohr)
+
+
 def compute_bipole_gradient_rhf(
     system: PeriodicSystem,
     basis: BasisSet,
@@ -6450,6 +6644,11 @@ def compute_bipole_gradient_rhf(
        RHF/UHF are included; other padded multi-k combinations remain gated. Use
        :func:`compute_bipole_gradient_fd` for production forces.
     """
+    from .bipole_ecp import reject_bipole_ecp_derivative
+    reject_bipole_ecp_derivative(result)
+    lattice_opts = _gradient_domain_options(
+        result, lattice_opts, system=system, basis=basis
+    )
     ewald_precision = float(getattr(result, "ewald_precision", 1e-8))
     _reject_m5_domain_analytic_gradient(result, "rhf")
     _warn_research_preview("rhf")
@@ -6682,6 +6881,11 @@ def compute_bipole_gradient_uhf(
        against FD, but RKS/UKS and multi-k are not. Use
        :func:`compute_bipole_gradient_fd` for production forces.
     """
+    from .bipole_ecp import reject_bipole_ecp_derivative
+    reject_bipole_ecp_derivative(result)
+    lattice_opts = _gradient_domain_options(
+        result, lattice_opts, system=system, basis=basis
+    )
     ewald_precision = float(getattr(result, "ewald_precision", 1e-8))
     _reject_m5_domain_analytic_gradient(result, "uhf")
     _warn_research_preview("uhf")
@@ -7182,7 +7386,18 @@ def _periodic_xc_grid_motion_correction_uks(
     return moving - np.asarray(fixed_grid_gradient, dtype=np.float64)
 
 
-def _ks_gradient_lattice_options(lattice_opts, use_periodic_becke, image_radius):
+def _reject_expanded_xc_analytic_gradient(result):
+    domain = getattr(result, "resolved_domain", None)
+    if getattr(domain, "xc_lattice", None) is not None:
+        raise NotImplementedError(
+            "BIPOLE analytic KS gradients do not yet differentiate independently "
+            "expanded XC image support; use compute_bipole_gradient_fd with the "
+            "same SCF options."
+        )
+
+
+def _ks_gradient_lattice_options(lattice_opts, use_periodic_becke, image_radius,
+                                 *, legacy_partition_reach=False):
     """Match the SCF's periodic XC reach without mutating caller options."""
     if not use_periodic_becke:
         return lattice_opts
@@ -7191,7 +7406,10 @@ def _ks_gradient_lattice_options(lattice_opts, use_periodic_becke, image_radius)
     source = lattice_opts if lattice_opts is not None else LatticeSumOptions()
     out = _lattice_options_passthrough(source)
     out.coulomb_method = source.coulomb_method
-    out.becke_image_radius_bohr = float(image_radius)
+    # Old results lack a domain snapshot and used the partition as density
+    # reach. Snapshot-bearing results already retain the executed density reach.
+    if legacy_partition_reach:
+        out.becke_image_radius_bohr = float(image_radius)
     return out
 
 
@@ -7204,8 +7422,8 @@ def compute_bipole_gradient_rks(
     kmesh=None,
     dft_plus_u: Optional[Sequence["object"]] = None,
     grid_options=None,
-    use_periodic_becke: bool = True,
-    becke_image_radius_bohr: float = 10.0,
+    use_periodic_becke: Optional[bool] = None,
+    becke_image_radius_bohr: Optional[float] = None,
 ) -> np.ndarray:
     """BIPOLE RKS (DFT) atomic gradient. Uses alpha_hf from functional.
 
@@ -7216,9 +7434,9 @@ def compute_bipole_gradient_rks(
     relaxation using a finite-difference ``f_xc`` response.
 
     ``grid_options`` / ``use_periodic_becke`` / ``becke_image_radius_bohr``
-    MUST match the SCF's DFT-grid settings (the analytic XC gradient is
-    integrated on the same grid the energy used). The defaults match
-    :class:`PeriodicKSOptions` (``use_periodic_becke=True``).
+    must match the SCF's DFT-grid settings. Omitted settings are restored
+    from ``result.resolved_domain``; explicit mismatches raise. Results from
+    older versions retain the historical defaults (periodic Becke, 10 bohr).
 
     See :func:`compute_bipole_gradient_rhf` for ``dft_plus_u`` /
     ``kmesh`` kwargs.
@@ -7232,11 +7450,25 @@ def compute_bipole_gradient_rks(
        certification remains open. Use
        :func:`compute_bipole_gradient_fd` for production forces.
     """
+    from .bipole_ecp import reject_bipole_ecp_derivative
+    reject_bipole_ecp_derivative(result)
+    grid_options, use_periodic_becke, becke_image_radius_bohr = _gradient_domain_grid(
+        result, grid_options, use_periodic_becke, becke_image_radius_bohr
+    )
     ewald_precision = float(getattr(result, "ewald_precision", 1e-8))
     _reject_m5_domain_analytic_gradient(result, "rks")
+    _reject_expanded_xc_analytic_gradient(result)
+    _reject_range_separated_analytic_gradient(result, "rks")
     _warn_research_preview("rks")
+    # Compare the caller's original snapshot before preparing XC-only fields.
+    # Applying the KS image radius first would prevent an otherwise exact
+    # requested-options match after the physical-domain default migration.
+    lattice_opts = _gradient_domain_options(
+        result, lattice_opts, system=system, basis=basis
+    )
     lattice_opts = _ks_gradient_lattice_options(
-        lattice_opts, use_periodic_becke, becke_image_radius_bohr
+        lattice_opts, use_periodic_becke, becke_image_radius_bohr,
+        legacy_partition_reach=getattr(result, "resolved_domain", None) is None,
     )
     if getattr(result, "exchange_ewald_split", False):
         # Corrected (Ewald-exchange-split) gauge at Γ: the standard
@@ -7519,6 +7751,9 @@ def compute_bipole_gradient_rks(
             lattice_opts,
             float(ewald_alpha),
             func_name,
+            grid_options=grid_options,
+            use_periodic_becke=use_periodic_becke,
+            becke_image_radius_bohr=becke_image_radius_bohr,
             ewald_precision=ewald_precision,
         )
     if dft_plus_u:
@@ -7551,8 +7786,8 @@ def compute_bipole_gradient_uks(
     kmesh=None,
     dft_plus_u: Optional[Sequence["object"]] = None,
     grid_options=None,
-    use_periodic_becke: bool = True,
-    becke_image_radius_bohr: float = 10.0,
+    use_periodic_becke: Optional[bool] = None,
+    becke_image_radius_bohr: Optional[float] = None,
 ) -> np.ndarray:
     """BIPOLE UKS (spin-DFT) atomic gradient.
 
@@ -7564,9 +7799,9 @@ def compute_bipole_gradient_uks(
     response.
 
     ``grid_options`` / ``use_periodic_becke`` / ``becke_image_radius_bohr``
-    MUST match the SCF's DFT-grid settings (the analytic XC gradient is
-    integrated on the same grid the energy used). The defaults match
-    :class:`PeriodicKSOptions` (``use_periodic_becke=True``).
+    must match the SCF's DFT-grid settings. Omitted settings are restored
+    from ``result.resolved_domain``; explicit mismatches raise. Results from
+    older versions retain the historical defaults (periodic Becke, 10 bohr).
 
     See :func:`compute_bipole_gradient_rhf` for ``dft_plus_u`` /
     ``kmesh`` kwargs.
@@ -7579,11 +7814,25 @@ def compute_bipole_gradient_uks(
        certification remains open. Use
        :func:`compute_bipole_gradient_fd` for production forces.
     """
+    from .bipole_ecp import reject_bipole_ecp_derivative
+    reject_bipole_ecp_derivative(result)
+    grid_options, use_periodic_becke, becke_image_radius_bohr = _gradient_domain_grid(
+        result, grid_options, use_periodic_becke, becke_image_radius_bohr
+    )
     ewald_precision = float(getattr(result, "ewald_precision", 1e-8))
     _reject_m5_domain_analytic_gradient(result, "uks")
+    _reject_expanded_xc_analytic_gradient(result)
+    _reject_range_separated_analytic_gradient(result, "uks")
     _warn_research_preview("uks")
+    # Compare the caller's original snapshot before preparing XC-only fields.
+    # Applying the KS image radius first would prevent an otherwise exact
+    # requested-options match after the physical-domain default migration.
+    lattice_opts = _gradient_domain_options(
+        result, lattice_opts, system=system, basis=basis
+    )
     lattice_opts = _ks_gradient_lattice_options(
-        lattice_opts, use_periodic_becke, becke_image_radius_bohr
+        lattice_opts, use_periodic_becke, becke_image_radius_bohr,
+        legacy_partition_reach=getattr(result, "resolved_domain", None) is None,
     )
     if getattr(result, "exchange_ewald_split", False):
         # Corrected (Ewald-exchange-split) gauge at Γ: standard variational
@@ -7982,6 +8231,9 @@ def compute_bipole_gradient_uks(
             lattice_opts,
             float(ewald_alpha),
             func_name,
+            grid_options=grid_options,
+            use_periodic_becke=use_periodic_becke,
+            becke_image_radius_bohr=becke_image_radius_bohr,
             ewald_precision=ewald_precision,
         )
 
@@ -8055,7 +8307,8 @@ def compute_bipole_gradient_fd(
         ``converged=False``. Set False only for failure-surface diagnostics.
     **bipole_kwargs
         Forwarded to the ``run_pbc_bipole_*`` driver (``ewald_precision``,
-        ``use_ewald_j_split``, ...).
+        ``use_ewald_j_split``, ``historical_domain``, ...). Keep these identical
+        to the reference SCF; the default uses physical pair support.
 
     Returns
     -------
@@ -8064,6 +8317,14 @@ def compute_bipole_gradient_fd(
     """
     from ._vibeqc_core import Atom, attach_symmetry
     from ._vibeqc_core import BasisSet as _BasisSet
+
+    from types import SimpleNamespace
+    from .pbc_bipole_common import reject_bipole_ecp_options
+    reject_bipole_ecp_options(
+        options, driver="BIPOLE ECP finite-difference derivative",
+        system=system, basis=(SimpleNamespace(name=basis_name)
+                             if isinstance(basis_name, str) else basis_name),
+    )
 
     method_upper = method.upper()
 

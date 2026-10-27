@@ -1,7 +1,7 @@
 ---
 myst:
   html_meta:
-    "description": "GFN2-xTB workshop -- a complete walkthrough of vibe-qc's extended tight-binding method, mirroring the Grimme lab xtb workshop. Single-point energy, geometry optimization, spin polarization, frequencies, PES scans, molecular dynamics, and periodic calculations."
+    "description": "GFN2-xTB workshop -- a complete walkthrough of vibe-qc's extended tight-binding method, mirroring the Grimme lab xtb workshop. The xTB Hamiltonian (extended-Hueckel H0, shell-resolved second-order electrostatics, anisotropic multipoles, third-order on-site term, D4, the SCC iteration), its experimental status in vibe-qc, single-point energy, geometry optimization, spin polarization, frequencies, PES scans, molecular dynamics, and periodic calculations."
     "og:title": "vibe-qc tutorial -- GFN2-xTB workshop"
 ---
 
@@ -15,19 +15,159 @@ vibe-qc ships its own native GFN2-xTB engine -- not a wrapper -- with
 molecular and Gamma-point periodic single-point energies, analytic gradients,
 post-SCF D4 dispersion, and spin polarization.
 
-```{warning}
-GFN2-xTB is **gated experimental** in vibe-qc. It emits a
-`GFN2ExperimentalWarning` on every evaluation. The H{sup}`0` shape and
-molecular AES terms are implemented; remaining production gates are
-periodic AES image-cell multipole terms, periodic molecular-limit
-parity, and the full external-parity matrix against the `xtb` reference.
-Use for screening and preoptimization, not for quantitative production
-energetics. See {ref}`semiempirical-status`.
+```{admonition} Status: experimental
+:class: warning
+
+GFN2-xTB (`method="gfn2_xtb"`) is an experimental route. It emits
+`GFN2ExperimentalWarning` on every evaluation through the public API
+(`GFN2Model(..., warn=False)` silences it deliberately), and the route is
+closed-shell only at every public boundary. The H{sup}`0` shape, shell-resolved
+SCC, third-order term, molecular AES, analytic gradients and post-SCF native D4
+are implemented and finite-difference validated; the remaining production
+gates are faithful periodic AES image-cell multipole terms, periodic
+molecular-limit parity, and the full external-parity matrix against the `xtb`
+reference. Its numbers are research output, not validated results, and it is
+not part of the release gate. Use it for screening and preoptimisation. The
+label vocabulary is defined in
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels);
+the per-route table is at {ref}`semiempirical-status`.
 ```
+
+All numbers quoted on this page come from a vibe-qc 0.17.x development
+build on Apple M2; expect the last digits to move between builds.
 
 All runnable examples for this workshop live in
 [`examples/semiempirical/`](https://github.com/vibe-qc/vibe-qc/tree/main/examples/semiempirical/)
 as `30_gfn2_*.py` through `37_gfn2_*.py`.
+
+---
+
+## Theory
+
+GFN2-xTB ({vibeqc-cite}`bannwarth_gfn2_2019`) is the second member of the
+*geometry, frequency, non-covalent* extended tight-binding family that
+began with GFN1-xTB ({vibeqc-cite}`grimme_gfn1_2017`). Like DFTB it is a
+second-order expansion of the DFT energy around a reference density of
+superposed atoms, but it keeps more of the physics: shell-resolved rather
+than atomic charge fluctuations, anisotropic (dipole and quadrupole)
+electrostatics, a third-order on-site term and a built-in dispersion
+correction, parametrised for the whole periodic table up to radon against
+reference data from higher-level calculations (geometries, frequencies and
+non-covalent interaction energies) rather than against experiment. The total energy is a
+sum of five pieces,
+
+$$
+E_{\text{GFN2}} = E_{\text{rep}} + E_{\text{EHT}} + E_{\text{IES+IXC}} + E_{\text{AES+AXC}} + E_{\text{disp}} ,
+$$
+
+which map onto the components the code reports: `e_repulsive` is
+$E_{\text{rep}}$, `e_electronic` is the band-structure energy from the
+zeroth-order Hamiltonian, `e_scc` collects the second- and third-order
+charge terms together with the anisotropic electrostatics, and the D4
+dispersion is added after the SCC.
+
+**The zeroth-order Hamiltonian.** The basis is a minimal valence set of
+Slater functions (expanded in Gaussians, with a polarisation shell on some
+elements), and the reference Hamiltonian has the extended-Hueckel form
+
+$$
+H^0_{\mu\nu} = \tfrac12\, K_{ll'}\, S_{\mu\nu}\,\bigl(h_l^A + h_{l'}^B\bigr)\,
+X(\mathrm{EN}_A,\mathrm{EN}_B)\,\Pi(R_{AB}; l, l') ,
+\qquad
+h_l^A = h_l^{A,0} - k_{\mathrm{CN}}^{A,l}\,\mathrm{CN}_A ,
+$$
+
+where $\mu$ belongs to shell $l$ of atom $A$ and $\nu$ to shell $l'$ of atom
+$B$, $S_{\mu\nu}$ is the overlap, $K_{ll'}$ a shell-pair scaling constant,
+$h_l^A$ the shell self-energy shifted linearly by the fractional
+coordination number $\mathrm{CN}_A$ (this is what "CN-dependent shell
+shifts" means in the components table below), $X$ an electronegativity
+correction $1 + k_{\mathrm{EN}}(\mathrm{EN}_A - \mathrm{EN}_B)^2$ that
+lowers the coupling between dissimilar atoms, and $\Pi$ a distance-dependent
+polynomial that sharpens the bonding at short range. Diagonal elements are
+the self-energies themselves. The band-structure energy is
+$\sum_i n_i \langle\psi_i|\hat H^0|\psi_i\rangle$ over the occupied
+orbitals with occupations $n_i$, the analogue of the DFTB0 energy.
+$E_{\text{rep}}$ is a pairwise, exponentially decaying atom-atom repulsion
+with element-pair parameters.
+
+**Second-order isotropic electrostatics and the gamma function.** Charge
+fluctuations are resolved per shell: $q_A^l$ is the Mulliken charge of
+shell $l$ on atom $A$ relative to its neutral-atom occupation. They
+interact through
+
+$$
+E_{\text{IES+IXC}} = \tfrac12 \sum_{A,B}\sum_{l\in A,\,l'\in B}
+q_A^l\, \gamma_{AB}^{ll'}\, q_B^{l'}
++ \tfrac13 \sum_A \Gamma_{A}\,q_A^3 ,
+\qquad
+\gamma_{AB}^{ll'} = \frac{1}{\sqrt{R_{AB}^2 + \eta_{AB,ll'}^{-2}}} ,
+$$
+
+where $\gamma$ is the Mataga-Nishimoto-Ohno-Klopman kernel that tends to
+$1/R_{AB}$ at long range and to the averaged shell hardness $\eta$ (the
+Hubbard parameter, scaled per shell) at $R_{AB}=0$, so the on-site term
+$\gamma_{AA}^{ll'}$ is finite and carries the exchange-correlation part of
+the second-order response ("IXC"). The cubic term with the on-site
+derivative $\Gamma_A$ of the hardness, acting on the atomic charge
+$q_A = \sum_{l\in A} q_A^l$, is the **third-order** contribution
+(`GAM3` in the components table); it is what lets the method describe
+strongly charged fragments and very polar bonds without the charges
+running away, the same physics that DFTB3 adds to SCC-DFTB.
+
+**Anisotropic multipole electrostatics.** The charge distribution on an
+atom is not spherical, so GFN2 also carries cumulative atomic dipoles
+$\boldsymbol\mu_A$ and traceless quadrupoles $\boldsymbol\Theta_A$, obtained
+from the density matrix and the dipole and quadrupole integrals over the
+basis. They interact with the monopoles and with each other through the
+classical charge-dipole ($R^{-2}$), dipole-dipole and charge-quadrupole
+($R^{-3}$) kernels, each multiplied by a short-range damping function
+$f_n(R_{AB}) = \bigl[1 + 6\,(R_0^{AB}/R_{AB})^{a_n}\bigr]^{-1}$ that switches
+the interaction off inside the covalent radius, plus on-site anisotropic
+exchange-correlation terms
+$\sum_A \bigl(f^{\mu}_{\mathrm{XC},A}\,|\boldsymbol\mu_A|^2 + f^{\Theta}_{\mathrm{XC},A}\,\|\boldsymbol\Theta_A\|^2\bigr)$
+that penalise unphysical polarisation. This AES block is what distinguishes
+GFN2 from GFN1 and from every DFTB flavour; it is the main reason GFN2
+handles hydrogen bonds, halogen bonds and metal coordination without
+element-pair-specific corrections. `opts.aes_faithful` selects the published
+atom-resolved or legacy shell-resolved model (see "The AES faithfulness flag");
+the periodic image-cell multipole sums are the open production gate.
+
+**Dispersion.** London dispersion enters through the D4 model: pairwise
+$C_6$ and $C_8$ coefficients interpolated from reference polarisabilities as
+a function of coordination number *and* atomic charge, damped with the
+Becke-Johnson function, plus an Axilrod-Teller-Muto three-body term. In the
+reference `xtb` code the charge dependence makes D4 part of the SCC; vibe-qc
+evaluates it once after the SCC with the converged charges (the
+"post-SCF native D4" of the element-coverage section), which is exact for the
+energy and differs from the self-consistent form only through the small
+charge response.
+
+**The SCC iteration.** Every term beyond $H^0$ depends on the charges and
+multipoles, which depend on the orbitals. The code therefore builds
+$H = H^0 + H^1(q, \boldsymbol\mu, \boldsymbol\Theta)$, where $H^1_{\mu\nu}$
+is the overlap-weighted average of the shell potentials
+$\partial E/\partial q_A^l$ and their multipole analogues, solves the
+generalised eigenproblem $H C = S C \varepsilon$, recomputes Mulliken
+shell charges and cumulative multipoles from the new density, mixes them
+with the previous iterate, and repeats until the charges stop changing. The
+mixer matters more than in an ab initio SCF because the multipoles make the
+fixed-point map stiff; section 9 lists the simple, DIIS and Broyden options
+and why the periodic driver defaults to a joint charge-and-moment Broyden
+mixer. Fractional occupations at a finite electronic temperature (Fermi
+smearing) smooth the map further and are on by default in the periodic
+driver.
+
+**Where it helps and where it fails.** GFN2 is built for what its name
+says: geometries, vibrational frequencies and non-covalent interaction
+energies of molecules of any composition, at a cost that allows thousands
+of conformers or long dynamics. It is not built for reaction energies or
+barriers to chemical accuracy, its absolute energies live on the method's
+own scale (section 2), open-shell states are approximate at best (and
+closed-shell only in vibe-qc), metals and strongly correlated systems are
+outside the model, and anything the parametrisation never saw, such as
+exotic oxidation states, can fail without warning. Treat it as the fast
+first pass whose survivors go to DFT.
 
 ---
 
@@ -92,8 +232,10 @@ mol = Molecule([
 run_job(mol, method="gfn2_xtb", output="h2o_gfn2")
 ```
 
+The console log carries the total:
+
 ```text
-E = -5.011... Ha
+SCF converged in 47 iterations; E = -5.0650921073 Ha
 ```
 
 For programmatic use, the `GFN2Model` class gives direct access to
@@ -109,8 +251,8 @@ print(f"Converged: {model.converged} in {model.n_iter} iterations")
 ```
 
 ```text
-GFN2-xTB energy: -5.011... Ha
-Converged: True in 118 iterations
+GFN2-xTB energy: -5.06509211 Ha
+Converged: True in 47 iterations
 ```
 
 ### Energy components
@@ -131,15 +273,17 @@ print(f"Mulliken charges:     {[f'{q:+.4f}' for q in result.charges]}")
 
 | Term | Meaning |
 |------|---------|
-| `e_electronic` | Band-structure energy from H{sup}`0` with CN-dependent shell shifts |
-| `e_repulsive` | Short-range pairwise atom-atom repulsion |
-| `e_scc` | Second- and third-order (GAM3) charge-fluctuation correction |
+| `e_electronic` | Band-structure energy from H{sup}`0` with CN-dependent shell shifts (water: -5.1155 Ha) |
+| `e_repulsive` | Short-range pairwise atom-atom repulsion (+0.0506 Ha) |
+| `e_scc` | Second- and third-order (GAM3) charge-fluctuation correction plus the anisotropic electrostatics (+0.0247 Ha) |
 | D4 | Post-SCF dispersion (added by `GFN2Model.energy()`) |
+
+The Mulliken charges for this geometry are O -0.568 and H +0.284.
 
 ### Understanding the energy scale
 
 GFN2-xTB total energies live on the method's own parametrised reference
-scale. Water at GFN2-xTB is approximately −5 Ha; the same water at
+scale. Water at GFN2-xTB is approximately −5.07 Ha; the same water at
 HF/6-31G\* is −76.01 Ha. The numbers are not comparable across methods.
 What *is* meaningful within GFN2-xTB:
 
@@ -150,11 +294,25 @@ What *is* meaningful within GFN2-xTB:
 
 ---
 
-## 3. Spin polarization -- unrestricted GFN2-xTB
+## 3. Experimental open-shell occupations
 
-For open-shell systems (radicals, triplet ground states), use the
-unrestricted driver `run_ugfn2_xtb`. The unrestricted model handles
-different α and β orbital occupations:
+The low-level `run_ugfn2_xtb` driver supports different alpha and beta
+occupations of a common Hamiltonian. It counts the parameterized valence
+electrons minus the molecular charge. Incompatible multiplicities,
+negative electron counts and occupations exceeding the basis capacity
+raise `ValueError`; occupations are never truncated or clamped.
+
+This legacy driver is experimental. Its atom-charge SCC loop does not
+implement the closed-shell driver's shell SCC, third-order and AES terms,
+or the Python model's D4 correction. Electron-count validation does not
+establish quantitative open-shell GFN2 accuracy. Only the native low-level
+entry point is available; `run_job` remains closed-shell for GFN2.
+Its configurable iteration controls are `max_iter`, `conv_tol_charge`, and
+`charge_mixing`. The shared options must select `scc_mixer=Simple`,
+`electronic_temperature=0`, `gamma_form=KlopmanOhno`, and
+`aes_faithful=False`; other values raise `ValueError`. The restricted
+driver's `auto_stabilize` ladder, accelerator history, and AES damping
+controls do not apply to this partial model.
 
 ```python
 from vibeqc._vibeqc_core import Atom as CAtom, Molecule as CMolecule
@@ -165,19 +323,32 @@ oh = CMolecule([CAtom(8, [0, 0, 0]), CAtom(1, [0, 0, 1.81])], 0, 2)
 
 opts = _xtb.XTBSccOptions()
 result = _xtb.run_ugfn2_xtb(oh, params, opts)
+if not result.converged:
+    raise RuntimeError("Experimental U-GFN2 SCC did not converge")
 print(f"U-GFN2-xTB OH: {result.energy:.8f} Ha")
 print(f"n_alpha={result.n_alpha}  n_beta={result.n_beta}")
 print(f"converged={result.converged}  n_iter={result.n_iter}")
 ```
 
 ```text
-U-GFN2-xTB OH: -4.935... Ha
-n_alpha=5  n_beta=4
-converged=True  n_iter=...
+n_alpha=4  n_beta=3
 ```
 
-The unrestricted driver is required for any molecule with multiplicity > 1;
-the closed-shell `run_gfn2_xtb` refuses open-shell input.
+OH has seven valence electrons, with oxygen's 1s pair frozen. The fuller
+native `run_gfn2_xtb` accepts open shells only with `aes_faithful=True`.
+It retains the shell SCC, third-order and faithful AES functional, and can
+consume explicit SCC D4 operands. Its common orbitals carry separate alpha
+and beta occupations, with separate Fermi levels at positive temperature.
+Inspect `occupations_alpha`, `occupations_beta`, `n_alpha`, and `n_beta`, and
+check `converged` before using a result. This remains an experimental native
+route; `run_job` is still closed-shell, and quantitative open-shell accuracy
+requires further validation. The legacy example above uses the partial
+atom-charge model and is not a substitute for this fuller functional.
+For elements with an f-in-core model, check the valence spin count rather
+than inferring it from the sum of atomic numbers alone. The `Molecule`
+constructor also requires compatible all-electron spin parity. Cases such
+as an isolated neutral Ce atom cannot currently satisfy both constraints;
+they are rejected instead of silently producing a different charge state.
 
 Triplet O{sub}`2`:
 
@@ -186,6 +357,10 @@ Triplet O{sub}`2`:
 o2 = CMolecule([CAtom(8, [0, 0, 0]), CAtom(8, [0, 0, 2.3])], 0, 3)
 result = _xtb.run_ugfn2_xtb(o2, params, opts)
 print(f"U-GFN2-xTB O2 (triplet): {result.energy:.8f} Ha")
+```
+
+```text
+U-GFN2-xTB O2 (triplet): -7.90043985 Ha
 ```
 
 ---
@@ -253,19 +428,31 @@ atoms = Atoms('OH2', positions=[
 atoms.calc = GFN2Calculator(params)
 
 opt = BFGS(atoms)
-opt.run(fmax=0.02)  # eV/angstrom
+opt.run(fmax=0.005)  # eV/angstrom; tight enough for the frequencies of section 5
 print(f"Optimised energy: {atoms.get_potential_energy():.8f} eV")
 ```
+
+```text
+Optimised energy: -137.96245362 eV
+```
+
+That is -5.07002670 Ha after seven BFGS steps, with r(OH) = 0.967 Å and
+∠HOH = 104.3°.
 
 ---
 
 ## 5. Vibrational frequencies
 
-Compute the Hessian by finite-differencing the analytic gradients,
-diagonalise to get harmonic frequencies:
+Compute the Hessian by finite-differencing the analytic gradients at the
+geometry optimised in section 4 (harmonic frequencies are only defined at a
+stationary point, and a loose optimiser tolerance shows up directly as large
+rotational "frequencies"), mass-weight it with ASE's atomic-mass table, and
+diagonalise:
 
 ```python
 import numpy as np
+from ase.data import atomic_masses
+from ase.units import Bohr
 from vibeqc import Molecule, Atom
 from vibeqc.semiempirical.methods.gfn2 import GFN2Model
 
@@ -293,46 +480,54 @@ def hessian_fd(model, h=0.005):
             H[3 * a + c, :] = (g_p - g_m) / (2.0 * h)
     return (H + H.T) / 2.0
 
-# Water at optimised geometry
+# Water at the geometry optimised in section 4 (ASE `atoms`, angstrom -> bohr)
 mol = Molecule([
-    Atom(8, [ 0.00,  0.00,  0.00]),
-    Atom(1, [ 1.43,  0.98,  0.00]),
-    Atom(1, [-1.43,  0.98,  0.00]),
+    Atom(int(z), (pos / Bohr).tolist())
+    for z, pos in zip(atoms.numbers, atoms.positions)
 ])
 model = GFN2Model(mol, params=params, warn=False)
 H = hessian_fd(model)
 
-# Mass-weight and diagonalise
+# Mass-weight (amu) and diagonalise
 import math
 HA_TO_J = 4.359744722e-18
 BOHR_TO_M = 5.291772109e-11
-ME = 9.1093837e-31
+AMU_KG = 1.66053906660e-27
 C_CM = 2.99792458e10
-_HESS_TO_CM1 = math.sqrt(HA_TO_J / (BOHR_TO_M**2 * ME)) / (2 * math.pi * C_CM)
-masses = np.array([at.mass for at in mol.atoms])
+_HESS_TO_CM1 = math.sqrt(HA_TO_J / (BOHR_TO_M**2 * AMU_KG)) / (2 * math.pi * C_CM)
+masses = np.array([atomic_masses[at.Z] for at in mol.atoms])
 M_inv_sqrt = np.diag(1.0 / np.sqrt(np.repeat(masses, 3)))
 H_mw = M_inv_sqrt @ H @ M_inv_sqrt
 eigvals = np.linalg.eigvalsh(H_mw)
 
-# Keep only positive eigenvalues (real frequencies)
-freqs_cm1 = np.sqrt(np.maximum(eigvals, 0)) * _HESS_TO_CM1
+# Signed square root: the six translations/rotations come out near zero
+freqs_cm1 = np.sign(eigvals) * np.sqrt(np.abs(eigvals)) * _HESS_TO_CM1
 print("Harmonic frequencies (cm⁻¹):")
-for i, f in enumerate(freqs_cm1):
+for i, f in enumerate(np.sort(freqs_cm1)):
     print(f"  mode {i+1:2d}: {f:8.1f} cm⁻¹")
 ```
 
 ```text
 Harmonic frequencies (cm⁻¹):
-  mode  1:   1592.5 cm⁻¹   (bend)
-  mode  2:   3659.8 cm⁻¹   (sym stretch)
-  mode  3:   3757.7 cm⁻¹   (asym stretch)
-  mode  4:      0.0 cm⁻¹   (trans)
-  mode  5:      0.0 cm⁻¹   (trans)
-  mode  6:      0.0 cm⁻¹   (trans)
-  mode  7:      0.0 cm⁻¹   (rot)
-  mode  8:      0.0 cm⁻¹   (rot)
-  mode  9:      0.0 cm⁻¹   (rot)
+  mode  1:    -16.6 cm⁻¹
+  mode  2:     -9.8 cm⁻¹
+  mode  3:     -0.3 cm⁻¹
+  mode  4:     -0.0 cm⁻¹
+  mode  5:      0.0 cm⁻¹
+  mode  6:      4.7 cm⁻¹
+  mode  7:   1528.1 cm⁻¹
+  mode  8:   3484.9 cm⁻¹
+  mode  9:   3546.4 cm⁻¹
 ```
+
+The last three are the harmonic GFN2-xTB frequencies of water at its own
+minimum: the bend, the symmetric stretch and the asymmetric stretch
+(experiment: 1595, 3657 and 3756 cm⁻¹; the stretches come out about 5 percent
+low, which is typical for GFN2 without scaling). The first six are the
+translations and rotations, which should vanish: their residual of a few
+wavenumbers measures the finite-difference step and the optimiser tolerance,
+not physics (with the looser `fmax=0.02` the same code gives three rotational
+values near -45 cm⁻¹), so tighten both if you need them closer to zero.
 
 ---
 
@@ -456,6 +651,16 @@ print(f"  free energy A = {result.free_energy:.8f} Ha")
 print(f"  n_cells={result.n_cells}  n_iter={result.n_iter}  converged={result.converged}")
 ```
 
+```text
+Periodic GFN2-xTB: E = -5.07186955 Ha
+  free energy A = -5.07186955 Ha
+  n_cells=19  n_iter=10  converged=True
+```
+
+The free energy equals the energy here because the box is a gapped
+molecular crystal: at 0.001 Ha the default frontier smearing produces no
+fractional occupation, so the entropy term is zero.
+
 Periodic GFN2-xTB smears the frontier by default (0.001 Ha, about 316 K),
 so `result.smearing_temperature`, `result.entropy`, and the Mermin free
 energy `result.free_energy = energy - T*S` are populated on every periodic
@@ -485,6 +690,11 @@ print(f"Graphene GFN2-xTB: E = {result_gr.energy:.8f} Ha/cell")
 print(f"  n_cells={result_gr.n_cells}  converged={result_gr.converged}")
 ```
 
+```text
+Graphene GFN2-xTB: E = -3.78116272 Ha/cell
+  n_cells=47  converged=True
+```
+
 ### k-point sampling
 
 General k-point GFN2 and GFN2 band paths are intentionally unavailable. The
@@ -508,6 +718,21 @@ print(f"|grad|_max:     {np.abs(grad).max():.6f} Ha/bohr")
 stress = _se.compute_periodic_gfn2_stress(system_gr, result_gr, params)
 print(f"Stress (Ha/bohr³):\n{np.array2string(stress, precision=6)}")
 ```
+
+```text
+Gradient shape: (2, 3)
+|grad|_max:     0.058603 Ha/bohr
+Stress (Ha/bohr³):
+[[-4.893920e-04  4.556563e-04  0.000000e+00]
+ [ 4.556563e-04 -2.868883e-03  0.000000e+00]
+ [ 3.354844e-20 -1.501837e-19  0.000000e+00]]
+```
+
+The in-plane stress is non-zero because 4.65 bohr is the experimental
+lattice constant, not the GFN2-xTB minimum. The third column and row (the
+vacuum direction of a `dim=2` system) vanish to numerical precision, and
+the finite gradient on the two carbons says the atoms are not at their own
+minimum in this idealised, unrelaxed cell either.
 
 ---
 
@@ -581,11 +806,12 @@ default molecular polyalgorithm.
 
 ### The AES faithfulness flag
 
-`opts.aes_faithful = True` requests the full AES (anisotropic
-electrostatic) multipole expansion up to quadrupole, matching the
-reference `xtb` implementation exactly. When `False`, vibe-qc uses a
-dipole-only AES for speed; the default is `False`. Production-parity
-studies should use `True`.
+`opts.aes_faithful` defaults to `True`: atom-resolved AES and on-site
+anisotropic XC follow Bannwarth et al. (2019), Eqs. 25 and 39-44.
+`False` explicitly selects the historical shell-resolved multipole model;
+it is not a dipole-only speed approximation. `GFN2Model` and the runner's
+geometry provider share the faithful default. The separate post-SCF D4
+approximation is unchanged, so AES agreement alone is not full-energy parity.
 
 ---
 
@@ -625,10 +851,10 @@ with warnings.catch_warnings(record=True) as w:
 | Workshop topic | vibe-qc GFN2-xTB | Notes |
 |---|---|---|
 | Single-point | ✓ | Molecular + periodic Gamma-point |
-| Spin polarization | ✓ | `run_ugfn2_xtb` |
+| Open-shell occupations | Experimental partial model | low-level `run_ugfn2_xtb`; no quantitative acceptance |
 | Geometry optimization | ✓ | Via `run_job` or ASE |
 | Frequencies | ✓ | FD Hessian from analytic gradients |
-| Molecular dynamics | ✓ | ASE NVE / NVT with `SemiempiricalCalculator` |
+| Molecular dynamics | ✓ | ASE NVE / NVT with the `GFN2Calculator` defined in section 4 |
 | PES scans | ✓ | Programmatic bond/angle scans |
 | Periodic | ✓ | 1D/2D/3D Gamma-point; general k-points fail closed |
 | Solvation | ✗ | Not implemented |

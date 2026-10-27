@@ -528,6 +528,51 @@ def test_run_periodic_job_gpw_multi_k_uhf_still_gated(tmp_path):
         )
 
 
+@pytest.mark.parametrize(
+    "functional", ["lc-wpbe", "wb97", "wb97x", "cam-b3lyp", "hse06", "pbe0"],
+)
+@pytest.mark.parametrize(
+    ("method", "jk_method", "kpoints"),
+    [
+        ("RKS", "gpw", (1, 1, 1)),
+        ("RKS", "gpw", (2, 1, 1)),
+        ("RKS", "gapw", (1, 1, 1)),
+        ("UKS", "gpw", (2, 1, 1)),
+        ("ROKS", "gpw", (2, 1, 1)),
+    ],
+    ids=["rks-gpw-1", "rks-gpw-2", "rks-gapw-1", "uks-gpw-2", "roks-gpw-2"],
+)
+def test_multik_gpw_gapw_refuse_every_exact_exchange_arm(
+    tmp_path, method, jk_method, kpoints, functional,
+):
+    """#659: these drivers build no exact exchange. A long-range-corrected
+    hybrid keeps all of it in cam_beta (lc-wpbe, wb97: hf_exchange_fraction
+    0), so gating on the global fraction alone ran them as their semilocal
+    remainder and returned a converged, wrong energy."""
+    if method == "RKS":
+        system = _h2_system(6.0)
+    else:
+        system = vq.PeriodicSystem(
+            3, 6.0 * np.eye(3), [vq.Atom(1, [0.0, 0.0, 0.0])],
+            charge=0, multiplicity=2,
+        )
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    with pytest.raises(
+        NotImplementedError,
+        match=rf"functional '{functional}' is a hybrid .*not wired",
+    ):
+        vq.run_periodic_job(
+            system,
+            basis,
+            method=method,
+            functional=functional,
+            jk_method=jk_method,
+            kpoints=kpoints,
+            output=str(tmp_path / f"{method}-{jk_method}-{functional}"),
+            progress=False,
+        )
+
+
 def test_run_periodic_job_gpw_compact_multik_si_converges(tmp_path):
     """P07-shaped compact Si through the runner with multi-k GPW RKS-PBE now
     takes the Bloch real-space density / per-k projection path and converges
@@ -1259,3 +1304,188 @@ def test_terminal_trace_row_selection_accepts_every_producer_shape():
     assert select_prefix(tuple(rows)) == tuple(rows), (
         "the pre-fix expression returned the whole tuple as if it were one row"
     )
+
+
+# ---------------------------------------------------------------------------
+# QVF bond orders come from the accepted density, not a rebuilt operator (#547)
+# ---------------------------------------------------------------------------
+
+
+def _qvf_bond_orders(path: Path):
+    """Return the ``bond_orders`` payload of a QVF archive, or None."""
+    import json
+    import zipfile
+
+    with zipfile.ZipFile(path, "r") as zf:
+        manifest = json.loads(zf.read("manifest.json"))
+        for section in manifest.get("sections", []):
+            if section.get("kind") != "bond_orders":
+                continue
+            member = section["members"]["bond_orders"]
+            return json.loads(zf.read(member["path"]))
+    return None
+
+
+def _run_h2_gpw_with_bond_orders(tmp: str, tag: str, **kwargs):
+    import warnings
+
+    from vibeqc.periodic_runner import _accepted_state_mayer_bond_orders
+
+    L = 10.0
+    system = _h2_system(L)
+    mol = vq.Molecule(list(system.unit_cell), 0, 1)
+    basis = vq.BasisSet(mol, "sto-3g")
+    output = Path(tmp) / tag
+    with warnings.catch_warnings(record=True) as record:
+        warnings.simplefilter("always")
+        result = vq.run_periodic_job(
+            system=system,
+            basis=basis,
+            output=str(output),
+            jk_method="gpw",
+            cutoff_ha=5.0,
+            **kwargs,
+        )
+    assert result.converged
+    refused = [
+        str(w.message) for w in record
+        if "bond_orders_computation" in str(w.message)
+    ]
+    assert refused == [], refused
+    payload = _qvf_bond_orders(output.with_suffix(".qvf"))
+    assert payload is not None, "QVF carries no bond_orders section"
+    assert payload["method"] == "mayer"
+    assert len(payload["pairs"]) == 1
+    pair = payload["pairs"][0]
+    assert (pair["i"], pair["j"]) == (0, 1)
+    assert (pair["symbol_i"], pair["symbol_j"]) == ("H", "H")
+    assert pair["distance_ang"] == pytest.approx(1.4 * 0.529177210903, abs=1e-9)
+    expected = _accepted_state_mayer_bond_orders(result, system, basis)
+    assert pair["order"] == pytest.approx(expected[0, 1], abs=1e-12)
+    return result, pair
+
+
+def test_run_periodic_job_gpw_qvf_bond_orders_from_accepted_density():
+    """GPW RHF/UHF Gamma: the QVF bond-order table is Mayer's contraction of
+    the converged density and overlap. Before #547 the runner re-diagonalized
+    its rebuilt origin-ball operator, whose Bloch sum is not Hermitian, and
+    the artifact was refused on every multi-AO cell."""
+    import warnings
+
+    from vibeqc.coop_cohp import _periodic_mayer_from_density
+
+    warnings.simplefilter("ignore", vq.GAPWExperimentalWarning)
+    with tempfile.TemporaryDirectory() as tmp:
+        result, pair = _run_h2_gpw_with_bond_orders(tmp, "h2_rhf", method="RHF")
+        # Minimal-basis H2: (PS)_12 (PS)_21 is exactly one.
+        assert pair["order"] == pytest.approx(1.0, abs=1e-10)
+        direct = _periodic_mayer_from_density(
+            [[np.asarray(result.density)]], [np.asarray(result.overlap)],
+            np.ones(1), [0, 1], 2,
+        )
+        assert pair["order"] == pytest.approx(direct[0, 1], abs=1e-12)
+
+        _, pair_u = _run_h2_gpw_with_bond_orders(tmp, "h2_uhf", method="UHF")
+        assert pair_u["order"] == pytest.approx(1.0, abs=1e-10)
+
+
+def test_run_periodic_job_gpw_multi_k_qvf_bond_orders_average_the_mesh():
+    """Multi-k GPW RKS: the table averages P(k) S(k) over the SCF mesh."""
+    import warnings
+
+    warnings.simplefilter("ignore", vq.GAPWExperimentalWarning)
+    with tempfile.TemporaryDirectory() as tmp:
+        result, pair = _run_h2_gpw_with_bond_orders(
+            tmp, "h2_rks_mk", method="RKS", functional="lda", kpoints=[2, 2, 2],
+        )
+        assert len(result.density_k) == 8
+        assert 0.9 < pair["order"] < 1.1
+
+
+# ---------------------------------------------------------------------------
+# The rebuilt DOS operator is measured, and a defect is reported (#547)
+# ---------------------------------------------------------------------------
+
+
+def _system_run_fields(stem: Path) -> dict:
+    import tomllib
+
+    return tomllib.loads(stem.with_suffix(".system").read_text("utf-8"))["run"]
+
+
+def _qvf_section_kinds(path: Path) -> set:
+    import json
+    import zipfile
+
+    with zipfile.ZipFile(path, "r") as zf:
+        manifest = json.loads(zf.read("manifest.json"))
+    return {section.get("kind") for section in manifest.get("sections", [])}
+
+
+def test_run_periodic_job_gpw_reports_a_non_hermitian_rebuilt_operator(tmp_path):
+    """H2/STO-3G, GPW RHF Gamma: the fixed-cutoff property rebuild is not
+    Hermitian on the DOS mesh (origin-ball lattice sums, #44). The runner now
+    measures that before diagonalizing, omits DOS/PDOS/COOP/COHP, records the
+    measured defect in ``.system`` and still writes the accepted-density bond
+    orders. Before #547 the DOS path symmetrized the operator and wrote
+    curves nobody had checked."""
+    import warnings
+
+    from vibeqc.periodic_runner import _REBUILT_OPERATOR_HERMITIAN_TOL
+
+    warnings.simplefilter("ignore", vq.GAPWExperimentalWarning)
+    system = _h2_system(10.0)
+    basis = vq.BasisSet(vq.Molecule(list(system.unit_cell), 0, 1), "sto-3g")
+    stem = tmp_path / "h2_gpw_dos_gate"
+    with warnings.catch_warnings(record=True) as record:
+        warnings.simplefilter("always")
+        result = vq.run_periodic_job(
+            system=system, basis=basis, method="RHF", jk_method="gpw",
+            cutoff_ha=5.0, output=str(stem), output_qvf=True,
+        )
+    assert result.converged
+    notices = [
+        str(w.message) for w in record if "dos_computation" in str(w.message)
+    ]
+    assert len(notices) == 1, notices
+    assert "not Hermitian" in notices[0] and "F2e" in notices[0]
+    assert not any("bond_orders_computation" in str(w.message) for w in record)
+
+    run = _system_run_fields(stem)
+    assert run["property_hamiltonian"].startswith("omitted ("), run
+    assert "not Hermitian" in run["property_hamiltonian"]
+    assert "#44" in run["property_hamiltonian"]
+    assert run["property_hermiticity_defect"] > _REBUILT_OPERATOR_HERMITIAN_TOL
+    assert run["property_kpoints"] == 512
+
+    kinds = _qvf_section_kinds(stem.with_suffix(".qvf"))
+    assert "bond_orders" in kinds, kinds
+    assert "dos.total" not in kinds and "dos.projected" not in kinds, kinds
+
+
+def test_run_periodic_job_gpw_hermitian_rebuilt_operator_keeps_its_dos(tmp_path):
+    """One AO per cell (He/STO-3G): every rebuilt term is 1x1, the contract
+    holds, and the DOS is written with the operator named and its measured
+    defect recorded."""
+    import warnings
+
+    from vibeqc.periodic_runner import _REBUILT_OPERATOR_HERMITIAN_TOL
+
+    warnings.simplefilter("ignore", vq.GAPWExperimentalWarning)
+    system = _he_system(16.0)
+    basis = vq.BasisSet(vq.Molecule(list(system.unit_cell), 0, 1), "sto-3g")
+    stem = tmp_path / "he_gpw_dos_ok"
+    with warnings.catch_warnings(record=True) as record:
+        warnings.simplefilter("always")
+        result = vq.run_periodic_job(
+            system=system, basis=basis, method="RHF", jk_method="gpw",
+            cutoff_ha=5.0, output=str(stem), output_qvf=True,
+        )
+    assert result.converged
+    assert not any("dos_computation" in str(w.message) for w in record)
+
+    run = _system_run_fields(stem)
+    assert run["property_hamiltonian"] == "rebuilt-fixed-cutoff", run
+    assert run["property_hermiticity_defect"] <= _REBUILT_OPERATOR_HERMITIAN_TOL
+    assert run["property_kpoints"] == 512
+    assert "dos.total" in _qvf_section_kinds(stem.with_suffix(".qvf"))

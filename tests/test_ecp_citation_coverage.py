@@ -90,6 +90,7 @@ _ROUTED_FROM: dict[str, str] = {
     "def2-mtzvpp": "andrae_ecp_1990",
     "pob-tzvp-rev2": "andrae_ecp_1990",
     "pob-tzvp": "andrae_ecp_1990",
+    "pob-dzvp-rev2": "andrae_ecp_1990",
     "dhf-tzvp": "weigend_baldes_dhf_2010",
     "vdzp": "mueller_wb97x3c_2023",
 }

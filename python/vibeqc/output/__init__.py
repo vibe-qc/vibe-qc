@@ -86,15 +86,25 @@ from .formats.structured_log import (
     structured_log,
 )
 from .formats import (
+    band_edge_manifest_fields,
+    band_extrema_block,
+    DoubleHybridConstruction,
+    double_hybrid_construction,
+    FD_HESSIAN_SURFACES,
     CubeRequest,
     TrexioData,
     TrexioMOBlock,
     TrexioSparse,
+    hessian_surface_label,
+    hessian_surface_lines,
+    hessian_surface_manifest_fields,
+    hessian_unsupported_surface_lines,
     parse_write_cube_kwarg,
     qvf_bytes,
     read_trexio,
     read_trexio_fields,
     requested_mo_indices,
+    thermochemistry_energy_labels,
     validate_qvf,
     write_cif,
     write_cube_density_for_run_job,
@@ -103,6 +113,7 @@ from .formats import (
     write_population,
     write_poscar,
     write_qvf,
+    write_qcschema,
     write_trexio,
     write_trexio_fields,
     write_xyz,
@@ -112,6 +123,8 @@ from .manifest import (
     IncompleteOutputError,
     ManifestStatus,
     ManifestUpdater,
+    portable_manifest_requested,
+    portable_manifest_scope,
     write_initial_manifest,
 )
 from .outputs_cli import main as outputs_cli_main
@@ -122,8 +135,23 @@ from .plan import (
     PlannedFile,
 )
 from .writer import OutputWriter
+from .verdict import RunVerdict, usable_from_manifest, verdict_from_result
+from .refusal import write_preflight_refusal_receipt
 
 __all__ = [
+    # formats/band_edges.py -- periodic band-edge wording
+    "band_edge_manifest_fields",
+    "band_extrema_block",
+    # formats/vibrational.py -- Hessian surface wording
+    "FD_HESSIAN_SURFACES",
+    "DoubleHybridConstruction",
+    "double_hybrid_construction",
+    "hessian_surface_label",
+    "hessian_surface_lines",
+    "hessian_surface_manifest_fields",
+    "hessian_unsupported_surface_lines",
+    "thermochemistry_energy_labels",
+    "write_qcschema",
     # channel.py
     "Level",
     "OutputChannel",
@@ -177,7 +205,14 @@ __all__ = [
     "IncompleteOutputError",
     "ManifestStatus",
     "ManifestUpdater",
+    "portable_manifest_requested",
+    "portable_manifest_scope",
     "write_initial_manifest",
+    # verdict.py / refusal.py
+    "RunVerdict",
+    "usable_from_manifest",
+    "verdict_from_result",
+    "write_preflight_refusal_receipt",
     # writer.py
     "OutputWriter",
     # dispatch.py (pre-v1.0 D1)

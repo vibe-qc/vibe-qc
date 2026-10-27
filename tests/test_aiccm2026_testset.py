@@ -10,17 +10,40 @@ old lih-chain a=2.0 Å, which was non-PD).
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
+import sys
+from unittest.mock import patch
 
 import numpy as np
 import pytest
 
 pytestmark = pytest.mark.experimental  # Γ-CCM (aiccm2026dev-a) research lane
 
-_TESTSET = Path(__file__).resolve().parent.parent / "studies" / "aiccm-2026" / "testset.py"
-_spec = importlib.util.spec_from_file_location("aiccm2026_testset", _TESTSET)
-testset = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(testset)
+_STUDY = Path(__file__).resolve().parent.parent / "studies" / "aiccm-2026"
+
+
+def _load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+# testset.py imports its sibling site_settings (#261); a by-path load puts
+# no directory on sys.path, so register the sibling first, without a site
+# profile, as tests/test_aiccm_site_settings.py does (#654).
+with patch.dict(os.environ):
+    os.environ.pop("AICCM_SITE_CONFIG", None)
+    _previous = sys.modules.get("site_settings")
+    sys.modules["site_settings"] = _load("site_settings", _STUDY / "site_settings.py")
+    try:
+        testset = _load("aiccm2026_testset", _STUDY / "testset.py")
+    finally:
+        if _previous is None:
+            del sys.modules["site_settings"]
+        else:
+            sys.modules["site_settings"] = _previous
 
 
 _HAS_ASE = importlib.util.find_spec("ase") is not None

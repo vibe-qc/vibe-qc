@@ -2465,8 +2465,8 @@ class GapwJBuilder:
         ``∂E_H/∂D``: it omitted the soft-basis projection of the smooth term
         and the D-dependent compensator response, pushing a partially-occupied
         core's tight 1s above the valence -- O collapsed to −35 Ha with an
-        empty core. See ``handovers/HANDOVER_GAPW_PRODUCTION.md`` § milestone 3
-        and ``examples/regression/gapw_parity/milestone3_analytic_fock.py``.)
+        empty core. See
+        ``examples/regression/gapw_parity/milestone3_analytic_fock.py``.)
 
         Since ``E_H`` is quadratic in D, the Fock is ``∫ (∂ρ/∂D_μν) V[ρ]`` of
         every density piece:
@@ -2732,6 +2732,28 @@ class GapwJBuilder:
         J = self.build_J(density_matrix)
         return 0.5 * float(np.einsum("ij,ij->", density_matrix, J))
 
+    def build_hartree(self, density_matrix: np.ndarray) -> tuple[float, np.ndarray]:
+        """Return the existing Hartree functional and J at one density.
+
+        The input and returned matrix are owned snapshots. Analytic/projector
+        augmentation already evaluates energy and derivative jointly; preserve
+        that pair rather than discarding half of it. Block augmentation keeps
+        its explicit functional (Krack/Parrinello 2000, Eq. 9), without assuming
+        that a generic half trace can replace the producer's energy.
+        """
+        density = np.array(density_matrix, dtype=float, copy=True)
+        if not self._aug._augmentation_active:
+            matrix = self._gpw.build_J(density)
+            energy = .5 * float(np.einsum("ij,ij->", density, matrix))
+        elif self._one_centre == "analytic":
+            energy, matrix = self._analytic_energy_and_fock(density)
+        elif self._one_centre == "projector":
+            energy, matrix = self._projector_energy_and_fock(density)
+        else:
+            matrix = self.build_J(density)
+            energy = self.gapw_hartree_energy(density)
+        return float(energy), np.array(matrix, copy=True)
+
     def gapw_hartree_energy(self, density_matrix: np.ndarray) -> float:
         """GAPW Hartree energy in the density-functional form.
 
@@ -2813,7 +2835,8 @@ class GapwScfResult:
     one_centre
         Resolved one-centre construction used by the SCF.
     fock, overlap
-        Post-DIIS Fock and Gamma overlap used for the returned eigenpairs.
+        Physical terminal Fock for migrated bare zero-temperature RHF;
+        otherwise the legacy post-DIIS Fock and Gamma overlap.
     molecular_limit_declared
         Whether the caller declared the isolated single-Gamma envelope (or
         selected explicit analytic mode, which is the expert declaration).
@@ -2835,8 +2858,8 @@ class GapwScfResult:
     smearing_entropy: float = 0.0
     fermi_level: float = 0.0
     occupations: tuple = ()
-    # The converged (post-DIIS) Fock diagonalized to produce
-    # ``mo_coeffs``/``mo_energies`` and the Gamma lattice overlap. The
+    # Migrated bare zero-temperature RHF exposes its physical terminal Fock;
+    # other routes retain the post-DIIS operator and Gamma overlap. The
     # runner adapter surfaces these directly; without them it falls back
     # to reconstructing an HF-shaped ``Hcore + J - K/2`` whose J is the
     # *un-augmented* GpwJBuilder J -- not the operator this SCF
@@ -2860,6 +2883,21 @@ class GapwScfResult:
 
     restart_kpoints: object = None
     restart_weights: object = None
+
+    fock_build: object = None
+
+    @property
+    def orbital_kind(self):
+        return "natural" if self.fock_build is not None else "canonical"
+
+    @property
+    def run_fields(self):
+        if self.fock_build is None:
+            return {}
+        return dict(self.fock_build.output_fields(),
+                    orbital_state_relation="density-defining-physical-rayleigh-quotients",
+                    fock_capture_scope="scf-and-terminal",
+                    scf_stop_reason="converged" if self.converged else "iteration_limit")
 
 
 def _resolve_one_centre_mode(
@@ -3010,7 +3048,7 @@ def run_periodic_rhf_gapw(
 
     ``one_centre="projector"`` (experimental) uses the fitted
     projector construction instead; single-atom cells only (off-centre
-    fit errors are variationally exploitable - see the handover) and
+    fit errors are variationally exploitable) and
     HF-only.
 
     DFT on the analytic mode supports SINGLE-ATOM cells, where the
@@ -3265,7 +3303,7 @@ def run_periodic_rhf_gapw(
             "fit-error directions variationally (H2O/STO-3G converges "
             "-3.67 Ha below the molecular reference even though the "
             "functional is accurate to +33 mHa at the physical "
-            "density; see HANDOVER_GAPW_PRODUCTION.md 2026-07-30). "
+            "density; measured 2026-07-30). "
             "Use one_centre='block' or jk_method='gdf'."
         )
 
@@ -3302,8 +3340,12 @@ def run_periodic_rhf_gapw(
     if initial_density is None:
         s_eigs, U = _eigh_safe(S)
         S_half_inv = U @ np.diag(1.0 / np.sqrt(s_eigs)) @ U.T
-        e, C_orth = _eigh_safe(S_half_inv @ Hcore @ S_half_inv)
-        C = S_half_inv @ C_orth
+        from .solvers._scf import solve_dense_fock
+        core_solution = solve_dense_fock(
+            Hcore, X=S_half_inv, overlap=S, kind="one_electron",
+            spin="restricted", basis_id="gamma-gapw-core-guess",
+        )
+        C = core_solution.eigenvectors
         D = 2.0 * C[:, :n_occ] @ C[:, :n_occ].T
     else:
         D = np.asarray(initial_density, dtype=float).copy()
@@ -3331,6 +3373,12 @@ def run_periodic_rhf_gapw(
     # Pre-build orthogonalizer.
     s_eigs, U = _eigh_safe(S)
     S_half_inv = U @ np.diag(1.0 / np.sqrt(s_eigs)) @ U.T
+    from .solvers._scf import FockDiagonalizer
+
+    diagonalise = FockDiagonalizer(
+        S_half_inv, S, None,
+        kind="ks" if functional is not None else "fock", n_required=n_occ,
+    )
 
     # Optional functional.
     if functional is not None:
@@ -3409,9 +3457,19 @@ def run_periodic_rhf_gapw(
     entropy = 0.0
     scf_trace: list[dict] = []
 
+    shared_rhf = func is None and not _dftu_sites and smearing_T == 0.0
+    source_options = dict(one_centre=one_centre, lmax=lmax,
+        soft_cutoff=soft_cutoff, n_radial=n_radial, lebedev_order=lebedev_order,
+        v_ne_convention=v_ne_convention, smearing_alpha=smearing_alpha,
+        molecular_limit_declared=molecular_limit_declared,
+        dispersion=dispersion, dispersion_functional=dispersion_functional)
+
     for it in range(1, max_iter + 1):
         # GAPW J build (smooth FFT + augmentation correction).
-        J = gapw_builder.build_J(D)
+        if shared_rhf:
+            hartree_energy, J = gapw_builder.build_hartree(D)
+        else:
+            J = gapw_builder.build_J(D)
 
         # Exchange.
         if ex_frac > 0.0:
@@ -3551,6 +3609,29 @@ def run_periodic_rhf_gapw(
             )
             E = E_elec + E_nn + e_dft_plus_u
 
+        physical_build = None
+        if shared_rhf:
+            from .periodic_gpw_fock import _capture_gapw_rhf_build
+            iteration_breakdown = GpwEnergyBreakdown(
+                e_kinetic=float(np.sum(D*T)),
+                e_nuclear_attraction=float(np.sum(D*V_ne)),
+                e_hartree=hartree_energy,
+                e_hf_exchange=-.25*float(np.sum(D*K)),
+                e_nuclear_repulsion=E_nn,
+                e_total=float(np.sum(D*Hcore)) + hartree_energy
+                    - .25*float(np.sum(D*K)) + E_nn, grid=grid)
+            physical_build = _capture_gapw_rhf_build(
+                builder=gapw_builder, lattice_options=lo, kinetic=T, nuclear=V_ne,
+                overlap=S, X=S_half_inv, density=D, coulomb=J, exchange=K,
+                breakdown=iteration_breakdown, generation=it,
+                source_options=source_options)
+            F = physical_build.channels[0].operator.matrix.copy()
+            E = physical_build.energy.total
+            if it == 1:
+                frame = physical_build.channels[0].operator.frame
+                diagonalise = FockDiagonalizer(frame.X, frame.overlap, None,
+                    frame=frame, n_required=n_occ)
+
         # DIIS. ``D`` is the density that built ``F``; see
         # tests/test_diis_error_vector_source.py.
         if diis is not None and it >= diis_start_iter:
@@ -3559,8 +3640,12 @@ def run_periodic_rhf_gapw(
             F = diis.extrapolate(F, err)
 
         # Solve F C = e S C.
-        e, C_orth = _eigh_safe(S_half_inv @ F @ S_half_inv)
-        C = S_half_inv @ C_orth
+        solver_fock = F
+        if physical_build is not None:
+            solver_fock = (physical_build.solver_operator(0, F, modification="diis")
+                if diis is not None and it >= diis_start_iter
+                else physical_build.channels[0].operator)
+        C, e = diagonalise(solver_fock)
 
         # Occupations / smearing.
         from .smearing import apply_smearing as _apply_smearing
@@ -3594,6 +3679,11 @@ def run_periodic_rhf_gapw(
                 "e_xc": float(e_xc_total_iter),
             }
         )
+        if physical_build is not None:
+            scf_trace[-1].update(build_id=physical_build.identity,
+                density_id=physical_build.density_id,
+                solver_role=solver_fock.metadata.role,
+                solver_build_id=solver_fock.metadata.build_id)
         if abs(dE) < conv_tol_energy and dD < conv_tol_density and it > 1:
             converged = True
             D = D_new
@@ -3616,7 +3706,7 @@ def run_periodic_rhf_gapw(
     # see GapwJBuilder.gapw_hartree_energy). This already includes the
     # per-atom Hartree augmentation, so the _e_h_aug returned below stays
     # diagnostic-only -- adding it again would double-count.
-    E_H = gapw_builder.gapw_hartree_energy(D)
+    E_H, gapw_J_diag = gapw_builder.build_hartree(D)
     if ex_frac > 0.0:
         lo = _core.LatticeSumOptions()
         lo.cutoff_bohr = 25.0
@@ -3702,7 +3792,6 @@ def run_periodic_rhf_gapw(
 
     # Diagnostic: Hartree augmentation from J_aug - J_gpw.
     gpw_J = gapw_builder._gpw.build_J(D)
-    gapw_J_diag = gapw_builder.build_J(D)
     gapw_correction = 0.5 * float(np.einsum("ij,ij->", D, gapw_J_diag - gpw_J))
 
     if external_xc is not None:
@@ -3720,8 +3809,7 @@ def run_periodic_rhf_gapw(
             F_final = F_final + S @ V_AO_sigma_final @ S
         F_final = F_final + _V_xc_final
         F_final = 0.5 * (F_final + F_final.T)
-        e, C_orth = _eigh_safe(S_half_inv @ F_final @ S_half_inv)
-        C = S_half_inv @ C_orth
+        C, e = diagonalise(F_final)
         from .smearing import apply_smearing as _apply_smearing
 
         final_smearing = _apply_smearing(
@@ -3750,10 +3838,21 @@ def run_periodic_rhf_gapw(
         )
         e_total = breakdown.e_total
 
+    terminal_build = None
+    if func is None and not _dftu_sites and smearing_T == 0.0:
+        from .periodic_gpw_fock import _capture_gapw_rhf_terminal
+        terminal_build, (C, e, occ_final) = _capture_gapw_rhf_terminal(
+            builder=gapw_builder, lattice_options=lo, kinetic=T, nuclear=V_ne,
+            overlap=S, X=S_half_inv, density=D, coulomb=gapw_J_diag,
+            exchange=K_final, breakdown=breakdown, generation=n_iter,
+            source_options=source_options)
+        F = terminal_build.channels[0].operator.matrix.copy()
+
     return GapwScfResult(
                restart_kpoints=np.zeros((1, 3)), restart_weights=np.ones(1),
                guess_selection=periodic_result_selection(system, requested_initial_guess, restarted=input_restart_supplied),
                restart_basis=basis, restart_lattice=np.asarray(system.lattice).copy(),
+        fock_build=terminal_build,
         energy=e_total,
         breakdown=breakdown,
         density=D,
@@ -4137,6 +4236,14 @@ def run_periodic_uhf_gapw(
     # Pre-build orthonormaliser.
     s_eigs, U = _eigh_safe(S)
     S_half_inv = U @ np.diag(1.0 / np.sqrt(s_eigs)) @ U.T
+    from .solvers._scf import FockDiagonalizer
+
+    diagonalise_alpha = FockDiagonalizer(
+        S_half_inv, S, None, kind="fock", spin="alpha", n_required=n_alpha_resolved,
+    )
+    diagonalise_beta = FockDiagonalizer(
+        S_half_inv, S, None, kind="fock", spin="beta", n_required=n_beta_resolved,
+    )
 
     # Density-mode guesses use the shared periodic adapter; explicit restart
     # densities retain precedence and HCORE keeps the route-local fallback.
@@ -4269,10 +4376,8 @@ def run_periodic_uhf_gapw(
             )
 
         # Solve F_s C_s = e_s S C_s.
-        e_a, C_orth_a = _eigh_safe(S_half_inv @ F_alpha @ S_half_inv)
-        C_alpha = S_half_inv @ C_orth_a
-        e_b, C_orth_b = _eigh_safe(S_half_inv @ F_beta @ S_half_inv)
-        C_beta = S_half_inv @ C_orth_b
+        C_alpha, e_a = diagonalise_alpha(F_alpha)
+        C_beta, e_b = diagonalise_beta(F_beta)
 
         if n_alpha_resolved > 0:
             D_alpha_new = (
@@ -4654,6 +4759,14 @@ def run_periodic_uks_gapw(
     # Pre-build orthonormaliser.
     s_eigs, U = _eigh_safe(S)
     S_half_inv = U @ np.diag(1.0 / np.sqrt(s_eigs)) @ U.T
+    from .solvers._scf import FockDiagonalizer
+
+    diagonalise_alpha = FockDiagonalizer(
+        S_half_inv, S, None, kind="ks", spin="alpha", n_required=n_alpha_resolved,
+    )
+    diagonalise_beta = FockDiagonalizer(
+        S_half_inv, S, None, kind="ks", spin="beta", n_required=n_beta_resolved,
+    )
 
     # Density-mode guesses use the shared periodic adapter; explicit restart
     # densities retain precedence and HCORE keeps the route-local fallback.
@@ -4919,10 +5032,8 @@ def run_periodic_uks_gapw(
             )
 
         # Solve F_s C_s = e_s S C_s.
-        e_a, C_orth_a = _eigh_safe(S_half_inv @ F_alpha @ S_half_inv)
-        C_alpha = S_half_inv @ C_orth_a
-        e_b, C_orth_b = _eigh_safe(S_half_inv @ F_beta @ S_half_inv)
-        C_beta = S_half_inv @ C_orth_b
+        C_alpha, e_a = diagonalise_alpha(F_alpha)
+        C_beta, e_b = diagonalise_beta(F_beta)
 
         if n_alpha_resolved > 0:
             D_alpha_new = (
@@ -5291,13 +5402,14 @@ def run_periodic_rks_gapw_multi_k(
             "run_periodic_rks_gapw with a Gamma-point calculation; "
             "multi-k GAPW external XC remains gated."
         )
-    if float(func.hf_exchange_fraction) != 0.0:
+    # cam_beta carries a long-range-corrected hybrid's exact exchange (#659).
+    if float(func.hf_exchange_fraction) != 0.0 or func.is_range_separated:
         raise NotImplementedError(
-            f"run_periodic_rks_gapw_multi_k: hybrids "
-            f"(hf_exchange_fraction = "
-            f"{func.hf_exchange_fraction}) are not supported "
-            f"on the multi-k GAPW path -- per-k K builders are not "
-            f"wired. Use a pure functional like 'lda' or 'pbe'."
+            f"run_periodic_rks_gapw_multi_k: functional {func.name!r} is a "
+            f"hybrid (hf_exchange_fraction = {func.hf_exchange_fraction}, "
+            f"cam_alpha = {func.cam_alpha}, cam_beta = {func.cam_beta}) and "
+            f"is not supported on the multi-k GAPW path -- per-k K builders "
+            f"are not wired. Use a pure functional like 'lda' or 'pbe'."
         )
 
     # k-mesh. Compact cells need Bloch real-space XC density/tau and per-k
@@ -5549,6 +5661,8 @@ def run_periodic_rks_gapw_multi_k(
                     for _ in range(n_k)
                 ]
 
+    from .solvers._scf import solve_dense_fock
+
     # Build the initial density from SAP or Hcore and accumulate rho. The
     # existing smearing/global-Aufbau code below owns the occupations.
     D_total = np.zeros((n_basis, n_basis), dtype=float)
@@ -5640,7 +5754,7 @@ def run_periodic_rks_gapw_multi_k(
         # correctly via ``_collocate_multik`` + per-k projection; porting
         # that here (including the augmentation's soft and compensator
         # pieces, which inherit the same fold) is the fix. Filed in
-        # HANDOVER_OPEN_BUGS_V015.md; until it lands, refuse rather than
+        # the original investigation; until it lands, refuse rather than
         # return a wrong number (CLAUDE.md section 7).
         _q_fold = float(
             collocate_density_on_grid(
@@ -5881,8 +5995,11 @@ def run_periodic_rks_gapw_multi_k(
         eps_per_k_new: list = []
         for ik in range(n_k):
             Fk = F_k_list[ik]
-            eps, C_orth = np.linalg.eigh(X_k[ik].conj().T @ Fk @ X_k[ik])
-            C = X_k[ik] @ C_orth
+            eig = solve_dense_fock(
+                Fk, X=X_k[ik], overlap=S_k[ik], kind="ks",
+                kpoint=kpoints[ik], generation=it,
+            )
+            eps, C = eig.eigenvalues, eig.eigenvectors
             new_C_k.append(C)
             new_e_k.append(eps)
             eps_per_k_new.append(np.asarray(np.real(eps), dtype=float))

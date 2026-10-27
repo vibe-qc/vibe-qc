@@ -28,7 +28,7 @@ import importlib
 import json
 import os
 import sys
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 
 
@@ -69,6 +69,18 @@ def _run_periodic(code: str, spec, basis: str, method, log_path: Path,
                   run_id: str, target: str, code_version: str,
                   artifact_dir: "Path | None" = None,
                   write_qvf_artifact: bool = False):
+    from examples.regression.core.periodic_matrix import (
+        apply_lattice_cutoffs, apply_state_overrides, validated_kmesh,
+    )
+    mesh = os.environ.get("VIBEQC_REGRESSION_KMESH")
+    if mesh is not None:
+        spec = replace(spec, default_kmesh=validated_kmesh(json.loads(mesh)))
+    state = os.environ.get("VIBEQC_REGRESSION_PERIODIC_STATE")
+    if state is not None:
+        spec = apply_state_overrides(spec, json.loads(state))
+    cutoffs = os.environ.get("VIBEQC_REGRESSION_LATTICE_CUTOFFS")
+    if cutoffs is not None:
+        spec = apply_lattice_cutoffs(spec, json.loads(cutoffs))
     if code == "vibeqc":
         from examples.regression.core import runner_vibeqc
         tail_raw = os.environ.get("VIBEQC_REGRESSION_RSGDF_TAIL_KE_CUTOFF")
@@ -77,6 +89,7 @@ def _run_periodic(code: str, spec, basis: str, method, log_path: Path,
             run_id=run_id, target=target, code_version=code_version,
             spec=spec, basis_name=basis, method=method,
             kmesh=spec.default_kmesh, log_path=log_path,
+            jk_method=os.environ.get("VIBEQC_REGRESSION_PERIODIC_JK_METHOD", "gdf"),
             artifact_dir=artifact_dir,
             rsgdf_tail_ke_cutoff=tail_cutoff,
             write_qvf_artifact=write_qvf_artifact,

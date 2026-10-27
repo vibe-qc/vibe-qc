@@ -6,8 +6,11 @@ That fixed `m` is a compromise: too small and the extrapolation has too
 little history to work with; too large and stale, near-linearly-dependent
 iterates make the least-squares problem ill-conditioned and can stall or
 oscillate the tail of the SCF. This tutorial introduces two accelerators
-that remove the guesswork by letting the history depth adapt on the fly,
-following Chupin, Dupuy, Legendre and Sere, *Convergence analysis of
+that remove the guesswork by letting the history depth adapt on the fly.
+Both are production routes (label vocabulary in
+[Methods: theory and status](../methods.md#how-to-read-the-status-labels)),
+and the [Theory](#theory) section gives the restart and window criteria.
+They follow Chupin, Dupuy, Legendre and Sere, *Convergence analysis of
 adaptive DIIS algorithms with application to electronic ground state
 calculations*, ESAIM: M2AN **55**, 2785 (2021),
 [doi:10.1051/m2an/2021069](https://doi.org/10.1051/m2an/2021069).
@@ -18,30 +21,74 @@ set of retained iterates differs. They are the adaptive-depth companions
 to the [EDIIS+DIIS stiff-convergence recipe](ediis_diis_hybrid.md), which
 instead switches the mixing *rule* near convergence.
 
-## One-paragraph theory
+## Theory
 
-Standard commutator DIIS minimises the norm of the extrapolated error
-vector $\sum_i c_i \mathbf{e}_i$ (with $\mathbf{e} = \mathbf{FDS} -
-\mathbf{SDF}$) over the last `m` iterates subject to $\sum_i c_i = 1$.
-The adaptive variants keep the same minimisation but choose *which*
-iterates to retain each step:
+**What plain DIIS does.** Pulay's commutator DIIS
+({vibeqc-cite}`pulay_diis_1980`, {vibeqc-cite}`pulay_diis_1982`) stores the
+Fock matrices $\mathbf F_j$ and error vectors
+$\mathbf e_j = \mathbf F_j\mathbf D_j\mathbf S - \mathbf S\mathbf D_j\mathbf F_j$
+of the last $m$ iterates and extrapolates
+$\mathbf F = \sum_j c_j\mathbf F_j$ with the coefficients that minimise the
+error of the combination under the normalisation constraint,
 
-- **R-CDIIS (restarted, Algorithm 3)** lets the depth grow every
-  iteration until the stored error *differences* become nearly linearly
-  dependent, then restarts (drops all history but the last iterate and
-  regrows). The near-dependence test projects the newest difference onto
-  the span of the stored ones; a restart fires when the orthogonal
-  residual is small relative to the difference itself, controlled by a
-  parameter $\tau \in (0, 1)$.
-- **AD-CDIIS (adaptive-depth, Algorithm 4)** keeps only the recent
-  iterates whose residual is within a factor $1/\delta$ of the current
-  residual, so the window shrinks smoothly as the SCF converges and the
-  current residual drops. It has no restart discontinuity and, in the
-  paper's numerics, tends to give the fastest convergence.
+$$
+\min_{\mathbf c}\;\Bigl\lVert \sum_{j} c_j\,\mathbf e_j \Bigr\rVert^2
+\quad\text{subject to}\quad \sum_j c_j = 1 ,
+$$
 
-Both hold `diis_subspace_size` as a hard upper bound on stored iterates
-(a memory safety cap); in practice the adaptive rule trims first, and the
-mean depth is usually smaller than the fixed default.
+a small bordered linear system built from the overlaps
+$\langle\mathbf e_i,\mathbf e_j\rangle$ (written out on the
+[EDIIS+DIIS page](ediis_diis_hybrid.md#theory)). The window length $m$
+(`diis_subspace_size`, default 8) is fixed. A short window discards history
+that would still help; a long window keeps early iterates whose errors are
+far larger than the current one and whose differences are nearly linearly
+dependent, so the overlap matrix becomes ill-conditioned and the fitted
+Fock matrix noisy. The adaptive variants of
+{vibeqc-cite}`chupin_adaptive_diis_2021` keep the same minimisation and
+change only *which* iterates are in the window at each step.
+
+**R-CDIIS (restarted).** The window grows every iteration. Write
+$\Delta\mathbf e_k = \mathbf e_{k+1} - \mathbf e_k$ for the newest error
+difference and $\Pi_k$ for the orthogonal projector onto the span of the
+stored differences. The history is restarted (everything dropped but the
+last iterate, then regrown) when the new difference is nearly contained in
+that span,
+
+$$
+\bigl\lVert (1 - \Pi_k)\,\Delta\mathbf e_k \bigr\rVert
+\;<\; \tau\,\lVert \Delta\mathbf e_k \rVert ,
+\qquad \tau \in (0, 1),
+$$
+
+which is exactly the situation in which the least-squares problem is about
+to become ill-conditioned. `diis_restart_tau` sets $\tau$; the default
+$10^{-4}$ is the paper's recommendation.
+
+**AD-CDIIS (adaptive depth).** Instead of restarting, keep only the
+iterates whose error is comparable to the current one,
+
+$$
+\mathcal W_k = \bigl\{\, j \le k \;:\; \lVert \mathbf e_j \rVert \le \delta^{-1}\,\lVert \mathbf e_k \rVert \,\bigr\},
+\qquad \delta > 0 ,
+$$
+
+so the window shrinks smoothly as the residual falls and early, large-error
+iterates leave it. There is no restart discontinuity, and in the paper's
+numerics this variant tends to give the fastest convergence.
+`diis_adaptive_delta` sets $\delta$; the default is again $10^{-4}$.
+`diis_subspace_size` stays a hard cap on the stored iterates for both
+variants (a memory safety bound); in practice the adaptive rule trims first
+and the mean depth is usually below the fixed default.
+
+**Where this helps and where it does not.** The adaptive rules address the
+fixed-history compromise, not the far-from-convergence failure of the
+commutator objective: they change how the tail of a well-behaved SCF is
+extrapolated, and they leave the answer unchanged (the accelerator is a
+solver detail, not a change to the energy functional). On a small, easy
+molecule they can even take a few more iterations than plain DIIS, as the
+example below shows. For oscillation far from the minimum, the
+[EDIIS+DIIS hybrid](ediis_diis_hybrid.md) changes the objective instead;
+the two ideas are independent.
 
 ## Selecting the accelerator
 
@@ -100,6 +147,12 @@ assert abs(e_rcdiis  - e_diis) < 1e-9
 assert abs(e_adcdiis - e_diis) < 1e-9
 ```
 
+On a vibe-qc 0.17.10 development build all accelerators converge to
+`-74.9629979688` Ha. The iteration counts on this easy problem are 7 for
+plain DIIS, 7 for the default EDIIS+DIIS, 9 for R-CDIIS and 8 for AD-CDIIS,
+so the adaptive variants do not pay off on a system that converges in seven
+iterations; their purpose is the stiff tail of harder SCFs.
+
 The same holds for UHF, RKS and UKS: the accelerator is a solver detail,
 not a change to the energy functional.
 
@@ -130,6 +183,13 @@ res = vq.run_rhf_periodic_multi_k_ewald3d(
 )
 print("converged:", res.converged, "E =", res.energy)
 ```
+
+On a vibe-qc 0.17.10 development build this chain (two k-points) converged
+in 3 iterations to `E = -2.22162183` Ha with plain DIIS, with
+`AD_CDIIS` and with `R_CDIIS` alike, so on a system this small the
+accelerator changes nothing. This is the multi-k Ewald route; a
+one-dimensional cell with a k mesh fails closed on the GDF route at present,
+so keep GDF examples three-dimensional or Gamma-only.
 
 For the multi-k drivers the depth policy operates on the k-weighted DIIS
 history, so the restart and residual-ratio tests use the same weighted

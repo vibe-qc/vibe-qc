@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0.0",
-  "name": "<g94-import>",
-  "description": "Imported from G94: <g94-import>",
+  "schema_version": "1.1.0",
+  "name": "augmentation-cc-pvqz",
+  "description": " aug-cc-pVQZ Diffuse  EMSL  Basis Set Exchange Library   1/2/16 11:24 AM\nElements                             References\nH    :  T.H. Dunning, Jr. J. Chem. Phys. 90, 1007 (1989).\nHe   :  D.E. Woon and T.H. Dunning, Jr., J. Chem. Phys. 100, 2975 (1994).\nB - F:  R.A. Kendall, T.H. Dunning, Jr. and R.J. Harrison, J. Chem. Phys. 96,\n6796 (1992).\nAl - Cl: D.E. Woon and T.H. Dunning, Jr. J. Chem. Phys. 98, 1358 (1993).\nSc - Zn: N.B. Balabanov and K.A. Peterson, J. Chem. Phys, 123, 064107 (2005)",
   "role": "orbital",
   "elements": {
     "H": {
@@ -2311,7 +2311,52 @@
       ]
     }
   },
+  "basis_family": "dunning",
+  "references": [
+    {
+      "key": "kendall_dunning_harrison_1992",
+      "description": "R. A. Kendall, T. H. Dunning, R. J. Harrison, Journal of Chemical Physics 96, 6796-6806 (1992)",
+      "doi": "10.1063/1.462569"
+    },
+    {
+      "key": "woon_dunning_he_1994",
+      "description": "D. E. Woon, T. H. Dunning, Journal of Chemical Physics 100, 2975-2988 (1994)",
+      "doi": "10.1063/1.466439"
+    },
+    {
+      "key": "woon_dunning_al_ar_1993",
+      "description": "D. E. Woon, T. H. Dunning, Journal of Chemical Physics 98, 1358-1371 (1993)",
+      "doi": "10.1063/1.464303"
+    },
+    {
+      "key": "balabanov_peterson_2005",
+      "description": "N. B. Balabanov, K. A. Peterson, Journal of Chemical Physics 123, 064107 (2005)",
+      "doi": "10.1063/1.1998907"
+    }
+  ],
   "provenance": {
-    "origin": "file"
+    "origin": "file",
+    "kind": "vendor",
+    "upstream": [
+      {
+        "name": "libint",
+        "version": "2.13.1",
+        "identifier": "augmentation-cc-pvqz",
+        "detail": "byte-identical to libint's bundled file"
+      }
+    ],
+    "retrieval_date": "2026-09-08",
+    "content_sha256": "fc3a7616ce80028bed62d97c49f3b0a3e4a0f608f0c571da6c5f4b652869a69e",
+    "citations": [
+      {
+        "keys": [
+          "kendall_dunning_harrison_1992",
+          "woon_dunning_he_1994",
+          "woon_dunning_al_ar_1993",
+          "balabanov_peterson_2005"
+        ]
+      }
+    ],
+    "notes": "The date is when the file entered this repository's history; the import date was not recorded."
   }
 }

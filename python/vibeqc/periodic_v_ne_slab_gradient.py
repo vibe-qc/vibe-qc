@@ -1,7 +1,7 @@
 """Analytic fixed-density gradient of the slab (dim=2) 2D-Ewald ``V_ne``.
 
 Rung 3 of the slab GDF gradient ladder
-(``handovers/HANDOVER_GDF_GRADIENT_DEFERRED.md`` § 6): the derivative of
+(the original investigation): the derivative of
 
     E_ne = S_k w_k Re Tr[ D(k) V_ne(k) ]
 
@@ -139,7 +139,7 @@ def compute_v_ne_slab_ewald_2d_gradient(
         ao_pair_fourier_transform_bloch,
         ao_pair_fourier_transform_bloch_gradient_gweighted,
     )
-    from .aux_basis import _ao_scales_for_rsgdf
+    from .aux_basis import _ao_scales_for_rsgdf, _physical_pair_cell_groups
     from .periodic_gdf_gradient import _fold_hermitian_k_matrices_to_lattice
     from .periodic_v_ne import _vne_ft_g_chunk_size
     from .periodic_v_ne_slab import (
@@ -148,6 +148,7 @@ def compute_v_ne_slab_ewald_2d_gradient(
         _g0_profile_meshes,
         _inplane_g_mesh,
         _slab_geometry,
+        _slab_pair_cutoff,
         _z_resolved_pair_profiles_at_cells,
     )
 
@@ -211,6 +212,15 @@ def compute_v_ne_slab_ewald_2d_gradient(
     R_g = np.array([list(c.r_cart) for c in cells], dtype=float)
     if R_g.size == 0:
         R_g = np.zeros((1, 3), dtype=float)
+    # The value route's AO-pair term set (#44): every pair of every cell, or
+    # under pair_complete_1e the pairs within lat_opts.cutoff_bohr. The
+    # derivative kernels take no pair cutoff, so they run once per group of
+    # cells sharing a pair mask, with the other pair weights zeroed.
+    pair_cutoff = _slab_pair_cutoff(lat_opts)
+    if pair_cutoff is None:
+        pair_groups = [(R_g, None)]
+    else:
+        pair_groups = _physical_pair_cell_groups(basis, R_g, pair_cutoff)
     D_fold = _fold_hermitian_k_matrices_to_lattice(
         densities, w_arr, kpts, v_short_lat
     )
@@ -274,7 +284,7 @@ def compute_v_ne_slab_ewald_2d_gradient(
                 # conj(.) of exactly this object when called at -k, which
                 # keeps the streaming (no per-cell tensor).
                 pair_ft_mk = ao_pair_fourier_transform_bloch(
-                    basis, G_c, R_g, k_cart=-k
+                    basis, G_c, R_g, k_cart=-k, pair_cutoff_bohr=pair_cutoff
                 )
                 t_k = np.einsum(
                     "ab,abg->g", D_weight, pair_ft_mk.conj(), optimize=True
@@ -297,9 +307,11 @@ def compute_v_ne_slab_ewald_2d_gradient(
                 # so it must be driven at k' = -k to differentiate the same
                 # S_g e^{+ik.R_g} conj(r̂_ab(g; G)) the value side builds.
                 Q = w_k * D_weight[:, :, None] * v_long_c[None, None, :]
-                gradient += ao_pair_fourier_transform_bloch_gradient_gweighted(
-                    basis, G_c, R_g, -k, Q, n_atoms
-                )
+                for R_grp, mask in pair_groups:
+                    Q_grp = Q if mask is None else Q * mask[:, :, None]
+                    gradient += ao_pair_fourier_transform_bloch_gradient_gweighted(
+                        basis, G_c, R_grp, -k, Q_grp, n_atoms
+                    )
 
     # ---- V_g0: the Parry g = 0 slab term -----------------------------------
     z_center = 0.5 * (float(z_I.min()) + float(z_I.max()))
@@ -332,9 +344,11 @@ def compute_v_ne_slab_ewald_2d_gradient(
             * D_weight[:, :, None]
             * np.conj(wtil)[None, None, :]
         )
-        gradient += ao_pair_fourier_transform_bloch_gradient_gweighted(
-            basis, G0, R_g, -kpts[ik], Q0, n_atoms
-        )
+        for R_grp, mask in pair_groups:
+            Q_grp = Q0 if mask is None else Q0 * mask[:, :, None]
+            gradient += ao_pair_fourier_transform_bloch_gradient_gweighted(
+                basis, G0, R_grp, -kpts[ik], Q_grp, n_atoms
+            )
 
     # Nuclear side: E_g0 = (2pi/A) S_I Z_I S_z n~(z) g0(z - z_I) dz with the
     # k-folded density profile n~(z) = S_g S_ab D_fold(g)_ab n_ab(g; z).
@@ -357,6 +371,7 @@ def compute_v_ne_slab_ewald_2d_gradient(
         profile_tol=profile_tol,
         z_spacing=z_spacing,
         context="compute_v_ne_slab_ewald_2d_gradient",
+        pair_cutoff_bohr=pair_cutoff,
     )
     D_fold_blocks = np.array(
         [np.asarray(D_fold.blocks[c]) for c in range(len(cells))]

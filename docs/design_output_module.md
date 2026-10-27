@@ -1080,8 +1080,28 @@ writers never regress to `print()`.
   - the dev-chat memo (citation-DB ownership, the new CLIs).
 - [`docs/release_process.md`](release_process.md), release cadence,
   documentation cadence (CLAUDE.md § 5).
-- [`CLAUDE.md` § 4](CLAUDE.md), basissetdev branch policy.
-- [`CLAUDE.md` § 10](CLAUDE.md), external-codes / library-only
-  policy; citation routing must respect the library/program line.
-- [`AGENTS.md`](AGENTS.md), dev-chat manifest where the
+- [`CLAUDE.md` § 4](https://github.com/vibe-qc/vibe-qc/blob/main/CLAUDE.md), basissetdev branch policy
+  (historical monorepo rule; retired, see `AGENTS.md`).
+- [`CLAUDE.md` § 10](https://github.com/vibe-qc/vibe-qc/blob/main/CLAUDE.md), external-codes / library-only
+  policy; citation routing must respect the library/program line (today
+  ground rule 5 of `AGENTS.md`).
+- [`AGENTS.md`](https://github.com/vibe-qc/vibe-qc/blob/main/AGENTS.md), dev-chat manifest where the
   citation-DB ownership clause lands.
+
+### Explicit resource input evidence
+
+The molecular dry-run path emits `resource_evidence` with schema
+`vibeqc.resource-evidence/1`, resolved method and basis, and `nbf` only after
+actual basis construction under the estimate opt-in. Other unresolved
+ResourceFeatures dimensions remain absent. This table does not certify a
+complete execution trace or estimate runtime.
+
+For file-based entry points, `resource_input_reads()` and
+`read_resource_input(path)` from `vibeqc.output.resource_evidence` provide a
+scoped reader. Parse or execute the returned bytes; do not reopen the file.
+The helper hashes exactly those returned bytes, so a later file modification
+cannot change the recorded input. Nested contexts are isolated. The manifest
+records only SHA256 values, without input paths. Its explicit-read coverage
+excludes uninstrumented reads, imports and pre-existing in-memory objects.
+Without observed input bytes the Queue must retain unknown input binding.
+Arbitrary Python scripts are not automatically instrumented by this API.

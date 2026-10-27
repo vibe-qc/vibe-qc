@@ -17,6 +17,7 @@ see [BLAS backend](#blas-backend) below.
 |---|---|---:|
 | Current tagged release | clone, then `./scripts/install.sh` (release branch or newest stable tag) | yes |
 | Develop or test current `main` | `./scripts/install.sh --dev` | yes |
+| Include OpenTrustRegion orbital optimization | `./scripts/install.sh --dev --with-opentrustregion` | yes, including Fortran |
 | Reproduce a published calculation | `./scripts/install.sh --branch vX.Y.Z` | yes |
 | Read QVF files only | [install vibe-view alone](tutorial/vibe_view_getting_started.md) | no |
 | Calculate and view on one machine | install vibe-qc, then follow [Install both](getting_started.md#install-both) | vibe-qc only |
@@ -28,12 +29,20 @@ manual build steps, BLAS selection, clusters, updates, and failure recovery.
 
 ```{note}
 **vibe-qc is not on PyPI yet.** There is no `pip install vibe-qc`. The
-supported install path is: clone the repo, install your platform's build
-prerequisites, then run `./scripts/install.sh --dev`. It builds or verifies the
+supported source-install path is: clone the repo, install your platform's
+build prerequisites, then run the managed installer. Use `--dev` for `main`,
+omit it for the selected origin's release branch or newest stable tag, or use
+`--branch <tag>` for a specific release. It builds or verifies the
 vendored libraries, creates the managed virtualenv, installs the package, and
 checks the live extension. The advanced manual recipe remains below for custom
 provisioning.
 ```
+
+The install and update scripts ignore ambient `PYTHONPATH`, `PYTHONHOME`,
+and user-site packages when creating the environment, installing dependencies,
+and verifying the result. This prevents external Python packages from falsely
+satisfying the target environment's dependencies. Compiler and library paths,
+pip index settings, and the existing native build cache are preserved.
 
 ## Request repository access
 
@@ -85,7 +94,9 @@ reproducing a calculation; a GitLab SHA does not identify the corresponding
 GitHub snapshot. See [GitHub source publication](github_publication.md) for
 the publication policy.
 
-For source downloads, choose a tag in the owning project's **tags** page.
+For source downloads, choose a tag in the owning project's **tags** page. Standalone macOS and Linux builds of vibe-qc, with checksums and the
+licensing of their bundled dependencies, are described in
+[distribution builds](distribution.md).
 Packaged artifacts, when published, belong to that project's release page:
 [vibe-qc](https://github.com/vibe-qc/vibe-qc/releases),
 [vibe-view](https://github.com/vibe-qc/vibe-view/releases),
@@ -119,9 +130,12 @@ It performs these steps in order:
 6. builds the editable Python/C++ package;
 7. imports vibe-qc and prints the linked-library banner.
 
-The first clean build normally takes 15 to 40 minutes and uses several
-gigabytes of build space. Re-running the installer is much faster when the
-native dependency stamps are current.
+Allow several gigabytes of build space and enough time for the selected
+Libint kernels. The default `5_4_4` Libint build alone is estimated at 1.5 to
+2 hours in the installer help; hardware, parallelism and cached dependencies
+change the total substantially. Re-running the installer reuses current
+native dependencies. See [Libint angular-momentum limits](#libint-max-am)
+before choosing a smaller kernel build for speed.
 
 After it finishes, verify the exact interpreter and package path:
 
@@ -190,6 +204,7 @@ The projects share a file format and can be adopted separately:
 | vibe-view | QVF, structure, browser, desktop, and terminal viewing | [separate repository](https://github.com/vibe-qc/vibe-view); [viewer setup](tutorial/vibe_view_getting_started.md) |
 | vibe-queue | Reusable scheduling; CLI and import package still `vq` | [separate repository](https://github.com/vibe-qc/vibe-queue); [queue setup](user_guide/queue.md) |
 | vibe-basis | External-code basis optimization | stays in this repository at `vibe-basis/` |
+| vibeqc-naming | IUPAC naming engine, pure Python | stays in this repository at `vibeqc-naming/`; required by vibe-qc; `pip install ./vibeqc-naming` also works on its own ([naming guide](user_guide/naming.md)) |
 | QVF | Specification, schema, registry, corpus, reference implementations | [format repository](https://github.com/vibe-qc/qvf), Apache-2.0; no runtime dependency |
 
 Each source installer operates in its own checkout and creates its own
@@ -199,8 +214,9 @@ specification and conformance corpus; it does not link the QVF reference
 toolkit. See [Install and maintain the toolset](toolset_lifecycle.md) for
 checkout locations and lifecycle commands.
 
-The flag-free installer targets `release`, the stable core snapshot advanced
-from a tag on `main`; `--dev` selects ongoing development on `main`.
+The flag-free installer targets origin's `release` branch when present, or
+its newest stable `vX.Y.Z` tag otherwise. `--dev` selects development `main`;
+`--branch NAME` requests that exact branch or tag without a fallback.
 Companion installation requirements are maintained in the
 [vibe-view manual](https://vibe-qc.com/vibe-view/docs/installation.html) and
 [vq lifecycle guide](https://vibe-qc.com/vibe-queue/docs/lifecycle.html#source-install-lifecycle).
@@ -250,7 +266,16 @@ Python runtime dependencies such as NumPy, SciPy, spglib, seekpath,
 jsonschema, joblib, and ASE come from `pyproject.toml` through pip.
 `scikit-build-core` and pybind11 are isolated build requirements. pytest,
 PySCF, and the other validation tools belong to the optional `test` and `dev`
-extras; a calculation-only installation does not need them.
+extras; a calculation-only installation does not need them. The managed
+installer defaults to the `test` extra, so explicitly select `--extras none`
+when you want only runtime dependencies:
+
+```sh
+./scripts/install.sh --dev --extras none --dry-run
+```
+
+Review the target ref, environment and dependency plan, then remove `--dry-run`
+to install. Add optional extras only for the workflow you intend to use.
 
 ## One-shot bootstrap
 
@@ -274,6 +299,7 @@ extras / venv flags as `update.sh`:
 ./scripts/install.sh --dev --extras basisopt             # add co-located vibe-basis
 ./scripts/install.sh --dev --extras mpi                 # add mpi4py for MPI-enabled runs
 ./scripts/install.sh --dev --extras dispersion,mpi      # add dispersion and MPI support
+./scripts/install.sh --dev --extras dispersion,mpi,test # ...plus pytest/PySCF for the test suite
 ./scripts/install.sh --dev --python python3.13          # force a specific interpreter
 ./scripts/install.sh --dev --with-openblas              # vendor OpenBLAS
 ./scripts/install.sh --dev --libint-max-am 5_4_3        # faster libint, no g-function Hessians
@@ -328,9 +354,10 @@ machine, or to integrate with your own provisioning):
 ```sh
 git clone https://github.com/vibe-qc/vibe-qc.git
 cd vibe-qc
-./scripts/setup_native_deps.sh       # preflight → 15-40 min build, idempotent
+./scripts/setup_native_deps.sh       # preflight and cached native dependency builds
 python3 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip
+.venv/bin/python -m pip install ./vibeqc-naming
 .venv/bin/python -m pip install -e .
 ```
 
@@ -364,9 +391,10 @@ that exist in this repository. Old monorepo tags remain in the archive.
 3. `build_spglib.sh`, spglib 2.7.0
 4. `build_fftw.sh`, FFTW3 3.3.10
 5. `build_libecpint.sh`, libecpint + pugixml + libcerf
-6. `setup_basis_library.sh`, populate the gitignored
-   `build/basis_library/basis/` overlay from libint's standard set plus
-   our custom additions
+6. `setup_basis_library.sh`, render the gitignored
+   `build/basis_library/` runtime overlay from the bundled QVF-Basis
+   records, with a content receipt the importer checks (see
+   [basis sets](user_guide/basis_sets.md#how-the-bundled-library-is-stored))
 
 After the build, `setup_native_deps.sh` probes which BLAS the
 system has and prints a tip if it would benefit from an upgrade.
@@ -613,7 +641,7 @@ sudo dnf install gcc-gfortran
 |---|---|
 | OS-package install | C++ compiler, CMake/Ninja, plus the headers libint's code generator needs at build time (Boost, Eigen, GMP) and the BLAS+LAPACK Eigen delegates dense linear algebra to. |
 | `setup_native_deps.sh` | Fetches and builds libint, libxc, spglib, FFTW3, libecpint into `third_party/<dep>/install/`. Each dep short-circuits silently if already built. |
-| `setup_basis_library.sh` | Builds the packaged basis inventory under `python/vibeqc/basis_library/basis/`: 255 bundled Gaussian `.g94` runtime files, combining the libint-inherited standard files with the custom and BSE-derived overlay files. The bundled basis library ships **inside** the Python package so a stock `pip install` gets every basis set without the user setting `LIBINT_DATA_PATH`. |
+| `setup_basis_library.sh` | Renders the runtime basis files libint and libecpint read (255 bundled Gaussian sets as `.g94` with `.ecp` sidecars) from the QVF-Basis records in `python/vibeqc/basis_library/qvf/`, the source of truth since v0.17.17, and writes a content receipt; an overlay whose bytes disagree with the records refuses to load (`BasisOverlayIntegrityError`, exit status 78). The bundled library ships **inside** the Python package, so a stock `pip install` gets every basis set without the user setting `LIBINT_DATA_PATH`. |
 | `python3 -m venv .venv` | Isolates vibe-qc from your system Python. |
 | `pip install -e '.[test]'` | Drives CMake via scikit-build-core, picks up the vendored libs from `third_party/`, compiles the pybind11 module, installs in editable mode plus test deps (pyscf, ase, dftd3). |
 
@@ -871,6 +899,19 @@ recipe modules importable. `calculators` and
 parametrisation, gradients, BDIIS driver and LD diagnostics) works
 without it.
 
+A second, independent extra adds the optional optimiser backends of the
+in-process drivers (`optimize_bobyqa`, `optimize_dfols`, `optimize_cmaes`,
+`optimize_minuit`):
+
+```sh
+pip install -e '.[basisopt-drivers]'      # Py-BOBYQA, DFO-LS, cma, iminuit
+```
+
+Each driver imports its backend only when called, so the core package and
+the BDIIS driver need none of them. Py-BOBYQA and DFO-LS are GPL-3.0; that is
+why they are an opt-in extra rather than a dependency. See
+[Choosing the optimiser](user_guide/basis_optimization.md#choosing-the-optimiser).
+
 After install:
 
 ```sh
@@ -930,6 +971,8 @@ PEP 668 blocks this; always use a virtualenv:
 ```sh
 python3 -m venv .venv && .venv/bin/pip install -e '.[test]'
 ```
+
+(libint-max-am)=
 
 **libint build is slow**
 The libint code generator produces a large amount of source for
@@ -994,15 +1037,16 @@ That rebuilds libint, and only libint. `./scripts/doctor.sh` reports
 which spec the current install was built with.
 
 **On Linux** the install scripts automatically cap parallelism to
-prevent the OOM-kill pattern that hung compute-reference on 2026-05-16. The
-cap is `min(nproc, max(2, mem_mb // 15000), 8)` -- 15 GB/worker
-budget, hard ceiling of 8 even on monster boxes. Concretely:
+reduce the risk of out-of-memory failures during compilation.
+The cap is `min(nproc, max(1, usable_mb // budget_mb), 8)`, where
+`usable` is `MemAvailable` bounded by any cgroup memory limit (not
+`MemTotal`, #411) and the per-worker budget is 5000 MB for libint's
+library and 15000 MB for everything else. For example, these synthetic resource budgets give:
 
-| Host (Linux)              | nproc | RAM    | parallelism |
-|---------------------------|------:|-------:|------------:|
-| compute-reference (32 th, 125 GB)   |    32 | 125 GB |           8 |
-| compute-small    (16 th,  62 GB)   |    16 |  62 GB |           4 |
-| small VM (4 th, 16 GB)    |     4 |  16 GB |           2 |
+| Available CPUs | Usable memory (MB) | libint workers | core workers |
+|---:|---:|---:|---:|
+| 16 | 32000 | 6 | 2 |
+| 8 | 12000 | 2 | 1 |
 
 The same scripts also self-re-exec under `nice -n 19 ionice -c 3`
 on Linux so the build runs at idle CPU + IO priority -- the box
@@ -1102,3 +1146,41 @@ comparing against `release`, validating a topic-branch fix, etc.
 The banner on the next run will then read e.g. `Release v0.9.0` or
 `dev 0.9.0 (feature/some-topic @ abc1234)`, which is what you'll see
 prepended to every persisted SCF log.
+
+## Optional OpenTrustRegion orbital optimizer
+
+The installer can fetch and compile the pinned OpenTrustRegion numerical
+library into the vibe-qc extension. Select it explicitly:
+
+```sh
+./scripts/install.sh --dev --with-opentrustregion
+# For an existing environment:
+./scripts/update.sh --dev --with-opentrustregion
+.venv/bin/python -c "import vibeqc; print(vibeqc.has_opentrustregion())"
+```
+
+Install a Fortran compiler in addition to the usual build prerequisites:
+`brew install gcc` on macOS, `sudo apt install gfortran` on Debian/Ubuntu,
+`sudo dnf install gcc-gfortran` on Fedora/RHEL, or
+`sudo pacman -S gcc-fortran` on Arch. Git and LP64 BLAS/LAPACK are also
+required. macOS uses Accelerate; Linux can use the OpenBLAS/LAPACK development
+packages listed above. The scripts report missing compiler/Git prerequisites
+before changing the environment, including with `--skip-native-deps`.
+
+The final capability check must print `True`. The library is fetched at build
+time and linked statically into the extension; a separate OpenTrustRegion
+Python package or runtime download is unnecessary. Linked Fortran and BLAS
+runtime libraries must remain available, as for other native dependencies.
+Default fresh builds leave this optional feature disabled.
+
+`install.sh`, `update.sh` and `reinstall.sh` accept both
+`--with-opentrustregion` and `--without-opentrustregion`. Without either,
+they preserve the last verified selection, including during `--clean` or
+environment replacement. Explicit flags take precedence over `CMAKE_ARGS`,
+which takes precedence over the saved selection. Legacy builds without a
+saved selection use their CMake cache; conflicting caches require an explicit
+flag. `--dry-run` shows the choice without fetching or compiling.
+
+For a local modified checkout, use `install.sh --current` or `reinstall.sh`
+to avoid a branch switch. See the [optimizer reference](user_guide/opentrustregion.md)
+for the pinned revision, offline builds, supported calculations and citations.

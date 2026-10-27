@@ -100,8 +100,12 @@ __all__ = [
     "compute_j_ewald_3d_ft_gamma",
     "compute_j_ewald_3d_ft_k_density_to_cells",
     "compute_j_ewald_3d_ft_lattice",
+    "compute_j_ewald_3d_ft_lattice_gradient",
     "EwaldJFTGammaCache",
     "EwaldJFTLatticeCache",
+    "EwaldJFTLatticeStream",
+    "ewald_j_ft_lattice_cache_budget_bytes",
+    "ewald_j_ft_lattice_cache_retained_bytes",
     "makov_payne_coefficient_cubic",
     "make_ewald_3d_gamma_j_builder",
 ]
@@ -530,16 +534,21 @@ class EwaldJFTLatticeCache:
     The conjugate is **not** stored (unlike the small Γ cache): this tensor
     can be large and persisting a second copy risks OOM on big cells (see
     the OOM note in :func:`vibeqc._aopair_ft.ao_pair_fourier_transform_bloch`).
-    The contraction conjugates inline -- exactly as the uncached path did --
-    so the cache's resident memory equals one ``pair_at_cells``, the same
-    tensor one uncached iteration already materialises.
+    The real contraction conjugates the reciprocal density instead of the
+    Fourier tensor, so it also avoids a transient second tensor. Only one
+    extra complex vector of length n_G is required.
 
     The cell list is captured at construction; reusing the cache with a
     density on a different cell list is a programming error (guarded by a
     cell-count check in :func:`compute_j_ewald_3d_ft_lattice`).
+
+    The driver requests compact physical support: exactly empty pair cells
+    are absent from ``pair_at_cells`` and ``active_cell_indices`` maps its
+    first axis to the original list. ``n_cells`` and ``cell_keys`` still
+    describe that complete list. Direct factory calls default to dense.
     """
 
-    __slots__ = ("pair_at_cells", "v_G", "inv_cell_volume", "n_cells", "n_bf", "cell_keys", "pair_cutoff")
+    __slots__ = ("pair_at_cells", "v_G", "inv_cell_volume", "n_cells", "n_bf", "cell_keys", "pair_cutoff", "active_cell_indices")
 
     def __init__(
         self,
@@ -550,14 +559,121 @@ class EwaldJFTLatticeCache:
         n_bf: int,
         cell_keys=None,
         pair_cutoff=None,
+        active_cell_indices=None,
     ) -> None:
-        self.pair_at_cells = pair_at_cells  # (n_cells, nbf, nbf, n_G) complex
+        self.pair_at_cells = pair_at_cells  # (n_stored_cells, nbf, nbf, n_G) complex
         self.v_G = v_G                       # (n_G,) = 4pi/G^2
         self.inv_cell_volume = inv_cell_volume
         self.n_cells = n_cells
         self.n_bf = n_bf
         self.cell_keys = cell_keys
         self.pair_cutoff = pair_cutoff
+        self.active_cell_indices = active_cell_indices
+
+
+class EwaldJFTLatticeStream:
+    """Bounded stand-in for :class:`EwaldJFTLatticeCache` (#640).
+
+    Holds everything of the retained cache **except** the Fourier tensor:
+    the same finite ``G != 0`` mesh and ``4pi/G^2`` kernel, the same cell
+    list, physical AO-pair support mask, AO scales and compact cell mapping.
+    :func:`compute_j_ewald_3d_ft_lattice` contracts it in reciprocal batches
+    under the ``VIBEQC_J_EWALD3D_FT_CELL_CHUNK_MIB`` policy, recomputing the
+    per-cell AO-pair FT for every Hartree build, so its peak memory is the
+    batch workspace instead of ``(cells, nbf, nbf, n_G)`` complex values.
+    The retained tensor's would-be size and the budget that refused it are
+    recorded for the caller's manifest. Batch accumulation changes the
+    reduction order, so the result agrees with the retained cache to
+    roundoff rather than bit for bit; the finite objective is identical.
+    """
+
+    __slots__ = (
+        "G", "v_G", "inv_cell_volume", "n_cells", "n_bf", "cell_keys",
+        "pair_cutoff", "active_cell_indices", "translations", "pair_mask",
+        "pair_scales", "retained_bytes", "budget_bytes",
+    )
+
+    def __init__(
+        self,
+        G: np.ndarray,
+        v_G: np.ndarray,
+        inv_cell_volume: float,
+        n_cells: int,
+        n_bf: int,
+        cell_keys,
+        pair_cutoff,
+        active_cell_indices,
+        translations: np.ndarray,
+        pair_mask: Optional[np.ndarray],
+        pair_scales: np.ndarray,
+        retained_bytes: int,
+        budget_bytes: int,
+    ) -> None:
+        self.G = G                                   # (n_G, 3), G != 0
+        self.v_G = v_G                               # (n_G,) = 4pi/G^2
+        self.inv_cell_volume = inv_cell_volume
+        self.n_cells = n_cells
+        self.n_bf = n_bf
+        self.cell_keys = cell_keys
+        self.pair_cutoff = pair_cutoff
+        self.active_cell_indices = active_cell_indices
+        self.translations = translations             # (n_stored_cells, 3)
+        self.pair_mask = pair_mask                   # (n_stored_cells, nbf, nbf) bool or None
+        self.pair_scales = pair_scales               # (nbf, nbf)
+        self.retained_bytes = int(retained_bytes)
+        self.budget_bytes = int(budget_bytes)
+
+    @property
+    def n_G(self) -> int:
+        return int(self.G.shape[0])
+
+
+def ewald_j_ft_lattice_cache_retained_bytes(n_stored_cells: int, nbf: int, n_G: int) -> int:
+    """Bytes the retained ``(cells, nbf, nbf, n_G)`` complex128 tensor holds."""
+    return (
+        max(0, int(n_stored_cells)) * max(0, int(nbf)) ** 2 * max(0, int(n_G))
+        * int(np.dtype(np.complex128).itemsize)
+    )
+
+
+#: Fraction of the memory available at cache construction that the retained
+#: lattice Hartree tensor may take when no explicit budget is configured.
+_EWALD_J_FT_CACHE_DEFAULT_FRACTION = 0.5
+
+
+def ewald_j_ft_lattice_cache_budget_bytes(
+    *, available: Optional[int] = None,
+) -> Optional[int]:
+    """Retained-cache budget of the multi-k analytic-FT Hartree (#640).
+
+    ``VIBEQC_J_EWALD3D_FT_CACHE_MAX_MIB`` sets it explicitly (a value that is
+    not a finite nonnegative number is refused). Otherwise it is half of the
+    memory available now, probed through :func:`vibeqc.available_memory_bytes`
+    (``available`` overrides the probe for tests). ``None`` means no bound:
+    the probe found nothing to enforce against, as :func:`vibeqc.check_memory`
+    treats that case. This budget covers the retained tensor only, not the
+    whole process; construction temporaries keep their own
+    ``VIBEQC_J_EWALD3D_FT_CELL_CHUNK_MIB`` policy.
+    """
+    raw = os.environ.get("VIBEQC_J_EWALD3D_FT_CACHE_MAX_MIB")
+    if raw is not None and raw.strip():
+        try:
+            mib = float(raw)
+        except ValueError:
+            mib = float("nan")
+        if not (math.isfinite(mib) and mib >= 0.0):
+            raise ValueError(
+                "VIBEQC_J_EWALD3D_FT_CACHE_MAX_MIB must be a finite "
+                f"nonnegative number of MiB; got {raw!r}"
+            )
+        return int(mib * 1024.0 * 1024.0)
+    if available is None:
+        from .memory import available_memory_bytes
+
+        available = int(available_memory_bytes())
+    if available <= 0:
+        return None
+    return int(_EWALD_J_FT_CACHE_DEFAULT_FRACTION * available)
 
 
 def build_j_ewald_3d_ft_lattice_cache(
@@ -567,7 +683,9 @@ def build_j_ewald_3d_ft_lattice_cache(
     *,
     lattice_opts: Optional[LatticeSumOptions] = None,
     ke_cutoff: float = 200.0,
-) -> EwaldJFTLatticeCache:
+    compact_physical_support: bool = False,
+    retained_cache_max_bytes: Optional[int] = None,
+) -> Union[EwaldJFTLatticeCache, EwaldJFTLatticeStream]:
     """Precompute the density-independent pieces of
     :func:`compute_j_ewald_3d_ft_lattice` for a fixed lattice cell list.
 
@@ -575,8 +693,27 @@ def build_j_ewald_3d_ft_lattice_cache(
     ``D_real.cells`` from the multi-k driver (it is fixed across SCF
     iterations, so the cache built from iteration 1 is valid for all).
     Returns an :class:`EwaldJFTLatticeCache` to feed back via the
-    ``cache`` argument of :func:`compute_j_ewald_3d_ft_lattice`. The
-    contraction is **bit-identical** to the uncached path.
+    ``cache`` argument of :func:`compute_j_ewald_3d_ft_lattice`.
+    Dense-cache contraction is **bit-identical** to the uncached path.
+
+    ``compact_physical_support`` omits cells whose physical AO-pair mask
+    is entirely false before allocating Fourier tensors. In that explicit
+    mode ``active_cell_indices`` maps the stored first axis back to the
+    original cell list; the contraction restores exact zero output blocks.
+    Removing zero terms can change reduction roundoff. The default keeps
+    the existing dense cache layout. Large transforms are constructed in
+    reciprocal batches under the existing FT workspace budget; the final
+    retained cache size is not bounded by that temporary-workspace budget.
+
+    ``retained_cache_max_bytes`` is the preflight of #640: when the tensor
+    the cache would retain (:func:`ewald_j_ft_lattice_cache_retained_bytes`
+    over the stored cells, ``nbf`` and the finite G mesh) exceeds it, no
+    Fourier tensor is allocated and an :class:`EwaldJFTLatticeStream` with
+    the same cells, mesh, kernel and support is returned instead; the
+    contraction then streams reciprocal batches. ``None`` keeps the
+    unbounded retained cache (the default for direct callers; the multi-k
+    driver passes :func:`ewald_j_ft_lattice_cache_budget_bytes`). A budget
+    equal to the retained size still retains.
     """
     from ._aopair_ft import ao_pair_fourier_transform_at_cells
     from .aux_basis import _ao_scales_for_rsgdf, rsgdf_dense_g_mesh
@@ -615,10 +752,62 @@ def build_j_ewald_3d_ft_lattice_cache(
     if R_g.size == 0:
         R_g = np.zeros((1, 3), dtype=float)
 
+    active_cell_indices = None
+    if compact_physical_support and opts.pair_complete_1e:
+        from .lattice_screening import ao_pair_support_mask
+
+        active = tuple(i for i, shift in enumerate(R_g)
+                       if ao_pair_support_mask(basis, shift, opts.cutoff_bohr).any())
+        if len(active) != n_cells:
+            active_cell_indices = active
+            R_g = R_g[np.asarray(active, dtype=int)]
+
+    v_G = 4.0 * np.pi / G2_kept
+    retained_bytes = ewald_j_ft_lattice_cache_retained_bytes(len(R_g), nbf, len(G))
+    if retained_cache_max_bytes is not None and retained_bytes > int(retained_cache_max_bytes):
+        # Preflight (#640): the retained tensor would not fit the budget.
+        # Keep every ingredient of the same finite objective and let the
+        # contraction stream the Fourier transform per Hartree build.
+        pair_mask = None
+        if opts.pair_complete_1e:
+            from .lattice_screening import ao_pair_support_mask
+
+            pair_mask = np.stack([
+                np.asarray(ao_pair_support_mask(basis, shift, opts.cutoff_bohr), dtype=bool)
+                for shift in R_g
+            ]) if len(R_g) else np.zeros((0, nbf, nbf), dtype=bool)
+        ao_scales = _ao_scales_for_rsgdf(basis)
+        return EwaldJFTLatticeStream(
+            G, v_G, 1.0 / cell_volume, n_cells, nbf,
+            tuple(tuple(c.index) for c in cell_list),
+            _physical_pair_cutoff(opts),
+            active_cell_indices,
+            np.ascontiguousarray(R_g, dtype=float),
+            pair_mask,
+            np.outer(ao_scales, ao_scales),
+            retained_bytes,
+            int(retained_cache_max_bytes),
+        )
+
     # Per-cell AO-pair FT FT_muν(G; R_g): shape (n_cells, nao, nao, n_G).
     # S_g of it is the Γ (k=0) Bloch AO-pair FT -- the source of the F4
     # Γ<->multi-k bit-match.
-    pair_at_cells = ao_pair_fourier_transform_at_cells(basis, G, R_g)
+    # The per-cell builder stacks a native one-cell tensor into its result.
+    # Bound both temporary tensors by batching G, not by enlarging the
+    # retained cache or changing the finite reciprocal objective. The same
+    # cells * G * nbf^2 byte policy can solve for the G axis here.
+    g_chunk = _ewald_j_ft_cell_chunk_size(nbf, max(1, len(R_g)))
+    if not len(R_g):
+        pair_at_cells = np.empty((0, nbf, nbf, len(G)), dtype=complex)
+    elif len(G) <= g_chunk:
+        pair_at_cells = ao_pair_fourier_transform_at_cells(basis, G, R_g)
+    else:
+        pair_at_cells = np.empty((len(R_g), nbf, nbf, len(G)), dtype=complex)
+        for start in range(0, len(G), g_chunk):
+            stop = min(start + g_chunk, len(G))
+            pair_at_cells[..., start:stop] = ao_pair_fourier_transform_at_cells(
+                basis, G[start:stop], R_g,
+            )
     _mask_physical_pair_ft(pair_at_cells, basis, R_g, opts)
     ao_scales = _ao_scales_for_rsgdf(basis)
     # In place: the tensor is (n_cells, nbf, nbf, n_G) -- the dominant
@@ -627,12 +816,50 @@ def build_j_ewald_3d_ft_lattice_cache(
     # primitive/sto-3g, 177 cells; 2026-07-09).
     pair_at_cells *= np.outer(ao_scales, ao_scales)[None, :, :, None]
 
-    v_G = 4.0 * np.pi / G2_kept
     return EwaldJFTLatticeCache(
         pair_at_cells, v_G, 1.0 / cell_volume, n_cells, nbf,
         tuple(tuple(c.index) for c in cell_list),
         _physical_pair_cutoff(opts),
+        active_cell_indices,
     )
+
+
+def _stream_j_ewald_3d_ft_lattice(
+    stream: EwaldJFTLatticeStream, basis: BasisSet, D_blocks: np.ndarray,
+) -> np.ndarray:
+    """Contract ``J(g)`` from a stream plan in reciprocal batches (#640).
+
+    Same objective and contraction as the retained path,
+    ``rho(G) = S_g S_ls D(g)_ls FT_ls(G; R_g)`` and
+    ``J(g) = (1/Omega) S_G (4pi/G^2) Re[conj(rho(G)) FT(G; R_g)]``, but the
+    per-cell FT is rebuilt one G batch at a time and both sums accumulate
+    over batches, so only the batch workspace (the
+    ``VIBEQC_J_EWALD3D_FT_CELL_CHUNK_MIB`` policy) is live.
+    """
+    from ._aopair_ft import ao_pair_fourier_transform_at_cells
+
+    n_stored = int(stream.translations.shape[0])
+    nbf = stream.n_bf
+    J_all = np.zeros((n_stored, nbf, nbf), dtype=float)
+    if n_stored == 0:
+        return J_all
+    g_chunk = _ewald_j_ft_cell_chunk_size(nbf, n_stored)
+    scales = stream.pair_scales[None, :, :, None]
+    mask = None if stream.pair_mask is None else stream.pair_mask[..., None]
+    for start in range(0, stream.n_G, g_chunk):
+        stop = min(start + g_chunk, stream.n_G)
+        ft = ao_pair_fourier_transform_at_cells(
+            basis, stream.G[start:stop], stream.translations,
+        )
+        if mask is not None:
+            ft *= mask
+        ft *= scales
+        rho_G = np.einsum("gmn,gmnk->k", D_blocks, ft)
+        J_all += np.real(
+            np.einsum("k,k,gmnk->gmn", stream.v_G[start:stop], rho_G.conj(), ft)
+        )
+    J_all *= stream.inv_cell_volume
+    return J_all
 
 
 def compute_j_ewald_3d_ft_lattice(
@@ -718,13 +945,26 @@ def compute_j_ewald_3d_ft_lattice(
 
     # Empty G-mesh (or no cells): J(g) == 0 per cell -- matches the uncached
     # early return.
-    if cache.pair_at_cells.shape[-1] == 0 or n_cells == 0:
+    streamed = isinstance(cache, EwaldJFTLatticeStream)
+    n_g = cache.n_G if streamed else cache.pair_at_cells.shape[-1]
+    if n_g == 0 or n_cells == 0 or cache.active_cell_indices == ():
         nbf = cache.n_bf
         return [np.zeros((nbf, nbf), dtype=float) for _ in range(n_cells)]
 
     D_blocks = np.array(
         [np.asarray(b, dtype=float) for b in D_real.blocks]
     )  # (n_cells, nao, nao)
+    if cache.active_cell_indices is not None:
+        D_blocks = D_blocks[np.asarray(cache.active_cell_indices, dtype=int)]
+
+    if streamed:
+        J_all = _stream_j_ewald_3d_ft_lattice(cache, basis, D_blocks)
+        if cache.active_cell_indices is not None:
+            output = [np.zeros((cache.n_bf, cache.n_bf)) for _ in range(n_cells)]
+            for compact, original in enumerate(cache.active_cell_indices):
+                output[original] = np.ascontiguousarray(J_all[compact])
+            return output
+        return [np.ascontiguousarray(J_all[g]) for g in range(n_cells)]
 
     # Density-dependent contraction only -- the cached ``pair_at_cells`` is
     # the per-cell analytic AO-pair Fourier transform FT_muν(G; R_g), Eq. 16
@@ -736,13 +976,19 @@ def compute_j_ewald_3d_ft_lattice(
     # Bloch-summed at Γ this equals compute_j_ewald_3d_ft_gamma; at a
     # genuine k-mesh it is the correct multi-k Hartree (w-invariant).
     # Validated: bit-matches the Γ driver on H₂/30-bohr at kmesh (1,1,1)
-    # (RKS + B3LYP + UKS) to < 1e-10 Ha -- F4 parity gate. The conjugate is
-    # taken inline (not stored on the cache) to avoid a persistent second
-    # copy of this potentially large tensor.
+    # (RKS + B3LYP + UKS) to < 1e-10 Ha -- F4 parity gate. Since only the
+    # real part is returned, Re[rho * conj(FT)] = Re[conj(rho) * FT].
+    # Conjugate the O(n_G) density, not the O(n_cells * nbf^2 * n_G)
+    # Fourier tensor. Keep the same three-operand contraction order.
     rho_G = np.einsum("gmn,gmnk->k", D_blocks, cache.pair_at_cells)
     J_all = cache.inv_cell_volume * np.real(
-        np.einsum("k,k,gmnk->gmn", cache.v_G, rho_G, cache.pair_at_cells.conj())
+        np.einsum("k,k,gmnk->gmn", cache.v_G, rho_G.conj(), cache.pair_at_cells)
     )
+    if cache.active_cell_indices is not None:
+        output = [np.zeros((cache.n_bf, cache.n_bf)) for _ in range(n_cells)]
+        for compact, original in enumerate(cache.active_cell_indices):
+            output[original] = np.ascontiguousarray(J_all[compact])
+        return output
     return [np.ascontiguousarray(J_all[g]) for g in range(n_cells)]
 
 
@@ -759,6 +1005,7 @@ def compute_j_ewald_3d_ft_k_density_to_cells(
     ke_cutoff: float = 200.0,
     chunk_size: int = 512,
     cell_chunk_size: Optional[int] = None,
+    integral_engine=None,
 ):
     """Exact G=0-dropped Hartree J blocks from per-k density matrices.
 
@@ -775,7 +1022,22 @@ def compute_j_ewald_3d_ft_k_density_to_cells(
     short-range envelope that caused the pure-RKS mHa Hartree offset.
     ``omega`` is accepted for API compatibility; the total exact J is
     independent of the Ewald split parameter.
+
+    Explicit ``IntegralEngineOptions(backend="manta")`` uses the bounded
+    native composition in physical AO normalization, with a whole-mesh
+    receipt. It requires unique inversion-closed supports and normalized
+    nonnegative weights. The selected source streams one cell at a time.
     """
+    if integral_engine is not None:
+        from .manta_periodic import _selected_periodic_hartree
+
+        result = _selected_periodic_hartree(
+            basis, system, D_k_list, k_points, weights, list(output_cells), omega,
+            lattice_opts=lattice_opts, ke_cutoff=ke_cutoff, reciprocal_batch=chunk_size,
+            cell_chunk_size=cell_chunk_size, integral_engine=integral_engine)
+        # The native producer checks the imaginary residual before this
+        # explicit conversion to the legacy real-space block interface.
+        return [np.ascontiguousarray(block.real) for block in result.cell_values]
     _ = float(omega)
     if system.dim != 3:
         raise ValueError(
@@ -909,3 +1171,91 @@ def compute_j_ewald_3d_ft_k_density_to_cells(
             )
 
     return [np.ascontiguousarray(J_all[g]) for g in range(n_cells)]
+
+
+def compute_j_ewald_3d_ft_lattice_gradient(
+    basis: BasisSet,
+    system: PeriodicSystem,
+    D_real,
+    *,
+    lattice_opts: Optional[LatticeSumOptions] = None,
+    ke_cutoff: float = 200.0,
+    chunk_size: int = 512,
+) -> np.ndarray:
+    """Fixed-density derivative of the actual finite analytic-FT Hartree sum.
+
+    For the same cells, physical AO-pair mask and G mesh as
+    :func:`compute_j_ewald_3d_ft_lattice`,
+
+        E_J = (1 / 2V) sum_{G != 0} (4 pi / G^2) |rho(G)|^2,
+        dE_J = (1 / V) sum_{G != 0} (4 pi / G^2) Re[rho(G) d rho(G)*].
+
+    This differentiates the finite reciprocal objective directly, without a
+    replacement real-space erfc domain or additional jellium overlap term.
+    Sun et al., JCP147,164119(2017), DOI10.1063/1.4998644, Sec.II.A
+    Eqs.(16)-(17) and Appendix B give the AO-product Fourier representation
+    and G=0-omitted convention. This is its unfitted Hartree specialization.
+
+    The native weighted derivative contracts each cell before returning.
+    Fourier workspace is O(nbf^2 * chunk_size), independent of the number
+    of cells; density weights use O(n_cells * nbf^2) storage. No per-cell
+    five-dimensional derivative is formed.
+    The reciprocal batch also obeys the existing FT workspace budget, with
+    a minimum of one G vector (one AO-pair matrix).
+    The cell/pair support is held fixed under the atomic displacement. As
+    for the value, convergence at a hard support boundary is caller-owned.
+    """
+    from ._aopair_ft import ao_pair_fourier_transform_bloch
+    from ._vibeqc_core import ao_pair_fourier_transform_gamma_gradient_weighted
+    from .aux_basis import _ao_scales_for_rsgdf, rsgdf_dense_g_mesh
+    from .lattice_screening import ao_pair_support_mask
+
+    if int(system.dim) != 3:
+        raise ValueError("analytic-FT Hartree gradient requires dim == 3")
+    chunk = int(chunk_size)
+    if chunk <= 0:
+        raise ValueError("analytic-FT Hartree gradient requires a positive chunk_size")
+    cells, blocks = list(D_real.cells), list(D_real.blocks)
+    if len(cells) != len(blocks):
+        raise ValueError("analytic-FT Hartree gradient density/cell count mismatch")
+    nbf = int(basis.nbasis)
+    # The value policy bounds cells * G * nbf^2. Here cells == 1, so use
+    # that same byte budget to limit G instead, without a second policy.
+    chunk = min(chunk, _ewald_j_ft_cell_chunk_size(nbf, 1))
+    scales = _ao_scales_for_rsgdf(basis)
+    pair_scales = scales[:, None] * scales[None, :]
+    weighted = []
+    for cell, block in zip(cells, blocks):
+        density = np.asarray(block)
+        if density.shape != (nbf, nbf) or np.any(np.abs(density.imag) > 1e-12):
+            raise ValueError("analytic-FT Hartree gradient requires real square density blocks")
+        w = np.asarray(density.real, dtype=float) * pair_scales
+        shift = np.asarray(cell.r_cart, dtype=float).reshape(1, 3)
+        if lattice_opts is not None and lattice_opts.pair_complete_1e:
+            w[~ao_pair_support_mask(basis, shift[0], lattice_opts.cutoff_bohr)] = 0.0
+        if np.any(w):
+            weighted.append((shift, np.ascontiguousarray(w)))
+    del blocks
+
+    gradient = np.zeros((len(system.unit_cell), 3), dtype=float)
+    if not weighted:
+        return gradient
+    vectors = rsgdf_dense_g_mesh(system, float(ke_cutoff))
+    squares = np.einsum("gx,gx->g", vectors, vectors)
+    nonzero = squares > 0.0
+    vectors, squares = vectors[nonzero], squares[nonzero]
+    volume = abs(float(np.linalg.det(np.asarray(system.lattice))))
+    gamma = np.zeros(3)
+    for start in range(0, len(vectors), chunk):
+        g = vectors[start:start + chunk]
+        rho = np.zeros(len(g), dtype=np.complex128)
+        for shift, w in weighted:
+            pair = ao_pair_fourier_transform_bloch(basis, g, shift, k_cart=gamma)
+            rho += np.einsum("mn,mng->g", w, pair, optimize=True)
+        del pair
+        q = (4.0*np.pi/volume) * rho / squares[start:start + chunk]
+        for shift, w in weighted:
+            gradient += np.asarray(ao_pair_fourier_transform_gamma_gradient_weighted(
+                basis, g, shift, w, q, len(system.unit_cell),
+            ))
+    return gradient

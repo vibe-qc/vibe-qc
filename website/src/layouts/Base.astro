@@ -9,10 +9,10 @@ interface Props {
 }
 
 const {
-  title = 'vibe-qc — Quantum chemistry for molecules and solids',
-  description = 'Calculate with vibe-qc, explore results with vibe-view, and schedule work with vibe-queue. Three independently installed products for molecular and periodic quantum chemistry, connected through the QVF file format.',
+  title = 'vibe-qc — Scientific software & technical documentation',
+  description = 'Technical documentation for vibe-qc, vibe-sketch, vibe-queue and vibe-view. Explore methods, prepare structures, run calculations and inspect results.',
   socialImage = 'vibe-qc-social.png',
-  socialImageAlt = 'vibe-qc, vibe-view and vq: Calculate. Explore. Keep work moving.',
+  socialImageAlt = 'vibe-qc scientific software: Sketch. Submit. Calculate. Analyze.',
 } = Astro.props;
 
 const canonical = new URL(Astro.url.pathname, Astro.site).href;
@@ -30,6 +30,7 @@ const ogImage = new URL(`${base}logo/${socialImage}`, Astro.site).href;
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <script is:inline>document.documentElement.classList.add("js");</script>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title}</title>
     <meta name="description" content={description} />
@@ -56,6 +57,7 @@ const ogImage = new URL(`${base}logo/${socialImage}`, Astro.site).href;
     <meta name="twitter:image:alt" content={socialImageAlt} />
   </head>
   <body>
+    <a class="skip-link" href="#main-content">Skip to content</a>
     <slot />
   </body>
 </html>

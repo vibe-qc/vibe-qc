@@ -1,5 +1,9 @@
 # Roadmap catch-up audit, v0.14 scope (2026-06-17)
 
+**Historical audit.** All uses of "current" below refer to the June 2026
+audited tree. For current status and release scope, use [the roadmap](roadmap.md)
+and method guides; this audit does not create present-day release blockers.
+
 **Audited tree:** `main` @ `f30addb9` (current head; v0.13.0 *Wisesa's Fox*
 shipped). Read-only audit, no code changed.
 

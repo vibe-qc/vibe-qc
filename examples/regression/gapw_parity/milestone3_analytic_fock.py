@@ -2,7 +2,7 @@
 """Milestone-3 blueprint: the analytic exact GAPW Hartree Fock J = ∂E_H/∂D.
 
 VALIDATED REFERENCE (not yet wired into production `GapwJBuilder.build_J`).
-See ``handovers/HANDOVER_GAPW_PRODUCTION.md`` § milestone 3.
+
 
 The bug it fixes (the core-aufbau failure). The shipped `build_J` returns the
 Hartree matrix as ``J_smooth(full basis) + Σ_a ∫χχ(V_hard − V_soft)``, which is
@@ -31,7 +31,7 @@ Validation (this script, O/STO-3G/Γ/12-bohr/24³):
     CORE OK; Ne → −126.642 (+339 mHa), preserved.
 
 Productionisation: port into `GapwJBuilder.build_J`, caching the D-independent
-M tensors + g_lm FFT/radial collocations (§ milestone-3 plan in the handover).
+M tensors + g_lm FFT/radial collocations (§ milestone-3 plan in the original investigation).
 """
 from __future__ import annotations
 

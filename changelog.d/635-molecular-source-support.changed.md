@@ -1,0 +1,1 @@
+- The experimental molecular quartet factory now consumes native MANTA source/support evidence for exact radial channels, shell mappings and declared geometry tolerance before integral evaluation. Complete numerical equivariance audits remain required; physical source and Fock identities, scientific tolerances and default routes are unchanged.

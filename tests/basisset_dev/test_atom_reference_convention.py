@@ -5,7 +5,7 @@ is half the answer, and it is only comparable to an external reference
 computed under the **same** convention. The plane-wave work measured the
 cost of getting this wrong: spin-restricting the bromine reference alone
 moved KBr's atomization energy by **37 kJ/mol**
-(``handovers/HANDOVER_GPAW_PW_REFERENCE.md``, GPAW-PWREF-002), against a
+(the original investigation, GPAW-PWREF-002), against a
 gate that has to hold to 1 kJ/mol.
 
 Two things are pinned here.
@@ -172,9 +172,9 @@ def test_engine_tags_the_convention_it_actually_used():
     engine = _Recorder(transport=object())
 
     engine.atom_energy(BASIS, 8, method="pbe")     # triplet
-    assert _Recorder.captured["atom_reference"] == "p1_box_aspherical_spin_polarised"
+    assert _Recorder.captured["atom_reference"] == "molecule_c1_aspherical_spin_polarised"
     assert _Recorder.captured["n_unpaired"] == 2
 
     engine.atom_energy(BASIS, 12, method="pbe")    # closed shell
-    assert _Recorder.captured["atom_reference"] == "p1_box_closed_shell"
+    assert _Recorder.captured["atom_reference"] == "molecule_c1_closed_shell"
     assert _Recorder.captured["n_unpaired"] == 0

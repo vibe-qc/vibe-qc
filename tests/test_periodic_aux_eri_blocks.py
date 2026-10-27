@@ -186,3 +186,47 @@ def test_bloch_lpq_builder_accepts_nonzero_k_vector():
     assert np.iscomplexobj(lpq)
     assert np.all(np.isfinite(lpq.real))
     assert np.all(np.isfinite(lpq.imag))
+
+
+@pytest.mark.parametrize("change_vectors", [False, True])
+def test_aux_image_ket_phases_reuse_exact_cell_vectors(monkeypatch, change_vectors):
+    """Reuse phases, while changed/reordered or mutated native vectors invalidate."""
+    import types
+    import vibeqc.aux_basis as ab
+
+    images = np.array([[1., 0., 0.], [2., 0., 0.], [3., 0., 0.]])
+    plan = types.SimpleNamespace(offsets=[0, 1], images=images,
+                                 members=[[0]] * 3, radius=3., remainder=1e-10)
+    vectors = np.array([[0., 0., 0.], [1., 0., 0.]])
+    original = vectors.copy()
+    blocks = np.array([[[[2.]]], [[[3.]]]])
+    pairs = [(np.array([.1, 0., 0.]), np.array([.3, 0., 0.])),
+             (np.array([.2, 0., 0.]), np.array([.3, 0., 0.]))]
+    monkeypatch.setattr(ab, "_aux_image_plan_cached", lambda *a: plan)
+    monkeypatch.setattr(ab, "_translated_fused_basis", lambda *a: None)
+    monkeypatch.setattr(ab, "_member_rows", lambda *a: np.array([0]))
+    calls = []
+    def native(*args):
+        if change_vectors and len(calls) == 1:
+            vectors[:] = vectors[::-1].copy()
+        calls.append(vectors.copy())
+        return None, vectors, blocks
+    monkeypatch.setattr(ab, "compute_3c_eri_lattice_blocks", native)
+    exp = np.exp
+    matrix_exps = []
+    def counted(values):
+        if np.asarray(values).ndim == 2:
+            matrix_exps.append(np.asarray(values).copy())
+        return exp(values)
+    monkeypatch.setattr(ab.np, "exp", counted)
+    got = ab.aux_image_3c(None, types.SimpleNamespace(nbasis=1), None, None,
+                           precision=1e-8, k_pairs=pairs)
+    assert len(matrix_exps) == (2 if change_vectors else 1)
+    assert len(calls) == 3
+    for (bra, ket), actual in zip(pairs, got):
+        expected = 0j
+        for image, cells in zip(images, calls):
+            expected += exp(-1j * ((ket-bra) @ image)) * (
+                exp(1j * (ket @ cells.T)) @ blocks.reshape(2))
+        np.testing.assert_allclose(actual.item(), expected, atol=1e-14, rtol=0)
+    np.testing.assert_array_equal(calls[0], original)

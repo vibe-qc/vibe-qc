@@ -13,10 +13,58 @@ is the contract that keeps the two honest about it.
 
 | | |
 |---|---|
-| **Current version** | 0.4.0 (M-0 landed; M0 API + vibe-qc engine landed, gate open) |
+| **Source version (2026-10-26)** | 0.13.0 (M-0 done; code for M0, M1, M2 (0.11.0) and M3 (0.12.0, scan driver 0.13.0) landed; the gates of M0 to M3 are open, see § 4) |
 | **1.0.0 criterion** | first production basis published from this driver + frozen backend/transport API ([`VERSIONING.md`](VERSIONING.md)) |
-| **Working tracker** | [`handovers/HANDOVER_BASISOPT.md`](../handovers/HANDOVER_BASISOPT.md) — current state, SHAs, blockers, asks |
 | **vibe-qc's roadmap** | [`docs/roadmap.md`](../docs/roadmap.md) § "OPTBASIS-style basis optimiser" |
+
+---
+
+## GitLab tracking and weekly reconciliation
+
+Because this package lives in the vibe-qc repository, its GitLab milestones
+live in that development project with the `vibe-basis` prefix. They do not
+share QC's version sequence. Find these exact titles on its **Milestones** page:
+
+| GitLab milestone title | Project milestone ID |
+|---|---|
+| vibe-basis M0 - cohesive pipeline qualification | 9 |
+| vibe-basis M1 - Gamma ZPE qualification | 10 |
+| vibe-basis M2 - cohesive objective qualification | 11 |
+| vibe-basis M3 - topology search qualification | 12 |
+| vibe-basis M4 - resumable campaign orchestration | 13 |
+| vibe-basis M5 - cross-validation ladder | 14 |
+| vibe-basis 1.0 - production basis and API freeze | 15 |
+
+Milestones hold capability/release goals and their exit criteria. Issues hold
+individual deliverables, defects and acceptance evidence. A shared prerequisite
+may be linked from several milestones without moving its existing assignment.
+An empty issue list or a 100% closed count is not proof that the exit criteria
+passed. Keep future research outside a bounded release unless it is explicitly
+included in that release's scope.
+
+Review this roadmap and its GitLab milestones **every week** against current
+main, tags, changelog, relevant issues/MRs and accepted numerical or functional
+evidence. Correct drift in both places and date material status changes.
+Distinguish implemented, qualified, release-ready and released; source landing
+does not certify numerical accuracy, and qualification does not create a tag.
+
+When the documented capability criteria pass, mark the milestone release-ready
+and advance the next feature-release target under the existing version policy.
+The release owner then selects the version and updates package metadata through
+the normal release process, reusing accepted evidence and completing required
+candidate checks. Close a release milestone only after its containing tag is
+confirmed. Do not invent a SemVer-major jump, codename, paper date or scope
+reduction to make a milestone appear complete. Companion releases remain
+independent; experimental work retains its documented status.
+
+The already shipped M0-M3 implementation versions remain historical facts.
+Completing their outstanding acceptance alone does not earn another code
+version. New features/fixes follow [VERSIONING.md](VERSIONING.md), updating both
+version sites together; M4/M5 receive numbers when release scope is ready.
+`1.0` remains the production-basis result plus API freeze, not completion of
+this documentation pass. M-0 is already complete and needs no duplicate open
+milestone. #224 remains the M2 evidence issue and is linked from M0; #225
+remains the M3 evidence issue.
 
 ---
 
@@ -32,7 +80,7 @@ CRYSTAL23's `OPTBASIS` minimises Ω = E + γ·ln κ(S) for **one** crystal, over
 Civalleri & Maschio, *JCTC* **16**, 2192 (2020)).
 
 That characterisation is **verified against the CRYSTAL23 manual** (§ `OPTBASIS`,
-p. 65; `~/gitlab/library/manuals/crystal23/crystal23.pdf`), not recalled:
+p. 65, checked in the configured literature library), not recalled:
 
 * the objective is exactly Ω({α,d}) = E_tot({α,d}) + γ·ln κ({α,d}), with κ the
   overlap condition number, minimised by BDIIS;
@@ -47,7 +95,7 @@ The manual's own assessment of the ceiling is worth quoting, because it is the
 gap this roadmap aims at: *"The optimization of the entire basis set is a
 formidable task and quite likely to be not very useful."*
 
-**The optimiser axis is already won.** vibe-qc ships `optimize_bdiis` — the same
+**The continuous optimisers are implemented.** vibe-qc ships `optimize_bdiis` — the same
 BDIIS, hardened past the CRYSTAL baseline (BFGS inverse-Hessian driving the DIIS
 error vectors; trust-region + Armijo guard forbidding an objective increase;
 quasi-Newton fallback on an ill-conditioned DIIS `B`; box-projected convergence)
@@ -58,11 +106,11 @@ minimised, over what, and against what truth.**
 | # | Axis | CRYSTAL23 `OPTBASIS` | vibe-basis |
 |:-:|------|----------------------|------------|
 | 1 | **Objective** | total energy (+ κ penalty) | **cohesive energy vs a PW-limit reference** |
-| 2 | **Basis topology** | fixed (starred shells only) | **searched** — d/f add-high / add-low / leave-one-out |
+| 2 | **Basis topology** | fixed (starred shells only) | **search implemented; scientific gate open** — d/f add-high / add-low / leave-one-out |
 | 3 | **Systems** | one crystal | **joint multi-system**, weighted, held-out validation |
-| 4 | **Geometry** | frozen | **re-relaxed per candidate basis** |
-| 5 | **Thermochemistry** | none | **automated ZPE** |
-| 6 | **Reference truth** | none | **PW-limit oracle**, validated across 28 systems |
+| 4 | **Geometry** | frozen | **planned re-relaxation per candidate**; VibeQcEngine variable-cell relaxation currently refuses |
+| 5 | **Thermochemistry** | none | **Γ-point ZPE driver implemented; cross-route gate open** |
+| 6 | **Reference truth** | none | **28-system PW reference data**; integrated engine reproduction remains open |
 
 ---
 
@@ -77,7 +125,9 @@ minimised, over what, and against what truth.**
 | Fallback — Gaussian | CRYSTAL23 | pob-lineage continuity; head-to-head baseline |
 | Fallback — plane wave | GPAW | today's PW-limit oracle (28 systems, validated) |
 
-One `EnergyEngine` protocol, four implementations. **No phase hard-codes an
+One `EnergyEngine` protocol; two implemented engine adapters and a GPAW stub.
+The GPW/GAPW capability is a remaining vibe-qc dependency, not a fourth
+implemented adapter. **No phase hard-codes an
 engine, and no phase is *complete* until it runs on `VibeQcEngine`** — except
 where an external result is deliberately the independent control (M5 rung 2).
 Every reported number carries the engine that produced it.
@@ -114,39 +164,42 @@ Current engine status:
 
 | Engine | Tier | State |
 |--------|:----:|-------|
-| `VibeQcEngine` | 2 | crystals, atoms, `relax`, `zero_point` (Γ phonons, M1) |
-| `Crystal23Engine` | 1 | complete — emit, submit, parse, version-check |
+| `VibeQcEngine` | 2 | crystals and atoms; declared `zero_point` (Γ phonons, M1) and `counterpoise` (BOC-3). No `relax` capability; direct variable-cell relaxation fails closed. |
+| `Crystal23Engine` | 1 | emit, submit, parse, version-check and counterpoise implemented; direct-binary `invocation="stdin"` added. Bare atoms run as molecular C1 decks since `e76429fa` (#554, verified against the issue's molecular references). |
 | `GpawEngine` | 1 | declared, raises; wired to the validated PW worker at M5 |
 
-An engine may additionally declare the optional capabilities `relax` and
-`zero_point` (`EnergyEngine.supports()`). `VibeQcEngine` declares **`relax`**
-(M0b, via the BIPOLE relaxer) and **`zero_point`** (M1, via
-`vibeqc.basis_optimization.phonons`). `Crystal23Engine` declares neither, so a
-pipeline on it records those stages as **skipped, with the engine named in the
-reason** — a static-lattice cohesive energy that says it is one, rather than a
-number that looks ZPE-corrected and is not.
+Optional stages follow `EnergyEngine.supports()`. `VibeQcEngine` declares
+`zero_point` and `counterpoise`; `Crystal23Engine` declares `counterpoise`.
+Neither advertises `relax`: the current vibe-qc adapter refuses variable-cell
+relaxation until a certified BIPOLE path exists. Unsupported pipeline stages
+are recorded as skipped with the engine named, never presented as completed
+relaxation or a ZPE correction. Static-lattice reference reproduction can
+proceed without claiming the full re-relaxed mission is achieved.
 
-Full rationale — why a separate package, why the arrow points this way, and why
-the two `OptResult` classes are a deliberate duplication rather than a bug — is
-in the working tracker, § 3.6.
+The package boundary is described in [README.md](README.md); the import guard
+and the two-tier source layout enforce it. Gate evidence belongs in the
+corresponding issue, not in removed handover documents.
 
 ---
 
 ## 4. Milestones
 
-Each is independently landable and leaves `main` release-ready (CLAUDE.md § 14).
-Gates are mechanical — a test, a number, or an artefact. Version column is the
-vibe-basis bump the milestone earns.
+Implementation lands independently of subsequent scientific acceptance;
+follow [AGENTS.md](../AGENTS.md). A source version is not a gate verdict.
+The original 0.4–0.8 milestone targets were overtaken by intervening releases:
+M2 actually landed in 0.11.0 and M3 in 0.12.0. The table therefore records
+implementation versions, not future bump promises. Unimplemented milestones
+receive a version through the normal release process when their scope is ready.
 
-| # | Milestone | Ver | Gate | Status |
+| # | Milestone | Implementation version | Gate | Status |
 |:-:|-----------|:---:|------|:------:|
 | **M-0** | Boundary cleanup + `EnergyEngine` protocol + CRYSTAL14→23 retarget | 0.3.0 | one engine abstraction; import-direction guard green; CRYSTAL23 `.out` round-trips with a version probe | ✅ **done** |
-| **M0** | Cohesive pipeline: relax → hybrid SP → ZPE → atoms → assemble | 0.4.0 | two-engine: CRYSTAL23 reproduces `E_pob` < 1 kJ/mol; then vibe-qc reproduces CRYSTAL23 < 2 kJ/mol | 🟡 **API (M0a) + `VibeQcEngine` (M0b) landed; gate open** |
-| **M1** | Γ-point ZPE on the Gaussian route (FD Hessian **from energies** — see BOC-2) | 0.4.x | MgO + NaCl optical modes within 5 cm⁻¹ of the GAPW route; acoustic within 15 cm⁻¹ of zero | 🟡 **driver + engine landed; gate open** |
-| **M2** | `CohesiveObjective` vs the PW limit | 0.5.0 | evaluating at pob-TZVP-REV2 reproduces MD −24.6 / MAD 35.4 kJ/mol (n=28) | ⬜ |
-| **M3** | **Topology search — the d/f scan** | 0.6.0 | Mg-d in MgO + Si-d in SiC: terminates, ranked Pareto front, **rediscovers the shipped pob topology** on a total-energy objective | ⬜ |
-| **M4** | Campaign orchestration on `vq` | 0.7.0 | 200-eval campaign survives a mid-run kill and resumes identically; zero writes into managed checkouts | ⬜ |
-| **M5** | Cross-validation ladder (Gaussian ↔ PW limit) | 0.8.0 | ≥ 28 systems, rungs 1/2/2′/3 + extrapolation residual demonstrably smaller than the gap it measures | ⬜ |
+| **M0** | Cohesive pipeline: relax → hybrid SP → ZPE → atoms → assemble | 0.4.0 | two-engine: CRYSTAL23 reproduces `E_pob` < 1 kJ/mol; then vibe-qc reproduces CRYSTAL23 < 2 kJ/mol | 🟡 **API + engine landed; reference-arithmetic rung 1a passes; engine reproduction and cross-engine gates open. Variable-cell relaxation unavailable.** |
+| **M1** | Γ-point ZPE on the Gaussian route (FD Hessian **from energies** — see BOC-2) | Included by 0.12.0 | MgO + NaCl optical modes within 5 cm⁻¹ of the GAPW route; acoustic within 15 cm⁻¹ of zero | 🟡 **driver + engine landed; gate open** |
+| **M2** | `CohesiveObjective` vs the PW limit | 0.11.0 | evaluating at pob-TZVP-REV2 reproduces MD −24.6 / MAD 35.4 kJ/mol (n=28) | 🟡 **objective landed (0.11.0); rung 2a passes**: the published pob energies through `CohesiveObjective` give −24.58 / 35.40 with the static-lattice and counterpoise conventions pinned (`tests/basisset_dev/test_m2_gate_published_pob.py`); rung 2b, an engine reproducing those energies, is open (#224); its `VibeQcEngine` half is no longer blocked on BOC-3 |
+| **M3** | **Topology search — the d/f scan** | 0.12.0 | Mg-d in MgO + Si-d in SiC: terminates, ranked Pareto front, **rediscovers the shipped pob topology** on a total-energy objective | 🟡 **topology code landed (0.12.0); relax-and-score recipe `vibeqc.basis_optimization.recipes.topology_scan` landed (0.13.0); gate open** (#225) |
+| **M4** | Campaign orchestration on `vq` | Unassigned | 200-eval campaign survives a mid-run kill and resumes identically; zero writes into managed checkouts | ⬜ |
+| **M5** | Cross-validation ladder (Gaussian ↔ PW limit) | Unassigned | ≥ 28 systems, rungs 1/2/2′/3 + extrapolation residual demonstrably smaller than the gap it measures | ⬜ |
 | **M6** | Production run — the optimised basis | **1.0.0** | runs on `VibeQcEngine`; held-out MAD beats pob-TZVP-REV2's 35.4 kJ/mol by a stated margin at equal-or-lower primitive count | ⬜ |
 
 Sequencing:
@@ -159,34 +212,87 @@ M-0 ─► M0 ──┬─► M1 ──┐
                      M5 ────────┘
 ```
 
-M-0 first, and it is cheap. M1 may run in parallel with M2 (which stubs ZPE = 0
-until M1 lands). M4 and M5 are independent of M3.
+M-0 is complete. M1 qualification and M2 reproduction can proceed separately:
+the published M2 reference is explicitly static lattice, with ZPE off and
+counterpoise on. That convention is not a temporary stub waiting for M1.
+M4 and M5 implementation need not wait for M3's scientific gate.
 
-Per-milestone detail — deliverables, design notes, failure modes — lives in the
-working tracker § 5, where it is kept current against `main`. This table is the
-stable view; that one moves.
+### Current evidence and next gates (2026-10-26)
+
+- **M0/M2:** reference arithmetic and objective algebra pass, not a fresh
+  28-system calculation. `test_m2_gate_published_pob.py` reproduces MD
+  **+24.58** in candidate-minus-reference convention (−24.58 in the published
+  GPAW-minus-pob convention) and MAD **35.40 kJ/mol**, n=28. The reference
+  decks and outputs behind the 28 values are readable
+  (`vibe_basis.io.cohesive_reference`, path supplied by the caller), and
+  `recipes.cohesive_reference` recomputes each run from our own decks
+  (rung 2b, #224). The audit of those runs found two values that are not
+  pob-TZVP-rev2 numbers. MgO's bulk and O atom are in another basis. BaO's
+  bulk Ba carries an f function its counterpoise atoms lack. LiH's H atom
+  energy is SCF cycle 1 of a run that crashed. The counterpoise settings
+  vary per system (NSTAR 10 to 60, RMAX 5 to 10 Angstrom, relaxed or
+  starting cell). The recomputation has not run yet.
+- **BOC-3 is landed (e96c2a7c):** the ghost-cluster implementation removes
+  the counterpoise capability blocker. The reported MgO comparisons agree
+  within 2.7e-6 Ha for Mg in the tested bases and about 1e-7 Ha for O/STO-3G.
+  The O/pob-TZVP-rev2 CRYSTAL comparison is incomplete. These checks do not
+  establish the 28-system cohesive gate; cluster size and SCF cost remain
+  practical constraints (#224).
+- **Bare atoms (#554, closed 2026-10-22):** the periodic P1 box gave Mg
+  about 0.31 Ha too low. Since `e76429fa` a bare atom is a molecular C1
+  deck, verified on CRYSTAL23 against the issue's molecular references (Mg
+  RHF STO-3G and pob-TZVP-rev2, O UHF triplet, all within 1e-6 Ha). Atoms
+  other than those three are untested on that route, and energies cached
+  from the old periodic route are not reused.
+- **M1:** the energy-difference Γ-Hessian driver exists, but its MgO/NaCl
+  comparison with GAPW remains open. Γ-only ZPE is not a converged q-mesh
+  thermochemical correction.
+- **M3 (#225):** the CRYSTAL stdin path is fixed (0bd5b77d) and one MgO
+  PW1PW/pob-TZVP-rev2 point converged at −275.47676757571 Ha. The
+  candidate-relaxation recipe and its model-engine check landed in 0.13.0
+  (`vibeqc.basis_optimization.recipes.topology_scan`,
+  `tests/basisset_dev/test_topology_scan_recipe.py`). On a model with known
+  optima the scan relaxes every candidate, seeds the next round from the
+  relaxed exponents and stops on its plateau rule after 3 rounds and about
+  200 energies. At 737 s per MgO point that is about 40 CPU-hours per system,
+  so the MgO/SiC campaign is sized by queue capacity, not by the optimiser.
+  The campaign has not produced a front yet. A pure-total-energy
+  Pareto front is a weak rediscovery test because added functions generally
+  lower variational energy; discriminating cohesive-objective evidence still
+  requires M2's engine reproduction.
+- **M4–M6:** cache/restart primitives and vq transport exist, but the
+  200-evaluation kill/resume gate, integrated cross-validation ladder and
+  production-basis result are not established. `GpawEngine` is still a stub.
+
+The next feature release can collect qualified driver changes without waiting
+for a production basis. **1.0 remains tied to the published production basis
+and frozen backend/transport API**, not the article deadline or the current
+0.13.0 number. A paper must identify the exact code and evidence it uses;
+implemented searches alone do not support an improved-basis claim.
 
 ---
 
 ## 5. Dependencies on vibe-qc
 
 None of these are vibe-basis's to fix. Each is owned by a vibe-qc dev chat and
-tracked in that chat's handover.
+documented in the dependency table below.
 
 | Id | Need | Blocks | Owner |
 |----|------|--------|-------|
 | BOC-1 | R13 Ewald-gauge dV(k)/dG(k) kernel → end-to-end periodic analytic basis gradient | *cost only* (~10× SCF without it) | periodic-SCF |
 | BOC-2 | ~~BIPOLE analytic force accurate enough for FD phonons~~ **ANSWERED: it is a documented research preview, so M1 differences the *energy* instead. Not a bug; nothing owed by the periodic chat.** | — | — |
-| BOC-3 | Ghost-atom BSSE for solids | counterpoise-corrected cohesive energies | periodic / basissetdev |
+| BOC-3 | ~~Ghost-atom BSSE for solids~~ **LANDED: `VibeQcEngine` declares `counterpoise` and computes the free atom in an `ATOMBSSE`-style ghost cluster (`vibeqc.basis_optimization.counterpoise`).** | — | — |
 | BOC-4 | GPAW oracle breadth: more systems, PBE0/HSE06, Cs > 800 eV | M5 | vibeqc-gpaw |
 | BOC-5 | PySCF reference backfill in `tests/test_periodic_ecp.py` | ECP-element cohesive energies | basissetdev |
 | BOC-6 | Hybrid periodic frequency cost | M1 at hybrid level | periodic / perf |
 | BOC-7 | **vibe-qc GPW/GAPW producing a converged PW-limit atomization** | **retiring the GPAW fallback — the "all calculations in vibe-qc" goal** | gapw |
-| BOC-8 | vibe-qc ↔ CRYSTAL23 agreement on cohesive energies | M0 gate 2 | periodic-SCF |
+| BOC-8 | vibe-qc ↔ CRYSTAL23 agreement on cohesive energies | M0 gate 2; full engine reproduction still open after BOC-3 | periodic-SCF |
+| BOC-9 | Certified BIPOLE variable-cell relaxation exposed by `VibeQcEngine` | Re-relaxed M0 pipeline and per-candidate geometry mission; not static-lattice reference arithmetic | periodic-SCF / basis optimisation |
 
-**BOC-1 governs schedule. BOC-7 closes the mission.** BOC-8 is the honest risk —
-total-energy parity does not imply cohesive-energy parity, and M0 is the first
-time anyone measures it.
+**BOC-1 affects cost; it does not block eligible calculations. BOC-7 closes
+the all-vibe-qc mission.** BOC-8 requires measured cohesive-energy parity,
+not inference from total-energy agreement. BOC-9 records an existing missing
+capability; it does not introduce a new requirement for static-lattice gates.
 
 ---
 
@@ -198,19 +304,19 @@ The two roadmaps are linked, not merged. The contract:
    § "OPTBASIS-style basis optimiser" carries the pointer and records what
    shipped on the vibe-qc side (BDIIS, the κ penalty, the analytic gradients).
    It does **not** restate these milestones.
-2. **This roadmap points there, once, per dependency.** § 5 is the only place
-   vibe-qc capabilities appear. A capability that is not in § 5 is not a
-   dependency, and adding one is how a vibe-qc need becomes visible.
+2. **This roadmap points there, once, per dependency.** § 5 is the
+   authoritative dependency inventory. Add a missing capability there when
+   source or gate evidence identifies a concrete vibe-qc prerequisite.
 3. **When a BOC dependency lands in vibe-qc, § 5 updates the same session.**
-   Same cadence as CLAUDE.md § 5's lightweight-ongoing rule: don't queue it.
-   The signal is a `main` sync (CLAUDE.md § 14) that touches a BOC owner's area.
+   Use the current [AGENTS.md](../AGENTS.md) sync policy and read the
+   source and issue evidence when a relevant main change lands.
 4. **A vibe-basis release does not imply a vibe-qc release, or vice versa**
-   ([`VERSIONING.md`](VERSIONING.md)). Milestones here earn vibe-basis bumps;
+   ([`VERSIONING.md`](VERSIONING.md)). Implementation changes earn vibe-basis bumps;
    they do not appear in vibe-qc's milestone list.
-5. **Divergence is resolved toward the tracker.** If this file and the working
-   tracker disagree about a gate, the tracker is current and this file is stale
-   — fix this file. If this file and `docs/roadmap.md` disagree about what
-   shipped in vibe-qc, `docs/roadmap.md` is authoritative.
+5. **Resolve divergence using evidence.** Read current source and dated
+   numerical evidence in the relevant issues, then update this file. An old
+   status comment is not a measured gate verdict. Reconcile shared capability
+   claims with `docs/roadmap.md` against the same implementation and evidence.
 
 ---
 
@@ -221,40 +327,41 @@ Carried here because they change the shape of M2/M3/M6, not just their schedule.
 1. **Objective target** — the PW limit (isolates basis incompleteness) or
    experiment-minus-ZPE (physical, but folds in the functional's own error)?
    *Recommendation: PW limit; experiment stays a reported diagnostic.*
-2. **BSSE** — counterpoise for solids does not exist (BOC-3). Without it the
-   optimiser can lower the objective by *increasing* BSSE, which is exactly what
-   diffuse `add-low` candidates will do. *Recommendation: a diffuseness penalty
-   as proxy now; open BOC-3 properly only if the paper needs it.*
+2. **BSSE** — counterpoise for solids exists on both engines since BOC-3
+   landed, but a counterpoise atom is host-specific and costs one cluster SCF
+   per element per system, so it is priced for reference comparisons rather
+   than for every optimiser point. Without it in the objective the optimiser
+   can lower the objective by *increasing* BSSE, which is exactly what diffuse
+   `add-low` candidates will do. *Recommendation: a diffuseness penalty as
+   proxy inside the loop; counterpoise atoms for the reference comparison and
+   the final candidates.*
 3. **Γ-only ZPE** — sufficient, or does the paper need q-mesh phonon ZPE?
 4. **Element order** — main-group d-polarisation (Mg, Al, Si, S) first, 3d TM
    later? *Recommendation: yes — TM brings magnetism and is where the PW oracle
    is weakest.*
-5. **Branch** — driver + pipeline on `main`, production campaign + resulting
-   basis on `basissetdev` (CLAUDE.md § 4)? *Recommendation: yes.*
+5. **Production integration** — keep driver and pipeline on `main`; choose
+   the production-basis integration and artifact destination when the campaign
+   is ready. Historical branch assignments do not override current ownership.
 6. **Dependency policy** — promote vibe-basis to a **core** vibe-qc dependency
    (collapsing the duplicated `OptResult`), or keep it an extra and keep the two
    pinned by contract test? Adding it to core costs one small pure-Python
-   package (click + numpy; click is *not* currently a vibe-qc dep). CLAUDE.md § 9
-   says don't add dependencies casually, so this is the maintainer's call.
+   package (click + numpy). Changing the dependency contract remains a
+   maintainer decision under the current contributor policy.
    *Recommendation: keep the extra; the contract test is proportionate for one
    nine-field dataclass.*
 
 ---
 
-## 8. Papers: use the library, or the wishlist
+## 8. Literature and reference evidence
 
-Maintainer instruction (2026-07-26): **if you need a paper, look in
-`~/gitlab/library` first; if it is not there, append it to
-`~/gitlab/library/wishlist.txt`.** Do not go hunting for PDFs elsewhere.
+Use the configured literature library, catalogues and source manuals following
+[AGENTS.md](../AGENTS.md). Reuse prior reading; request missing references
+through the library's intake process. Keep local library locations out of
+product documentation. The CRYSTAL23 OPTBASIS manual and the papers below
+supply the formulation and reference conventions; implementation or arithmetic
+checks do not replace the pending engine comparisons.
 
-The library is the PDF counterpart of vibe-qc's citation database
-(`python/vibeqc/output/citations/database.toml`), organised into topic folders
-with `INDEX.md` listing every file and `catalog.tsv` for lookup by DOI, author,
-title, or citation key. It also holds vendor manuals under `manuals/`, including
-**CRYSTAL23** — which is how § 1's characterisation of `OPTBASIS` and the
-r2SCAN availability in § 4's M0 gate were verified rather than assumed.
-
-Every paper this roadmap cites is already present:
+Reference papers and citation keys:
 
 | Topic | Paper | Key |
 |---|---|---|
@@ -266,19 +373,16 @@ Every paper this roadmap cites is already present:
 | SCAN | Sun, Ruzsinszky & Perdew 2015 | `sun_scan_2015` |
 | PW1PW | Bredow & Gerson 2000 | `bredow_gerson_pw1pw_2000` |
 
-Per CLAUDE.md § 8, anything citable this workstream *adds* needs its
-`database.toml` entry and route in the same merge; the PDF should land in the
-library alongside, or go on the wishlist if it cannot be obtained.
+Add new scientific references to the citation database and the relevant
+output route with the implementation, following the current contributor
+policy. Retain the source paper, conventions and numerical evidence together
+in the configured research records.
 
 ## 9. See also
 
 * [`README.md`](README.md) — what vibe-basis is, install, why a separate package.
 * [`VERSIONING.md`](VERSIONING.md) — the version line and the 1.0.0 criterion.
-* [`handovers/HANDOVER_BASISOPT.md`](../handovers/HANDOVER_BASISOPT.md)
-  — the working tracker: current state, SHAs, per-milestone detail, progress log.
 * [`docs/roadmap.md`](../docs/roadmap.md) — vibe-qc's own roadmap (§ 6 above).
 * [`docs/basisset_dev/`](../docs/basisset_dev/) — the basis-set development
   documentation set, incl. `GOAL8_MPEI_TZVP.md` (the 1.0.0 target basis) and
   `OPTIMISING_A_BASIS.md` (the in-process molecular optimiser user guide).
-* [`handovers/HANDOVER_GPAW_PW_REFERENCE.md`](../handovers/HANDOVER_GPAW_PW_REFERENCE.md)
-  — the PW-limit oracle this roadmap consumes.

@@ -1,0 +1,122 @@
+{
+  "vibe-sketch": {
+    "version": "0.6.0",
+    "channel": "Standalone release",
+    "url": "/download/#vibe-sketch",
+    "manifest": {
+      "product": "vibe-sketch",
+      "version": "0.6.0",
+      "sourceCommit": "df9a478c30181fe115663d1daa2272bf6f362f4d",
+      "artifacts": {
+        "macos": {
+          "filename": "vibe-sketch-0.6.0-arm64.dmg",
+          "sha256": "ff1891f35bf68acae6b21fe3c20f4c80ad931a21fc60d2c3058b6384846014d4",
+          "size": 510585275,
+          "url": "/updates/vibe-sketch/releases/0.6.0/vibe-sketch-0.6.0-arm64.dmg"
+        },
+        "linux": {
+          "filename": "vibe-sketch-0.6.0-x86_64.AppImage",
+          "sha256": "5c2433abe4394124786131f24450c1048044aba858e2233216185dc35e29a29a",
+          "size": 451339989,
+          "url": "/updates/vibe-sketch/releases/0.6.0/vibe-sketch-0.6.0-x86_64.AppImage"
+        },
+        "source": {
+          "filename": "vibe-sketch-0.6.0-source.tar.gz",
+          "sha256": "d430b867061610387e5dac6426420af940d261f7dd135e008c599f6f9ead7fb9",
+          "size": 144902262,
+          "url": "/updates/vibe-sketch/releases/0.6.0/vibe-sketch-0.6.0-source.tar.gz"
+        }
+      }
+    }
+  },
+  "vibe-queue": {
+    "version": "1.0.0",
+    "channel": "Standalone release",
+    "url": "/download/#vibe-queue",
+    "manifest": {
+      "product": "vibe-queue",
+      "version": "1.0.0",
+      "sourceCommit": "e6cc04d79675787de4fe6b81d620e58de80295b7",
+      "artifacts": {
+        "macos": {
+          "filename": "vibe-queue-1.0.0-arm64.dmg",
+          "sha256": "63e4ac705329d778104a3c44114418e670194b6318099a69b17a84bf86091b24",
+          "size": 89633286,
+          "url": "/updates/vibe-queue/releases/1.0.0/vibe-queue-1.0.0-arm64.dmg"
+        },
+        "linux": {
+          "filename": "vibe-queue-1.0.0-x86_64.tar.gz",
+          "sha256": "0368b2c69ebfeccc96467a7a567e0043dfc1ddc201ef6f892e2608802b24c097",
+          "size": 120641145,
+          "url": "/updates/vibe-queue/releases/1.0.0/vibe-queue-1.0.0-x86_64.tar.gz"
+        },
+        "source": {
+          "filename": "vibe-queue-1.0.0-source.tar.gz",
+          "sha256": "3876c053541039c4bad600b0abff52019ead944879da461d38f63707466dfe3c",
+          "size": 43532012,
+          "url": "/updates/vibe-queue/releases/1.0.0/vibe-queue-1.0.0-source.tar.gz"
+        }
+      }
+    }
+  },
+  "vibe-qc": {
+    "version": "0.18.0",
+    "channel": "Standalone release",
+    "url": "/download/#vibe-qc",
+    "manifest": {
+      "product": "vibe-qc",
+      "version": "0.18.0",
+      "sourceCommit": "5dfc97f0ec269e681c84bfda9531a0336b2f19f6",
+      "artifacts": {
+        "macos": {
+          "filename": "vibe-qc-0.18.0-arm64.dmg",
+          "sha256": "66fc643c41bff873c2bfc7749caaf5ab91bb7e5c65d408d0e2c48e32d5be01e9",
+          "size": 751557601,
+          "url": "/updates/vibe-qc/releases/0.18.0/vibe-qc-0.18.0-arm64.dmg"
+        },
+        "linux": {
+          "filename": "vibe-qc-0.18.0-x86_64.tar.gz",
+          "sha256": "e0f58acbe66367c2ee7513e3f4427674cab4f04087d9a0f74ab0fc7f8f85cb6c",
+          "size": 720389193,
+          "url": "/updates/vibe-qc/releases/0.18.0/vibe-qc-0.18.0-x86_64.tar.gz"
+        },
+        "source": {
+          "filename": "vibe-qc-0.18.0-source.tar.gz",
+          "sha256": "5b10dad9640a8af01bd3b079c7f50134bb5aed9def1e0c477e9a33bfcf09dbab",
+          "size": 125927978,
+          "url": "/updates/vibe-qc/releases/0.18.0/vibe-qc-0.18.0-source.tar.gz"
+        }
+      }
+    }
+  },
+  "vibe-view": {
+    "version": "3.0.0",
+    "channel": "Standalone release",
+    "url": "/download/#vibe-view",
+    "manifest": {
+      "product": "vibe-view",
+      "version": "3.0.0",
+      "sourceCommit": "7f26a090d9fac487bb0b31dbf5d7ac7137949d9b",
+      "artifacts": {
+        "macos": {
+          "filename": "vibe-view-3.0.0-arm64.dmg",
+          "sha256": "5deeb9e98e9caf52923c1bb5689f47e26a99fec08ca9b58014657f17b3d95883",
+          "size": 433555756,
+          "url": "/updates/vibe-view/releases/3.0.0/vibe-view-3.0.0-arm64.dmg"
+        },
+        "linux": {
+          "filename": "vibe-view-3.0.0-x86_64.AppImage",
+          "sha256": "df736a61c8a9775fb34b483fdf5bf5b4478cadb1262f05b5bc31287d8d806289",
+          "size": 549476887,
+          "url": "/updates/vibe-view/releases/3.0.0/vibe-view-3.0.0-x86_64.AppImage"
+        },
+        "source": {
+          "filename": "vibe-view-3.0.0-source.tar.gz",
+          "sha256": "63e3514fd6ea2620cc84fd667eea66f4e31bdd9fbf7f8dd0cc1d7dec703055d1",
+          "size": 27498320,
+          "url": "/updates/vibe-view/releases/3.0.0/vibe-view-3.0.0-source.tar.gz"
+        }
+      }
+    }
+  }
+}

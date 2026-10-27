@@ -67,6 +67,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from ..solvers._scf import solve_dense_fock
+
 
 @dataclass
 class DLPNOUMP2Options:
@@ -160,9 +162,14 @@ class DLPNOUMP2Result:
     avg_pno_aa: float = 0.0
     avg_pno_bb: float = 0.0
     avg_pno_ab: float = 0.0
+    source_kind: str = ""
+    source_identity: str = ""
 
 
-def _pnos(D_pair: np.ndarray, eps_vir: np.ndarray, tcut: float):
+def _pnos(
+    D_pair: np.ndarray, eps_vir: np.ndarray, tcut: float, *,
+    spin=None, basis_id="pair-natural-virtual",
+):
     """Pair natural orbitals for one virtual space.
 
     Diagonalise the (symmetric) pair density ``D_pair``, keep the natural
@@ -170,6 +177,8 @@ def _pnos(D_pair: np.ndarray, eps_vir: np.ndarray, tcut: float):
     quasi-canonicalise the retained space against ``diag(eps_vir)`` so the
     MP2 denominators stay diagonal. Returns ``(U, eps_pno)`` with ``U`` the
     (n_vir x n_pno) transform and ``eps_pno`` the quasi-canonical energies.
+    The density eigensystem sets truncation; only the retained Fock block
+    uses the shared solver. Spin and pair-frame labels are annotations.
     """
     occ, d = np.linalg.eigh(0.5 * (D_pair + D_pair.T))
     order = np.argsort(-occ)
@@ -179,11 +188,13 @@ def _pnos(D_pair: np.ndarray, eps_vir: np.ndarray, tcut: float):
         keep[0] = True
     d = d[:, keep]
     F_pno = d.T @ np.diag(eps_vir) @ d
-    eps_pno, u = np.linalg.eigh(0.5 * (F_pno + F_pno.T))
-    return d @ u, eps_pno
+    result = solve_dense_fock(
+        0.5 * (F_pno + F_pno.T), spin=spin, basis_id=basis_id,
+    )
+    return d @ result.eigenvectors, result.eigenvalues
 
 
-def _same_spin_channel(B, eps_occ, eps_vir, tcut):
+def _same_spin_channel(B, eps_occ, eps_vir, tcut, *, spin=None):
     """Same-spin channel energy + PNO stats. ``B`` is (naux, n_occ, n_vir)."""
     n_occ = B.shape[1]
     e = 0.0
@@ -197,7 +208,10 @@ def _same_spin_channel(B, eps_occ, eps_vir, tcut):
             T = anti / denom
             # Pair density (PSD for antisymmetric T too) -> one PNO set.
             D_pair = T @ T.T + T.T @ T
-            U, eps_pno = _pnos(D_pair, eps_vir, tcut)
+            U, eps_pno = _pnos(
+                D_pair, eps_vir, tcut, spin=spin,
+                basis_id=f"dlpno-ump2-canonical-same-pair-{i}-{j}-pno",
+            )
             Kp = U.T @ K @ U
             antip = Kp - Kp.T
             dp = eps_occ[i] + eps_occ[j] - eps_pno[:, None] - eps_pno[None, :]
@@ -217,8 +231,9 @@ def _opp_spin_channel(Ba, eao, eva, Bb, ebo, evb, tcut):
             K = Bai.T @ Bb[:, j, :]            # (nva, nvb) = (ia|jb)
             denom = eao[i] + ebo[j] - eva[:, None] - evb[None, :]
             T = K / denom
-            Ua, ea_pno = _pnos(T @ T.T, eva, tcut)     # alpha PNOs
-            Ub, eb_pno = _pnos(T.T @ T, evb, tcut)     # beta PNOs
+            frame = f"dlpno-ump2-canonical-opposite-pair-{i}-{j}-pno"
+            Ua, ea_pno = _pnos(T @ T.T, eva, tcut, spin="alpha", basis_id=frame)
+            Ub, eb_pno = _pnos(T.T @ T, evb, tcut, spin="beta", basis_id=frame)
             Kp = Ua.T @ K @ Ub
             dp = eao[i] + ebo[j] - ea_pno[:, None] - eb_pno[None, :]
             Tp = Kp / dp
@@ -360,7 +375,9 @@ def _opp_spin_localized(Ba, Fa, eva, Bb, Fb, evb, max_iter, tol, tcut_pairs=0.0)
     return e, used, converged, len(screened)
 
 
-def _same_spin_localized_pno(B, F_oo, eps_vir, tcut, max_iter, tol, tcut_pairs=0.0):
+def _same_spin_localized_pno(
+    B, F_oo, eps_vir, tcut, max_iter, tol, tcut_pairs=0.0, *, spin=None,
+):
     """Same-spin LMP2 with per-pair PNO truncation (M1c).
 
     Like ``_same_spin_localized`` but each pair carries its own (truncated)
@@ -381,7 +398,10 @@ def _same_spin_localized_pno(B, F_oo, eps_vir, tcut, max_iter, tol, tcut_pairs=0
         Tsc = anti / (fdd[i] + fdd[j] - eps_vir[:, None] - eps_vir[None, :])
         # Semicanonical estimate (full virtual) for pair screening.
         e_sc[(i, j)] = 0.5 * float(np.sum(anti * Tsc))
-        Uij, ep = _pnos(Tsc @ Tsc.T + Tsc.T @ Tsc, eps_vir, tcut)
+        Uij, ep = _pnos(
+            Tsc @ Tsc.T + Tsc.T @ Tsc, eps_vir, tcut, spin=spin,
+            basis_id=f"dlpno-ump2-localized-same-pair-{i}-{j}-pno",
+        )
         U[(i, j)], epsp[(i, j)] = Uij, ep
         Kp[(i, j)] = Uij.T @ anti @ Uij
         T[(i, j)] = Kp[(i, j)] / (fdd[i] + fdd[j] - ep[:, None] - ep[None, :])
@@ -442,8 +462,9 @@ def _opp_spin_localized_pno(Ba, Fa, eva, Bb, Fb, evb, tcut, max_iter, tol, tcut_
         Kij = Ba[:, i, :].T @ Bb[:, j, :]
         Tsc = Kij / (fda[i] + fdb[j] - eva[:, None] - evb[None, :])
         e_sc[(i, j)] = float(np.sum(Kij * Tsc))
-        Uaij, ea = _pnos(Tsc @ Tsc.T, eva, tcut)
-        Ubij, eb = _pnos(Tsc.T @ Tsc, evb, tcut)
+        frame = f"dlpno-ump2-localized-opposite-pair-{i}-{j}-pno"
+        Uaij, ea = _pnos(Tsc @ Tsc.T, eva, tcut, spin="alpha", basis_id=frame)
+        Ubij, eb = _pnos(Tsc.T @ Tsc, evb, tcut, spin="beta", basis_id=frame)
         Ua[(i, j)], Ub[(i, j)], epa[(i, j)], epb[(i, j)] = Uaij, Ubij, ea, eb
         Kp[(i, j)] = Uaij.T @ Kij @ Ubij
         T[(i, j)] = Kp[(i, j)] / (fda[i] + fdb[j] - ea[:, None] - eb[None, :])
@@ -478,7 +499,7 @@ def _opp_spin_localized_pno(Ba, Fa, eva, Bb, Fb, evb, tcut, max_iter, tol, tcut_
     return e, used, converged, npno, len(screened)
 
 
-def run_dlpno_ump2(molecule, basis, uhf, df, options=None):
+def run_dlpno_ump2(molecule, basis, uhf, df, options=None, *, source=None):
     """Run open-shell DLPNO-UMP2 on a converged UHF reference.
 
     Parameters
@@ -488,9 +509,25 @@ def run_dlpno_ump2(molecule, basis, uhf, df, options=None):
         ``energy``, ``converged``.
     df : vibeqc.density_fitting.DensityFitting with a real RI fitting basis.
     options : DLPNOUMP2Options
+    source : CorrelationSource, optional
+        Calculation-local UHF reference and factors, replacing the positional
+        inputs. The channels use independent orthonormal spin MO spaces, so
+        no AO-overlap construction is needed by this engine.
     """
+    from .source import CorrelationSource, molecular_source
+
     if options is None:
         options = DLPNOUMP2Options()
+    if source is None:
+        source = molecular_source(molecule, basis, uhf, df)
+    elif not isinstance(source, CorrelationSource):
+        raise TypeError(
+            "source must be a vibeqc.dlpno.source.CorrelationSource, got "
+            f"{type(source).__name__}"
+        )
+    source.validate_reference()
+    molecule, basis = source.molecule, source.basis
+    uhf, df = source.reference, source.factors
     from vibeqc.correlation_conventions import effective_electron_count
     if options.localise not in ("none", "boys", "external"):
         raise ValueError(f"unknown localise option: {options.localise!r}")
@@ -538,10 +575,10 @@ def run_dlpno_ump2(molecule, basis, uhf, df, options=None):
         if options.tcut_pno > 0.0:
             tc = options.tcut_pno
             e_aa, _, c_aa, npno_aa, s_aa = _same_spin_localized_pno(
-                Ba, Fa_oo, eva, tc, mi, tol, tp
+                Ba, Fa_oo, eva, tc, mi, tol, tp, spin="alpha"
             )
             e_bb, _, c_bb, npno_bb, s_bb = _same_spin_localized_pno(
-                Bb, Fb_oo, evb, tc, mi, tol, tp
+                Bb, Fb_oo, evb, tc, mi, tol, tp, spin="beta"
             )
             e_ab, _, c_ab, npno_ab, s_ab = _opp_spin_localized_pno(
                 Ba, Fa_oo, eva, Bb, Fb_oo, evb, tc, mi, tol, tp
@@ -562,8 +599,8 @@ def run_dlpno_ump2(molecule, basis, uhf, df, options=None):
         # occupieds -> semicanonical (one-shot) amplitudes per pair.
         Ba = np.ascontiguousarray(np.asarray(df.mo_transform(Cao, Cav)))
         Bb = np.ascontiguousarray(np.asarray(df.mo_transform(Cbo, Cbv)))
-        e_aa, npno_aa = _same_spin_channel(Ba, eao, eva, options.tcut_pno)
-        e_bb, npno_bb = _same_spin_channel(Bb, ebo, evb, options.tcut_pno)
+        e_aa, npno_aa = _same_spin_channel(Ba, eao, eva, options.tcut_pno, spin="alpha")
+        e_bb, npno_bb = _same_spin_channel(Bb, ebo, evb, options.tcut_pno, spin="beta")
         e_ab, npno_ab = _opp_spin_channel(Ba, eao, eva, Bb, ebo, evb, options.tcut_pno)
 
     e_corr = options.os_scale * e_ab + options.ss_scale * (e_aa + e_bb)
@@ -584,5 +621,7 @@ def run_dlpno_ump2(molecule, basis, uhf, df, options=None):
         avg_pno_aa=float(np.mean(npno_aa)) if npno_aa else 0.0,
         avg_pno_bb=float(np.mean(npno_bb)) if npno_bb else 0.0,
         avg_pno_ab=float(np.mean(npno_ab)) if npno_ab else 0.0,
+        source_kind=str(source.kind),
+        source_identity=str(source.identity),
     )
     return res

@@ -263,10 +263,15 @@ def _bond_length(system: PeriodicSystem) -> float:
 
 @pytest.fixture
 def h2_stretched() -> PeriodicSystem:
-    """H₂ stretched to 1.9 bohr in a roomy 7-bohr cubic box (clean
-    isolated-molecule minimum well inside the cell)."""
+    """H₂ stretched to 1.9 bohr in a roomy 12-bohr cubic box (clean
+    isolated-molecule minimum well inside the cell).
+
+    A 7-bohr box at the tests' 7-bohr cutoff leaves the H STO-3G overlap
+    tail unconverged (S(Γ) fold drift 1.3e-02), which the BIPOLE fold guard
+    refuses; converging it there needs ~12 bohr, at ~90 s per SCF. The
+    12-bohr box keeps the cheap cutoff with a converged fold (#502)."""
     return PeriodicSystem(
-        3, np.diag([7.0, 7.0, 7.0]),
+        3, np.diag([12.0, 12.0, 12.0]),
         [Atom(1, [0.0, 0.0, 0.0]), Atom(1, [0.0, 0.0, 1.9])],
     )
 
@@ -582,7 +587,14 @@ class TestProductionRelaxConverges:
         assert isinstance(result, OptimizeResult)
         assert seen_k
         assert seen_sr_precision
-        assert all(value == pytest.approx(1e-6) for value in seen_sr_precision)
+        # The optimizer forwards the shipped SR default (1e-8 since 5332e68c,
+        # #531), not a literal of its own.
+        from vibeqc.bipole_domain import DEFAULT_BIPOLE_SR_IMAGE_PRECISION
+
+        assert all(
+            value == pytest.approx(DEFAULT_BIPOLE_SR_IMAGE_PRECISION)
+            for value in seen_sr_precision
+        )
         for kmesh in seen_k:
             np.testing.assert_allclose(
                 np.asarray(kmesh.kpoints, dtype=float),

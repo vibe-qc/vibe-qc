@@ -95,9 +95,15 @@ def copy_initial_guess_options(source, target):
 
 def select_periodic_driver_guess(
     system, options, *, route, method, driver, multi_k=False,
-    restart_supplied=False,
+    restart_supplied=False, ecp_operator=False,
 ):
-    """Shared preflight for option-based native/Ewald public entry points."""
+    """Shared preflight for option-based native/Ewald public entry points.
+
+    ``ecp_operator`` says the calling Ewald driver builds the periodic ECP
+    operator itself (the open-shell multi-k drivers since #35); every other
+    Ewald driver keeps refusing an active ECP context here rather than
+    dropping it.
+    """
     from ._vibeqc_core import SpinlockMode
 
     requested = coerce_initial_guess(options.initial_guess)
@@ -115,10 +121,12 @@ def select_periodic_driver_guess(
     context = guess_ecp_context(options, molecule=mol)
     # Validate orphan/malformed context even on a route with no ECP operator.
     validate_guess_ecp(InitialGuess.HCORE, context, mol)
-    if route == "ewald" and context.active:
+    if route == "ewald" and context.active and not ecp_operator:
         raise NotImplementedError(
-            f"{driver}: ECP Hamiltonians are not implemented by the Python Ewald "
-            "route; use a supported GDF or native DIRECT_TRUNCATED route"
+            f"{driver}: ECP Hamiltonians are not implemented by this Python Ewald "
+            "driver; use the GDF route, the open-shell multi-k Ewald drivers "
+            "(run_uhf_periodic_multi_k_ewald3d / run_uks_periodic_multi_k_ewald3d) "
+            "or a native DIRECT_TRUNCATED route"
         )
     return select_initial_guess(
         mol, requested, is_periodic=True, is_open_shell=is_open_shell,
@@ -195,17 +203,39 @@ def validate_guess_ecp(kind, context=None, molecule=None):
     return context
 
 
+#: Guesses a route constructs only when the caller names them. ``AUTO`` never
+#: resolves to one, so admitting a guess here leaves the route's default
+#: untouched. The real-Gamma AICCM drivers build SAD on the supercell in the
+#: torus metric (#519 RG-9); its default stays HCORE until the maintainer
+#: changes it.
+_EXPLICIT_ONLY_PERIODIC_GUESSES = {
+    "aiccm-real-gamma": frozenset((InitialGuess.SAD,)),
+}
+
+
 def periodic_guess_capabilities(
     route: str, method: str = "RHF", *, dim: int = 3,
-    multi_k: bool = False, transport: str = "source",
+    multi_k: bool = False, transport: str = "source", requested=None,
 ) -> frozenset:
     """Construction and payload contract for a concrete periodic adapter.
 
     ``source`` is the public result/QVF/Molden seam. Direct callers can name
     ``lattice`` or ``k`` when they supply complete density blocks themselves.
     A matrix at Gamma is never implicitly a full lattice or all-k restart.
+
+    ``requested`` is the caller's selector. A guess the route builds only on
+    explicit request (``_EXPLICIT_ONLY_PERIODIC_GUESSES``) is a capability
+    only when it is the one requested, so ``AUTO`` keeps its resolution.
     """
     route, method = route.lower(), method.upper()
+    explicit = _EXPLICIT_ONLY_PERIODIC_GUESSES.get(route, frozenset())
+    extra = frozenset()
+    if explicit and requested is not None:
+        named = coerce_initial_guess(requested)
+        if named in explicit:
+            extra = frozenset((named,))
+    if route == "aiccm-real-gamma":
+        return frozenset((InitialGuess.HCORE, InitialGuess.READ)) | extra
     if route == "aiccm-hcore":
         return frozenset((InitialGuess.HCORE,))
     if route not in ("ewald", "gdf", "rijcosx", "bipole", "gpw", "gapw", "native", "gpw-native"):
@@ -313,10 +343,21 @@ def select_initial_guess(
     """
     requested = coerce_initial_guess(initial_guess)
     capabilities = tuple(coerce_initial_guess(k) for k in supported)
+    # An ATOMSPIN pattern is a per-atom seed of the SAD density, so AUTO
+    # resolves to SAD whenever one is supplied (#273). Without this the
+    # open-shell d/f-block rule would take an antiferromagnetically seeded
+    # metal complex to PATOM, which then rejects its own seed below. An
+    # explicit selector is untouched and still validated against SAD.
+    seeded = atomic_spins is not None and len(atomic_spins) > 0
+    resolve_capabilities = (
+        tuple(k for k in capabilities if k is not InitialGuess.PATOM)
+        if seeded and requested is InitialGuess.AUTO
+        else capabilities
+    )
     try:
         effective = resolve_initial_guess(
             mol, requested, is_periodic=is_periodic, is_open_shell=is_open_shell,
-            supported=capabilities,
+            supported=resolve_capabilities,
         )
     except NotImplementedError as exc:
         valid = ", ".join(sorted(k.name for k in capabilities))
@@ -626,19 +667,31 @@ def _canonical_orthogonalizer(
     return scale[:, None] * X_norm
 
 
+def _real_if_exact(matrix):
+    """Keep real-valued guesses real without dropping any imaginary entry.
+
+    Bloch assembly uses complex arrays even at Gamma (exp(i k.R) = 1;
+    Sun et al. 2017, Eq. 3, doi:10.1063/1.4998644). Select the real
+    eigensolver only when both matrix inputs are exactly real. A tolerance
+    here would silently alter a genuinely complex trial state.
+    """
+    array = np.asarray(matrix)
+    return array.real if np.iscomplexobj(array) and not np.any(array.imag) else array
+
+
 def _density_from_fock(
     F: np.ndarray,
     S: np.ndarray,
     n_occ: int,
 ) -> np.ndarray:
     """Diagonalise a closed-shell Fock-mode guess against ``S``."""
-    X = _canonical_orthogonalizer(S)
+    X = _canonical_orthogonalizer(_real_if_exact(S))
     if int(n_occ) > X.shape[1]:
         raise RuntimeError(
             "periodic initial guess: fewer retained overlap directions "
             f"({X.shape[1]}) than occupied orbitals ({int(n_occ)})"
         )
-    F_arr = np.asarray(F)
+    F_arr = _real_if_exact(F)
     F = 0.5 * (F_arr + F_arr.conj().T)
     Fp = X.conj().T @ F @ X
     _, Cp = np.linalg.eigh(0.5 * (Fp + Fp.conj().T))
@@ -657,19 +710,19 @@ def _densities_from_fock_open_shell(
     n_alpha_i = int(n_alpha)
     n_beta_i = int(n_beta)
     n_occ = max(n_alpha_i, n_beta_i)
-    S_arr = np.asarray(S)
+    S_arr = _real_if_exact(S)
     shape = S_arr.shape
     if n_occ <= 0:
         Z = np.zeros(shape, dtype=S_arr.dtype)
         return Z, Z.copy()
 
-    X = _canonical_orthogonalizer(S)
+    X = _canonical_orthogonalizer(S_arr)
     if n_occ > X.shape[1]:
         raise RuntimeError(
             "periodic initial guess: fewer retained overlap directions "
             f"({X.shape[1]}) than occupied spin orbitals ({n_occ})"
         )
-    F_arr = np.asarray(F)
+    F_arr = _real_if_exact(F)
     F = 0.5 * (F_arr + F_arr.conj().T)
     Fp = X.conj().T @ F @ X
     _, Cp = np.linalg.eigh(0.5 * (Fp + Fp.conj().T))
@@ -726,10 +779,11 @@ def periodic_fock_guess_k(
             from ._vibeqc_core import compute_vsap_ecp_lattice
             potential = compute_vsap_ecp_lattice(basis, system, opts, ecp_context)
         else:
-            # V_mu,nu(g) integrates a localized AO pair over all space.
-            # A periodic XC partition would require a bra-image sum here;
-            # using it alone drops AO tails assigned to neighboring cells.
-            # Match the molecular partition used by the native SAP drivers.
+            # The long-range SAP term is analytic in reciprocal space (#483);
+            # the grid is only its fallback for Cartesian or l > 6 shells.
+            # V_mu,nu(g) integrates a localized AO pair over all space, so
+            # that fallback needs the molecular partition, not the periodic
+            # XC one (which would require a bra-image sum).
             grid = build_grid(system.unit_cell_molecule())
             potential = compute_vsap_lattice(
                 basis, system, grid, "sap_helfem_large", opts)
@@ -953,6 +1007,30 @@ def _density_guess_metric(basis, overlap, weights, periodic_system, lattice_opts
     # Context-free compatibility calls have only a molecular AO metric.
     # Every production periodic route supplies its actual overlap explicitly.
     return np.asarray(compute_overlap(basis))
+
+def _real_gamma_seed(density, where: str) -> np.ndarray:
+    """A Gamma seed density from the shared periodic adapter, as a real array.
+
+    The adapter also serves k-mesh routes and can return a complex array
+    at Gamma. The exact-Gamma drivers run real-only SCF, so a complex seed
+    with a zero imaginary part reached them as complex and was refused:
+    the Gamma GDF eigensolver (periodic SAP, #527) and the Gamma Ewald
+    RHF/RKS/UHF/UKS/ROHF evaluated states ("requires a real total
+    density", #472). A materially complex seed is refused here rather
+    than having its imaginary part dropped.
+    """
+    density = np.asarray(density)
+    if not np.iscomplexobj(density):
+        return density
+    scale = max(1.0, float(np.max(np.abs(density))) if density.size else 1.0)
+    if density.size and float(np.max(np.abs(density.imag))) > 1e-10 * scale:
+        raise ValueError(
+            f"{where}: the Gamma seed density has a material imaginary part "
+            f"({float(np.max(np.abs(density.imag))):.3e}); a Gamma-point "
+            "density must be real."
+        )
+    return np.ascontiguousarray(density.real)
+
 
 def initial_density_closed_shell(
     mol: Molecule,
