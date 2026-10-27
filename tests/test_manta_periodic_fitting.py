@@ -137,7 +137,9 @@ def test_shared_screening_controls_retained_source_and_per_entry_error(error):
     np.testing.assert_allclose(r.three_center,t,atol=2e-11,rtol=2e-12)
     assert np.max(abs(r.metric-exact.metric))<=error+2e-11
     assert np.max(abs(r.three_center-exact.three_center))<=error+2e-11
-    assert r.receipt.three_center_shell_calls<exact.receipt.three_center_shell_calls
+    # Split survivors can increase shell invocations while reducing primitive work.
+    assert r.receipt.primitive_products<exact.receipt.primitive_products
+    assert r.receipt.three_center_shell_calls<=r.plan.three_center_shell_calls
     assert r.receipt.source_identity!=exact.receipt.source_identity
 
 
@@ -273,3 +275,70 @@ def test_left_handed_lattice_basis_relabel_keeps_physical_image_set():
     np.testing.assert_allclose(b.three_center,r.three_center,atol=5e-12,rtol=0)
     assert b.receipt.metric_shell_calls==r.receipt.metric_shell_calls
     assert b.receipt.three_center_shell_calls==r.receipt.three_center_shell_calls
+
+
+@pytest.mark.parametrize('angular',[0,1,2])
+@pytest.mark.parametrize('mode',['common','coupling'])
+def test_shared_primitive_screen_retains_the_libint_source(angular,mode):
+    """Contracted/signed survivors use the same selector, not a looser tolerance."""
+    a=case();a['system'],a['orbital'],a['auxiliary']=_weighted_gradient_fixture(angular)
+    o=a['options'];o.pair_cutoff_bohr=8.;o.auxiliary_cutoff_bohr=20.;o.compute_metric=False
+    exact=manta.compute_periodic_gdf_short_range(**a)
+    setattr(o,'integral_screen_error' if mode=='common' else 'coupling_screen_error',.01)
+    screened=manta.compute_periodic_gdf_short_range(**a)
+    expected=core.compute_gdf_sr_three_center(a['orbital'],a['auxiliary'],a['system'],a['q'],a['ket_kpoints'],
+        o.omega,o.pair_cutoff_bohr,o.auxiliary_cutoff_bohr,2**28,o.image_candidate_cap,2**28,integral_screen_error=.01)
+    np.testing.assert_allclose(screened.three_center,expected,atol=2e-11,rtol=2e-12)
+    assert np.max(abs(screened.three_center-exact.three_center))<=.01
+    assert screened.receipt.primitive_products<exact.receipt.primitive_products
+    assert screened.receipt.three_center_source_identity!=exact.receipt.three_center_source_identity
+    assert screened.receipt.three_center_shell_calls<=screened.plan.three_center_shell_calls
+    assert screened.receipt.primitive_products<=screened.plan.primitive_products
+
+
+@pytest.mark.parametrize('field,quantity',CAPS)
+def test_shared_primitive_screen_admits_split_calls_and_scratch(field,quantity):
+    a=case();a['system'],a['orbital'],a['auxiliary']=_weighted_gradient_fixture(1)
+    a['options'].pair_cutoff_bohr=8.;a['options'].auxiliary_cutoff_bohr=20.;a['options'].integral_screen_error=.01
+    p=plan(a);b=a['budget']
+    for key,name in CAPS:setattr(b,key,getattr(p,name))
+    result=manta.compute_periodic_gdf_short_range(**a)
+    assert result.receipt.three_center_shell_calls<=p.three_center_shell_calls
+    setattr(b,field,getattr(p,quantity)-1);a['q'][:]=np.nan
+    with pytest.raises((ValueError,RuntimeError),match='budget'):manta.compute_periodic_gdf_short_range(**a)
+
+
+def screened_contracted_job(directory):
+    """Complete UHF with mixed tight/diffuse contractions and a real screen."""
+    import dataclasses
+    from tests.test_manta_periodic_ri_job import job_case
+    job,a,k=job_case(directory,species='Li')
+    for name in ('basis','auxiliary'):
+        shells=a[name].shells()
+        for shell in shells:
+            alpha,coef=shell.exponents[0],shell.coefficients[0]
+            shell.exponents=[alpha,20*alpha];shell.coefficients=[coef,.02*coef]
+        a[name]=vq.BasisSet(a['system'].unit_cell_molecule(),shells,'screened-contracted-control',True)
+    a['options'].fitting.integral_screen_error=.01;a['options'].fitting.auxiliary_cutoff_bohr=12.
+    job['basis']=a['basis'];job['coulomb']=dataclasses.replace(job['coulomb'],auxiliary_basis=a['auxiliary'])
+    job['periodic_fitting']=dataclasses.replace(job['periodic_fitting'],integral_screen_error=.01,auxiliary_cutoff_bohr=12.)
+    return job,a,k
+
+
+def check_screened_contracted_job(job,a,k,result):
+    from tests.test_manta_periodic_ri_domains import explicit
+    from tests.test_manta_periodic_ri_uhf import reference
+    from tests.test_manta_periodic_rhf import _nuclear_reference
+    domains=manta.build_periodic_ri_uhf_domains(**a);args=explicit(a,domains)
+    s,h,build,_=reference(args,k);f,energies=build(result.native.density)
+    errors=dict(fock=float(np.max(abs(result.native.fock-f))),energy=abs(result.energy-sum(energies)-sum(_nuclear_reference(args)[0])),
+                overlap=float(np.max(abs(result.native.overlap-s))),hcore=float(np.max(abs(result.native.hcore-h))))
+    assert result.converged
+    assert max(errors.values())<8e-11,errors
+    assert result.integral_provenance['fitting']['controls']['integral_screen_error']==.01
+    return errors
+
+
+def test_shared_primitive_screen_complete_uhf_independent_fock(tmp_path):
+    job,a,k=screened_contracted_job(tmp_path)
+    check_screened_contracted_job(job,a,k,vq.run_periodic_job(**job))

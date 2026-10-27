@@ -12,6 +12,7 @@ FittingPlan plan_fitting(const std::vector<const BasisSet*>& axes,const KernelRe
     if(axes.size()!=2 && axes.size()!=3) throw std::invalid_argument("MANTA fitting tiles require two or three basis axes");
     if(request.centers!=static_cast<int>(axes.size()))
         throw std::invalid_argument("MANTA fitting request center count must match the basis axes");
+    if(request.derivative!=0) throw std::invalid_argument("MANTA fitting tiles require derivative=0; use derivative tiles for gradients");
     const auto capability=md_capability(request);
     if(!capability.supported) throw std::invalid_argument(capability.reason);
     margin(budget);

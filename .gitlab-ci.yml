@@ -20,7 +20,7 @@ stages:
 variables:
   QVF_TAG: "v0.6.0"
   VIBE_VIEW_TAG: "v2.20.20"
-  VIBEQC_RELEASE_BASE: "v0.18.1"
+  VIBEQC_RELEASE_BASE: "v0.18.2"
 
 workflow:
   auto_cancel:

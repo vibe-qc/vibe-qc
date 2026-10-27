@@ -5926,3 +5926,241 @@ certifies numerical angular transport, omitted operator members or geometry
 mismatch in the separate symmetry machinery. Basis/vector data generation,
 AO-pair Fourier/three-center coupling construction, domains/screening and
 relaxed response remain outside automatic total-energy accuracy claims.
+
+
+### 5.66 Orbital-pair Fourier construction component
+
+`plan_pair_fourier_construction` and `certify_pair_fourier_panel` extend the
+shared Fourier proof to products of two stored orbital Gaussians, each with
+l=0..6, in pure or Cartesian form. The numerical `compute_fourier_panel` is
+unchanged. The certificate returns that panel and entrywise real/imaginary
+lower/upper bounds and a conservative absolute error, in `(q,bra,ket)` order.
+The internal shell producer returns the same enclosures for future coupling
+consumers. This is a separately admitted component diagnostic, not a complete
+three-center construction certificate or a new SCF accuracy admission.
+
+For positive exponents a,b and exact stored centers A,B, define p=a+b,
+P=A+(b/p)(B-A), and rho=a*b/p. The Gaussian product theorem gives a common
+seed `(pi/p)^(3/2) exp(-rho*|A-B|^2-q.q/(4*p)) exp(-i*q.P)`.
+Product-center, squared-distance, exponent and prefactor arithmetic are all
+enclosed. The existing phase proof now accepts an interval angle internally;
+no rounded product center is treated as exact. The public point-vector phase
+contract and its arithmetic are unchanged. Pi, exponential and square-root
+proofs reuse Sections 5.59-5.62 without a libm accuracy assumption.
+
+Expand each Cartesian pair about P using finite binomial products of P-A
+and P-B. For each axis, normalized Fourier moments obey h0=1,
+h1=-i*q/(2*p) and hn=(-i*q/(2*p))*h(n-1)+(n-1)/(2*p)*h(n-2).
+Outward complex arithmetic encloses all moments through order 12, polynomial
+products, signed primitive contractions and both exact mathematical pure
+transforms from Section 5.65. Binomial coefficients through order six are
+small exactly representable integers. Intersections with known positivity
+and unit-circle bounds retain the exact reference. Overflow or unresolved
+positive denominators refuse; underflow is retained by outward endpoints.
+
+This is the Gaussian-product and Fourier convention of Neese2023 and
+Sun2017 (DOI 10.1002/jcc.26942 and 10.1063/1.4998644), with Rump2010 verified
+arithmetic. The explicit derivation above bounds the same finite Gaussian
+integral rather than introducing a different physical source. Independent
+witnesses shift a Gaussian contour and sum its finite even central moments
+in high precision; they do not use the native h recurrence. Exact rational
+Legendre transforms, separate high-precision phase/elementary evaluation and
+existing real-space Gauss-Hermite integration check convention and values.
+
+Count-only planning precedes vector copying and evaluation. It includes the
+existing numerical panel, all certificate arrays, shell metadata, contraction
+and transform workspace, at most 13 moments per axis, at most 49 binomial
+products per Cartesian axis pair, and shared phase/elementary/representation
+proof work. Storage, scalar, kernel, shell and primitive caps remain strict;
+conservative reservations are not measured allocation or speedup claims.
+Empty vector panels retain their declared shape without primitive evaluation.
+
+The exact stored normalized basis data and wave vectors define this component
+reference. Their generation, lattice/image translation, periodic Bloch sums,
+three-center short-range integrals, reciprocal coupling products and sums,
+zero-mode terms, screening/domain truncation and coupling action propagation
+remain separate. No metric, RI-BUPO, Fock, symmetry or automatic-selection
+certificate silently acquires this coverage. Existing component budgets and
+complete-source flags are unchanged. This diagnostic establishes neither
+total relaxed-energy accuracy, bulk CRYSTAL parity, numerical equivariance
+nor production readiness for the full MANTA programme.
+
+
+### 5.67 Streamed three-center integral construction
+
+`ThreeCenterConstructionTiles(auxiliary, bra, ket, request, budget)` returns
+separately owned construction certificates for individual ordered `(P,mu,nu)`
+shell tiles. `plan_three_center_construction` counts the complete requested
+shell sweep and its maximum live tile storage before copying basis data.
+Auxiliary l=0..7 and each orbital l=0..6, mixed pure/Cartesian shells and
+Coulomb, erf and erfc kernels retain the existing `FittingTiles` conventions.
+Range parameters must be finite and nonnegative; full Coulomb requires zero.
+No global three-index tensor is allocated. Numerical tiles and their physical
+source identity are unchanged; lower/upper/error arrays have the same shape.
+
+The reference is the exact integral of the stored normalized Gaussians.
+For orbital exponents b,c at B,C, p=b+c, P=B+(c/p)(C-B), and the product decay
+is exp(-b*c/p*|B-C|^2). All product-center and decay arithmetic is enclosed.
+For auxiliary exponent a, rho=a*p/(a+p), displacement D=A-P and T=rho*D.D.
+The primitive prefactor is `2*pi^(5/2)/(a*p*sqrt(a+p))` times the product decay
+and stored signed contraction coefficients. Shared verified elementary and
+representation producers cover pi, exponentials, roots and pure transforms.
+
+The one-dimensional Hermite raising identity is
+`E(i+1,j,t)=E(i,j,t-1)/(2*p)+(P-B)*E(i,j,t)+(t+1)*E(i,j,t+1)`;
+raising the other orbital uses P-C. The seed E(0,0,0)=1 leaves the common decay
+in the prefactor. Auxiliary coefficients use the same identity with zero
+center shift and a unit partner. Outward arithmetic encloses every coefficient;
+zero terms are omitted only when both interval endpoints are exactly zero.
+
+The existing metric radial producer supplies Boys, erf and positive erfc
+seed enclosures through order 19 via a thin shared kernel wrapper. Its
+implementation and ordinary Boys interface are unchanged. Seeds multiplied
+by `(-2*rho)^n` enter the standard Cartesian Coulomb derivative recurrence;
+ket derivatives carry `(-1)^(tx+ty+tz)`. Successive interval contractions of
+the Hermite kernel with orbital and auxiliary coefficients avoid a four-axis
+Cartesian/Hermite loop. Three successive mathematical representation
+transforms and signed primitive sums produce the final tile enclosure.
+The error compares the actual numerical tile to that enclosure.
+
+This is the McMurchieDavidson1978 / Neese2023 Gaussian-product formulation
+(DOI 10.1002/jcc.26942), with the radial conventions of Sections 5.63-5.64
+and Rump2010 outward verification. Independent witnesses expand the Cartesian
+product polynomial about P, use closed factorial Hermite coefficients and
+finite Cartesian derivative sums with high-precision alternating radial
+integrals. They avoid both native raising recurrences. Existing libint
+three-center comparisons check the numerical source separately. Selected
+maximum-order Cartesian witnesses supplement all-angular-axis, mixed,
+contracted, signed, underflow and range-limit cases.
+
+Admission charges basis copies, numerical and proof tiles, three transform
+stages, sparse Hermite tables, derivative/kernel scratch, all primitive
+products, radial work and output copies. Shell, primitive, scalar, kernel
+and memory caps refuse before evaluating a tile; invalid arity, indices,
+angular roles, derivatives or nonfinite input refuse. Numerical and proof
+scratch scale with a shell tile, not the number of global tensor entries.
+Conservative reservations are not measured allocation or performance claims.
+
+This streamed component supplies a prerequisite for complete periodic
+coupling construction. It does not yet compose with pair/auxiliary Fourier,
+reciprocal weights, Bloch/image sums or zero-mode terms into a coupling action
+bound. Exact stored centers do not include errors in constructing translated
+image centers. Normalized basis/vector generation, periodic domains/screening,
+BvK, XC/grid, basis/BZ, overlap/occupied/density relaxation and total relaxed
+energy remain separate. Existing metric/Fock/SCF budgets and complete-source
+flags are unchanged. No symmetry reduction, bulk CRYSTAL parity, general
+speedup or automatic whole-method accuracy permission follows.
+
+
+The shared scalar fitting planner now explicitly rejects derivative requests.
+Its capability query describes several producers and previously admitted a
+first-derivative request that the scalar tile evaluator did not execute.
+`DerivativeTiles` remains the supported first-derivative producer. Metric and
+three-center construction diagnostics inherit this corrected refusal; ordinary
+integrals and their scientific results are unchanged.
+
+### 5.68 Finite periodic coupling construction and paired actions
+
+`PeriodicGDFTiles.plan_coupling_construction(budget)` admits the complete
+finite construction proof and one unchanged numerical coupling action.
+`certify_coupling_tile(p, mu, nu, budget)` returns one owned numerical tile
+and flattened real/imaginary lower/upper/error arrays in its native order.
+`certify_forward(input, budget)` and `certify_adjoint(input, budget)` return
+the unchanged numerical action plus the corresponding output enclosures.
+Inputs are exact stored complex128 values; C/F contiguous layouts agree.
+All five work/storage caps are checked before binding input copies.
+
+The reference is the unscreened literal finite integer image set selected by
+the shared sphere/capsule producer for the supplied cutoffs. Selection uses
+its existing rounded geometry and finite-zero convention. For each selected
+integer triple n, the proof encloses the exact product L*n and the addition
+of each stored center. It then encloses the Gaussian integral on those exact
+centers. This distinguishes an exact finite-set integral from an assertion
+that the selected set is a mathematically complete geometric domain.
+
+For a tile, the reference is the sum of the real-space erfc term
+`sum_R exp(i*k.R) sum_T exp(-i*q.T) (P_T|mu nu_R)_erfc`, the reciprocal term
+`sum_G w(G+q) conj(auxFT(P,G+q)) sum_R exp(i*k.R) pairFT(mu,nu_R,G+q)`,
+and the existing finite-zero correction when applicable. Shared three-center,
+orbital-pair/auxiliary Fourier, Bloch-phase, radial, representation and lattice
+weight producers enclose all terms. Coulomb, physical erf and physical erfc
+keep their existing decompositions and zero-mode conventions. A reciprocal
+pole classification whose interval crosses the threshold refuses. No new
+radial algorithm, image selector or symmetry reduction is introduced.
+
+Exact finite-source forward and adjoint contractions are respectively
+`conj(T):X` and `T*c`, including arbitrary complex, non-Hermitian inputs.
+Per-output error is the outward complex L1 distance from the actual numerical
+value to its reference rectangle. Therefore this single certificate includes
+construction, omitted/screened/multipole terms and executed contraction error
+for the admitted numerical route. It must not be added to overlapping old
+approximation or roundoff budgets. Screened, explicit, compressed, global and
+pair-tree actions are compared directly with the same reference, rather than
+assuming their real-arithmetic maps or Gamma averaging are identical.
+
+`source_identity` identifies the actual numerical coupling; `reference_identity`
+identifies the physical finite reference and selected integer supports;
+`certificate_identity` additionally binds actual values, input snapshot and
+bounds. `reference_terms` counts selected SR auxiliary images and LR pair
+images per reciprocal panel, not scalar operations or unique images. The
+numerical receipt retains its original plan and counters; the separate
+construction plan reserves the additional proof work. Only shell tiles,
+Fourier panels and action vectors are retained, never the global coupling
+tensor. Conservative component-plan multiplicities and explicit folding/
+geometry/contraction charges bound work and live scratch. Those reservations
+are not measured allocations, costs or speedup evidence.
+
+The formulation reuses Sun et al. 2017 (DOI 10.1063/1.4998644), Ye and
+Berkelbach 2021 range-separated Gaussian fitting, McMurchieDavidson1978 /
+Neese2023 Gaussian products and Rump2010 verification from preceding sections.
+Independent witnesses use a brute-force finite image census, exact Decimal
+lattice products, closed polynomial Gaussian moments/derivatives and
+high-precision scalar phase/weight evaluation. They do not consume the native
+interval endpoints. Separate numerical-source and paired-action regressions
+preserve the shared Fock/PBC/symmetry contracts.
+
+This remains an experimental finite-source diagnostic. Existing SCF/Fock
+admissions and metric budgets do not automatically consume it. Stored
+normalized basis, lattice and reciprocal-vector generation, selection/domain
+completeness and infinite tails, fitting-basis incompleteness, BvK, XC/grid,
+basis/BZ, overlap/occupied/density relaxation and total relaxed energy remain
+separate. No bulk CRYSTAL parity, general speedup or useful automatic
+whole-method accuracy follows. Subsequent composition must account for
+coupling and metric response without counting the same error twice.
+
+### 5.69 Shared screened primitive source
+
+MANTA's dense and streamed real-space three-center paths now use the same
+`PrimitiveTripleScreen` as libint values and gradients. Previously they
+shared shell/image decisions but retained different primitive sets within
+contracted shells. This caused the retained-source comparison in #687 to
+fail at 5.65e-11 for a requested omission budget of 0.01; it was not a new
+coupling-certificate error or an unbudgeted primitive-epsilon screen.
+
+The existing Gaussian/angular envelope of Ye and Berkelbach 2021 SI S4
+assigns each image term a fraction of the shell budget, then divides that
+fraction by its primitive-triple count. Each omitted primitive obeys the
+same absolute envelope; all survivors retain their original signed normalized
+coefficients. No fragment is renormalized. If every primitive survives, the
+original contracted evaluation is retained; if none survives, no numerical
+integral call is made. The selector, bounds and traversal are shared without
+changing the libint implementation. Zero screening and multipole routes keep
+their previous numerical paths.
+
+Screened source identities now include `shared-budgeted-primitive-triples.v1`;
+unscreened source identities and the exact finite reference from Section 5.68
+are unchanged. Common and coupling-only screening both use the shared
+primitive selector; the latter leaves the metric unchanged. Split survivors
+can increase numerical shell invocations while reducing evaluated primitive
+products, so neither fewer shell calls nor general speedup is promised.
+
+Count admission reserves one call/transform per possible primitive triple,
+selector envelopes/survivors and copied primitive-shell storage, plus phase
+accumulation work. This applies before dense or streamed numerical allocation.
+Actual counters report executed numerical calls and primitive products.
+Existing five resource caps, source ownership, Fock/PBC/symmetry interfaces
+and omission targets remain intact. Independent libint comparisons retain
+their original tolerance; complete calculations exercise contracted screened
+sources. These are finite-source checks, not total relaxed-energy or bulk
+CRYSTAL parity claims. MANTA and the broader accuracy programme remain
+experimental and unfinished.

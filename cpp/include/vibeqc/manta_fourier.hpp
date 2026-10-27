@@ -42,6 +42,10 @@ struct FourierConstructionCertificate {
     FourierResult evaluated;
     std::vector<double> real_lower,real_upper,imag_lower,imag_upper,error_bounds;
 };
+// Component proof for exact stored orbital Gaussian pairs; not a complete
+// three-center coupling, periodic image or relaxed-energy certificate.
+FourierConstructionPlan plan_pair_fourier_construction(const BasisSet&,const BasisSet&,Count,const ResourceBudget&);
+FourierConstructionCertificate certify_pair_fourier_panel(const BasisSet&,const BasisSet&,const md::Matrix&,const ResourceBudget&);
 FourierConstructionPlan plan_auxiliary_fourier_construction(const BasisSet&,Count,const ResourceBudget&);
 FourierConstructionCertificate certify_auxiliary_fourier_panel(const BasisSet&,const md::Matrix&,const ResourceBudget&);
 // A null ket denotes a single auxiliary Gaussian, with no orbital product.

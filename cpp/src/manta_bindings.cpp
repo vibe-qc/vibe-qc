@@ -3,6 +3,7 @@
 #include "vibeqc/manta_md.hpp"
 #include "vibeqc/manta_one_electron.hpp"
 #include "vibeqc/manta_fitting.hpp"
+#include "vibeqc/manta_three_center.hpp"
 #include "vibeqc/manta_radial.hpp"
 #include "vibeqc/manta_fourier.hpp"
 #include "vibeqc/manta_derivatives.hpp"
@@ -385,6 +386,22 @@ void bind_manta(py::module_& parent) {
         py::arg("request")=fitting_request(2),py::arg("budget")=ResourceBudget{});
     m.def("certify_metric_construction",&certify_metric_construction,py::arg("bra"),py::arg("ket"),
         py::arg("request")=fitting_request(2),py::arg("budget")=ResourceBudget{});
+    m.def("plan_three_center_construction",&plan_three_center_construction,
+        py::arg("auxiliary"),py::arg("bra"),py::arg("ket"),py::arg("request")=fitting_request(3),py::arg("budget")=ResourceBudget{});
+    py::class_<ThreeCenterConstructionTiles>(m,"ThreeCenterConstructionTiles")
+        .def(py::init<const vibeqc::BasisSet&,const vibeqc::BasisSet&,const vibeqc::BasisSet&,const KernelRequest&,const ResourceBudget&>(),
+            py::arg("auxiliary"),py::arg("bra"),py::arg("ket"),py::arg("request")=fitting_request(3),py::arg("budget")=ResourceBudget{})
+        .def_property_readonly("plan",&ThreeCenterConstructionTiles::plan,py::return_value_policy::copy)
+        .def_property_readonly("source_identity",&ThreeCenterConstructionTiles::source_identity)
+        .def("evaluate",[](const ThreeCenterConstructionTiles& source,const std::vector<std::size_t>& indices) {
+            const auto tile=source.evaluate(indices);
+            const std::vector<py::ssize_t> shape(tile.evaluated.shape.begin(),tile.evaluated.shape.end());
+            auto array=[&](const double* data) {py::array_t<double> a(shape);std::copy_n(data,a.size(),a.mutable_data());return a;};
+            py::dict result;result["values"]=array(tile.evaluated.values.data());
+            result["lower"]=array(tile.lower.data());result["upper"]=array(tile.upper.data());result["error_bounds"]=array(tile.error_bounds.data());
+            result["source_identity"]=source.source_identity();result["primitive_products_requested"]=tile.evaluated.primitive_products;
+            return result;
+        },py::arg("ordered_shell_indices"));
     py::class_<FittingPlan>(m,"FittingPlan")
         .def_readonly("shape",&FittingPlan::shape)
         .def_readonly("shell_extents",&FittingPlan::shell_extents)
@@ -532,6 +549,14 @@ void bind_manta(py::module_& parent) {
         .def_readonly("imag_lower",&FourierConstructionCertificate::imag_lower)
         .def_readonly("imag_upper",&FourierConstructionCertificate::imag_upper)
         .def_readonly("error_bounds",&FourierConstructionCertificate::error_bounds);
+    m.def("plan_pair_fourier_construction",&plan_pair_fourier_construction,
+        py::arg("bra"),py::arg("ket"),py::arg("n_vectors"),py::arg("budget")=ResourceBudget{});
+    m.def("certify_pair_fourier_panel",[](const vibeqc::BasisSet& bra,const vibeqc::BasisSet& ket,const py::array& vectors,const ResourceBudget& budget) {
+        if(vectors.ndim()!=2)throw py::value_error("MANTA Fourier vectors must have shape (n,3)");
+        plan_pair_fourier_construction(bra,ket,vectors.shape(0),budget);
+        const auto q=fourier_vectors(bra,&ket,vectors,budget);
+        return certify_pair_fourier_panel(bra,ket,q,budget);
+    },py::arg("bra"),py::arg("ket"),py::arg("wave_vectors").noconvert(),py::arg("budget")=ResourceBudget{});
     m.def("plan_auxiliary_fourier_construction",&plan_auxiliary_fourier_construction,
         py::arg("auxiliary"),py::arg("n_vectors"),py::arg("budget")=ResourceBudget{});
     m.def("certify_auxiliary_fourier_panel",[](const vibeqc::BasisSet& auxiliary,const py::array& vectors,const ResourceBudget& budget) {

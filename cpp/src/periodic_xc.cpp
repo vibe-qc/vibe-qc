@@ -88,23 +88,44 @@ int hessian_component(int a, int b) {
 // the V_xc Fock's virtual subspace (eigenvalues ~1e8) and can drive the SCF to
 // a spurious stationary point, while the energy integral stays ~correct (the
 // offending points carry negligible exc*w). SCAN/r2SCAN self-regularise and
-// were unaffected. Clamping tau to tau_W restores the physical input at exactly
-// those points and is a no-op everywhere tau >= tau_W already, so it does not
-// perturb the converged energy -- it is the energy-consistent root-cause fix,
-// applied identically in the energy, the SCF Fock, and the analytic gradient so
-// FD and analytic forces stay synchronised. Clamping tau to 0 is NOT enough
-// (libxc still diverges at tau=0 with finite sigma); the bound must be tau_W.
-inline void enforce_von_weizsaecker_floor(Eigen::VectorXd& tau,
-                                          const Eigen::VectorXd& rho,
-                                          const Eigen::VectorXd& sigma) {
-    const Eigen::Index n = tau.size();
-    for (Eigen::Index i = 0; i < n; ++i) {
+// were unaffected. The floor is a no-op where tau >= tau_W. Its chain
+// rule must also reach the Fock and geometry derivatives: on an active floor
+// d tau_eff = -tau_W/rho d rho + (1/8rho) d sigma, with no raw-tau term.
+// TPSS: Tao et al., PRL 91, 146401 (2003), Eqs. (1)-(2) and tau_W definition,
+// DOI: 10.1103/PhysRevLett.91.146401. The floor is our numerical extension
+// outside the physical feature domain, not a modification of that functional.
+using TauFloor = std::vector<Eigen::Index>;
+inline TauFloor enforce_von_weizsaecker_floor(Eigen::VectorXd& tau,
+                                            const Eigen::VectorXd& rho,
+                                            const Eigen::VectorXd& sigma) {
+    TauFloor active;
+    for (Eigen::Index i = 0; i < tau.size(); ++i) {
         if (rho[i] <= 0.0) {
             tau[i] = 0.0;
+            active.push_back(i);
         } else {
             const double tau_w = sigma[i] / (8.0 * rho[i]);
-            if (tau[i] < tau_w) tau[i] = tau_w;
+            if (tau[i] < tau_w) {
+                tau[i] = tau_w;
+                active.push_back(i);
+            }
         }
+    }
+    return active;
+}
+
+inline void pull_back_tau_floor(const TauFloor& active,
+                                const Eigen::VectorXd& rho,
+                                const Eigen::VectorXd& tau,
+                                Eigen::VectorXd& v_rho,
+                                Eigen::VectorXd& v_sigma,
+                                Eigen::VectorXd& v_tau) {
+    for (Eigen::Index i : active) {
+        if (rho[i] > 0.0) {
+            v_rho[i] -= v_tau[i] * tau[i] / rho[i];
+            v_sigma[i] += v_tau[i] / (8.0 * rho[i]);
+        }
+        v_tau[i] = 0.0;
     }
 }
 
@@ -1716,13 +1737,15 @@ static PeriodicXCContribution build_xc_periodic_impl(const BasisSet& basis,
         // tau >= tau_W (von Weizsacker): the cross-cell tau sum can dip below
         // it from roundoff, making unregularised meta-GGAs singular (see the
         // helper). No-op where the physical bound already holds.
-        if (is_mgga) enforce_von_weizsaecker_floor(tau, rho, sigma);
+        const TauFloor tau_floor = is_mgga
+            ? enforce_von_weizsaecker_floor(tau, rho, sigma) : TauFloor{};
 
         profile.elapsed.finish(2);
         Eigen::VectorXd exc, v_rho, v_sigma, v_tau;
         if (is_mgga) {
             func.eval_unpolarised_mgga(rho, sigma, tau,
                                        exc, v_rho, v_sigma, v_tau);
+            pull_back_tau_floor(tau_floor, rho, tau, v_rho, v_sigma, v_tau);
         } else {
             func.eval_unpolarised(rho, sigma, exc, v_rho, v_sigma);
         }
@@ -1968,11 +1991,13 @@ static Eigen::MatrixXd xc_lattice_gradient_batch(
         sigma.resize(0);
     // tau >= tau_W (von Weizsacker) — identical to build_xc_periodic so the
     // analytic gradient differentiates exactly the SCF energy surface.
-    if (is_mgga) enforce_von_weizsaecker_floor(tau, rho, sigma);
+    const TauFloor tau_floor = is_mgga
+            ? enforce_von_weizsaecker_floor(tau, rho, sigma) : TauFloor{};
     Eigen::VectorXd exc, v_rho, v_sigma, v_tau;
-    if (is_mgga)
+    if (is_mgga) {
         func.eval_unpolarised_mgga(rho, sigma, tau, exc, v_rho, v_sigma, v_tau);
-    else
+        pull_back_tau_floor(tau_floor, rho, tau, v_rho, v_sigma, v_tau);
+    } else
         func.eval_unpolarised(rho, sigma, exc, v_rho, v_sigma);
 
     const Eigen::VectorXd w_vrho = grid.weights.array() * v_rho.array();
@@ -2287,9 +2312,10 @@ static Eigen::MatrixXd xc_lattice_gradient_batch_uks(
 
     // tau_σ >= tau_W,σ = σ_σσ / (8 ρ_σ) per spin (von Weizsacker) — identical
     // to build_xc_periodic_uks so the analytic gradient matches its energy.
+    TauFloor tau_floor_a, tau_floor_b;
     if (is_mgga) {
-        enforce_von_weizsaecker_floor(tau_a, rho_a, sigma_aa);
-        enforce_von_weizsaecker_floor(tau_b, rho_b, sigma_bb);
+        tau_floor_a = enforce_von_weizsaecker_floor(tau_a, rho_a, sigma_aa);
+        tau_floor_b = enforce_von_weizsaecker_floor(tau_b, rho_b, sigma_bb);
     }
 
     Eigen::VectorXd exc;
@@ -2302,6 +2328,8 @@ static Eigen::MatrixXd xc_lattice_gradient_batch_uks(
                                  exc, v_rho_a, v_rho_b,
                                  v_sig_aa, v_sig_ab, v_sig_bb,
                                  v_tau_a, v_tau_b);
+        pull_back_tau_floor(tau_floor_a, rho_a, tau_a, v_rho_a, v_sig_aa, v_tau_a);
+        pull_back_tau_floor(tau_floor_b, rho_b, tau_b, v_rho_b, v_sig_bb, v_tau_b);
     } else {
         func.eval_polarised(rho_a, rho_b, sigma_aa, sigma_ab, sigma_bb,
                             exc, v_rho_a, v_rho_b,
@@ -2892,9 +2920,10 @@ static PeriodicUKSXCContribution build_xc_periodic_uks_impl(
         // cross-cell per-spin τ sum can dip below the bound from roundoff,
         // making unregularised meta-GGAs singular (see the helper). No-op where
         // the physical bound already holds.
+        TauFloor tau_floor_a, tau_floor_b;
         if (is_mgga) {
-            enforce_von_weizsaecker_floor(tau_a, rho_a, sigma_aa);
-            enforce_von_weizsaecker_floor(tau_b, rho_b, sigma_bb);
+            tau_floor_a = enforce_von_weizsaecker_floor(tau_a, rho_a, sigma_aa);
+            tau_floor_b = enforce_von_weizsaecker_floor(tau_b, rho_b, sigma_bb);
         }
 
         profile.elapsed.finish(2);
@@ -2908,6 +2937,8 @@ static PeriodicUKSXCContribution build_xc_periodic_uks_impl(
                                      exc, v_rho_a, v_rho_b,
                                      v_sig_aa, v_sig_ab, v_sig_bb,
                                      v_tau_a, v_tau_b);
+            pull_back_tau_floor(tau_floor_a, rho_a, tau_a, v_rho_a, v_sig_aa, v_tau_a);
+            pull_back_tau_floor(tau_floor_b, rho_b, tau_b, v_rho_b, v_sig_bb, v_tau_b);
         } else {
             func.eval_polarised(rho_a, rho_b, sigma_aa, sigma_ab, sigma_bb,
                                 exc, v_rho_a, v_rho_b,

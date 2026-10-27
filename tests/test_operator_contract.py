@@ -2044,3 +2044,54 @@ def test_interior_generalized_refuses_invalid_metric(metric):
     problem = InteriorEigenProblem(GeneralizedEigenProblem(matrix=np.diag([-1., 2.]), overlap=metric))
     with pytest.raises(ValueError, match="overlap"):
         solve_eigenproblem(problem, SolverOptions(n_roots=1), solver="dense")
+
+
+@pytest.mark.parametrize("tol", [np.inf, -np.inf, np.nan, 0., -1.])
+@pytest.mark.parametrize("interior", [False, True])
+def test_legacy_standard_refuses_invalid_tolerance_before_backend(monkeypatch, tol, interior):
+    from vibeqc.solvers.eigensolver import get_solver
+    solver = "jd" if interior else "lanczos"
+    def forbidden(*args, **kwargs):
+        pytest.fail("Invalid tolerance reached backend dispatch")
+    monkeypatch.setattr(type(get_solver(solver)), "solve", forbidden)
+    problem = EigenProblem(matrix=np.diag([-1., 2., 5.]))
+    if interior:
+        problem = InteriorEigenProblem(problem, sigma=2.1)
+    with pytest.raises(ValueError, match="tol must be positive and finite"):
+        solve_eigenproblem(problem, SolverOptions(n_roots=1, tol=tol), solver=solver)
+
+
+def test_legacy_lanczos_infinite_tolerance_cannot_certify_bad_ritz_vector():
+    with pytest.raises(ValueError, match="tol must be positive and finite"):
+        solve_eigenproblem(EigenProblem(matrix=np.diag([-1., 2., 5.])),
+                           SolverOptions(n_roots=1, tol=np.inf), solver="lanczos")
+
+
+@pytest.mark.parametrize("complex_case", [False, True])
+def test_legacy_lanczos_valid_tolerance_preserves_projector(complex_case):
+    u = _unitary(3, complex_case)
+    f = (u * np.array([-1., 2., 5.])) @ u.conj().T
+    result = solve_eigenproblem(EigenProblem(matrix=f), SolverOptions(n_roots=1, tol=1e-10), solver="lanczos")
+    assert result.converged and result.residuals.max() < 1e-10
+    np.testing.assert_allclose(result.eigenvalues, [-1.], atol=1e-12)
+    c = result.eigenvectors
+    np.testing.assert_allclose(c @ c.conj().T, u[:, :1] @ u[:, :1].conj().T, atol=1e-12)
+    np.testing.assert_allclose(c.conj().T @ c, np.eye(1), atol=1e-12)
+
+
+@pytest.mark.parametrize("n_roots,ncv", [(2, 1), (4, None)])
+@pytest.mark.parametrize("callback", [False, True])
+def test_legacy_lanczos_refuses_truncated_root_request(n_roots, ncv, callback):
+    def forbidden(v):
+        pytest.fail("Impossible root request evaluated the operator")
+    problem = EigenProblem(matvec=forbidden, n=3) if callback else EigenProblem(matrix=np.eye(3))
+    with pytest.raises(ValueError, match="n_roots.*Krylov"):
+        solve_eigenproblem(problem, SolverOptions(n_roots=n_roots, ncv=ncv), solver="lanczos")
+
+
+def test_legacy_lanczos_breakdown_does_not_certify_missing_roots():
+    result = solve_eigenproblem(EigenProblem(matrix=np.eye(3)),
+                               SolverOptions(n_roots=2, ncv=3), solver="lanczos")
+    assert len(result.eigenvalues) == 1
+    assert not result.converged
+    assert result.residuals.max() < 1e-10

@@ -529,24 +529,61 @@ Reference: Neese group, *SHARK Integral Package and Task Driver*, ORCA
 
 ### `v1.x`, algorithmic and hardware acceleration
 
-- **GPU acceleration, proposed:** the
-  [GPU support concept](design/gpu_support.md) defines G0-G6 for CPU,
-  CUDA, HIP/ROCm and Metal backends, beginning with profiling,
-  density-fitting contractions and XC quadrature. Experimental feasibility
-  work can start before `v1.x`; production coverage remains this milestone's
-  theme, with no release version assigned. Gaming and professional GPUs
-  need device-specific memory and precision qualification. Apple support
-  starts with selective GPU arithmetic and CPU FP64 recovery. Integral
-  generation, periodic operations and correlated tensors follow measured
-  bottlenecks and scientific acceptance. Speedups are unmeasured; reduced
-  precision requires its own accuracy evidence. Optional NVIDIA cuEST
-  evaluation is a separate lower-priority track. The concept remains a
-  discussion draft, not an approved dependency or licensing change.
+- **GPU acceleration, planned:** the accepted
+  [GPU support concept](design/gpu_support.md),
+  [research review](design/gpu_research_review.md) and
+  [G0/G1m implementation plan](design/gpu_g0_g1m_plan.md) define the
+  [delivery stages](#gpu-delivery-stages) below. Begin with CPU profiling and
+  correctness/storage work; qualify CUDA/HIP and Apple separately. Work can
+  start before `v1.x`; production coverage remains this milestone's theme,
+  with no release version assigned. GPU runtime support and speedups remain
+  unimplemented and unmeasured. Planning acceptance does not settle new
+  dependencies, vendor licences or the proprietary product boundary.
 - **Tensor decompositions** THC (tensor hypercontraction) /
   Cholesky decomposition / ISDF (interpolative separable density
   fitting, increasingly popular for periodic GW / BSE). CD is
   essentially RI with a numerically generated auxiliary basis,
   controllable accuracy for free.
+
+#### GPU delivery stages
+
+This is the implementation sequence, not a shipped capability matrix.
+The first development task is **G0-A**, the runnable CPU profiling and
+provenance slice in the [G0 plan](design/gpu_g0_g1m_plan.md). Follow it with
+bounded G0 DF correctness/storage changes and measured operation contracts.
+G0 has a 2-3 engineer-week planning allowance; G1m is a separate one-week
+experiment timebox once Apple hardware/tools and CPU fixtures are available.
+Neither is a delivery commitment or a reason to mark incomplete evidence PASS.
+
+| Stage | Planned scope | Dependency and exit |
+|---|---|---|
+| **G0: CPU baseline and design** | H2O, naphthalene and n-hexadecane/def2-SVP; RHF/PBE/PBE0 on direct, DF, RIJCOSX and resolved AUTO; component times, provenance, memory and noise floors; retire defective streaming and repair B-only helpers | Focused tests, source/runtime identity and applicable complete `vq` reference calculations; publish public-safe summaries and operation/error/memory contracts |
+| **G1: CUDA/HIP feasibility** | Native-FP64 blocked DF-J/K over vendor BLAS, with CPU factors and replay densities | G0 contracts and NVIDIA/AMD hardware; qualify each backend independently, including setup, transfer, workspace and full replay cost; no Metal or FP32 SCF recovery pilot |
+| **G1m: Apple feasibility** | Metal collocation, MPS DF-shaped products and complete seminumerical-exchange batches | Real Apple GPU and Metal/MPS tools plus CPU reference fixtures; explicit numerical and complete-cost gates; select the first Apple route from measurements |
+| **G2: molecular DF integration** | Optional GPU DF-J/K behind JKBuilder; qualify restricted/unrestricted HF and selected KS/global hybrids | Relevant G1 backend and the priority gate below; complete measured SCF acceptance against CPU and matched external references; explicit fallback |
+| **G3 / GPU-XC1: grid and derivative work** | AO/density/XC batches and seminumerical exchange; compare native work with optional GauXC; gradients separately | Common operation contracts; a grid pilot may precede G2 when measurements justify it; production energies and derivatives each need acceptance |
+| **G4: measured bottlenecks** | Native 2c/3c generation, larger resident workflows and selected solvers; direct four-center engines separately scoped | G2/G3 profiling must justify the work; algorithm-specific primary papers/SI and reference checks |
+| **G5: periodic operations** | GPW/FFT/Poisson, GDF and k/q contractions | Qualified CPU routes and complex/periodic contracts; ties to existing periodic/MPI work, not automatic molecular-backend parity |
+| **G6: correlated scaling** | RI-MP2, selected CCSD/(T) and batched local-correlation contractions | Qualified shared operations, bounded tensor memory and scientific references; contributes to the production correlated-scaling `v2.x` theme |
+| **N1: optional cuEST study** | Bounded NVIDIA molecular component comparison and potential collaboration evidence | Separate lower-priority licensing/packaging and accuracy assessment; no vendor contact or funding commitment; does not block G0-G6 |
+
+**Priority gate:** CPU-only G0 ranks the bottlenecks. G1 then combines measured
+device replay costs with G0 setup and remaining-SCF costs to test a projected
+win over the fastest qualified actual CPU default on the medium and large
+RHF/PBE0 cases, at matched accuracy. The small case establishes CPU crossover;
+PBE is a separate J/XC decision. If DF does not pass, move the measured
+dominant grid/COSX pilot ahead of G2. A projection selects work; only complete
+SCF measurements can establish a production speedup. See the G0/G1m plan for
+the exact protocol and treatment of inconclusive results.
+
+NVIDIA and AMD gaming/workstation products need their own device, driver,
+precision and memory qualification. G1m does not imply M5/M6 family-wide
+support; report the actual tested Apple device. Keep native FP64 as the
+initial strict reference, mixed/emulated arithmetic explicit per operation,
+and recovery consistent with the requested electronic state. CPU execution
+remains available. The proposed shared acceleration layer starts inside
+open-source vibe-qc; extraction as a general library requires a real second
+consumer. Commercial packaging and vendor licences remain separate decisions.
 
 ### Beyond SCF, local correlation methods
 
@@ -3980,10 +4017,11 @@ Two lighter-weight extensions of machinery vibe-qc is already building:
 * **GPU-XC1** GauXC-style external XC quadrature offload: CP2K
   optionally routes exchange-correlation energy/potential/gradient
   evaluation through an external GPU-capable integrator instead of its
-  own grid code. Not a new roadmap item on its own, a concrete target
-  for the already-generic "GPU acceleration" entry in the `v1.x`
-  algorithmic/hardware section above, XC-grid quadrature specifically,
-  alongside integral evaluation and diagonalization.
+  own grid code. This is the **G3** grid workstream in the
+  [GPU delivery stages](#gpu-delivery-stages), not a second implementation
+  program. G0 measurements can prioritize its pilot ahead of G2. Compare
+  optional GauXC with native CUDA/HIP work and the Apple path before adding
+  a dependency; energy/potential and derivative qualification are separate.
 
 #### Explicitly not proposed (already covered or already excluded elsewhere)
 
@@ -4155,8 +4193,8 @@ something borrowed from PySCF), implicit solvation (CPCM, v0.12.0),
 QM/MM (already blanket out-of-scope pre-`v1.0`), geometry optimisation
 (shipped), CISD (already one of **AUTOCI1**'s `citype` values), and
 molecular dynamics (already the **MD1**-**MD6** post-MPI-milestone bucket, GPU
-acceleration already the generic `v1.x` item GPU4PySCF is one more
-concrete instance of, alongside GauXC above).
+acceleration already the [staged GPU program](#gpu-delivery-stages), for
+which GPU4PySCF is another implementation reference alongside GauXC above).
 
 ### Psi4 sweep (open-source molecular reference, not a parity target)
 

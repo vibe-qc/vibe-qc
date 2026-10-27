@@ -1,1 +1,0 @@
-- Make molecular property recipes self-contained, reuse the recorded RHF result for polarizability, document scalar versus sequence response shapes and dense ERI memory, and clarify ECP metadata and periodic analysis availability.

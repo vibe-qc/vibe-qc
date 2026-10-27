@@ -259,12 +259,24 @@ compatibility path also uses the shared solve for each retained TNO Fock
 block, naming the source, frozen count, rotated occupied triple and combined
 alpha/beta coordinates. Triple density selection, its singleton fallback
 and the existing screening refusal are unchanged; each snapshot is released
-before the retained-space lift. Local T0 and iterative T1 TNO construction,
-native TNO kernels, other PAO callers and remaining C2 construction/state
-migrations retain their existing roles.
+before the retained-space lift. The Python local-TNO branch now checks its
+retained Fock block too, covering union T0 and both iterative T1 residual
+routes. It names the local occupied triple and triples mode while preserving
+the pair-union SVD rank, density selection and screened triple list. Each
+snapshot is released before the retained and precursor lifts. Native TNO
+kernels, other PAO callers and remaining C2 construction/state migrations
+retain their existing roles.
 This is the current independent-UHF compatibility correction, not a change
 to the single-set ROHF/QRO formulation in Saitow et al., DOI
 `10.1063/1.4981521`, Sec. II A.
+
+Restricted DLPNO-MP2 pair PAOs and the occupied-domain dipole-screening
+prepass also use the named retained Fock solve. Their frames include the
+source, frozen count, atom domain and pair or occupied index. Full occupied
+projection, including the frozen columns, stays with the PAO producer;
+overlap-rank selection, screening estimates and PNO thresholds are unchanged.
+Only the retained orthonormal Fock block enters the checked solve, and its
+snapshot is released before returning the PAO coefficients.
 
 Reuse source-matched canonical/full-domain and accepted molecular/PBC controls
 for each changed path. A matching external reference is useful only with the

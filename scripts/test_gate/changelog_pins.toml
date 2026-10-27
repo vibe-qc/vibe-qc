@@ -11,6 +11,9 @@
 #     python scripts/test_gate/changelog_guard.py pin vX.Y.Z --amended "why"
 # An entry for work that has not been released belongs under [Unreleased].
 
+[sections."v0.18.3"]
+sha256 = "f4d860ecab6a17d82e6a28bfe16776767940ad70cb33132ae64937969d9e47f4"
+
 [sections."v0.18.2"]
 sha256 = "b8a845cdcf5dd50980821211318ecda32eea9adbba6beb4cb5e006b3b6f7b6ee"
 

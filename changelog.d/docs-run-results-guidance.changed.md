@@ -1,1 +1,0 @@
-- Improve run monitoring and exit-status handling, explain result-manifest inspection, update optimizer and return-value guidance, and clarify quickstart and calculation-planning checks.

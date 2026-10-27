@@ -1,1 +1,0 @@
-- Molecular DLPNO-UCCSD union residual preparation now reuses the checked spin-PAO Fock cache across pairs and singles, avoiding repeated construction for identical atom domains. Frozen partitions, overlap rank selection, domain ordering, empty-domain refusals and numerical thresholds are unchanged.

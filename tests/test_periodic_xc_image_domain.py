@@ -202,7 +202,7 @@ def test_bipole_xc_support_preserves_integral_and_explicit_domains(requested, ph
 
 @pytest.mark.parametrize("driver", ["rks", "uks"])
 @pytest.mark.parametrize("mesh", [(1, 1, 1), (2, 1, 1)])
-@pytest.mark.parametrize("functional", ["pbe", "pbe0"])
+@pytest.mark.parametrize("functional", ["pbe", "pbe0", "tpss", "m06-l", "r2scan"])
 def test_bipole_xc_expanded_domain_matches_wider_density_reference(
     driver, mesh, functional, record_property,
 ):
@@ -277,7 +277,8 @@ def test_bipole_xc_expanded_domain_matches_wider_density_reference(
     cell.verbose = 0
     cell.build()
     coords = np.asarray(grid.points)
-    spin_rho = [np.zeros((4, len(coords))) for _ in per_k]
+    is_mgga = libxc.xc_type(functional) == "MGGA"
+    spin_rho = [np.zeros((6 if is_mgga else 4, len(coords))) for _ in per_k]
     for ik, (weight, kpoint) in enumerate(zip(kmesh.weights, kmesh.kpoints)):
         ao = dft.numint.eval_ao(cell, coords, kpt=np.asarray(kpoint), deriv=1)
         for rho, blocks in zip(spin_rho, per_k):
@@ -286,6 +287,9 @@ def test_bipole_xc_expanded_domain_matches_wider_density_reference(
             for axis in range(3):
                 rho[axis+1] += 2*weight*np.einsum(
                     'pi,ij,pj->p', ao[axis+1].conj(), d, ao[0]).real
+                if is_mgga:
+                    rho[5] += .5*weight*np.einsum(
+                        'pi,ij,pj->p', ao[axis+1].conj(), d, ao[axis+1]).real
     rho_total = sum(rho[0] for rho in spin_rho)
     exc = libxc.eval_xc(functional, spin_rho[0] if driver=='rks' else np.asarray(spin_rho),
                         spin=0 if driver=='rks' else 1, deriv=0)[0]

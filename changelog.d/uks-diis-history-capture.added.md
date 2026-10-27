@@ -1,1 +1,0 @@
-- Add an opt-in bounded UKS diagnostic that records physical states, coupled-spin DIIS histories, Gram matrices and actual solve coefficients without changing the SCF trajectory.

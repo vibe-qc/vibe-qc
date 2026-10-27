@@ -450,7 +450,10 @@ def run_dlpno_mp2(
             for a in atoms_i:
                 mask[atom_first[a] : atom_first[a + 1]] = True
             V_i, eps_i = semicanonical_pao_basis(
-                F_ao, S_ao, Q_vir, np.where(mask)[0], options.lindep
+                F_ao, S_ao, Q_vir, np.where(mask)[0], options.lindep,
+                fock_basis_id=(f"dlpno-mp2:{source.identity}:frozen={nf}:"
+                               f"screen-occ={i + nf}:atoms={tuple(map(int, atoms_i))}:restricted"),
+                spin="restricted",
             )
             mu2 = np.zeros(V_i.shape[1])
             for c in range(3):
@@ -499,7 +502,10 @@ def run_dlpno_mp2(
         ao_idx = np.where(ao_mask)[0]
 
         V_semi, eps_pao = semicanonical_pao_basis(
-            F_ao, S_ao, Q_vir, ao_idx, lindep_thresh=options.lindep
+            F_ao, S_ao, Q_vir, ao_idx, lindep_thresh=options.lindep,
+            fock_basis_id=(f"dlpno-mp2:{source.identity}:frozen={nf}:"
+                           f"pair={i + nf},{j + nf}:atoms={tuple(map(int, domain_atoms))}:restricted"),
+            spin="restricted",
         )
         n_pao = V_semi.shape[1]
         if n_pao == 0:

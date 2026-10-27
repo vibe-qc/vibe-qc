@@ -120,6 +120,13 @@ name follows Saunders and co-workers ({vibeqc-cite}`saunders_bipole_1992`).
   until that derivative is implemented. Use finite differences with the same
   SCF options; no broader force qualification is implied.
 
+  Built-in periodic meta-GGA XC applies the chain rule when its kinetic-density
+  floor is active: both the potential and fixed-grid gradient differentiate
+  the same floored energy. The floor is a numerical extension outside the
+  physical feature domain; it is not a new functional. External providers
+  continue to receive the raw kinetic-density features. This kernel correction
+  does not broaden the supported analytic-force envelope.
+
   Native built-in XC reuses its torus grouping plan when the density and
   potential retain exactly the same screened pair indices. Different screens
   retain separate plans: a negligible density contribution can still have a
@@ -554,6 +561,12 @@ Multi-k long-range exchange groups target/source pairs by their existing
 momentum-transfer channel and evaluates source Bloch phases in batches.
 Unrestricted HF and hybrid KS share those panels across both spins. The
 physical AO-pair support, full source mesh and weights are preserved.
+A nonzero momentum-transfer channel with no reciprocal vectors inside the
+resolved cutoff contributes zero to that finite long-range sum. This can
+occur in elongated cells with an explicit small Ewald splitting parameter.
+No Fourier panels are allocated for an empty channel; the diagonal channel
+and its existing zero-mode correction are unchanged. Convergence with the
+real and reciprocal supports remains necessary.
 The default method builders retain at most 256 MiB of nonzero-transfer Fourier
 panel payload and request at most 64 MiB of new panel payload per batch.
 Small calculations reuse retained panels; larger calculations recompute panels

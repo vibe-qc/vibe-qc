@@ -1278,3 +1278,57 @@ the shared layer supplies metric-aware transport and finite-inverse factors.
 The resulting tensor residual must bound arbitrary-density J/K and fit the
 unchanged source tolerance before any member read can be omitted. Its setup,
 storage and contraction cost must be measured against the full-audit route.
+
+### Four-center construction evidence from the producer
+
+The next arithmetic component is `MolecularQuartetConstruction`, an explicit
+experimental diagnostic for one contracted s-shell quartet of an immutable
+native molecular Coulomb provider. It reuses the MANTA metric producer's
+verified Boys reference and elementary enclosures. McMurchie and Davidson
+(1978), DOI `10.1016/0021-9991(78)90092-X`, give the Gaussian product/Hermite
+foundation; Rump (2010), DOI `10.1017/S096249291000005X`, gives the verified
+arithmetic framework. This is a derived construction-error bound, not a new
+integral algorithm or an inferred accuracy property of either library.
+
+For exact stored exponents and centers, let p=a+b, q=c+d,
+P=(aA+bB)/p, Q=(cC+dD)/q and rho=pq/(p+q). Each primitive reference is
+
+$$
+(ab|cd)=\frac{2\pi^{5/2}}{pq\sqrt{p+q}}
+\exp[-ab|A-B|^2/p-cd|C-D|^2/q]F_0(\rho|P-Q|^2).
+$$
+
+Outward binary64 operations enclose product centers, squared distances,
+decays, prefactors, the shared radial reference, signed stored contraction
+coefficients and accumulation. Gradual underflow and round-to-nearest are
+required. The shared Boys proof uses a positive series with an explicit tail;
+its large-argument gamma-integral fallback can be wide. It does not assume
+libm accuracy. If the reference lies in [L,U] and the existing producer returns
+x, the outward maximum of |x-L| and |x-U| bounds that actual finite tile's
+construction error, even if x lies outside [L,U]. A null tile is x=0 and does
+not erase the positive reference bound. Numerical evaluation remains on the
+existing `IntegralProvider` path.
+
+This reference treats the stored normalized basis data as exact. Their
+construction is excluded. Pure and Cartesian s functions coincide; no higher
+angular conversion is admitted. Other angular quartets, range-separated or
+complex kernels, image shifts and derivatives refuse this diagnostic. Count
+admission includes proof primitives, bounded scalar/kernel work, one actual
+native shell call, its additional workspace and retained evidence.
+
+The certificate retains its exact live provider and quartet key. It cannot be
+constructed or edited in Python and cannot validate another provider, even
+with identical content. This is arithmetic evidence for one evaluated tile,
+not group, state, subspace, screening or equivariance authority. It deliberately
+leaves `arithmetic_equivariance_certified` false. Fock unification can keep its
+existing source/frame/state identities; periodic Seitz, image, wrap, phase,
+weight and momentum contracts are unchanged. No QC0.18 route depends on this
+new diagnostic.
+
+The remaining audit-reduction work is substantive: bound angular shells and
+finite action/inverse application, physical geometry mismatch and complete
+operation-compatible source/screening coverage, then compose arbitrary-density
+J/K residuals within the unchanged tolerance. A quartet diagnostic that reads
+the actual tile cannot eliminate that read. Its proof cost must be included
+before a future hierarchical producer certificate or reduced pipeline can
+claim a useful saving. Full ordered and stabilizer audits remain mandatory.

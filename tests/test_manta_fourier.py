@@ -236,7 +236,7 @@ def _decimal_phase(momentum,translation):
             _decimal_phase.pi=+(a+b)**2/(4*t)
     with localcontext() as ctx:
         ctx.prec=800
-        angle=sum(D(float(a))*D(float(b)) for a,b in zip(momentum,translation))
+        angle=sum((a if isinstance(a,D) else D(float(a)))*(b if isinstance(b,D) else D(float(b))) for a,b in zip(momentum,translation))
         two_pi=2*_decimal_phase.pi
         x=angle-(angle/two_pi).to_integral_value(rounding=ROUND_HALF_EVEN)*two_pi
         cosine=D(1);sine=x;ct=D(1);st=x
@@ -375,3 +375,137 @@ def test_auxiliary_fourier_construction_representable_scale_limits(exponent):
     shell=_basis((0,),False).shells()[0];shell.exponents=[exponent];shell.coefficients=[1.]
     basis=vq.BasisSet(vq.Molecule([vq.Atom(2,shell.origin)]),[shell],'construction-scale',True)
     _check_fourier_construction(basis,VECTORS*np.sqrt(exponent))
+
+
+def _decimal_pair_fourier(bra,ket,vectors):
+    """Complex shifted Gaussian expectations, no native moment recurrence."""
+    from decimal import Decimal as D,localcontext
+    from math import comb,factorial
+    from tests.test_manta_md import _decimal_representation
+    _decimal_phase([0.],[0.])
+    def mul(a,b):return (a[0]*b[0]-a[1]*b[1],a[0]*b[1]+a[1]*b[0])
+    def powers(z,n):
+        out=[(D(1),D(0))]
+        for _ in range(n):out.append(mul(out[-1],z))
+        return out
+    rows=[]
+    with localcontext() as ctx:
+        ctx.prec=250
+        for wave in vectors:
+            q=[D(float(v)) for v in wave];row=np.empty((bra.nbasis,ket.nbasis),dtype=object);offset_a=0
+            for a in bra.shells():
+                offset_b=0
+                for b in ket.shells():
+                    ca,cb=_cart(a.l),_cart(b.l)
+                    cart=[[(D(0),D(0)) for _ in cb] for _ in ca]
+                    A=list(map(D,a.origin));B=list(map(D,b.origin))
+                    for alpha,ac in zip(a.exponents,a.coefficients):
+                        for beta,bc in zip(b.exponents,b.coefficients):
+                            alpha,beta,ac,bc=map(D,(alpha,beta,ac,bc));p=alpha+beta
+                            center=[(alpha*x+beta*y)/p for x,y in zip(A,B)]
+                            phase=_decimal_phase([-x for x in q],center)
+                            ratio=_decimal_phase.pi/p
+                            exponent=-alpha*beta/p*sum((x-y)**2 for x,y in zip(A,B))-sum(x*x for x in q)/(4*p)
+                            seed=ratio*ratio.sqrt()*exponent.exp()*ac*bc
+                            axes=[]
+                            for axis in range(3):
+                                # Shift the Gaussian integration contour once;
+                                # only even central moments survive. No h_n recurrence.
+                                ap=powers((center[axis]-A[axis],-q[axis]/(2*p)),a.l)
+                                bp=powers((center[axis]-B[axis],-q[axis]/(2*p)),b.l)
+                                table={}
+                                for i in range(a.l+1):
+                                    for j in range(b.l+1):
+                                        re=im=D(0)
+                                        for u in range(i+1):
+                                            for v in range(j+1):
+                                                n=u+v
+                                                if n%2:continue
+                                                weight=D(comb(i,u)*comb(j,v)*factorial(n))/D(factorial(n//2))*(1/(4*p))**(n//2)
+                                                z=mul(ap[i-u],bp[j-v]);re+=weight*z[0];im+=weight*z[1]
+                                        table[i,j]=(re,im)
+                                axes.append(table)
+                            for i,x in enumerate(ca):
+                                for j,y in enumerate(cb):
+                                    z=(seed*phase[0],seed*phase[1])
+                                    for axis in range(3):z=mul(z,axes[axis][x[axis],y[axis]])
+                                    old=cart[i][j];cart[i][j]=(old[0]+z[0],old[1]+z[1])
+                    ta,tb=_decimal_representation(a.l,a.pure),_decimal_representation(b.l,b.pure)
+                    intermediate=[[(sum(t*z[0] for t,z in zip(r,[cart[k][j] for k in range(len(ca))])),sum(t*z[1] for t,z in zip(r,[cart[k][j] for k in range(len(ca))]))) for j in range(len(cb))] for r in ta]
+                    for i,r in enumerate(intermediate):
+                        for j,t in enumerate(tb):row[offset_a+i,offset_b+j]=(sum(c*z[0] for c,z in zip(t,r)),sum(c*z[1] for c,z in zip(t,r)))
+                    offset_b+=len(tb)
+                offset_a+=len(ta)
+            rows.append(row)
+    return rows
+
+
+def _check_pair_fourier_construction(bra,ket,vectors):
+    from decimal import Decimal as D,localcontext
+    c=manta.certify_pair_fourier_panel(bra,ket,vectors);actual=c.evaluated.values
+    baseline=manta.compute_fourier_panel(bra,ket,vectors)
+    np.testing.assert_array_equal(actual,baseline.values)
+    assert c.evaluated.receipt.source_identity==baseline.receipt.source_identity
+    reference=_decimal_pair_fourier(bra,ket,vectors)
+    bounds=[np.asarray(getattr(c,k)).reshape(actual.shape) for k in ('real_lower','real_upper','imag_lower','imag_upper','error_bounds')]
+    with localcontext() as ctx:
+        ctx.prec=250
+        for g,row in enumerate(reference):
+            for i,j in np.ndindex(row.shape):
+                re,im=row[i,j];idx=(g,i,j)
+                assert D(float(bounds[0][idx]))<=re<=D(float(bounds[1][idx])),(idx,'real')
+                assert D(float(bounds[2][idx]))<=im<=D(float(bounds[3][idx])),(idx,'imag')
+                error=abs(D(float(actual[idx].real))-re)+abs(D(float(actual[idx].imag))-im)
+                assert error<=D(float(bounds[4][idx]))
+    assert np.all(np.isfinite(bounds[4]))
+    with pytest.raises(AttributeError):c.error_bounds=[]
+    return c
+
+
+@pytest.mark.parametrize('l',range(7))
+@pytest.mark.parametrize('pure',[False,True])
+def test_pair_fourier_construction_decimal_all_angular(l,pure):
+    a,b=_basis((l,),pure),_basis((l,),pure,(.3,-.4,.7))
+    _check_pair_fourier_construction(a,b,VECTORS[[0,1]])
+
+
+@pytest.mark.parametrize('kind',['coincident','mixed','diffuse','tight','underflow','cancellation','large-center'])
+def test_pair_fourier_construction_extremes(kind):
+    a,b=_basis((2,),True),_basis((1,),False,(.3,-.4,.7));vectors=VECTORS
+    if kind=='mixed':a,b=_basis((0,2),False),_basis((1,0,2),True,(.3,-.4,.7))
+    elif kind=='coincident':b=a
+    else:
+        sa,sb=a.shells()[0],b.shells()[0]
+        if kind in ('diffuse','tight'):
+            exponent=1e-6 if kind=='diffuse' else 1e6
+            sa.exponents=sb.exponents=[exponent,2*exponent];vectors=VECTORS*np.sqrt(exponent)
+            sb.origin=sa.origin
+        elif kind=='underflow':sb.origin=[100.,100.,100.]
+        elif kind=='large-center':sa.origin=[1e12,-1e12,.3];sb.origin=[1e12+.1,-1e12+.5,.6]
+        elif kind=='cancellation':sa.exponents=[.7,.7]*4+[1.6];sa.coefficients=[1.,-1.]*4+[1e-15]
+        a=vq.BasisSet(vq.Molecule([vq.Atom(2,sa.origin)]),[sa],'pair-a',True)
+        b=vq.BasisSet(vq.Molecule([vq.Atom(2,sb.origin)]),[sb],'pair-b',True)
+    _check_pair_fourier_construction(a,b,vectors)
+
+
+@pytest.mark.parametrize('field,quantity',[('memory_bytes','modeled_peak_bytes'),('scalar_terms','scalar_terms'),('kernel_terms','kernel_terms'),('shell_calls','shell_calls'),('primitive_quartets','primitive_products')])
+def test_pair_fourier_construction_caps(field,quantity):
+    a,b=_basis((2,),True),_basis((1,),False);budget=manta.ResourceBudget()
+    p=manta.plan_pair_fourier_construction(a,b,len(VECTORS),budget);setattr(budget,field,getattr(p,quantity)-1)
+    with pytest.raises((ValueError,RuntimeError),match='budget'):manta.certify_pair_fourier_panel(a,b,np.full_like(VECTORS,np.nan),budget)
+    setattr(budget,field,getattr(p,quantity));assert manta.certify_pair_fourier_panel(a,b,VECTORS,budget).evaluated.values.shape==(len(VECTORS),a.nbasis,b.nbasis)
+    with pytest.raises(ValueError,match='finite'):manta.certify_pair_fourier_panel(a,b,np.full_like(VECTORS,np.nan),budget)
+
+
+def test_pair_fourier_construction_empty_limits_and_symmetries():
+    a,b=_basis((2,),True),_basis((1,),False,(.3,-.4,.7))
+    empty=manta.certify_pair_fourier_panel(a,b,np.empty((0,3)))
+    assert empty.evaluated.values.shape==(0,a.nbasis,b.nbasis) and not empty.error_bounds
+    with pytest.raises(ValueError,match='angular'):manta.plan_pair_fourier_construction(_basis((7,)),b,1)
+    with pytest.raises(ValueError,match='angular'):manta.plan_pair_fourier_construction(a,_basis((7,)),1)
+    for v in (np.ones((3,2)),np.ones(3)):
+        with pytest.raises(ValueError):manta.certify_pair_fourier_panel(a,b,v)
+    ab=manta.certify_pair_fourier_panel(a,b,VECTORS).evaluated.values
+    ba=manta.certify_pair_fourier_panel(b,a,VECTORS).evaluated.values
+    np.testing.assert_allclose(ab,ba.transpose(0,2,1),atol=2e-15,rtol=2e-15)
+    np.testing.assert_array_equal(ab[1],ab[2].conj())

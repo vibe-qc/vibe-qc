@@ -1,5 +1,378 @@
 ## [Unreleased]
 
+## [v0.18.3] - 2026-10-27
+
+- Allow opt-in fresh FFTW collectors to receive the recipe-pinned source archive and exact build paths through an external spec; reject mismatches before configuration.
+
+- Add an opt-in candidate adapter for prospectively authenticated FFTW installs,
+  deriving configured inputs and host/toolchain context before reuse and
+  checking final-prefix native/header observations with donor reads denied.
+  Unsupported toolchains, patched sources and other dependencies remain held.
+
+- Extend the opt-in FFTW prefix probe to observe the separate threaded library,
+  its actual function bindings and a transform configured for two threads.
+  Build provenance and whole-install reuse admission remain unevaluated.
+
+- Standard and interior eigensolver requests now reject nonpositive or nonfinite residual tolerances before backend dispatch, preventing false convergence with infinite tolerance.
+
+- Interior eigenproblem wrappers now preserve generalized overlap validation, retained-rank reduction and metric-normalized orbitals instead of bypassing the generalized dispatcher.
+
+- Legacy Lanczos now refuses explicit root requests larger than its Krylov capacity instead of silently reducing the count and potentially certifying a partial spectrum.
+
+- Gamma GDF UHF/UKS now refill a non-ensemble atomic/restart seed from its own
+  physical Fock before the first finite-temperature iterate, as the multi-k
+  route already does. Invalid accepted densities still fail entropy admission;
+  zero-temperature and initial-guess-only evaluation remain unchanged.
+
+### Added: an occupation record on the neutral Γ-CCM producers (#519)
+
+Every real-Gamma and neutral-Bloch result records how the spin sector's
+electrons were distributed (`result.occupation`: integer or ensemble, the
+largest departure from an integer, the Bloch producer's per-k counts, the
+frontier gap and whether it is degenerate), in both convention records and
+the `.system` manifest (`aiccm_occupation`). A same-Hamiltonian comparison
+(`assert_comparable_neutral_results`) now also refuses an ensemble state by
+name before any fold: the multi-k zero-temperature fill shares a
+frontier-degenerate group equally, which has no determinant on the torus.
+AICCM/CCM stays experimental.
+
+### Added: an explicit spin-state contract for the neutral Γ-CCM producers (#519)
+
+`CCMSystem(..., spin_state=)`, the real-Gamma and neutral-Bloch producers,
+both runner arms and `run_periodic_job(aiccm_spin_state=)` name the spin
+sector of the Born-von Karman torus: `"legacy"` (the default, each
+producer's historical convention, unchanged number for number),
+`"per-cell"` (the unit cell's `(n_alpha, n_beta)` replicated with spins
+aligned on both producers) or an integer total multiplicity. The sector is
+resolved before the shell-aware dispatch, impossible requests fail at
+construction, the executed counts are recorded on every result, in the
+`.system` manifest (`aiccm_spin_policy`, `aiccm_spin_state`) and in the
+QVF convention record, and a same-Hamiltonian comparison is refused when
+the two sides executed different sectors
+(`assert_compatible_spin_state`, `assert_comparable_neutral_results`).
+Under the default a doublet cell on a torus of more than one cell still runs
+as a supercell singlet on `real-gamma` and as a per-cell doublet on
+`neutral-bloch`; the mismatch is now recorded and refused instead of
+silent. AICCM/CCM stays experimental.
+
+- Added read-only experimental chi factor and complete Coulomb-block fidelity diagnostics. Localized the archived LiH reciprocal-40 refusal to retained-eigenspace forward accuracy near the metric cutoff, with independent operator and higher-precision controls. The original source still refuses; no producer, retained rank, support, admission tolerance or D93 qualification changed.
+
+- Molecular DLPNO-MP2 PAO preparation now uses checked retained Fock solves for pair domains and dipole screening, preserving frozen-core projection, overlap rank, screening estimates and PNO thresholds.
+
+- Molecular DLPNO-UCCSD default full union singles now reuse one checked Fock solve per calculation. Full-space ordering, independent singles amplitudes, frozen partitions and numerical gates are preserved while repeated identical preparation is removed.
+
+- Molecular DLPNO-UCCSD Python local-TNO preparation now uses checked retained Fock solves for union T0 and iterative T1, preserving frozen partitions, pair-union rank, TNO selection, screened triples and numerical gates.
+
+- Route cached molecular DLPNO-UCCSD spin-PAO Fock blocks through the shared residual-checked eigensolver with source, frozen, atom-domain and spin coordinates. Preserve overlap rank selection, projection tails, empty-space behavior and cache reuse without retaining solver snapshots.
+
+- Molecular DLPNO-UCCSD rotated-occupied T1 triples now use checked retained TNO Fock solves with explicit source, frozen and triple coordinates. TNO selection, frozen partitions, screening refusals and numerical gates are preserved.
+
+- Route retained singles-PNO Fock blocks in compiled molecular DLPNO-UCCSD through the shared residual-checked eigensolver, preserving independent spin and frozen partitions, density selection and PAO projection. The default full singles space needs no additional solve.
+
+- Molecular DLPNO-UCCSD union residual preparation now reuses the checked spin-PAO Fock cache across pairs and singles, avoiding repeated construction for identical atom domains. Frozen partitions, overlap rank selection, domain ordering, empty-domain refusals and numerical thresholds are unchanged.
+
+- Molecular DLPNO-UCCSD retained union pair-PNO and enabled singles-PNO Fock solves now use the shared checked boundary with explicit source, frozen and spin-coordinate labels. Density selection, degenerate spin spaces, PAO projection, frozen partitions and numerical gates are preserved.
+
+- Experimental streamed molecular symmetry execution can bind MANTA's certified shell maps once and consume representative keys natively, avoiding repeated Python map copies. Mismatched plan maps refuse before evaluation; complete numerical audits, physical source identities and checked fallbacks remain unchanged.
+
+- The experimental molecular quartet factory now consumes native MANTA source/support evidence for exact radial channels, shell mappings and declared geometry tolerance before integral evaluation. Complete numerical equivariance audits remain required; physical source and Fock identities, scientific tolerances and default routes are unchanged.
+
+- Add an explicit experimental producer diagnostic for contracted s-shell four-center Coulomb construction errors, reusing MANTA's verified radial bounds. It includes actual native/null tiles, signed contractions and resource admission; full symmetry source audits remain mandatory.
+
+- Experimental streamed molecular symmetry J/K can consume immutable MANTA
+  libint/MD tiles through the native provider interface, preserving full source
+  audits, canonical digests, physical counters and target ownership. The extra
+  workspace is budgeted explicitly; smaller budgets and older runtimes retain
+  the checked Python reader. Numerical-source and default-routing scope stay
+  unchanged.
+
+- Reconstruct symmetry-reduced CCM three-center integrals before metric whitening to avoid amplifying numerical noncommutation in near-null auxiliary modes. Metric screening and factor-level tolerances are unchanged.
+
+- Keep the MgO multicell symmetry fixture on its documented no-tail profile on both sides, retaining the original factor-level tolerance.
+
+- Add experimental parameter-opt molecular energy fitting: immutable parameters and reference protocols, balanced correlated contrasts, grouped splits, isolated DFTB/PM6 adapters, bounded conditional and nonlinear solves, restart artifacts and a queued-fit example. Broader P0-P3 scientific acceptance remains tracked in #676.
+
+- Reject stale or contradictory symmetry-reduced BIPOLE k-point input before full-mesh expansion; preserve valid native reductions, consistent representative reordering and reciprocal-lattice wraps.
+
+- Validate declared full BIPOLE multi-k coordinates against the current cell and shift before integral work or dry-run output, rejecting stale or incomplete Fourier grids while preserving valid point order and reciprocal wraps.
+
+- Molecular GFN2-xTB: for molecules with an element beyond argon, the auto-stabilisation ladder on the default atom-resolved AES path gains a stiff-AES rung before the high-temperature rung (T = 0.005 Ha, AES-potential damping 0.02, 100 iterations). Open-d singlet atoms such as W, Os and Mo, whose spherical state is an unstable fixed point of the on-site multipole feedback and never converged on any earlier rung (nor in xtb 6.7.0), now converge there in about 50 iterations to the spherical solution (W at 300 K: -2.215078 Ha, matching xtb). The rung's budget comes out of the high-temperature rung (600 to 500), so every budget figure of the ladder is unchanged; each attempt record now carries `ladder_aes_damping`. Path-only: converged energies are unchanged.
+
+- Apply the kinetic-density floor chain rule consistently in periodic meta-GGA potentials and fixed-grid gradients, so active-floor derivatives match the evaluated XC energy in restricted and unrestricted calculations.
+
+- Multi-k Ewald UKS now computes its spin diagnostic from all k points and
+  their complex orbitals and occupations, matching the other periodic
+  unrestricted drivers. This removes spurious dependence on orbital phases
+  and includes fractional occupations. SCF energies and densities are unchanged.
+
+- BIPOLE multi-k HF and hybrid DFT now accept empty nonzero-transfer
+  reciprocal spheres as zero long-range exchange sums. Elongated 3D cells
+  with small Ewald splitting parameters no longer fail on these valid
+  channels. Cutoffs, physical supports and zero-mode corrections are unchanged.
+
+- Molecular ASE geometry optimization now refuses line-search warnings instead of accepting a minimum trial step, reports the failure status, and retains the last accepted geometry. Successful line searches and force thresholds are unchanged.
+
+- Improve multireference, selected-CI and double-hybrid tutorials with explicit active-space ordering, per-run output names, convergence checks and energy-bookkeeping guidance.
+
+### Added
+
+- `vibe_basis.io.cohesive_reference` reads a CRYSTAL cohesive-energy reference tree. It finds the log line that produced a published value and the runs it cites, and reads each run's deck settings (basis, functional, `TOLINTEG`, `SHRINK`, `OPTGEOM`, `ATOMBSSE IAT NSTAR RMAX`) and the relaxed cell of an `OPTGEOM` bulk. It also records whether each output converged, stopped, was truncated, crashed or is missing. `load_reference_system(...).cohesive_kj()` reassembles all 28 published r2SCAN/pob values of the M2 gate to within 0.05 kJ/mol, or 0.12 kJ/mol where the log converted with 2625 kJ/mol per Ha. The tree is not part of the repository; its path is the caller's.
+- `vibeqc.basis_optimization.recipes.cohesive_reference.reproduce_reference_system` recomputes each of those runs from decks the vibe-basis emitters write (M2 rung 2b, #224) and reports every run's energy difference and the cohesive-energy difference. A consistent variant changes named runs only: `bundled_basis=` replaces a deck's basis with the bundled record, and `relax=` relaxes a bulk with `OPTGEOM` from its deck's starting cell.
+- `Crystal23Engine(shrink=)` and the bulk emitters take `SHRINK` as an int or an `(IS, ISP)` pair; the reference decks use `8 24` and `12 12` for some systems.
+- `Crystal23Engine(optgeom=True)` relaxes a crystal before reporting its energy and fails the run as `optgeom_not_converged` unless CRYSTAL reports a converged optimisation. `emit_input_inline(optgeom=, toldeg=)` writes the `OPTGEOM ... ENDOPT` block; its former `toldeg` option wrote `TOLDEG` with no `OPTGEOM` block, which CRYSTAL cannot read.
+
+### Fixed
+
+- A counterpoise atom's `ATOMBSSE IAT` is a label in CRYSTAL's primitive cell, built one asymmetric-unit orbit at a time, not an index into the asymmetric unit. `Crystal23Engine` and `emit_input_atom_counterpoise` read it as the asymmetric-unit index, so in a cell written with a multiplicity-2 site first, such as Li2O as (Li, O), the oxygen atom was emitted as the second lithium. The label is now resolved from the expanded cell (`primitive_cell_labels`), can be passed as `atom_label`, and the emitter takes and checks the atom's element. Structures in `vibe_basis.io.structures` list the multiplicity-1 site first and are unaffected.
+
+### Added
+
+- `vibeqc.basis_optimization.recipes.topology_scan.run_topology_scan` scans how many functions of one angular momentum an element carries in a crystal (the M3 gate, #225). It starts from a bundled pob record and runs `vibe_basis.topology.greedy_scan`. Every candidate's uncontracted exponents of the scanned type are relaxed in log space with BOBYQA, with the rev2 lower bound of 0.15. The relaxed exponents seed the next round. Each candidate is scored on total energy per cell (kJ/mol), primitive count and overlap conditioning. Energies are journalled, so a restarted scan reuses every finished point. A point lost in transit is retried, and when every retry fails the scan stops (`TransportUnavailable`) so a restart resumes from the journal; only a failed SCF reaches BOBYQA, as a finite penalty. `crystal23_engine_factory` runs each point on CRYSTAL23 through `vq`. The run record, `scan_record.json`, holds every candidate with its move, exponents and energies, and reports how far the shipped topology trails the Pareto front.
+- vibe-basis 0.13.0: `greedy_scan` carries a relaxed topology forward when the evaluator returns `Relaxed`, keeps one record per candidate in `ScanResult.candidates`, evaluates a round through an injected map (a thread pool's, for concurrent candidates) and no longer evaluates the baseline twice. `front_gap` gives the distance behind the front. `optimize_nlopt` takes `ftol_abs` and `xtol_abs`.
+
+### Fixed
+
+- `vibe_basis.optimize.optimize_nlopt` returned the starting point, paired with the best value, when NLopt stopped roundoff-limited; it now returns the best evaluated point. Its relative `tol` alone stopped a total-energy objective early (1e-4 of a -275 Ha cell is 0.03 Ha), which the new absolute tolerances avoid.
+
+- Make BIPOLE `ewald_precision` tighten the reciprocal Gaussian envelope as well as the direct-space Ewald sum. Energy, gradient and response paths use the same resolved cutoff; historical helper calls without an explicit tolerance retain their calibration. This is a damping target, not a total-energy error bound.
+
+- Grow default physical 3D BIPOLE RKS/UKS XC image support from the basis envelope independently of integral cutoffs. Preserve explicit finite-density radii, record the executed XC domain, and refuse analytic gradients that cannot reproduce the expanded operator.
+
+- Add opt-in precision-controlled classic chi retained spectral construction, preserving complete supports, the original retained mask and admission gates. Record new factor identities and precision receipts, require consistent fresh HF references, and qualify LiH prepared/bounded local MP2 against independent same-source canonical controls. Chi remains experimental and D93 fitted/post-HF remains not-qualified.
+
+- Document precision-controlled LiH reciprocal tests through 240 Ha and the radius-44 joint recheck: ten fresh HF sources and forty prepared/bounded local MP2 solves pass numerical qualification, while reciprocal and joint support convergence remain unestablished under unchanged caps and gates. Chi remains experimental; D93 fitted/post-HF remains not-qualified.
+
+- Improve correlated-method tutorials with explicit setup, separate SCF/solver convergence checks, unique output stems, a bounded method ladder and an executable RI auxiliary-basis comparison.
+
+- Clarify the molecular DLPNO worked examples with explicit convergence checks, signed correlation-energy differences and accurate full-domain comparison labels. Keep comparison tables separate from finalized job artifacts and document how to retain each run.
+
+### Documentation
+
+- Add API entry-point, unit and result-interpretation guidance. Make the new
+  experimental parameter-opt manual reachable from the user-guide navigation
+  and task index, with explicit links to its supported scope and limitations.
+
+### Documentation
+
+- Refresh the API tour with a self-contained molecular job, distinct water and
+  hydroxide inputs, checked convergence, current RHF defaults and method-route
+  links. Keep the isolated-atom example from overwriting the subsequent water
+  DFT input, explain output provenance and replace the blanket test-suite
+  command with focused validation guidance.
+
+### Documentation
+
+- Add environment and native-module diagnostics, explain optimization refusal
+  handling without silently loosening scientific thresholds, and expand the
+  reproducible bug-report checklist. Correct the quickstart's obsolete claim
+  that `run_job(solver="lobpcg")` falls back to Davidson.
+
+### Documentation
+
+- Make the geometry tutorial's ASE backend and output requests explicit, keep
+  water and dimer inputs separate, and add final-force inspection and stopped-run
+  guidance. Remove convergence and force-noise guarantees from the dimer example
+  and align the user guide's restart advice with preserving the intended force
+  threshold. Historical trajectories remain illustrations, not new benchmarks.
+
+### Documentation
+
+- Align the molecular HF tutorial with AUTO/PATOM and EDIIS_DIIS defaults,
+  check convergence before consuming results and gradients, and clarify units
+  and the matching geometry/basis requirement. Correct the AO stationarity
+  residual and distinguish SCF stationarity from a global variational minimum.
+
+### Documentation
+
+- Clarify installer release selection, the default test extra and clean Libint
+  build expectations. Direct viewer downloads to their owning releases and
+  explain how to update without changing an active calculation's installation.
+  Distinguish the doctor's local Git-state check from fetching upstream.
+
+- Correct the molecular electron-count/multiplicity rule, replace a missing XYZ input with a complete example, and clarify units, file parsing and convergence checks in the molecules guide.
+
+- Repair the open-shell tutorial reference handoff, add convergence and frozen-core checks, and update the OH UMP2 example to use one recorded `run_job(method="mp2")` calculation with the correct energy and spin diagnostics.
+
+- Make molecular property recipes self-contained, reuse the recorded RHF result for polarizability, document scalar versus sequence response shapes and dense ERI memory, and clarify ECP metadata and periodic analysis availability.
+
+- Improve the molecular properties tutorial with convergence and charge-sum checks, atom-index and density conventions, and the actual optimized dimer XYZ filename. Clarify the population-analysis example geometry and historical values.
+
+- Improve run monitoring and exit-status handling, explain result-manifest inspection, update optimizer and return-value guidance, and clarify quickstart and calculation-planning checks.
+
+- Clarify contributor checks and scientific acceptance, replace manual update recipes with lifecycle commands, explain safe updates around running calculations, and add a reproducible bug-report checklist.
+
+### Added: opt-in Gaussian segment charges on the Lebedev cavity (#681)
+
+`SolventModel(charge_representation="gaussian")` keeps the switched Lebedev
+cavity and replaces the point-charge cavity matrix, which is indefinite (its
+smallest eigenvalue runs -6 to -28 on distorted methanol, so the energy has
+poles and the analytic gradient spikes near them), with York and Karplus's
+Gaussian charges, whose matrix is positive definite at every geometry. The
+analytic gradient is exact for the construction: on 60 distorted methanols it
+is within 1.6e-8 Ha/bohr of a finite difference everywhere, where the default
+kernel disagrees by more than 1e-5 at 20% of them. The citation report names the
+kernel that ran (`cpcm_gaussian` / `cosmo_gaussian`).
+
+The default is unchanged, because the kernel moves every solvated energy: the
+point kernel overshoots the sharp union-of-spheres answer by 17% (302 points)
+to 27% (974 points) at the default switching width and drifts further as the
+grid is refined, where the Gaussian kernel is 2% to 4% off. Whether it becomes
+the default is the maintainer's decision, tracked in #681; the numbers are in
+the user guide under "Choosing the number of cavity points".
+
+- GFN2 output now captures the published D4 source revision and complete input-manifest hash beside the exact converted-record hash. This distinguishes portable pinned input identity from platform-dependent conversion bits without changing numerical operands or hash checks.
+
+- Molecular GFN2-xTB: the public default route (faithful AES with the self-consistent D4 term built from the pinned published references) is now gated against xtb 6.7.0 totals on the 49-system parity matrix. Every closed-shell row, transition metals included, reproduces xtb's total within 2e-5 Ha and its dispersion channel within 1e-6 Ha (measured: 12 uHa and 0.05 uHa). The explicit `legacy_eeq` control keeps its own H-Ar and Cu reference-data scope; gradient parity, periodic cells and the open-shell route stay outside the gate.
+
+- Molecular GFN2 results expose detached density, orbital-coefficient, overlap and last-diagonalized Hamiltonian matrices from the executed SCF, including exhaustion. State audits can now inspect the original solve without running a separate delegated calculation. Document branch continuity and stability limits; preserve the unresolved Li4 regression.
+
+- Molecular GFN2 now couples published D4 references to its existing variational SCC potential and total gradient. Pinned upstream data and licenses are cached separately with offline integrity checks; explicit legacy AES/EEQ controls remain available. Output records the executed D4 model and operand fingerprint. External energy and gradient qualification remains distinct from internal derivative checks.
+
+- Refine the GPU discussion draft using library papers, recent research and
+  source inspection, with explicit precision, state-recovery, memory and
+  Apple feasibility limits. No GPU runtime support is introduced.
+
+- Integrate the accepted GPU concept into the acceleration roadmap with
+  G0-G6, Apple feasibility and optional cuEST stages, starting from CPU
+  profiling and provenance. No GPU runtime support is introduced.
+
+- Converge the GPU concept on separate CUDA/HIP and Apple feasibility stages,
+  document reproduced inactive DF defects, and specify CPU profiling, Apple
+  experiments and measured roadmap gates. No runtime support is introduced.
+
+- Document a proposed cross-vendor GPU architecture and staged implementation
+  plan covering NVIDIA, AMD and Apple, precision qualification, roadmap fit
+  and an optional cuEST evaluation. This is a discussion draft; no GPU runtime
+  support or measured speedup is introduced.
+
+- Enclose auxiliary Fourier construction through the existing experimental MANTA metric/rank/inverse/J/K audit, with immutable per-element diagnostics, count admission and explicit basis-data and total-energy exclusions.
+
+- Add experimental streamed finite periodic coupling construction certificates for tiles and complex forward/adjoint actions, reusing shared integral, Fourier, phase and weight proofs. Screened and compressed routes retain their numerical values. Explicit resource admission and finite-reference exclusions apply; this does not establish total relaxed-energy accuracy or expand SCF admission.
+
+- Experimental MANTA metric assembly bounds now include two-center Coulomb integral construction through auxiliary l=7, with shared diagnostic plans, strict admission and explicit remaining source/relaxation exclusions.
+
+- Include pi and stored-cell volume in experimental MANTA reciprocal metric weight bounds, propagating through existing rank/inverse/J/K audits with strict unresolved-volume refusal.
+
+- Add an experimental orbital-pair Fourier construction certificate through l=6 with shared verified phase, Gaussian moments and pure transforms, strict resource admission and independent witnesses. Complete periodic coupling and relaxed-energy accuracy remain outside this component diagnostic.
+
+- Experimental MANTA short-range metric construction bounds now use positive radial panels with explicit series and omitted-tail bounds, avoiding cancellation between full and long-range Boys enclosures while preserving numerical integrals and accuracy targets.
+
+- Experimental MANTA Fourier and metric construction bounds now include Cartesian-to-pure coefficient generation through l=7 using a shared verified representation diagnostic; numerical transforms and symmetry permissions are unchanged.
+
+- Fix MANTA periodic screened three-center sources to reuse the shared budgeted primitive selector used by libint, preserving signed contraction coefficients and original numerical tolerances. Reserve split-call work and scratch explicitly and version screened coupling identities. Unscreened and multipole numerical routes remain unchanged.
+
+- Add an experimental streamed three-center Gaussian integral construction certificate for Coulomb, erf and erfc kernels, using shared verified radial and representation producers with strict tile resource admission. Full periodic coupling composition and relaxed-energy accuracy remain separate.
+- Reject derivative requests in scalar fitting and construction APIs instead of returning ordinary integrals; the dedicated derivative provider remains available.
+
+- MSINDO-SECCM native nonconvergence now raises `CCMConvergenceError` with the retained energy, density, orbital spectrum, iteration count and available stability diagnostics in `error.result`. The calculation remains rejected; inspecting the failed state does not launch another SCF or change its controls.
+
+- Add bounded energy-lowering state-selection recovery for restricted molecular OM2, preserving the 0.02 Ha finite-difference guard and failing closed when recovery exhausts its budget.
+
+- Fix GPW/GAPW full-grid external XC preparation overwriting the AO density-image reach with the Becke partition radius. Preserve the requested lattice density support and build its complete difference domain independently of the quadrature partition.
+
+- Clarify periodic tutorial setup and convergence checks, correct the DFT chain orientation and missing alias, add measured cutoff differences, and replace unmeasured LiH mesh claims with a bounded pilot and resource guidance.
+
+- Reuse the immutable periodic XC torus grouping plan when density and potential retain identical pair indices, avoiding duplicate plan construction in restricted and unrestricted built-in XC. Different screening lists retain independent plans.
+
+- `PM6Model` and `UPM6Model` now reject unconverged native energies, including default zero values, and refuse derivatives of a rejected state. Iteration and parameter diagnostics remain available. Converged calculations and SCF controls are unchanged.
+
+- Clarify the experimental MSINDO-SECCM stability audit's restricted orbital
+  space, finite-descent thresholds and state-selection limits. Explain why
+  an absent instability flag or a fitted volume minimum alone does not establish
+  a stable equilibrium, and correct comments that promised branch continuity
+  or a global minimum. Numerical behavior and saved reference pins are unchanged.
+
+### Fixed: frequencies and thermochemistry in solvent were the gas phase's
+
+`run_job(hessian=True, solvent=...)` ran a solvated SCF and then printed the
+gas-phase Hessian under it, with a `.out` that said nothing about the
+difference: every number smooth and plausible, on the wrong surface (a solvated
+optimization had the same defect before it was fixed). `compute_hessian_fd` now
+takes `solvent=` and finite-differences the in-solvent analytic gradient
+(`cpcm_gradient`), re-converging the apparent charges at every displacement, so
+the frequencies are those of the equilibrium-solvation surface. The frequency
+block names the medium (`Surface: RHF/sto-3g in CPCM water (eps = 78.39)` and a
+`Medium:` note) and the `.system` manifest records it in `[hessian]`.
+
+Supported for RHF, UHF, RKS and UKS with `variant="cpcm"` or `"cosmo"`, on
+either cavity; functionals with an incomplete analytic gradient take the
+full-energy route in solvent too. Refused, with the reason: ROHF and ROKS,
+selected integral engines, ECPs, and Direct COSMO-RS (its energy has a cusp at a
+symmetric geometry that gradient differences would straddle). A warning fires
+for the fine cavity in the molecule-fixed frame at a symmetric geometry, where
+the frame tie makes the modes that break the symmetry wrong (measured on water:
+the asymmetric stretch 45 cm^-1 low; use the default cavity or
+`fine_frame="lab"`).
+
+Validated against the second derivative of the energy the solvated job reports:
+the solvent changes the curvature along the leading directions by 7.5e-3 and
+3.9e-3 Ha/bohr^2 and the Hessian reproduces the energy's curvature to 1.1e-5
+and 5.0e-5. Kohn-Sham (analytic and full-energy routes) and open shell are
+checked through the solvent's change in curvature, which cancels the gas-phase
+grid error of the analytic KS gradient: 8e-8 apart for PBE and CAM-B3LYP.
+
+### Added: geometry optimization, forces and frequencies for ECP solutes in solvent
+
+The solvated gradient refused every molecule with a pseudopotential, and with it
+the optimizer, ASE forces and the finite-difference Hessian, so no heavy-element
+solute (iodine, Pd, Pt, Zn ...) could be relaxed or have its frequencies computed
+in solution. `cpcm_gradient`, `optimize_molecule`, `run_job(optimize=True)` and
+`run_job(hessian=True)` now accept them (RHF, UHF, RKS, UKS; CPCM and COSMO): the
+reaction field never touches the ECP, so the gradient is the ECP-aware gas-phase
+one plus the usual cavity terms. With no `options` it repeats the ECP provenance
+the SCF result recorded, and it refuses a result whose cavity and SCF disagree on
+whether there is an ECP.
+
+Against central differences of the reported solvated energy: [ZnH]+ (ecp10mdf)
+9e-9 Ha/bohr, vDZP methane (inline primitives) 1e-8, HI in def2-SVP 2e-8; the
+solvated HI Hessian reproduces the energy's curvature to 3e-8 Ha/bohr^2 with the
+solvent contributing 9.4e-4.
+
+### Fixed: frequencies, thermochemistry and MD refused every atom heavier than krypton
+
+The atomic mass table stopped at Kr, so any job with a heavy atom died on "no
+built-in mass" before computing anything, which is exactly the set of elements an
+ECP basis exists for. It now reaches plutonium (IUPAC conventional values; the
+mass number of the longest-lived isotope where no stable one exists).
+`center_of_mass` and the thermochemistry origin accept those atoms too.
+
+### Fixed: solvated SCF and gradient memory no longer scales with the basis squared times the segments
+
+A solvated SCF kept a stack of per-segment Coulomb operators
+(`8 * n_segments * n_basis^2` bytes: 3 GB for a 30-atom molecule in def2-SVP,
+16 GB for 50 atoms), a second copy of the cavity matrix for its LU
+factorization, and the gradient built `(n, n, 3)` separation tensors on top. A
+74-atom alkane (15 500 segments, STO-3G) peaked at 9.9 GB in the SCF; it now
+peaks at 2.2 GB, and the gradient at 2.7 GB.
+
+The factorization is done in place, the gradient sums over a block of segments at
+a time (bit-identical to the unblocked sums), and the operator stack is kept only
+up to the new `SolventModel(operator_cache_mb=1024)`. Above it the SCF streams the
+potential and the Fock operator one segment at a time, which agrees with the
+cached run to 2e-13 Ha (energy) and 6e-14 Ha/bohr (gradient) and costs one extra
+integral pass per macro-iteration. Nothing changes below the budget except the
+in-place factorization.
+
+### Changed: the solvation block of the `.out` names the model that produced the energy
+
+The **Implicit solvation** block printed the energies and nothing about the model
+behind them. It now opens with the solvent and its dielectric constant, the
+screening family and its `f(eps)`, the cavity construction (switched Lebedev
+spheres with the grid, radii scale and switching width, or the COSMO FINE
+cavity), the number of segments and the cavity area, the segment-charge kernel
+(point charges or Gaussian, which move the energy by percent, #681) and the
+number of reaction-field cycles. Everything is read off the result. MSINDO COSMO
+jobs, whose result carries none of this, print the block as before.
+
+The solvation user guide's quick-start also labelled `1/2 q.V` as the solvation
+free energy; the electrostatic free energy is the in-solvent total minus the
+gas-phase total (4.08 against 4.30 kcal/mol for water in STO-3G), and the guide
+now says so.
+
+- Clarify tutorial setup and continuation blocks, check convergence before analysis, reuse basis-sweep results, and add a reproducible radial-grid sweep with explicit reference and cache handling.
+
+- Add an opt-in bounded UKS diagnostic that records physical states, coupled-spin DIIS histories, Gram matrices and actual solve coefficients without changing the SCF trajectory.
+
 ## [v0.18.2] - 2026-10-26
 
 - GFN2-xTB: the native post-SCF D4 reference data now covers Na-Ar

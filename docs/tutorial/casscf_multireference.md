@@ -31,6 +31,25 @@ contract in depth.
 
 ## Setup
 
+Run the examples with the installed engine's Python in a directory outside
+the checkout. Coordinates are in bohr. The first four calculation blocks
+are self-contained; later gradient and export examples explicitly reuse the
+N2 or H2 setup. Give each method and geometry its own output stem so a scan
+retains every input/result pair.
+
+The API tuple lists **orbitals first, electrons second**. In contrast, the
+usual chemistry label CAS(electrons, orbitals) lists electrons first:
+
+| Intended space | `active_space` argument |
+|---|---|
+| 2 electrons in 2 orbitals | `(2, 2)` |
+| 2 electrons in 4 orbitals | `(4, 2)` |
+| 6 electrons in 6 orbitals | `(6, 6)` |
+
+A size tuple selects a window; it does not prove that the window contains
+the chemically relevant orbitals. Inspect orbital character and occupations,
+and keep the selected state and space consistent along a geometry scan.
+
 The CAS methods need nothing beyond a molecule and a basis. A CAS
 calculation is specified by two numbers: how many electrons and how
 many spatial orbitals you place in the active space. vibe-qc takes
@@ -51,7 +70,10 @@ from vibeqc.runner import run_job
 # H2 at equilibrium (bond length 1.4 bohr)
 h2 = Molecule([Atom(1, [0.0, 0.0, 0.0]), Atom(1, [0.0, 0.0, 1.4])])
 
-result = run_job(h2, basis="sto-3g", method="casscf", active_space=(2, 2))
+result = run_job(h2, basis="sto-3g", method="casscf", active_space=(2, 2),
+                 output="h2_sto3g_casscf")
+if not result.converged:
+    raise RuntimeError("CASSCF did not converge; inspect the solver trace")
 print(f"E(CASSCF(2,2)) = {result.energy:.8f} Ha")
 ```
 
@@ -81,7 +103,8 @@ uses this fixed-orbital boundary.
 N2 at its equilibrium bond length is the cleanest illustration of the
 ladder, because vibe-qc's CASSCF and CASPT2 energies for it are pinned
 to an external OpenMolcas reference (recorded in
-`tests/test_solvers_mrpt_parity.py`), so you can trust every digit. The
+`tests/test_solvers_mrpt_parity.py`). The values below are historical
+reference comparisons, not a guarantee of identical digits on every runtime. The
 honest active space for the nitrogen triple bond is **CAS(6,6)**: the
 six electrons of the $\sigma$ and two $\pi$ bonds in the six valence
 orbitals $\sigma_{2p}$, $\pi_{2p}\times 2$, $\pi^*_{2p}\times 2$,
@@ -103,7 +126,11 @@ from vibeqc.solvers import CASSCFOptions
 n2 = Molecule([Atom(7, [0.0, 0.0, 0.0]), Atom(7, [0.0, 0.0, 2.074])])
 
 def energy(method, **kw):
-    return run_job(n2, basis="sto-3g", method=method, **kw).energy
+    result = run_job(n2, basis="sto-3g", method=method,
+                     output=f"n2_sto3g_{method}", **kw)
+    if not result.converged:
+        raise RuntimeError(f"N2 {method} did not converge")
+    return result.energy
 
 e_rhf    = energy("rhf")
 e_casci  = energy("casci",  active_space=(6, 6))
@@ -113,6 +140,7 @@ e_casscf = energy("casscf", active_space=(6, 6))
 # switch the reference from CASCI-on-HF-orbitals to a converged CASSCF).
 e_nevpt2 = energy("nevpt2", active_space=(6, 6), casscf_options=CASSCFOptions())
 e_caspt2 = energy("caspt2", active_space=(6, 6), casscf_options=CASSCFOptions())
+# These calls each build their own reference; e_casscf is not passed into PT2.
 
 print(f"  RHF              {e_rhf:.8f}")
 print(f"  CASCI(6,6)       {e_casci:.8f}   (static, frozen HF orbitals)")
@@ -124,7 +152,7 @@ print(f"  static  correlation (RHF -> CASSCF): {(e_rhf - e_casscf) * 627.509:7.2
 print(f"  dynamic correlation (CASSCF -> CASPT2): {(e_casscf - e_caspt2) * 627.509:7.2f} kcal/mol")
 ```
 
-This is exactly what you get:
+Recorded output from the reference calculation:
 
 ```
   RHF              -107.49584213
@@ -193,14 +221,18 @@ equilibrium out toward dissociation and prints the gap.
 from vibeqc import Atom, Molecule
 from vibeqc.runner import run_job
 
-def energy(mol, method, **kw):
-    return run_job(mol, basis="6-31g", method=method, **kw).energy
+def energy(mol, method, output, **kw):
+    result = run_job(mol, basis="6-31g", method=method, output=output, **kw)
+    if not result.converged:
+        raise RuntimeError(f"Unconverged scan point: {output}")
+    return result.energy
 
 print(f" {'R/bohr':>7s} {'E(RHF)':>14s} {'E(CASSCF)':>14s} {'gap/kcal':>9s}")
 for R in [1.4, 2.0, 3.0, 4.0, 5.0, 6.0]:
     h2 = Molecule([Atom(1, [0.0, 0.0, 0.0]), Atom(1, [0.0, 0.0, R])])
-    e_rhf = energy(h2, "rhf")
-    e_cas = energy(h2, "casscf", active_space=(2, 2))
+    stem = f"h2_R{R:.2f}".replace(".", "p")
+    e_rhf = energy(h2, "rhf", output=f"{stem}_rhf")
+    e_cas = energy(h2, "casscf", output=f"{stem}_casscf", active_space=(2, 2))
     print(f" {R:>7.2f} {e_rhf:>14.8f} {e_cas:>14.8f} {(e_rhf - e_cas) * 627.509:>9.1f}")
 ```
 
@@ -262,7 +294,11 @@ h2o = Molecule([
 ])
 
 def energy(method, **kw):
-    return run_job(h2o, basis="sto-3g", method=method, **kw).energy
+    result = run_job(h2o, basis="sto-3g", method=method,
+                     output=f"h2o_sto3g_{method}", **kw)
+    if not result.converged:
+        raise RuntimeError(f"Water {method} did not converge")
+    return result.energy
 
 print(f"  RHF          {energy('rhf'):.8f}")
 print(f"  CASCI(4,4)   {energy('casci',  active_space=(4, 4)):.8f}")
@@ -504,9 +540,11 @@ as described after the optimisation example below.
 point converges:
 
 ```python
-from vibeqc.solvers import CASSCFOptions
-
-result = run_job(mol, basis="cc-pvdz", method="casscf", active_space=(6, 6))
+# doc-audit: skip - reuses n2 and run_job from the N2 ladder
+result = run_job(n2, basis="cc-pvdz", method="casscf", active_space=(6, 6),
+                 output="n2_ccpvdz_casscf_gradient")
+if not result.converged:
+    raise RuntimeError("CASSCF did not converge; do not use its gradient")
 forces = -result.gradient            # (n_atoms, 3), Hartree/bohr
 ```
 
@@ -578,14 +616,19 @@ finite differences of the full energy, and expect minutes, not seconds, even
 for a small molecule:
 
 ```python
+# doc-audit: skip - reuses h2, run_job and CASSCFOptions from earlier examples
 result = run_job(
     h2, basis="6-31g", method="caspt2", active_space=(2, 2),
     casscf_options=CASSCFOptions(),
-    optimize=True, optimizer_backend="native",
+    optimize=True, optimizer_backend="native", output="h2_caspt2_opt",
 )
 ```
 
 ## Natural orbitals and QVF wavefunction export
+
+This block reuses `n2` and `run_job` from the N2 ladder. Use a new output stem
+when changing the active space or state; an earlier archive is not evidence
+that a later calculation succeeded.
 
 A converged CASSCF/CASCI result has no ordinary canonical mean-field MOs to
 export, but it does have **natural orbitals**, the active-space 1-RDM's
@@ -596,8 +639,9 @@ the QVF archive's wavefunction section, so vibe-view can resample any natural
 orbital on demand just as it would a mean-field MO:
 
 ```python
+# doc-audit: skip - reuses n2 and run_job from the N2 ladder
 result = run_job(
-    mol, basis="cc-pvdz", method="casscf", active_space=(6, 6),
+    n2, basis="cc-pvdz", method="casscf", active_space=(6, 6),
     output="n2_casscf",   # -> n2_casscf.out, n2_casscf.qvf
 )
 ```

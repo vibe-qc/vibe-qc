@@ -891,6 +891,115 @@ def test_rotated_t1_tno_fock_preserves_frozen_calculation(
     record_property("final_iteration", actual.trace[-1])
 
 
+@pytest.mark.parametrize("route,mode", [("union", "t0"), ("union", "t1-iterative"),
+                                        ("pno", "t1-iterative")])
+@pytest.mark.parametrize("n_frozen", [0, 1])
+@pytest.mark.parametrize("case", ["canonical", "truncated", "screened"])
+def test_local_tno_fock_preserves_frozen_calculation(
+    oh_sto3g, separated_sto3g, monkeypatch, route, mode, n_frozen, case,
+    record_property,
+):
+    from types import SimpleNamespace
+    import weakref
+    from vibeqc.dlpno import uccsd_local_solver as local
+
+    system = separated_sto3g if case == "screened" else oh_sto3g
+    options = LocalUCCSDOptions(
+        residual_domain=route, n_frozen=n_frozen,
+        localise="none" if case == "canonical" else "boys",
+        tcut_pno=0., tcut_pairs=0., tcut_mkn=0., tcut_pno_singles=0.,
+        coupling_radius=5. if case == "screened" else 0.,
+        compute_triples=True, triples_mode=mode,
+        tcut_tno=1e-12 if case == "truncated" else 0.,
+        conv_tol_residual=1e-11, conv_tol_energy=1e-13,
+    )
+    shared = local.solve_dense_fock
+    marker = f":local-{mode}-triple="
+    calls, references = [], []
+
+    def checked(matrix, **metadata):
+        assert all(ref() is None for ref in references)
+        solved = shared(matrix, **metadata)
+        if marker in metadata["basis_id"]:
+            references.append(weakref.ref(solved))
+            eps, vectors = np.linalg.eigh(matrix)
+            np.testing.assert_array_equal(solved.eigenvalues, eps)
+            np.testing.assert_array_equal(solved.eigenvectors, vectors)
+            assert solved.residual_frame == "orthogonal"
+            assert max(solved.residuals) < 1e-10
+            assert solved.orthogonality_error < 1e-12
+            calls.append((matrix.shape[0], metadata))
+        return solved
+
+    with monkeypatch.context() as patch:
+        patch.setattr(local, "solve_dense_fock", checked)
+        actual = run_local_dlpno_uccsd(*system, options)
+    assert all(ref() is None for ref in references)
+
+    def previous(matrix, **metadata):
+        if marker not in metadata["basis_id"]:
+            return shared(matrix, **metadata)
+        eps, vectors = np.linalg.eigh(matrix)
+        return SimpleNamespace(eigenvalues=eps, eigenvectors=vectors)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(local, "solve_dense_fock", previous)
+        before = run_local_dlpno_uccsd(*system, options)
+    assert actual.converged and before.converged and actual.triples_executed
+    assert actual.source_identity == before.source_identity
+    assert actual.n_frozen == before.n_frozen == n_frozen
+    assert actual.e_corr == before.e_corr and actual.trace == before.trace
+    assert actual.e_pno_correction == before.e_pno_correction
+    assert actual.e_t == pytest.approx(before.e_t, abs=1e-14, rel=0.)
+    for name in ("pno_per_pair", "pao_per_pair", "singles_per_occ", "tno_per_triple",
+                 "n_triples", "n_screened_triples", "n_degenerate_tno_triples"):
+        assert getattr(actual, name) == getattr(before, name)
+    assert actual.trace[-1]["r_norm"] < 1e-11
+    assert abs(actual.trace[-1]["delta_e"]) < 1e-13
+    seen = {}
+    prefix = f"dlpno-uccsd:{actual.source_identity}:frozen={n_frozen}{marker}"
+    for rank, metadata in calls:
+        assert metadata["basis_id"].startswith(prefix)
+        text, spin = metadata["basis_id"][len(prefix):].split(":retained-tno:")
+        triple = tuple(map(int, text.split(",")))
+        assert len(triple) == 3 and triple[0] < triple[1] < triple[2]
+        assert triple not in seen and spin == metadata["spin"] == "alpha-beta"
+        seen[triple] = rank
+    assert seen == actual.tno_per_triple
+    if case == "canonical":
+        # Compiled per-spin pairs can span fewer than three virtuals for
+        # spin-forbidden triples even without a TNO cutoff.
+        assert set(seen.values()) <= {1, 2, 3}
+        if route == "union":
+            assert set(seen.values()) == {3} and actual.n_degenerate_tno_triples == 0
+        canonical = run_dlpno_uccsd_pilot(*system, DLPNOUCCSDPilotOptions(
+            n_frozen=n_frozen, localise="none", tcut_pno=0., compute_triples=True,
+            conv_tol_residual=1e-11, conv_tol_energy=1e-13,
+        ))
+        assert canonical.converged and abs(actual.e_t) > 1e-8
+        raw_error = abs(actual.trace[-1]["e_corr"]-canonical.e_corr)
+        triples_error = abs(actual.e_t-canonical.e_t)
+        assert raw_error < 1e-8 and triples_error < 1e-11
+        record_property("canonical_raw_error_Eh", raw_error)
+        record_property("canonical_triples_error_Eh", triples_error)
+    elif case == "truncated":
+        # Minimal-basis collapse is a preservation control, not a useful
+        # TNO cutoff calibration or a canonical triples accuracy claim.
+        assert actual.avg_tno < 3 and actual.n_degenerate_tno_triples > 0
+    else:
+        assert actual.n_screened_triples > 0 and actual.n_triples > 0
+        assert abs(actual.e_t) > 1e-8
+    record_property("raw_correlation_Eh", actual.trace[-1]["e_corr"])
+    record_property("pno_correction_Eh", actual.e_pno_correction)
+    record_property("triples_Eh", actual.e_t)
+    record_property("previous_triples_error_Eh", abs(actual.e_t-before.e_t))
+    record_property("tno_fock_solves", len(calls))
+    record_property("tno_rank_range", [min(seen.values()), max(seen.values())])
+    record_property("screened_triples", actual.n_screened_triples)
+    record_property("degenerate_triples", actual.n_degenerate_tno_triples)
+    record_property("final_iteration", actual.trace[-1])
+
+
 def test_zero_beta_reference_is_exact_against_canonical_uccsd():
     from vibeqc.cc import run_uccsd
 

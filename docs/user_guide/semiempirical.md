@@ -746,6 +746,13 @@ model = PM6Model(mol)
 print(f"Energy: {model.energy():.6f} Ha")
 ```
 
+`PM6Model` and `UPM6Model` raise `SemiempiricalEnergyError` when their
+native SCF does not converge. Their iteration count, convergence flag and
+parameter identity remain available for diagnosis. A failed energy call
+cannot be followed by a gradient of that rejected state. These direct models
+do not run the closed-shell job route's basin probes described below;
+convergence alone does not establish state selection or electronic stability.
+
 The high-level closed-shell `run_job(method="pm6")` route runs the ordinary
 zero-temperature SCF and, alongside it, a bounded finite-temperature
 occupation homotopy at each of three temperatures, every rung cooled back to

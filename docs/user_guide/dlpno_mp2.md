@@ -270,8 +270,16 @@ The identity-density ordering is preserved, and the singles amplitudes
 remain independent. The rotated-occupied `triples_mode="t1"` path also
 checks retained TNO Fock solves with source/frozen/triple/combined-spin
 coordinates. Its TNO density cutoff, singleton fallback, occupied rotation
-and refusal of screened triple lists are unchanged. Local T0, iterative T1
-and native TNO rotations keep their existing paths.
+and refusal of screened triple lists are unchanged. Python local-TNO
+preparation for union T0 and iterative T1 also checks retained Fock blocks,
+with explicit local occupied triple and triples-mode coordinates. Pair-union
+rank, TNO selection and the local screened triple list are preserved. Native
+T0 TNO rotations keep their existing path.
+
+Restricted MP2 also checks retained PAO Fock solves for pair construction
+and dipole screening. Source, frozen, atom-domain and pair or occupied
+coordinates are explicit. Frozen-core projection, overlap-rank selection,
+screening estimates and PNO cutoffs are unchanged.
 
 **Where it helps and where it fails.** DLPNO is the right tool for
 large gapped molecules where canonical CCSD(T) is out of reach and a

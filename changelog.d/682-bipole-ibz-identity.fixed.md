@@ -1,1 +1,0 @@
-- Reject stale or contradictory symmetry-reduced BIPOLE k-point input before full-mesh expansion; preserve valid native reductions, consistent representative reordering and reciprocal-lattice wraps.

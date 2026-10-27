@@ -2076,3 +2076,315 @@ construction, source domains/screening, stored-factor/executed arithmetic,
 BvK, XC/grid, basis/BZ and overlap/occupied/density relaxation remain separate.
 Shared Fock/PBC/BIPOLE/symmetry ownership is preserved; #623/#625/#617 remain
 experimental, without automatic total-accuracy, bulk parity or release claims.
+
+
+## Orbital-pair Fourier construction component
+
+Qualified source `aa17566e` adds the standalone orbital-pair construction
+certificate described in contract 5.66. It encloses exact stored Gaussian
+product centers, decay/prefactor, Fourier phase/moments, signed contractions
+and both mathematical pure transforms through orbital l=6. Numerical MD
+panels and physical sources are unchanged. This component is not yet composed
+into periodic three-center coupling or automatic SCF accuracy admission.
+
+The local calculation job certifies panels on each of six accepted profiles'
+actual orbital bases, at zero and a conjugate pair of stored first reciprocal
+basis vectors. Vector generation is outside the proof. A separate 250-digit
+finite even-moment contour-shift oracle lies inside every enclosure; the
+certified numerical panels equal the original producer bit for bit and retain
+its source identity. Panel costs below include certificate construction and
+numerical evaluation but exclude the independent oracle. Reservations are
+modeled maxima, not measured allocations.
+
+| Profile | Orbital functions | Maximum witness error | Maximum error bound | Panel wall seconds | Planned peak bytes |
+| --- | --- | --- | --- | --- | --- |
+| fitted-rhf | 3 | 2.29516176e-17 | 3.01494940e-15 | 0.000156 | 17905604 |
+| fitted-hse06-uks | 3 | 1.32496753e-17 | 3.01668412e-15 | 0.000157 | 17905604 |
+| fitted-cam-b3lyp-rks | 3 | 2.29516176e-17 | 3.01494940e-15 | 0.000166 | 17905604 |
+| uhf | 3 | 1.32496753e-17 | 3.01668412e-15 | 0.000149 | 17905604 |
+| pbe0-rks | 3 | 2.29516176e-17 | 3.01494940e-15 | 0.000154 | 17905604 |
+| pbe0-uks | 3 | 1.32496753e-17 | 3.01668412e-15 | 0.000158 | 17905604 |
+
+The six complete periodic calculations preserve all prior representation-proof
+inputs, supports, energies, iterations, physical source/density/Fock identities,
+QVF spin densities, full-Coulomb certificate and component ledger. All 23
+metric-owner receipts retain their existing qualifications. These unchanged
+SCF results establish compatibility; they do not imply that the new diagnostic
+has been propagated through coupling or improves an SCF energy budget.
+Explicit profiles, current continuous grids, original fitting policies and
+raw K admission targets 1e20 are retained. No automatic selection or old-grid
+substitution is made.
+
+The local job reports `121 passed, 670 deselected in 5.11s`. New witnesses cover pure/Cartesian l=0..6,
+mixed bases and shapes, exact product centers, zero/conjugate vectors,
+coincident/diffuse/tight/canceling/underflowed/large-center cases, resource
+one-short/exact caps, invalid angular/input domains and immutable properties.
+Existing real-space Gauss-Hermite comparisons test the numerical panels.
+The phase algorithm is reused unchanged; its public tests and auxiliary/metric
+consumers are checked. Complete method evidence reuses the accepted independent
+Gaussian/libint/Fourier/NumPy references for the first three profiles (maximum
+Fock error 4.85e-15, energy error 1.12e-13 Eh); UHF/PBE0 reuse accepted state
+controls. No matched ORCA/CRYSTAL custom finite-source reference is available;
+KS references share libxc. No general speedup or bulk parity is established.
+
+Harness cost: 32.566423 s wall, 32.426511 s CPU,
+593.50 MiB peak RSS. Queue cost:
+33.298724 s wall and 33.269058 s CPU.
+Reproduce the component witnesses with `pytest tests/test_manta_fourier.py -q
+-k pair_fourier_construction`; use the public plan/certify pair APIs on the
+selected calculation basis for separate panel costs. Exact profile inputs,
+actual vector payloads, bounds and identities are in the acceptance receipt.
+
+Actual qualified native SHA256:
+`61296ad68683c948198ea1bf341dc8a91da100f0c57e170f6297fc0043da4b30`.
+Before/after source/native/dependency/reused-output pins and fetched output
+hashes agree. This is qualified source/native, not a deployed release. Stored
+normalized basis/vector generation, lattice/image translation, Bloch sums,
+remaining short-range/reciprocal/zero-mode coupling construction and action
+propagation, domains/screening, overlap/occupied/density relaxation, BvK,
+XC/grid and basis/BZ errors remain excluded. Existing complete-source flags
+and metric/Fock budgets are unchanged. MANTA remains experimental; full
+#617 and automatic total relaxed-energy accuracy remain unfinished.
+
+
+## Streamed three-center construction component
+
+Qualified source `21d5c67b` adds the streamed `(P|mu nu)` construction
+certificate from contract 5.67, through auxiliary/orbital l=7/6/6 for
+Coulomb/erf/erfc. Gaussian product centers/decay, radial seeds, Hermite/Coulomb
+recurrences, signed contractions and mathematical transforms are enclosed.
+Shared radial algorithms are unchanged. The scalar fitting planner now
+refuses derivative requests that previously returned ordinary integrals;
+the dedicated derivative producer remains supported and independently tested.
+
+Each accepted periodic profile supplies its actual auxiliary/orbital bases
+and short-range erfc parameter to the certificate. Every unshifted ordered
+shell triple is streamed and compared with an independent 180-digit closed
+polynomial/finite-derivative oracle. Returned numerical tiles and source
+identities equal the original fitting producer bit for bit. This does not
+cover translated image generation or compose the periodic coupling action.
+No global three-index tensor is retained by the certificate provider.
+
+| Profile | Shell tiles / elements | Maximum witness error | Maximum error bound | Proof wall seconds | Planned peak bytes |
+| --- | --- | --- | --- | --- | --- |
+| fitted-rhf | 27 / 27 | 1.41994808e-16 | 4.41313652e-15 | 0.000493 | 19054300 |
+| fitted-hse06-uks | 27 / 27 | 1.22324142e-16 | 5.21804822e-15 | 0.000820 | 19054300 |
+| fitted-cam-b3lyp-rks | 27 / 27 | 1.51330740e-16 | 5.21804822e-15 | 0.000472 | 19054300 |
+| uhf | 27 / 27 | 1.55955370e-16 | 4.41313652e-15 | 0.000493 | 19054300 |
+| pbe0-rks | 27 / 27 | 1.51330740e-16 | 5.21804822e-15 | 0.000514 | 19054300 |
+| pbe0-uks | 27 / 27 | 1.22324142e-16 | 5.21804822e-15 | 0.000503 | 19054300 |
+
+Proof times include provider construction and all numerical/certified tiles,
+excluding independent witnesses. Reservations are conservative modeled live
+storage, not measured allocations. The six complete SCFs retain accepted
+inputs/supports, energies, iterations, physical source/density/Fock identities,
+QVF spin densities, full-Coulomb certificates and component ledgers. All 23
+existing metric-owner qualifications remain unchanged. Explicit profiles,
+current continuous grids, original fitting policies and raw K admission
+targets 1e20 are retained. No automatic-selection or old-grid substitution.
+These states establish compatibility, not full coupling or energy coverage.
+
+The calculation job reports `75 passed, 776 deselected in 2.49s`. Source checks pass all 222 fitting
+and derivative tests, including independent construction witnesses on each
+angular axis, selected maximum-total-order Cartesian elements, mixed/signed
+contractions, range limits and infinite-range refusals, coincident/scaled/
+underflowed inputs, exact/one-short budgets, tile lifetime and invalid domains.
+Existing libint fitting and finite-difference derivative comparisons pass.
+Twenty-three focused docs/changelog/citation checks pass; prior unchanged
+citation-entry checks are reused and the known stale navigation-label test
+is excluded. Test groups overlap; no full CI claim is made.
+
+Complete method results reuse accepted Gaussian/libint/Fourier/NumPy references
+for the first three profiles (maximum Fock error 4.85e-15, energy error
+1.12e-13 Eh); UHF/PBE0 reuse accepted state controls. No matched ORCA/CRYSTAL
+custom finite-source reference is available; KS references share libxc.
+New high-precision witnesses independently check this component, not the
+complete periodic method. No bulk parity or general speedup is established.
+
+Harness cost: 29.920660 s wall, 29.661768 s CPU,
+594.47 MiB peak RSS. Queue cost:
+30.845857 s wall and 30.585213 s CPU.
+Reproduce component witnesses with `pytest tests/test_manta_fitting.py -q
+-k three_center_construction`; the public streamed constructor/evaluate APIs
+supply separate per-tile measurements on chosen physical bases. Exact inputs,
+range parameters, budgets, source identities and costs are retained in the
+acceptance receipt.
+
+Actual qualified native SHA256:
+`746f631019d426ca169cc7fc4df7c9b7712c537d704b1b18fc6aac4dd5c408ec`.
+Source/native/dependency/reused-output pins agree before/after the job and
+fetched output hashes verify. Qualified source/native is distinct from any
+deployed release. Stored normalized basis/vector generation, image-center
+construction, Bloch sums, reciprocal/zero-mode composition, coupling action
+propagation, domains/screening, BvK, XC/grid, basis/BZ and overlap/occupied/
+density relaxation remain separate. Existing metric/Fock budgets and the
+complete-source flags are unchanged. MANTA and full #617 remain experimental and
+unfinished; this is not automatic total relaxed-energy accuracy.
+
+
+## Finite periodic coupling construction and actions
+
+Qualified source `f34e8fc4` composes shared integral/Fourier/phase/weight
+proofs into separate finite coupling tile and forward/adjoint certificates
+(contract 5.68). The reference uses the literal unscreened selected integer
+images, exact stored lattice translations and shifted centers, SR phase sums,
+reciprocal folds/products and the finite-zero correction. Numerical actions
+are unchanged, including screened, multipole, compressed, global and pair-tree
+routes. Their single distance-to-reference bounds include approximation and
+construction discrepancy; do not add overlapping old component budgets.
+
+The six accepted complete calculations retain physical inputs/supports,
+energies, iterations, source/density/Fock identities, QVF spin densities,
+component ledgers, full-Coulomb certificates and all 23 metric-owner
+qualifications. For each profile the shared domain producer reconstructs the
+actual Gamma Coulomb owner; its metric source identity exactly matches the
+SCF receipt. New forward proofs consume the converged stored total density;
+adjoint proofs consume an explicit arbitrary complex auxiliary vector.
+Actual momenta, reciprocal vectors, controls, reference/input/certificate
+identities and plans are retained in the acceptance receipt. These separate
+diagnostics do not enlarge the SCF admission or certify relaxed density.
+
+| Profile | Direction | Finite reference terms | Maximum action error bound | Proof wall seconds | Planned peak bytes |
+| --- | --- | --- | --- | --- | --- |
+| fitted-rhf | forward | 1107 | 3.72917448e-12 | 1.374340 | 88205786 |
+| fitted-rhf | adjoint | 1107 | 1.02279296e-14 | 1.369194 | 88205786 |
+| fitted-hse06-uks | forward | 513 | 2.71475912e-12 | 0.301271 | 88205786 |
+| fitted-hse06-uks | adjoint | 513 | 9.36750677e-15 | 0.304436 | 88205786 |
+| fitted-cam-b3lyp-rks | forward | 513 | 4.69167925e-12 | 0.305334 | 88205786 |
+| fitted-cam-b3lyp-rks | adjoint | 513 | 9.36750677e-15 | 0.299739 | 88205786 |
+| uhf | forward | 1107 | 2.15398650e-12 | 1.352801 | 88205786 |
+| uhf | adjoint | 1107 | 1.02071129e-14 | 1.364614 | 88205786 |
+| pbe0-rks | forward | 513 | 4.68629433e-12 | 0.291893 | 88205786 |
+| pbe0-rks | adjoint | 513 | 9.36750677e-15 | 0.295164 | 88205786 |
+| pbe0-uks | forward | 513 | 2.70915843e-12 | 0.290996 | 88205786 |
+| pbe0-uks | adjoint | 513 | 9.36750677e-15 | 0.302723 | 88205786 |
+
+Reference terms count selected SR auxiliary images and LR pair images per
+panel, not unique images or scalar operations. Proof times exclude baseline
+numerical actions and complete SCFs. Memory reservations are conservative
+modeled storage, not measured allocations. No global coupling tensor is
+retained by the proof. Source plans and finite supports have not been reduced
+to obtain these bounds; no speedup is inferred from the timings.
+
+The local calculation job reports `25 passed, 162 deselected in 176.50s (0:02:56)`. Independent new witnesses use
+180-digit finite polynomial Gaussian integrals, exact Decimal translations,
+scalar phase/weight sums and complex contractions, with a separate brute-force
+image census. They test skew cells, signed/angular pure transforms, Gamma and
+non-Gamma Coulomb/erf/erfc, exact/one-short budgets, invalid inputs and pole
+refusal. Screened and all compressed routes share identical unscreened
+reference enclosures while preserving their actual numerical receipts.
+
+Broader component/source regression: 563 passed and one pre-existing libint
+comparison failure at screening budget 0.01. Rebuilding unchanged main
+reproduced the same maximum discrepancy 5.6537243829336e-11; all baseline and
+candidate MANTA/libint arrays were separately bitwise identical. Tracker #687
+retains this failure for diagnosis; its existing tolerance was not relaxed.
+The discrepancy is not used as a passing scientific reference. Focused
+corrected docs/changelog/citation checks pass (11); other unchanged citation
+checks are reused. Test groups overlap, and no full CI claim is made.
+
+Complete methods reuse accepted Gaussian/libint/Fourier/NumPy references for
+the first three profiles (maximum Fock error 4.85e-15 and energy error
+1.12e-13 Eh); UHF/PBE0 reuse accepted state controls. New independent witnesses
+qualify the finite construction component. No matched ORCA/CRYSTAL reference
+for these custom finite sources is available; KS references share libxc.
+Explicit profiles/current continuous grids and raw K targets 1e20 are retained,
+with no automatic-selection or old-grid substitution.
+
+Harness cost: 211.145880 s wall, 210.683202 s CPU,
+583.47 MiB peak RSS. Queue cost:
+212.717859 s wall and 211.479531 s CPU.
+Reproduce the new witnesses with `pytest tests/test_manta_periodic_gdf_tiles.py
+ tests/test_manta_periodic_gdf_actions.py -q -k coupling_construction`.
+Actual qualified native SHA256:
+`f19e9b6c0076fafb524c7ecf9dead7af7630bcbea70602bb59d7a188d2727a24`. Source/native/dependency/reused-output pins agree
+before/after the job and fetched output hashes verify. Qualified source and
+native identity are distinct from deployment or release acceptance.
+
+The certificate assumes exact stored normalized basis/lattice/vector inputs
+and the selected finite index set. Input generation, selection completeness
+and infinite tails, basis/BZ, BvK, XC/grid, overlap/occupied/density relaxation
+and total relaxed energy remain separate. Composition into metric/J/K/RI-BUPO
+and SCF accuracy admissions remains subsequent work. Existing unified Fock,
+PBC/BIPOLE and symmetry interfaces are preserved. MANTA and full #617 remain
+experimental and unfinished; no bulk parity, general speedup, whole-method
+accuracy or release claim is made.
+
+## Shared screened primitive source
+
+Source `95d71ea9`, integrated qualification source `2558b4ac75b43c4d277de60ae415ebebaab6fedb`,
+repairs #687 without changing comparison tolerances. Both MANTA and libint
+now use the existing budgeted primitive selector after their shared
+shell/image selector. Signed normalized coefficients and survivor decisions
+are identical. The original 5.6537243829336e-11 mismatch was a difference
+between retained primitive sets, not an unexplained integral tolerance.
+Screened source identities change; unscreened and multipole routes retain
+their original numerical paths. See scientific contract Section 5.69.
+
+The local calculation job passed all 15 new/affected source, admission and
+streamed-certificate checks. The angular fixture uses pair cutoff 8 bohr,
+auxiliary cutoff 20 bohr and common screening budget 0.01. Its original
+libint comparison remains `atol=2e-11, rtol=2e-12`. The source construction
+certificate keeps the same unscreened finite reference and encloses the
+actual screened result. Common and coupling-only modes are both exercised.
+
+| Angular fixture | Maximum libint difference | Maximum omitted contribution | Numerical shell calls | Numerical primitive products | Source wall seconds | Planned peak bytes |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0 | 2.69295288e-14 | 3.49629659e-10 | 3337 | 3603 | 0.002817 | 17793334 |
+| 1 | 1.15490213e-14 | 5.65930402e-11 | 5094 | 5360 | 0.005345 | 17807806 |
+| 2 | 2.13165534e-14 | 2.01613388e-11 | 5349 | 5539 | 0.007346 | 17827830 |
+
+Each unscreened control used 3,240 shell calls and 64,800 primitive products.
+Splitting contracted survivors can increase shell calls while reducing
+primitive work. Count admission conservatively reserves all possible split
+calls, transforms, selector envelopes and storage; these reservations are
+not measured allocations. Exact and one-short tests cover all five resource
+caps before invalid numerical inputs. No speedup is inferred from these
+single-process timings.
+
+A complete screened contracted UHF calculation used a neutral Li cell,
+multiplicity 2, upper-triangular lattice rows `(6, .2, .1)`, `(0, 6.2, .15)`,
+`(0, 0, 6.4)` bohr and atom position `(.1, -.15, .2)` bohr. The explicit
+mesh was `(2,1,1)` with shift `(1,0,0)`. Orbital s-shell exponent pairs
+were `(2.4,48)`, `(.7,14)`, `(.2,4)`, with the original normalized leading
+coefficient and a 0.02 relative tight coefficient. Auxiliary pairs were
+`(.4,8)`, `(1.4,28)`, `(4.8,96)`, coefficients `(1,.02)`.
+
+Physical controls were reciprocal energy cutoff 6, pair/nuclear cutoffs
+3/4 bohr, alpha 0.6 and Ewald exchange correction. Fitting omega was 0.65,
+auxiliary cutoff 12 bohr and common screening 0.01. Metric absolute/relative
+cutoffs were 1e-12/1e-10, mode block 2. The calculation used no DIIS, a
+100-iteration cap and energy convergence 1e-12 Eh.
+
+It converged in 16 iterations to -6.388837768362105 Eh
+in 0.235237 s. At the evaluated density, the independent
+libint-source/NumPy reference differs by 4.99600361e-14
+in Fock entries and 7.32747196e-14 Eh in energy; overlap
+and core-Hamiltonian differences are 2.22044605e-16
+and 1.77635684e-15. This checks the shared finite screened
+source; it does not independently validate the screening envelope itself.
+No matched ORCA/CRYSTAL reference for this custom finite source is available.
+
+All six previously accepted explicit HF/KS profiles retain bitwise densities,
+energies, iteration counts, source/Fock identities and component ledgers;
+their 23 metric owners remain qualified. Original independent references are
+reused, as are current continuous-grid results. No old-grid or automatic
+selection substitution is made. Broad focused regression passed 272 checks;
+one obsolete shell-count assertion was corrected and its focused check
+passed. Documentation/changelog checks passed 14. Test groups overlap.
+
+Harness cost: 79.927713 s wall, 79.223215 s CPU,
+585.09 MiB peak RSS. Queue cost: 80.690877 s wall,
+80.100957 s CPU. Actual qualified native SHA256:
+`00c4d04e981e83b322813ddf26246f99813c7fae5fbbbe2ee1d774a5e9c24626`. Source, native, dependency, reused evidence and fetched
+output hashes verify. This qualified runtime is distinct from deployment.
+Reproduce the focused checks with `pytest tests/test_manta_periodic_fitting.py
+ tests/test_manta_periodic_gdf_tiles.py -q -k shared_primitive_screen`.
+
+Finite coupling/metric composition into J/K/RI-BUPO and SCF admissions remains
+subsequent work. Component omission and construction budgets do not establish
+total relaxed-energy accuracy. Input generation, domain completeness/infinite
+tails, basis/BZ, XC/grid, BvK and occupied/density relaxation remain separate.
+Unified Fock/PBC/BIPOLE/symmetry interfaces are preserved. MANTA and #617 remain
+experimental and unfinished; no bulk CRYSTAL parity, general speedup or release
+claim follows.

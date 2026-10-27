@@ -181,6 +181,59 @@ def test_uks_smearing_terminal_metadata_matches_reported_spectrum_and_density():
         np.testing.assert_allclose(got, expected, atol=1e-12)
 
 
+@pytest.mark.parametrize("mesh,shift", [([1, 1, 1], [0, 0, 0]),
+                                       ([2, 1, 1], [0, 0, 0]),
+                                       ([2, 1, 1], [1, 0, 0])])
+@pytest.mark.parametrize("temperature", [0.0, 0.05])
+def test_uks_spin_diagnostic_matches_density_and_mo_phase_gauge(
+    monkeypatch, mesh, shift, temperature,
+):
+    """A column phase cannot change the spin of the executed density."""
+    import vibeqc.periodic_uks_multi_k_ewald as driver
+
+    system, basis = _h2_in_box()
+    kmesh = vq.monkhorst_pack(system, mesh, shift)
+    opts = _default_options("PBE")
+    opts.smearing_temperature = temperature
+    original_diag = driver._diag_in_orth_basis
+
+    def phased_diag(*args, **kwargs):
+        coeffs, energies = original_diag(*args, **kwargs)
+        phases = np.exp(1j * np.linspace(0.7, 1.3, coeffs.shape[1]))
+        return coeffs * phases, energies
+
+    def check(result):
+        assert result.converged
+        # Independent density form of the existing per-cell diagnostic:
+        # Sz(Sz+1) + Nb - sum_k w_k Tr(Da S Db S), here Sz=0 and Nb=1.
+        expected = 1.0 - sum(
+            float(w) * np.trace(da @ s @ db @ s).real
+            for w, da, db, s in zip(kmesh.weights, result.density_alpha_k,
+                                    result.density_beta_k, result.overlap)
+        )
+        assert result.s_squared == pytest.approx(expected, abs=1e-11)
+        if temperature == 0.0:
+            assert result.s_squared == pytest.approx(0.0, abs=1e-11)
+        else:
+            assert expected > 1e-5  # Exercise fractional, not integer, filling.
+
+    plain = driver.run_uks_periodic_multi_k_ewald3d(
+        system, basis, kmesh, opts, omega=0.5, progress=False,
+    )
+    check(plain)
+    monkeypatch.setattr(driver, "_diag_in_orth_basis", phased_diag)
+    phased = driver.run_uks_periodic_multi_k_ewald3d(
+        system, basis, kmesh, opts, omega=0.5, progress=False,
+    )
+    check(phased)
+    assert phased.s_squared == pytest.approx(plain.s_squared, abs=1e-11)
+    assert phased.energy == pytest.approx(plain.energy, abs=1e-10)
+    for spin in ("alpha", "beta"):
+        for before, after in zip(getattr(plain, f"density_{spin}_k"),
+                                 getattr(phased, f"density_{spin}_k")):
+            np.testing.assert_allclose(after, before, atol=1e-11, rtol=0)
+
+
 def test_damped_li_terminal_recheck_continues_and_fails_closed_at_cap():
     """A damped KS plateau cannot certify the look-ahead density."""
     box = 30.0

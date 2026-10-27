@@ -1651,9 +1651,10 @@ def test_no_truncation_dlpno_ccsd_t_has_nonzero_triples_oracle() -> None:
     )
 
     assert result.converged
-    # As above, allow the sub-nHa native reduction-order envelope.
-    assert result.e_corr_per_cell == pytest.approx(-0.0151237664685, abs=5e-10)
-    assert result.e_t_per_cell == pytest.approx(-4.6701557478e-5, abs=2e-11)
+    # Independent RCCSD(T) on the saved finite-torus Fock and cyclic AO
+    # factors (two-cell normalization), not molecular integrals; see #668.
+    assert result.e_corr_per_cell == pytest.approx(-0.015127987095197772, abs=5e-10)
+    assert result.e_t_per_cell == pytest.approx(-4.6749972452290686e-5, abs=2e-11)
     assert result.cderi_symmetry_residual < 1e-7
 
 

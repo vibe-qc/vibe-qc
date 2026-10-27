@@ -1,1 +1,0 @@
-- Added read-only experimental chi factor and complete Coulomb-block fidelity diagnostics. Localized the archived LiH reciprocal-40 refusal to retained-eigenspace forward accuracy near the metric cutoff, with independent operator and higher-precision controls. The original source still refuses; no producer, retained rank, support, admission tolerance or D93 qualification changed.

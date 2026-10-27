@@ -138,6 +138,10 @@ class DFTB0RepulsivePlaceholderWarning(UserWarning):
 
 
 _LAZY_EXPORTS = {
+    "CCMConvergenceError": (
+        "vibeqc.semiempirical.methods.msindo_ccm",
+        "CCMConvergenceError",
+    ),
     "GFN2D4UnsupportedWarning": (
         "vibeqc.semiempirical.methods.gfn2",
         "GFN2D4UnsupportedWarning",
@@ -232,6 +236,7 @@ __all__ = [
     "MOLECULAR_SEMIEMPIRICAL_METHODS",
     "SEMIEMPIRICAL_METHODS",
     "SemiempiricalEnergyError",
+    "CCMConvergenceError",
     "SemiempiricalResult",
     "SemiempiricalRoutePlan",
     "run_ccm",

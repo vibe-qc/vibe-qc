@@ -390,3 +390,38 @@ Exact rational-polynomial/sqrt bounds feed shared rank/inverse/J/raw-K without
 changing numerical transforms or states. Basis/vector data generation, coupling,
 domains/screening and relaxed response remain open; no symmetry permission is
 inferred. #623/#625/#617 remain experimental and unfinished.
+
+
+The #623 orbital-pair Fourier construction component (contract 5.66) adds a
+shared certificate through orbital l=6 for Gaussian products, exact product
+centers, phase/moments, contractions and both pure transforms. It retains the
+numerical source and is currently a separate diagnostic. Full three-center
+coupling composition and propagation, stored input generation, domain/screening
+and relaxed response remain open. No existing metric/Fock/symmetry admission
+inherits this component automatically; #623/#617 remain experimental.
+
+
+The #623 streamed three-center construction component (contract 5.67)
+covers the exact stored auxiliary/orbital Gaussian integral through l=7/6/6
+for Coulomb/erf/erfc. Shared radial, elementary and representation proofs feed
+per-tile Hermite/Coulomb construction bounds without changing numerical tiles.
+Full periodic coupling composition and action propagation remain open, along
+with stored-input/image generation, domains/screening and relaxed accuracy.
+This component does not expand existing metric/Fock or symmetry admissions.
+
+The #623 finite periodic coupling diagnostic (contract 5.68) composes shared
+three-center, Fourier, phase, lattice-weight and representation proofs over
+literal selected integer image sets, including translated centers and the
+finite-zero term. Separate tile/forward/adjoint certificates compare unchanged
+numerical routes directly with that unscreened finite reference. It closes
+the finite construction composition gap; propagation into J/K/RI-BUPO/SCF
+admission, input/domain completeness and relaxed accuracy remain open. Existing
+Fock/PBC/symmetry interfaces and metric budgets are preserved. #623/#617 remain
+experimental and unfinished; overlapping component budgets must not be added.
+
+The retained-source discrepancy #687 is repaired by sharing the existing
+budgeted primitive selector between MANTA and libint, including dense and
+streamed paths. Screened source identities and split-call admission reflect
+the retained primitive set; unscreened sources stay unchanged (contract 5.69).
+Finite coupling/metric composition into J/K/RI-BUPO/SCF remains the next open
+accuracy increment; the primitive repair does not close #617 or that work.

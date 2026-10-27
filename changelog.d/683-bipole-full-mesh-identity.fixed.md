@@ -1,1 +1,0 @@
-- Validate declared full BIPOLE multi-k coordinates against the current cell and shift before integral work or dry-run output, rejecting stale or incomplete Fourier grids while preserving valid point order and reciprocal wraps.

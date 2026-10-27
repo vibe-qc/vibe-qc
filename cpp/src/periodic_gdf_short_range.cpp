@@ -11,6 +11,7 @@
 #include "manta_verified_math.hpp"
 #include "manta_fourier_enclosure.hpp"
 #include "manta_metric_enclosure.hpp"
+#include "manta_three_center_enclosure.hpp"
 #include "manta_auxiliary_image_bubbles.hpp"
 #include "vibeqc/manta_shells.hpp"
 #include "vibeqc/detail/sha256.hpp"
@@ -221,7 +222,7 @@ struct ImageBox {
         each_index(center,[&](const Eigen::Vector3d& r,const std::array<long long,3>&) {f(r);});
     }
 
-    template<class F> void each_capsule(
+    template<class F> void each_capsule_index(
         const Eigen::Vector3d& begin, const Eigen::Vector3d& end, double radius,
         const Eigen::Vector3d& screen_center, double screen_radius, F&& f) const {
         // A capsule projects onto lattice coordinate i as the interval
@@ -245,8 +246,13 @@ struct ImageBox {
         for (auto i = lo[0]; i <= hi[0]; ++i)
             for (auto j = lo[1]; j <= hi[1]; ++j)
                 for (auto k = lo[2]; k <= hi[2]; ++k)
-                    f(lattice * Eigen::Vector3d(double(i), double(j), double(k)));
+                    f(lattice * Eigen::Vector3d(double(i), double(j), double(k)),std::array<long long,3>{i,j,k});
     }
+    template<class F> void each_capsule(const Eigen::Vector3d& begin,const Eigen::Vector3d& end,double radius,
+        const Eigen::Vector3d& center,double screen_radius,F&& f) const {
+        each_capsule_index(begin,end,radius,center,screen_radius,[&](const Eigen::Vector3d& t,const std::array<long long,3>&) {f(t);});
+    }
+
 };
 
 // Absolute shell envelope, including contractions and angular momentum.
@@ -386,7 +392,7 @@ struct ThreeCenterImageDomain {
         });
     }
     template<class Start, class Integral, class Finish>
-    void each(const libint2::Shell& p, const libint2::Shell& mu,
+    void each_index(const libint2::Shell& p, const libint2::Shell& mu,
               const libint2::Shell& nu, Start&& start, Integral&& integral,
               Finish&& finish) const {
         const Eigen::Vector3d A = origin(mu), B = origin(nu), P = origin(p);
@@ -395,37 +401,45 @@ struct ThreeCenterImageDomain {
         const double beta = em.a * en.a / pair_exponent;
         const GaussianSRBound bound(ep.a, pair_exponent,
             ep.log_c + em.log_c + en.log_c, omega);
-        auto visit_pair = [&](const Eigen::Vector3d& r) {
+        auto visit_pair = [&](const Eigen::Vector3d& r,const std::array<long long,3>& ri) {
             if (!pair_in_range(mu, nu, r, pair_cutoff)) return;
             const Eigen::Vector3d end = B + r, segment = end - A;
             const double length2 = segment.squaredNorm();
             const double log_pair_bound = bound.log_prefactor - beta * length2;
             if (error > 0.0 && log_pair_bound < log_budget) return;
             const Eigen::Vector3d product_center = (em.a * A + en.a * end) / pair_exponent;
-            start(r);
-            auto visit = [&](const Eigen::Vector3d& t) {
+            start(r,ri);
+            auto visit = [&](const Eigen::Vector3d& t,const std::array<long long,3>& ti) {
                 if (!inside_auxiliary_capsule(P+t,A,end,auxiliary_cutoff)) return;
                 if (error > 0.0 && log_pair_bound - bound.decay
                     * (P + t - product_center).squaredNorm() < log_budget) return;
-                integral(r, t);
+                integral(r,ri,t,ti);
             };
             const double radius = error > 0.0
                 ? std::sqrt(std::max(0.0, (log_pair_bound - log_budget) / bound.decay))
                 : std::numeric_limits<double>::infinity();
-            aux_images.each_capsule(A - P, end - P, auxiliary_cutoff,
+            aux_images.each_capsule_index(A - P, end - P, auxiliary_cutoff,
                                     product_center - P, radius, visit);
-            finish(r);
+            finish(r,ri);
         };
         if (error > 0.0) {
             if (bound.log_prefactor < log_budget) return;
             const double radius = std::sqrt((bound.log_prefactor - log_budget) / beta);
             if (radius < pair_cutoff) {
-                ImageBox(system, radius, image_cap).each(A - B, visit_pair);
+                ImageBox(system, radius, image_cap).each_index(A - B, visit_pair);
                 return;
             }
         }
-        pair_images.each(A - B, visit_pair);
+        pair_images.each_index(A - B, visit_pair);
     }
+    template<class Start,class Integral,class Finish>
+    void each(const libint2::Shell& p,const libint2::Shell& mu,const libint2::Shell& nu,
+        Start&& start,Integral&& integral,Finish&& finish) const {
+        each_index(p,mu,nu,[&](const Eigen::Vector3d& r,const std::array<long long,3>&) {start(r);},
+            [&](const Eigen::Vector3d& r,const std::array<long long,3>&,const Eigen::Vector3d& t,const std::array<long long,3>&) {integral(r,t);},
+            [&](const Eigen::Vector3d& r,const std::array<long long,3>&) {finish(r);});
+    }
+
 };
 
 template<class F> void primitive_blocks(const libint2::Shell& shell, F&& f) {
@@ -1709,6 +1723,7 @@ std::string fitting_identity(bool three,const PeriodicSystem& system,const Eigen
     h.text(r.convention);h.word(three);h.text(r.auxiliary_basis_identity);h.matrix(system.lattice);h.matrix(q);
     h.real(o.omega);h.real(o.auxiliary_cutoff_bohr);h.real(three?coupling_screen(o):o.integral_screen_error);
     if(three) {
+        if(coupling_screen(o)>0.)h.text("shared-budgeted-primitive-triples.v1");
         h.text(r.orbital_basis_identity);h.matrix(k);h.real(o.pair_cutoff_bohr);
         if(o.coupling_multipole_error>0.) {
             h.text("ordered-erfc-multipoles.v2;joint-radial-and-interior-moment-bounds");h.real(o.coupling_multipole_error);h.word(o.coupling_multipole_order);
@@ -2079,11 +2094,13 @@ struct OrderedCouplingMultipoles {
     long double tolerance=0.,error=0.;
     Count always_near=0;
     bool active=false;
+    std::unique_ptr<PrimitiveTripleScreen> primitive_screen;
     OrderedCouplingMultipoles(const libint2::Shell& shell,const libint2::Shell& mu,const libint2::Shell& nu,Count index,
         const ThreeCenterImageDomain& domain,const PeriodicGDFShortRangeOptions& o,PeriodicGDFShortRangeReceipt& r,
         PeriodicGDFMomentCache* prepared=nullptr,Count bra_index=0,Count ket_index=0,PeriodicGDFMultipoleAction* compressed=nullptr,PeriodicGDFPartitionCache* cached=nullptr)
         :options(o),receipt(r),extents(coupling_extents(o)),preparation(prepared),partitions(cached),
         partition_key{index,bra_index,ket_index,0},action(compressed),active(o.coupling_multipole_error>0.) {
+        if(coupling_screen(o)>0.) primitive_screen=std::make_unique<PrimitiveTripleScreen>(shell,mu,nu,o.omega,domain.log_budget);
         if(!active) return;
         // Count the actual shared support without retaining an interaction
         // list. The count and every acceptance decision are density independent.
@@ -2105,7 +2122,8 @@ struct OrderedCouplingMultipoles {
             receipt.multipole_primitive_products+=shell.nprim();
         }
     }
-    void start(const libint2::Shell& a,const libint2::Shell& b,Count i,Count j) {
+    void start(const libint2::Shell& a,const libint2::Shell& b,Count i,Count j,const Eigen::Vector3d& image) {
+        if(primitive_screen)primitive_screen->set_pair_image(image);
         selected_images.clear();
         if(!active) return;
         if(preparation) {prepared_pair=preparation->pair(a,b,i,j,pair_ordinal,receipt);pair=prepared_pair->extent;}
@@ -2166,6 +2184,21 @@ struct OrderedCouplingMultipoles {
     void accumulate(const Eigen::Vector3d& t,const libint2::Shell& shell,const libint2::Shell& a,
         const libint2::Shell& b,const Eigen::Vector3d& q,std::vector<Complex>& total,std::vector<Complex>& correction) {
         if(hierarchical()) {selected_images.push_back(t);return;}
+        if(primitive_screen && primitive_screen->active()) {
+            // The same Ye2021 SI S4 envelope and per-primitive budget used by
+            // the libint value/gradient producer. Original coefficients and
+            // exact shared survivor decisions; never renormalize fragments.
+            const auto phase=fitting_phase(-q.dot(t),receipt);
+            const bool split=primitive_screen->each_surviving(t,[&](const libint2::Shell& p,
+                const libint2::Shell& mu,const libint2::Shell& nu) {
+                const auto values=evaluate(p,mu,nu);
+                for(Count i=0;i<total.size();++i) {fitting_add(phase*values.data()[i],total[i],correction[i]);++receipt.phase_accumulations;}
+            });
+            if(split)return;
+            const auto values=evaluate(shifted(shell,t),a,b);
+            for(Count i=0;i<total.size();++i) {fitting_add(phase*values.data()[i],total[i],correction[i]);++receipt.phase_accumulations;}
+            return;
+        }
         const auto values=evaluate(shifted(shell,t),a,b);const auto phase=fitting_phase(-q.dot(t),receipt);
         for(Count i=0;i<total.size();++i) {fitting_add(phase*values.data()[i],total[i],correction[i]);++receipt.phase_accumulations;}
     }
@@ -2443,6 +2476,21 @@ PeriodicGDFShortRangePlan plan_periodic_gdf_short_range(const BasisSet& orbital,
     leaf.memory_bytes=leaf.shell_calls=leaf.primitive_quartets=leaf.scalar_terms=leaf.kernel_terms=std::numeric_limits<Count>::max();
     auto request=fitting_request(3);request.kernel="erfc";request.omega=o.omega;
     p.three_center=plan_fitting({&aux,&orbital,&orbital},request,leaf);
+    Count screen_work=0;
+    if(coupling_screen(o)>0.) {
+        const auto ac=census(aux,7),bc=census(orbital,6);
+        // A surviving primitive can require its own numerical shell call and
+        // representation transform. Reserve a complete sweep even when all
+        // primitives survive and the unchanged contracted fast path is used.
+        p.three_center.shell_calls=p.three_center.primitive_products;
+        const Count cart=mul(ac.maximum_cartesian,square(bc.maximum_cartesian));
+        const Count transforms=mul(8,mul(cart,add(ac.maximum_cartesian,square(bc.maximum_cartesian))));
+        screen_work=mul(p.three_center.primitive_products,add(4096,mul(128,p.three_center.tile_elements)));
+        p.three_center.kernel_terms=add(p.three_center.kernel_terms,
+            add(mul(8,screen_work),mul(p.three_center.primitive_products,transforms)));
+        p.three_center.modeled_peak_bytes=add(p.three_center.modeled_peak_bytes,
+            add(65536,add(mul(8,add(ac.bytes,mul(2,bc.bytes))),mul(4096,p.three_center.primitive_products))));
+    }
     if(o.compute_metric) { request.centers=2;p.metric=plan_fitting({&aux,&aux},request,leaf); }
     p.metric_shell_calls=mul(mi,p.metric.shell_calls);p.three_center_shell_calls=mul(ti,p.three_center.shell_calls);
     p.shell_calls=add(p.metric_shell_calls,p.three_center_shell_calls);
@@ -2453,7 +2501,7 @@ PeriodicGDFShortRangePlan plan_periodic_gdf_short_range(const BasisSet& orbital,
         mul(p.three_center.integral_elements,add(ti,mul(nk,p.pair_image_candidates))));
     // Candidate distance checks, phase construction and compensated digestion
     // are charged even where the shared geometric/screening selector skips.
-    p.scalar_terms=add(mul(8,add(me,te)),mul(128,add(p.shell_calls,add(phases,contractions))));
+    p.scalar_terms=add(mul(ti,screen_work),add(mul(8,add(me,te)),mul(128,add(p.shell_calls,add(phases,contractions)))));
     p.kernel_terms=add(mul(mi,p.metric.kernel_terms),add(mul(ti,p.three_center.kernel_terms),mul(8,p.scalar_terms)));
     p.modeled_peak_bytes=add(p.modeled_peak_bytes,add(std::max(p.metric.modeled_peak_bytes,p.three_center.modeled_peak_bytes),
         mul(32,p.three_center.tile_elements)));
@@ -2519,7 +2567,7 @@ PeriodicGDFShortRangeResult compute_periodic_gdf_short_range(const BasisSet& orb
         std::vector<Complex> contracted(tile),correction(tile);auto ket=b[in];
         OrderedCouplingMultipoles multipole(a[ip],b[im],b[in],ip,three,o,r);
         three.each(a[ip],b[im],b[in],[&](const Eigen::Vector3d& t) {
-            ket=shifted(b[in],t);multipole.start(b[im],ket,im,in);std::fill(contracted.begin(),contracted.end(),Complex{});
+            ket=shifted(b[in],t);multipole.start(b[im],ket,im,in,t);std::fill(contracted.begin(),contracted.end(),Complex{});
             std::fill(correction.begin(),correction.end(),Complex{});++r.pair_shell_images;
         },[&](const Eigen::Vector3d&,const Eigen::Vector3d& t) {
             multipole.accumulate(t,a[ip],b[im],ket,q,contracted,correction);
@@ -4114,7 +4162,7 @@ PeriodicGDFTile PeriodicGDFTiles::evaluate_impl(Count ip,Count im,Count in,Perio
     OrderedCouplingMultipoles multipole(sp,sm,sn,ip,domain,multipole_options,r.short_range,preparation_.get(),im,in,action,partitions_.get());
     if(source_.real_short_range && !residual) domain.each(sp,sm,sn,[&](const Eigen::Vector3d& t) {
         if(action) action->start(t);
-        ket=shifted(sn,t);multipole.start(sm,ket,im,in);std::fill(contracted.begin(),contracted.end(),Complex{});std::fill(correction.begin(),correction.end(),Complex{});
+        ket=shifted(sn,t);multipole.start(sm,ket,im,in,t);std::fill(contracted.begin(),contracted.end(),Complex{});std::fill(correction.begin(),correction.end(),Complex{});
         ++r.short_range.pair_shell_images;
     },[&](const Eigen::Vector3d&,const Eigen::Vector3d& t) {
         multipole.accumulate(t,sp,sm,ket,q_,contracted,correction);
@@ -4164,6 +4212,157 @@ PeriodicGDFTile PeriodicGDFTiles::evaluate_impl(Count ip,Count im,Count in,Perio
     admission::cap(r.shell_calls,plan_.coupling_shell_calls,"MANTA GDF tile executed-work bound exceeded");
     admission::cap(r.primitive_products,plan_.coupling_primitive_products,"MANTA GDF tile primitive bound exceeded");
     return result;
+}
+// Sun et al. (2017), DOI 10.1063/1.4998644, finite Gaussian Fourier
+// decomposition; Rump2010 verification, scientific contract 5.68. Shared
+// component proofs enclose the literal selected index set, not its completeness.
+namespace {
+PeriodicGDFShortRangeOptions construction_options(PeriodicGDFShortRangeOptions o) {
+    o.integral_screen_error=o.coupling_screen_error=o.coupling_multipole_error=0.;
+    o.coupling_multipole_hierarchy=o.coupling_multipole_compress=o.coupling_multipole_global_actions=o.coupling_multipole_pair_tree=false;
+    o.coupling_multipole_reuse=false;o.coupling_multipole_partition_bytes=0;o.compute_metric=o.metric_assembly_rank=false;return o;
+}
+void construction_export(PeriodicGDFConstructionBounds& out,const std::vector<spectral_interval::ComplexInterval>& ideal) {
+    const auto n=ideal.size();out.real_lower.resize(n);out.real_upper.resize(n);out.imag_lower.resize(n);out.imag_upper.resize(n);
+    for(Count i=0;i<n;++i) {const auto z=ideal[i];out.real_lower[i]=z.real.lo;out.real_upper[i]=z.real.hi;out.imag_lower[i]=z.imag.lo;out.imag_upper[i]=z.imag.hi;}
+}
+spectral_interval::ComplexInterval construction_interval(const PeriodicGDFConstructionBounds& b,Count i) {
+    return {{b.real_lower[i],b.real_upper[i]},{b.imag_lower[i],b.imag_upper[i]}};
+}
+void construction_finish(PeriodicGDFConstructionBounds& out,const std::vector<Complex>& actual,const std::string& input) {
+    namespace si=spectral_interval;FittingDigest id;id.text("manta.periodic-gdf.coupling-construction.v1");
+    id.text(out.source_identity);id.text(out.reference_identity);id.text(input);out.error_bounds.resize(actual.size());
+    for(Count i=0;i<actual.size();++i) {
+        const double error=si::magnitude(si::sub(si::point(actual[i]),construction_interval(out,i)));
+        out.error_bounds[i]=error;out.maximum_error=std::max(out.maximum_error,error);
+        id.real(actual[i].real());id.real(actual[i].imag());id.real(error);
+    }
+    out.certificate_identity=id.hash.finish_hex();
+}
+}
+PeriodicGDFCouplingPlan PeriodicGDFTiles::plan_coupling_construction(const ResourceBudget& budget) const {
+    using namespace admission;margin(budget);auto leaf=ResourceBudget{};
+    leaf.memory_bytes=leaf.shell_calls=leaf.primitive_quartets=leaf.scalar_terms=leaf.kernel_terms=std::numeric_limits<Count>::max();
+    auto p=plan_coupling(leaf);const auto o=construction_options(options_);
+    const auto sr=plan_periodic_gdf_short_range(orbital_,auxiliary_,system_,plan_.momenta,o,leaf);
+    const auto integral=plan_three_center_construction(auxiliary_,orbital_,orbital_,fitting_request(3),leaf);
+    const Count panels=add(plan_.vectors/16+(plan_.vectors%16!=0),1),ng=std::max<Count>(1,plan_.panel_vectors);
+    const auto af=plan_auxiliary_fourier_construction(auxiliary_,ng,leaf),bf=plan_pair_fourier_construction(orbital_,orbital_,ng,leaf);
+    const Count pairs=square(orbital_.nshells()),aux=auxiliary_.nshells(),images=sr.pair_image_candidates;
+    const Count triples=mul(images,sr.auxiliary_image_candidates);
+    const Count aft=mul(panels,pairs),bft=mul(panels,mul(aux,images));
+    const Count radial=source_.real_short_range?triples:0;
+    const auto phase=plan_bloch_phase(leaf);const auto weight=plan_periodic_gdf_weight(leaf);
+    const Count phases=add(mul(radial,integral.shell_calls),mul(add(panels,source_.real_short_range?1:0),mul(plan_.momenta,mul(images,mul(aux,pairs)))));
+    const Count weights=mul(add(plan_.vectors,1),mul(aux,pairs));
+    const Count mesh=mul(plan_.momenta,square(plan_.n_orb));
+    const Count arithmetic=mul(4096,add(mul(radial,mul(integral.shell_calls,plan_.maximum_tile_elements)),
+        add(mul(weights,mul(images,plan_.maximum_tile_elements)),mul(mesh,plan_.n_aux))));
+    p.shell_calls=add(p.shell_calls,add(mul(radial,integral.shell_calls),add(mul(aft,af.shell_calls),mul(bft,bf.shell_calls))));
+    p.primitive_products=add(p.primitive_products,add(mul(radial,integral.primitive_products),add(mul(aft,af.primitive_products),mul(bft,bf.primitive_products))));
+    p.scalar_terms=add(p.scalar_terms,add(arithmetic,add(mul(radial,integral.scalar_terms),add(mul(aft,af.scalar_terms),
+        add(mul(bft,bf.scalar_terms),add(mul(phases,phase.scalar_terms),mul(weights,weight.scalar_terms)))))));
+    p.kernel_terms=add(p.kernel_terms,add(mul(8,arithmetic),add(mul(radial,integral.kernel_terms),add(mul(aft,af.kernel_terms),
+        add(mul(bft,bf.kernel_terms),add(mul(phases,phase.kernel_terms),mul(weights,weight.kernel_terms)))))));
+    // Only a shell tile and action vectors are retained, with independent
+    // interval folds and owned exports. Full-basis component plans overreserve
+    // panel scratch but never allocate an auxiliary-by-AO-pair tensor.
+    p.modeled_peak_bytes=add(p.modeled_peak_bytes,add(budget.other_live_bytes,add(budget.backend_margin_bytes,
+        add(integral.modeled_peak_bytes,add(af.modeled_peak_bytes,add(bf.modeled_peak_bytes,
+        mul(2048,add(mesh,add(plan_.n_aux,mul(ng,plan_.maximum_tile_elements))))))))));
+    cap(p.modeled_peak_bytes,budget.memory_bytes,"MANTA coupling construction memory budget exceeded");
+    cap(p.shell_calls,budget.shell_calls,"MANTA coupling construction shell budget exceeded");
+    cap(p.primitive_products,budget.primitive_quartets,"MANTA coupling construction primitive budget exceeded");
+    cap(p.scalar_terms,budget.scalar_terms,"MANTA coupling construction scalar budget exceeded");
+    cap(p.kernel_terms,budget.kernel_terms,"MANTA coupling construction work budget exceeded");return p;
+}
+PeriodicGDFConstructionBounds PeriodicGDFTiles::coupling_construction_bounds(Count ip,Count im,Count in) const {
+    namespace si=spectral_interval;si::require_arithmetic();
+    if(ip>=auxiliary_.nshells() || im>=orbital_.nshells() || in>=orbital_.nshells())throw std::out_of_range("MANTA coupling construction shell index");
+    const auto& sp=auxiliary_.libint()[ip];const auto& sm=orbital_.libint()[im];const auto& sn=orbital_.libint()[in];
+    const Count np=sp.size(),nm=sm.size(),nn=sn.size(),pairs=nm*nn,tile=np*pairs,nk=plan_.momenta;
+    PeriodicGDFConstructionBounds result;result.source_identity=source_.three_center_source_identity;
+    const auto exact=construction_options(options_);auto reference=source_;
+    reference.short_range=describe_gdf_short_range(orbital_,auxiliary_,system_,q_,k_,exact,0,source_.real_short_range);
+    FittingDigest identity;identity.text("manta.periodic-gdf.exact-finite-index-coupling.v1");
+    identity.text(gdf_identity(false,vectors_,reference));identity.word(ip);identity.word(im);identity.word(in);
+    const auto record=[&](const std::array<long long,3>& n) {for(auto v:n)identity.word(static_cast<std::uint64_t>(v));};
+    std::vector<si::ComplexInterval> ideal(nk*tile),contracted(tile);
+    const ThreeCenterImageDomain domain(system_,exact.pair_cutoff_bohr,exact.auxiliary_cutoff_bohr,exact.omega,exact.image_candidate_cap,0.);
+    if(source_.real_short_range)domain.each_index(sp,sm,sn,
+        [&](const Eigen::Vector3d&,const std::array<long long,3>& ri) {
+            identity.text("SR-pair");record(ri);std::fill(contracted.begin(),contracted.end(),si::ComplexInterval{});
+        },[&](const Eigen::Vector3d&,const std::array<long long,3>& ri,const Eigen::Vector3d&,const std::array<long long,3>& ti) {
+            record(ti);++result.reference_terms;const auto r=enclosed_image(system_.lattice,ri),t=enclosed_image(system_.lattice,ti);
+            const auto integrals=three_center_shell_enclosure(sp,sm,sn,md::RadialKernel::Erfc,exact.omega,
+                enclosed_shift(enclosed_center(sp),t),enclosed_center(sm),enclosed_shift(enclosed_center(sn),r));
+            const auto phase=bloch_phase_enclosure(enclosed_point(-q_),t);
+            for(Count i=0;i<tile;++i)contracted[i]=si::add(contracted[i],si::product(phase,si::ComplexInterval{integrals[i],{}}));
+        },[&](const Eigen::Vector3d&,const std::array<long long,3>& ri) {
+            const auto r=enclosed_image(system_.lattice,ri);
+            for(Count k=0;k<nk;++k) {
+                const auto phase=bloch_phase_enclosure(enclosed_point(k_.row(k)),r);
+                for(Count i=0;i<tile;++i)ideal[k*tile+i]=si::add(ideal[k*tile+i],si::product(phase,contracted[i]));
+            }
+        });
+    const RangeSeparatedCoulombKernel kernel(system_,q_,exact.omega);const auto prefactor=metric_prefactor(system_.lattice);
+    const ImageBox images(system_,exact.pair_cutoff_bohr,exact.image_candidate_cap);
+    auto panel=[&](const md::Matrix& vectors,bool zero) {
+        identity.text(zero?"finite-zero":"reciprocal-panel");const Count ng=vectors.rows();
+        const auto af=auxiliary_fourier_enclosure(sp,vectors);std::vector<si::Interval> weights(ng);
+        std::vector<si::ComplexInterval> folded(nk*pairs*ng);
+        for(Count g=0;g<ng;++g) {
+            const auto c=weight_certificate(vectors.row(g),exact.omega,prefactor,physical_,zero,0.);weights[g]={c.lower,c.upper};
+        }
+        images.each_index(origin(sm)-origin(sn),[&](const Eigen::Vector3d& rounded,const std::array<long long,3>& ri) {
+            if(!pair_in_range(sm,sn,rounded,exact.pair_cutoff_bohr))return;
+            record(ri);++result.reference_terms;const auto r=enclosed_image(system_.lattice,ri);
+            const auto ft=pair_fourier_enclosure(sm,sn,vectors,enclosed_center(sm),enclosed_shift(enclosed_center(sn),r));
+            for(Count k=0;k<nk;++k) {
+                const auto phase=bloch_phase_enclosure(enclosed_point(k_.row(k)),r);
+                for(Count pair=0;pair<pairs;++pair)for(Count g=0;g<ng;++g) {
+                    const Count out=(k*pairs+pair)*ng+g;folded[out]=si::add(folded[out],si::product(phase,ft[pair*ng+g]));
+                }
+            }
+        });
+        for(Count k=0;k<nk;++k)for(Count p=0;p<np;++p)for(Count pair=0;pair<pairs;++pair)for(Count g=0;g<ng;++g) {
+            auto bra=af[p*ng+g];bra.imag={-bra.imag.hi,-bra.imag.lo};const Count out=(k*np+p)*pairs+pair;
+            ideal[out]=si::add(ideal[out],si::product(si::product(si::ComplexInterval{weights[g],{}},bra),folded[(k*pairs+pair)*ng+g]));
+        }
+    };
+    if(kernel.zero_transfer && source_.real_short_range)panel(md::Matrix::Zero(1,3),true);
+    for(Count first=0;first<plan_.vectors;first+=plan_.panel_vectors)
+        panel(vectors_.middleRows(first,std::min(plan_.panel_vectors,plan_.vectors-first)),false);
+    result.reference_identity=identity.hash.finish_hex();construction_export(result,ideal);return result;
+}
+PeriodicGDFConstructionTile PeriodicGDFTiles::certify_coupling_tile(Count p,Count m,Count n,const ResourceBudget& budget) const {
+    plan_coupling_construction(budget);PeriodicGDFConstructionTile result;
+    static_cast<PeriodicGDFConstructionBounds&>(result)=coupling_construction_bounds(p,m,n);
+    result.evaluated=evaluate(p,m,n);construction_finish(result,result.evaluated.values,"tile");return result;
+}
+PeriodicGDFConstructionAction PeriodicGDFTiles::certify_coupling_action(const std::vector<Complex>& input,bool forward_action,const ResourceBudget& budget) const {
+    const auto p=plan_coupling_construction(budget);namespace si=spectral_interval;si::require_arithmetic();
+    const Count mesh=p.momenta*p.n_orb*p.n_orb;
+    if(input.size()!=(forward_action?mesh:p.n_aux))throw std::invalid_argument("MANTA coupling construction input dimensions");
+    for(auto z:input) {admission::require_finite(z.real());admission::require_finite(z.imag());}
+    PeriodicGDFConstructionAction result;result.source_identity=source_.three_center_source_identity;
+    auto leaf=budget;leaf.other_live_bytes=0; // Joint admission already includes proof and numerical scratch.
+    result.evaluated=forward_action?forward(input,leaf):adjoint(input,leaf);
+    std::vector<si::ComplexInterval> ideal(result.evaluated.values.size());
+    FittingDigest reference;reference.text("manta.periodic-gdf.exact-finite-index-action.v1");reference.text(forward_action?"forward":"adjoint");
+    const auto ao=auxiliary_.libint().shell2bf(),bo=orbital_.libint().shell2bf();
+    for(Count ap=0;ap<auxiliary_.nshells();++ap)for(Count am=0;am<orbital_.nshells();++am)for(Count an=0;an<orbital_.nshells();++an) {
+        const auto bounds=coupling_construction_bounds(ap,am,an);reference.text(bounds.reference_identity);
+        result.reference_terms=admission::add(result.reference_terms,bounds.reference_terms);
+        const Count na=auxiliary_.libint()[ap].size(),nm=orbital_.libint()[am].size(),nn=orbital_.libint()[an].size();
+        for(Count k=0;k<p.momenta;++k)for(Count a=0;a<na;++a)for(Count m=0;m<nm;++m)for(Count n=0;n<nn;++n) {
+            const Count aux=ao[ap]+a,pair=(k*p.n_orb+bo[am]+m)*p.n_orb+bo[an]+n,out=forward_action?aux:pair;
+            auto z=construction_interval(bounds,((k*na+a)*nm+m)*nn+n);if(forward_action)z.imag={-z.imag.hi,-z.imag.lo};
+            ideal[out]=si::add(ideal[out],si::product(z,si::point(input[forward_action?pair:aux])));
+        }
+    }
+    result.reference_identity=reference.hash.finish_hex();construction_export(result,ideal);
+    construction_finish(result,result.evaluated.values,result.evaluated.receipt.snapshot_identity);return result;
 }
 PeriodicGDFCouplingPlan plan_periodic_gdf_coupling(const PeriodicGDFTilesPlan& source,const ResourceBudget& budget) {
     using namespace admission;

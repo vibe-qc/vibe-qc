@@ -240,6 +240,12 @@ Native, usable today:
   Γ-only GDF RHF/RKS driver and
   high-level `run_periodic_job(smearing_temperature=...)` support the
   same occupation model for Γ-point metal/debug work.
+* Multi-k Ewald UHF/UKS report the spin diagnostic using all k points,
+  their weights, complex alpha/beta orbital overlaps and the executed
+  occupations. Arbitrary orbital phases therefore leave it unchanged.
+  With smearing this is the occupation-weighted diagnostic shared by the
+  periodic drivers, not a spin-projected state or a measure of pure-state
+  spin contamination. Zero-iteration results use the supplied guess density.
 
 Not native yet:
 

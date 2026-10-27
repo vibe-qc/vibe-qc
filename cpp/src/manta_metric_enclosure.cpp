@@ -1,4 +1,5 @@
 #include "manta_metric_enclosure.hpp"
+#include "manta_radial_enclosure.hpp"
 #include "manta_verified_math.hpp"
 #include "manta_positive_radial.hpp"
 #include "manta_representation_enclosure.hpp"
@@ -82,6 +83,16 @@ std::vector<std::vector<Term>> expansion(int l,double a) {
     return out;
 }
 }
+std::vector<spectral_interval::Interval> radial_kernel_enclosure(int n,spectral_interval::Interval t,
+    spectral_interval::Interval rho,md::RadialKernel kernel,double omega) {
+    return radial(n,t,rho,kernel,omega);
+}
+std::vector<I> coulomb_boys_enclosure(int n,I t) {
+    if(n<0 || n>md::maximum_order || !std::isfinite(t.lo) || !std::isfinite(t.hi) || t.lo<0. || t.lo>t.hi)
+        throw std::invalid_argument("MANTA invalid Coulomb radial enclosure input");
+    return boys_enclosure(n,t);
+}
+
 MetricConstructionPlan plan_metric_construction(const BasisSet& bra,const BasisSet& ket,const KernelRequest& request,const ResourceBudget& budget) {
     using namespace admission;margin(budget);const auto f=plan_fitting({&bra,&ket},request,ResourceBudget{});
     const auto a=census(bra,7),b=census(ket,7);const Count degree=a.maximum_l+b.maximum_l;

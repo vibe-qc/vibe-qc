@@ -163,3 +163,68 @@ def test_format_report_mentions_ase_version() -> None:
     report = format_ase_optimizer_report()
     assert ase.__version__ in report
     assert "bfgs-linesearch" in report
+
+
+def test_checked_linesearch_preserves_successful_trajectory():
+    import numpy as np
+    from ase import Atoms
+    from ase.calculators.calculator import Calculator, all_changes
+    from ase.optimize import BFGSLineSearch
+    from vibeqc.ase_optimizers import checked_bfgs_linesearch
+
+    class Quadratic(Calculator):
+        implemented_properties = ["energy", "forces"]
+
+        def calculate(self, atoms=None, properties=None, system_changes=all_changes):
+            super().calculate(atoms, properties, system_changes)
+            x = self.atoms.positions
+            self.results = {"energy": float(0.5 * (x * x).sum()), "forces": -x}
+
+    original_dependency = BFGSLineSearch.step.__globals__["LineSearch"]
+    trajectories = []
+    for cls in (BFGSLineSearch, checked_bfgs_linesearch()):
+        atoms = Atoms("H", positions=[[0.4, 0.1, 0.0]], calculator=Quadratic())
+        opt = cls(atoms, logfile=None)
+        frames = []
+        opt.attach(lambda: frames.append(atoms.positions.copy()))
+        assert opt.run(fmax=0.001, steps=20)
+        trajectories.append(np.asarray(frames))
+    np.testing.assert_array_equal(*trajectories)
+    assert BFGSLineSearch.step.__globals__["LineSearch"] is original_dependency
+
+
+def test_checked_linesearch_refuses_warning_and_restores_geometry():
+    import numpy as np
+    from ase import Atoms
+    from ase.calculators.calculator import Calculator, all_changes
+    from vibeqc.ase_optimizers import ASELineSearchError, checked_bfgs_linesearch
+
+    class Inconsistent(Calculator):
+        implemented_properties = ["energy", "forces"]
+
+        def calculate(self, atoms=None, properties=None, system_changes=all_changes):
+            super().calculate(atoms, properties, system_changes)
+            self.results = {
+                "energy": float(self.atoms.positions[0, 0]),
+                "forces": np.array([[1.0, 0.0, 0.0]]),
+            }
+
+    atoms = Atoms("H", positions=[[0.0, 0.0, 0.0]], calculator=Inconsistent())
+    initial = atoms.positions.copy()
+    opt = checked_bfgs_linesearch()(atoms, logfile=None)
+    frames = []
+    opt.attach(lambda: frames.append(atoms.positions.copy()))
+    with pytest.raises(ASELineSearchError, match="WARNING: STP = minstep"):
+        opt.run(fmax=0.001, steps=20)
+    np.testing.assert_array_equal(atoms.positions, initial)
+    assert len(frames) == 1
+    assert opt.nsteps == 0
+
+
+def test_checked_linesearch_refuses_unknown_dependency_seam(monkeypatch):
+    from ase.optimize import BFGSLineSearch
+    from vibeqc.ase_optimizers import checked_bfgs_linesearch
+
+    monkeypatch.setattr(BFGSLineSearch, "step", lambda self: None)
+    with pytest.raises(RuntimeError, match="cannot install.*guard safely"):
+        checked_bfgs_linesearch()

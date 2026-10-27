@@ -5861,13 +5861,13 @@ def _optimize_geometry(
     """
     # ASE < 3.23 line-search optimizers import scipy names removed in
     # SciPy >= 1.14; restore the aliases before touching ase.optimize.
-    from .ase_optimizers import ensure_ase_scipy_compat
+    from .ase_optimizers import checked_bfgs_linesearch, ensure_ase_scipy_compat
 
     ensure_ase_scipy_compat()
     try:
         from ase import Atoms
         from ase.io.trajectory import Trajectory
-        from ase.optimize import BFGSLineSearch
+        BFGSLineSearch = checked_bfgs_linesearch()
         from ase.units import Bohr
     except ImportError as exc:
         raise ImportError(
@@ -6015,7 +6015,7 @@ def _optimize_geometry(
         last_positions = atoms.positions.copy()
 
     with Trajectory(str(trajectory_path), "w", atoms) as traj:
-        # BFGSLineSearch refuses uphill steps by construction -- essential
+        # The checked BFGSLineSearch refuses unconverged line searches -- essential
         # on flat / weakly-bound PESs (H-bonded clusters, dispersion-dominated
         # complexes) where plain BFGS's Hessian extrapolation routinely
         # pushes atoms apart. Works on covalent minima too, so we use it

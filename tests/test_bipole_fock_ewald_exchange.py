@@ -1369,6 +1369,56 @@ def test_bvk_missing_residue_fails_before_native_block_export(monkeypatch):
         bvk_torus_density_matrices(density, [np.zeros(3)], (2, 1, 1))
 
 
+@pytest.mark.parametrize("n_atoms,charge,mesh,reference", [
+    (1, 0, (1, 1, 1), -2.8165935072416204),
+    (1, 0, (2, 1, 1), -2.8122265414233807),
+    (1, 1, (1, 1, 1), -2.117738604293459),
+    (1, 1, (2, 1, 1), -2.1155674148922383),
+    (2, 1, (1, 1, 1), -5.014444221374941),
+    (2, 1, (2, 1, 1), -5.008072978203993),
+])
+def test_fixed_cell_charged_uhf_matches_independent_aft_reference(
+    n_atoms, charge, mesh, reference,
+):
+    """Fixed-cell jellium energies, not isolated-ion finite-size corrections.
+
+    Reference protocol and scope: benchmarks/bipole_charged_uhf.md.
+    PySCF KUHF needs explicit BvK electron counts; cell.charge/spin alone
+    are insufficient at multiple k points. Pins include its ewald exxdiv.
+    """
+    from vibeqc.pbc_bipole_uhf import run_pbc_bipole_uhf
+
+    positions = [[0., 0., 0.]] if n_atoms == 1 else [[0., 0., -1.], [0., 0., 1.]]
+    system = vq.PeriodicSystem(3, np.eye(3) * 8.,
+                              [vq.Atom(2, xyz) for xyz in positions],
+                              charge=charge, multiplicity=1 + charge)
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    opts = PeriodicRHFOptions()
+    opts.lattice_opts.cutoff_bohr = 12.
+    opts.lattice_opts.nuclear_cutoff_bohr = 16.
+    opts.initial_guess = InitialGuess.HCORE
+    opts.max_iter = 40
+    opts.conv_tol_energy = 1e-10
+    opts.conv_tol_grad = 1e-8
+
+    def run():
+        return run_pbc_bipole_uhf(system, basis, monkhorst_pack(system, list(mesh)),
+                                  opts, ewald_precision=1e-10, progress=False)
+
+    if charge:
+        with pytest.warns(RuntimeWarning, match="jellium"):
+            result = run()
+    else:
+        result = run()
+    assert result.converged
+    assert result.energy == pytest.approx(reference, abs=1e-8)
+    expected_counts = (n_atoms, n_atoms - charge)
+    np.testing.assert_allclose(result.final_spin_electron_counts, expected_counts,
+                               atol=1e-10, rtol=0)
+    assert result.s_squared == pytest.approx(.75 * charge, abs=1e-10)
+    assert result.exchange_ewald_split
+
+
 def test_exchange_split_multik_h2_211_matches_pyscf_krhf():
     """Integration: the corrected gauge at [2,1,1] on the 12-bohr H₂
     box against out-of-process PySCF KRHF GDF (exxdiv='ewald'). Cutoff
@@ -2194,6 +2244,103 @@ def test_j_cache_normalization_does_not_duplicate_the_stack(monkeypatch, physica
         for cell, shift in enumerate(cells):
             expected[cell] *= ao_pair_support_mask(basis, shift, 5.)[:, :, None]
     np.testing.assert_array_equal(cache.ft_per_cell, expected)
+
+
+@pytest.mark.parametrize("cache_cap", [0, 2**20])
+@pytest.mark.parametrize("batch_cap", [1, 2**20])
+def test_empty_shifted_exchange_channel_is_a_zero_finite_sum(
+    monkeypatch, cache_cap, batch_cap,
+):
+    """An elongated 3D cell has populated G but empty q+G spheres."""
+    from vibeqc import bipole_fock_ewald as ewald
+    from vibeqc import _aopair_ft
+
+    system = vq.PeriodicSystem(3, np.diag([4., 100., 100.]),
+                              [vq.Atom(1, [0., 0., 0.]),
+                               vq.Atom(1, [0.7, 0.4, 0.])])
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    cells = np.array([[0., 0., 0.], [4., 0., 0.], [-4., 0., 0.]])
+    j = ewald._build_j_long_range_cache(basis, system, cells, .08, 1e-8, K_max=.7)
+    cache = ewald.build_k_exchange_long_range_cache(basis, system, j, K_max=.7)
+    points = np.asarray(monkhorst_pack(system, [2, 1, 1]).kpoints)
+    weights = [.5, .5]
+    assert len(j.kernel) > 0
+    # Every shifted vector has |Kx| >= pi/4 > .7, independently of Gy,Gz.
+    assert np.pi / 4 > cache.K_max
+    shifted = ewald.compute_shifted_reciprocal_lattice_vectors(
+        system, points[0] - points[1], cache.K_max,
+    )
+    assert shifted.shape == (0, 3)
+    rng = np.random.default_rng(688)
+    density = rng.normal(size=(2, 2, 2, 2)) + 1j * rng.normal(size=(2, 2, 2, 2))
+    density += density.conj().swapaxes(-1, -2)
+    expected = np.zeros_like(density)
+    for k, point in enumerate(points):
+        b = np.einsum("g,gmnx->mnx", np.exp(-1j * cells @ point), j.ft_per_cell)
+        for spin in range(2):
+            for x, value in enumerate(j.kernel):
+                expected[spin, k] += weights[k] * value * (
+                    b[:, :, x].conj() @ density[spin, k] @ b[:, :, x].T
+                )
+
+    def no_empty_transform(*args, **kwargs):
+        pytest.fail("empty exchange channel must not call the Fourier backend")
+
+    monkeypatch.setattr(_aopair_ft, "ao_pair_fourier_transform_bloch_multi", no_empty_transform)
+    monkeypatch.setattr(_aopair_ft, "ao_pair_fourier_transform_bloch", no_empty_transform)
+    for factor in (1., -.3):
+        actual = ewald.compute_K_long_range_mesh(
+            cache, points, weights, factor * density,
+            max_cached_bytes=cache_cap, max_batch_bytes=batch_cap,
+        )
+        np.testing.assert_allclose(actual, factor * expected, atol=1e-12, rtol=1e-12)
+        for spin in range(2):
+            for k, point in enumerate(points):
+                single = ewald.compute_K_long_range_at_k(
+                    cache, point, points, weights, factor * density[spin],
+                )
+                np.testing.assert_allclose(single, factor * expected[spin, k],
+                                           atol=1e-12, rtol=1e-12)
+    assert all(ch.kernel.size == 0 for ch in cache.q_channels.values())
+
+
+@pytest.mark.parametrize("method", ["rhf", "uhf", "rks", "uks"])
+def test_elongated_cell_exchange_empty_channel_ewald_split_invariance(method, monkeypatch):
+    """Complete HF/PBE0 SCFs with empty versus populated transfer spheres."""
+    from vibeqc import bipole_fock_ewald as ewald
+
+    system = vq.PeriodicSystem(3, np.diag([4., 100., 100.]),
+                              [vq.Atom(2, [0., 0., 0.])])
+    basis = vq.BasisSet(system.unit_cell_molecule(), "sto-3g")
+    mesh = monkhorst_pack(system, [2, 1, 1])
+    opts = vq.PeriodicKSOptions() if method.endswith("ks") else vq.PeriodicRHFOptions()
+    if method.endswith("ks"):
+        opts.functional = "pbe0"
+    opts.lattice_opts.cutoff_bohr = 8.
+    opts.lattice_opts.nuclear_cutoff_bohr = 16.
+    opts.initial_guess = vq.InitialGuess.HCORE
+    opts.max_iter = 30
+    opts.conv_tol_energy = 1e-10
+    opts.conv_tol_grad = 1e-8
+    caches = []
+    original = ewald.KExchangeLongRangeCache._nonzero_channel
+
+    def observe(self, *args):
+        channel = original(self, *args)
+        caches.append(channel.kernel.size)
+        return channel
+
+    monkeypatch.setattr(ewald.KExchangeLongRangeCache, "_nonzero_channel", observe)
+    run = getattr(vq, f"run_pbc_bipole_{method}")
+    empty = run(system, basis, mesh, opts, ewald_precision=1e-8, ewald_omega=.08,
+                sr_image_extent_bohr=100., progress=False)
+    assert caches and all(n == 0 for n in caches)
+    caches.clear()
+    populated = run(system, basis, mesh, opts, ewald_precision=1e-10,
+                    ewald_omega=.13, sr_image_extent_bohr=100., progress=False)
+    assert caches and all(n > 0 for n in caches)
+    assert empty.converged and populated.converged
+    assert empty.energy == pytest.approx(populated.energy, abs=1e-8)
 
 
 def _exchange_mesh_fixture(relabel=False, gamma=False, physical=True):

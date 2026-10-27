@@ -2786,3 +2786,25 @@ records actual native identity, component budgets, costs and reference limits.
 Normalized basis/vector data generation, coupling construction, domains and
 relaxed response remain excluded. No new symmetry reduction authority or total
 relaxed-energy accuracy follows. Full #617 remains active and experimental.
+
+
+Orbital-pair Fourier construction (contract 5.66) is checked at qualified
+source `aa17566e` with independent high-precision shifted Gaussian moments
+and existing real-space quadrature. Six complete periodic methods preserve
+accepted inputs/supports/states while separate certificates on their actual
+orbital bases enclose the independent panel witnesses. See
+[measured component costs and boundaries](../../benchmarks/manta_metric_spectrum.md#orbital-pair-fourier-construction-component).
+This diagnostic has not yet been composed into full three-center coupling,
+SCF or relaxed-energy accuracy admission; existing ledgers and flags remain.
+
+
+Streamed three-center construction (contract 5.67) is qualified at source
+`21d5c67b` by independent closed polynomial/finite-derivative witnesses,
+existing libint fitting comparisons and all 222 fitting/derivative tests.
+Six accepted periodic states retain exact inputs/supports/results while
+separate unshifted actual-basis shell certificates enclose the independent
+witnesses. See [measured component evidence](../../benchmarks/manta_metric_spectrum.md#streamed-three-center-construction-component).
+Derivative requests now refuse in scalar fitting/construction producers;
+the dedicated derivative route remains supported. Periodic image/Fourier/
+zero-mode composition and action propagation, domains and relaxed accuracy
+remain unfinished; no existing Fock/symmetry admission is enlarged.

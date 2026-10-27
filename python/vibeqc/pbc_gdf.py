@@ -457,6 +457,23 @@ def _gamma_gradient_orbital_blocks(
     )
 
 
+def _open_shell_gamma_needs_fermi_seed_step(densities, overlap, x, temperature, max_iter):
+    """Use a non-ensemble guess only to build the first physical Fock.
+
+    As in the multi-k driver, an atomic/restart seed need not be a valid
+    Fermi density. Mermin, Phys. Rev. 137, A1441 (1965), Eqs. (1)-(4),
+    defines energy/entropy on the same admissible density operator. Refill
+    the seed Fock before accepting a thermal iterate; never clip that seed
+    or suppress a domain error in an accepted iterate. NOITER stays literal.
+    """
+    if max_iter <= 0 or temperature <= 0.0:
+        return False
+    from .periodic_k_density import _needs_fermi_seed_step
+
+    return any(_needs_fermi_seed_step([d], [overlap], [x], [1.0], 1.0)
+               for d in densities)
+
+
 def _reject_non_fermi_dirac_gradient(entry: str, smear_opts) -> None:
     """Fail closed until non-Fermi-Dirac analytic-force paths are tested.
 
@@ -1650,9 +1667,9 @@ def run_pbc_gdf_rhf(
     C_final = C0
     eps_final = eps0
 
-    # max_iter=0 (NOITER, #649) still runs iteration 1's evaluation of the
-    # guess, so its energy is exactly the first trace entry of an iterating
-    # run; the exit after the result block keeps it unconverged.
+    # NOITER evaluates the literal guess, without a thermal seed refill.
+    # An out-of-domain thermal guess still refuses at entropy admission.
+    # Admissible guesses retain the original first-iterate energy contract.
     for iter_idx in range(1, max(max_iter, 1) + 1):
         diis_active = use_diis and iter_idx >= diis_start_iter
         D_used = (
@@ -2480,10 +2497,13 @@ def run_pbc_gdf_uhf(
     F_beta_prev_mixed: Optional[np.ndarray] = None
     if int(opts.max_iter) < 0:
         raise ValueError("max_iter must be >= 0 (0 evaluates the initial guess only)")
-    # max_iter=0 (NOITER, #649) still runs iteration 1's evaluation of the
-    # guess, so its energy is exactly the first trace entry of an iterating
-    # run; the exit after the result block keeps it unconverged.
-    for iter_idx in range(1, max(int(opts.max_iter), 1) + 1):
+    # NOITER evaluates the literal guess, without a thermal seed refill.
+    # An out-of-domain thermal guess still refuses at entropy admission.
+    # Admissible guesses retain the original first-iterate energy contract.
+    seed_step = _open_shell_gamma_needs_fermi_seed_step(
+        (D_alpha, D_beta), S, X, smear_T, int(opts.max_iter),
+    )
+    for iter_idx in range(0 if seed_step else 1, max(int(opts.max_iter), 1) + 1):
         if damper is not None:
             damping = damper.alpha
         # SPINLOCK PATTERN_HOLD: the accelerator (DIIS / EDIIS / ADIIS /
@@ -2498,7 +2518,7 @@ def run_pbc_gdf_uhf(
         diis_active = (
             use_diis and iter_idx >= diis_start_iter and not hold_active
         )
-        if iter_idx == 1 or damping == 0.0 or diis_active:
+        if iter_idx <= 1 or damping == 0.0 or diis_active:
             D_alpha_used, D_beta_used = D_alpha, D_beta
         else:
             D_alpha_used = damping * D_alpha_prev + (1.0 - damping) * D_alpha
@@ -2521,6 +2541,20 @@ def run_pbc_gdf_uhf(
 
         F_alpha = 0.5 * ((Hcore + J - K_alpha) + (Hcore + J - K_alpha).T)
         F_beta = 0.5 * ((Hcore + J - K_beta) + (Hcore + J - K_beta).T)
+
+        if iter_idx == 0:
+            C_alpha, eps_alpha = diagonalise(F_alpha)
+            C_beta, eps_beta = diagonalise_beta(F_beta)
+            (D_alpha, D_beta, occ_a, occ_b, fermi_a, fermi_b, entropy_cur) = (
+                _open_shell_gamma_occupy(
+                    C_alpha, eps_alpha, C_beta, eps_beta, n_alpha, n_beta, smear_opts
+                )
+            )
+            D_alpha_prev, D_beta_prev = D_alpha.copy(), D_beta.copy()
+            C_alpha_f, eps_alpha_f = C_alpha, eps_alpha
+            C_beta_f, eps_beta_f = C_beta, eps_beta
+            plog.info("initial density: Fermi refill of the selected seed Fock")
+            continue
 
         # UHF energy: 1/2Tr[(Da+Db)Hcore] + 1/2Tr[Da Fa] + 1/2Tr[Db Fb]
         # (the exxdiv shift is already inside the K_s folded into F_s).
@@ -3388,10 +3422,13 @@ def run_pbc_gdf_uks(
     F_beta_prev_mixed: Optional[np.ndarray] = None
     if int(opts.max_iter) < 0:
         raise ValueError("max_iter must be >= 0 (0 evaluates the initial guess only)")
-    # max_iter=0 (NOITER, #649) still runs iteration 1's evaluation of the
-    # guess, so its energy is exactly the first trace entry of an iterating
-    # run; the exit after the result block keeps it unconverged.
-    for iter_idx in range(1, max(int(opts.max_iter), 1) + 1):
+    # NOITER evaluates the literal guess, without a thermal seed refill.
+    # An out-of-domain thermal guess still refuses at entropy admission.
+    # Admissible guesses retain the original first-iterate energy contract.
+    seed_step = _open_shell_gamma_needs_fermi_seed_step(
+        (D_alpha, D_beta), S, X, smear_T, int(opts.max_iter),
+    )
+    for iter_idx in range(0 if seed_step else 1, max(int(opts.max_iter), 1) + 1):
         if damper is not None:
             damping = damper.alpha
         # SPINLOCK PATTERN_HOLD: the accelerator (DIIS / EDIIS / ADIIS /
@@ -3406,7 +3443,7 @@ def run_pbc_gdf_uks(
         diis_active = (
             use_diis and iter_idx >= diis_start_iter and not hold_active
         )
-        if iter_idx == 1 or damping == 0.0 or diis_active:
+        if iter_idx <= 1 or damping == 0.0 or diis_active:
             D_alpha_used, D_beta_used = D_alpha, D_beta
         else:
             D_alpha_used = damping * D_alpha_prev + (1.0 - damping) * D_alpha
@@ -3447,6 +3484,20 @@ def run_pbc_gdf_uks(
         F_beta = Hcore + F_HF_beta + V_xc_beta
         F_alpha = 0.5 * (F_alpha + F_alpha.T)
         F_beta = 0.5 * (F_beta + F_beta.T)
+
+        if iter_idx == 0:
+            C_alpha, eps_alpha = diagonalise(F_alpha)
+            C_beta, eps_beta = diagonalise_beta(F_beta)
+            (D_alpha, D_beta, occ_a, occ_b, fermi_a, fermi_b, entropy_cur) = (
+                _open_shell_gamma_occupy(
+                    C_alpha, eps_alpha, C_beta, eps_beta, n_alpha, n_beta, smear_opts
+                )
+            )
+            D_alpha_prev, D_beta_prev = D_alpha.copy(), D_beta.copy()
+            C_alpha_f, eps_alpha_f = C_alpha, eps_alpha
+            C_beta_f, eps_beta_f = C_beta, eps_beta
+            plog.info("initial density: Fermi refill of the selected seed Fock")
+            continue
 
         E_core = float(np.einsum("ij,ij->", D_alpha_used + D_beta_used, Hcore))
         E_J = 0.5 * float(np.einsum("ij,ij->", D_alpha_used + D_beta_used, J))

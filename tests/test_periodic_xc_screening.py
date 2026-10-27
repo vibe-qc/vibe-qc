@@ -691,3 +691,67 @@ int main() {
     result = subprocess.run([str(exe)], check=True, capture_output=True, text=True)
     assert "cases 288" in result.stdout
     print(result.stdout)
+
+
+@pytest.mark.parametrize("functional", ["tpss", "m06-l", "r2scan"])
+@pytest.mark.parametrize("channel", ["restricted", "alpha", "beta"])
+@pytest.mark.parametrize("floor_active", [False, True])
+def test_mgga_tau_floor_energy_density_and_geometry_adjoint(functional, channel, floor_active):
+    """Differentiate the implemented energy on both sides of the tau floor.
+
+    The active-floor fixture deliberately has a non-PSD density, with positive
+    sampled rho. It isolates the numerical extension accepted by this kernel;
+    it is not a physical converged state. The inactive fixture is positive
+    definite. The grid stays fixed for the geometry derivative.
+    """
+    points = np.array([[.2, .1, .3]])
+    grid = core.Grid(points, np.array([1.]))
+    opts = core.LatticeSumOptions()
+    opts.cutoff_bohr = opts.becke_image_radius_bohr = 2.
+    density = np.array([[1., 1.2], [1.2, 1.]]) if floor_active else np.eye(2)
+    direction = np.array([[.1, .3], [.3, -.2]])
+    other = .5*np.eye(2)
+    spin = 1 if channel == "restricted" else 2
+    fun = core.Functional(functional, spin)
+
+    def geometry(displacement=0.):
+        s = vq.PeriodicSystem(3, np.eye(3)*8., [
+            vq.Atom(1, [0., 0., -.7]), vq.Atom(1, [0., 0., .7+displacement]),
+        ])
+        return s, vq.BasisSet(s.unit_cell_molecule(), "sto-3g")
+
+    system, basis = geometry()
+    ao, *grad = (np.asarray(x) for x in core.evaluate_ao_with_gradient(basis, points))
+    rho = np.einsum('pi,ij,pj->p', ao, density, ao)
+    grad_rho = np.array([2*np.einsum('pi,ij,pj->p', x, density, ao) for x in grad])
+    tau = .5*sum(np.einsum('pi,ij,pj->p', x, density, x) for x in grad)
+    tau_w = np.sum(grad_rho**2, axis=0)/(8*rho)
+    assert rho[0] > 0
+    assert bool(tau[0] < tau_w[0]) == floor_active
+    assert abs(tau[0]-tau_w[0]) > 1e-3  # differences do not cross the kink
+
+    def operands(s, b, d):
+        cells = [core.LatticeCell(s, (0, 0, 0))]
+        fold = lambda x: core.make_lattice_matrix_set(b.nbasis, cells, [x])
+        if spin == 1:
+            return (b, s, grid, fun, fold(d), opts)
+        alpha, beta = (d, other) if channel == "alpha" else (other, d)
+        return (b, s, grid, fun, fold(alpha), fold(beta), opts)
+
+    build = core.build_xc_periodic if spin == 1 else core.build_xc_periodic_uks
+    center = build(*operands(system, basis, density))
+    values = center.V_xc if spin == 1 else getattr(center, "V_"+channel)
+    adjoint = np.sum(np.asarray(values.blocks[0])*direction)
+    step = 1e-5
+    ep = build(*operands(system, basis, density+step*direction)).e_xc
+    em = build(*operands(system, basis, density-step*direction)).e_xc
+    assert adjoint == pytest.approx((ep-em)/(2*step), abs=2e-8, rel=2e-7)
+
+    gradient = (core.xc_lattice_gradient_contribution if spin == 1
+                else core.xc_lattice_gradient_contribution_uks)
+    analytic = np.asarray(gradient(*operands(system, basis, density)))[1, 2]
+    energies = []
+    for sign in (1., -1.):
+        s, b = geometry(sign*step)
+        energies.append(build(*operands(s, b, density)).e_xc)
+    assert analytic == pytest.approx((energies[0]-energies[1])/(2*step), abs=2e-8, rel=2e-7)

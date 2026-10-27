@@ -294,7 +294,9 @@ def test_engaged_screening_changes_only_the_retained_short_range_source():
     np.testing.assert_allclose(r.metric,m,atol=2e-11,rtol=2e-12)
     np.testing.assert_allclose(r.three_center,t,atol=2e-11,rtol=2e-12)
     assert np.max(abs(r.metric-exact.metric))<1e-3 and np.max(abs(r.three_center-exact.three_center))<1e-3
-    assert r.receipt.short_range.three_center_shell_calls<exact.receipt.short_range.three_center_shell_calls
+    # Splitting retained primitives may increase shell calls but reduces primitive work.
+    assert r.receipt.short_range.primitive_products<exact.receipt.short_range.primitive_products
+    assert r.receipt.short_range.three_center_shell_calls<=r.plan.short_range.three_center_shell_calls
     assert r.receipt.pair_fourier_shell_calls==exact.receipt.pair_fourier_shell_calls
     assert r.receipt.source_identity!=exact.receipt.source_identity
 
