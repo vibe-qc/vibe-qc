@@ -129,84 +129,6 @@ def _metric_keep_mask(
 # use). Below it the eigenvalue is not resolved from rounding and its
 # 1/sqrt(lambda) whitening would amplify noise, so the cut applies instead.
 # compcell and MDF keep their relative floors (decision scope).
-#
-# Accuracy of the kept modes: the full-rank fit resolves near-null modes of
-# diffuse auxiliary functions, so the q=0 metric rows of those functions are
-# summed in reciprocal space (_rsgdf_diffuse_metric_zero_transfer); the
-# range-separated assembly leaves them with architecture-dependent rounding
-# of about 1e-12 (Linux/macOS 1.2e-7 Ha on LiH (2,2,2) before 2026-10-28).
-
-
-def _rsgdf_diffuse_auxiliary_indices(aux_basis, omega: float) -> np.ndarray:
-    """Auxiliary functions whose every primitive exponent is <= omega**2.
-
-    These are wider than the SR range 1/omega, so their real-space erfc
-    lattice sum at zero transfer is almost entirely the finite SR p=0 mode
-    pi/(V omega^2) q_P q_Q that is subtracted afterwards (vibe-qc#179).
-    """
-    indices, first = [], 0
-    for shell in aux_basis.shells():
-        width = 2 * int(shell.l) + 1
-        if max(float(a) for a in shell.exponents) <= float(omega) ** 2:
-            indices.extend(range(first, first + width))
-        first += width
-    return np.asarray(indices, dtype=np.intp)
-
-
-def _rsgdf_diffuse_metric_zero_transfer(system, aux_basis, omega, metric):
-    """Replace the diffuse rows/columns of the q=0 SR/LR metric in place.
-
-    Ye & Berkelbach, J. Chem. Phys. 154, 131104 (2021), Eq. 15 and Fig. 1
-    (and PySCF's ``rsdf_builder.get_2c2e``, whose smooth auxiliary block is
-    a plain reciprocal sum): integrals with a diffuse auxiliary function are
-    evaluated entirely in reciprocal space with the bare Coulomb kernel,
-
-        M_PQ = (4 pi / V) sum_{G != 0} conj(chi_P(G)) chi_Q(G) / |G|^2,
-
-    which is mathematically the SR(erfc) + LR(erf, G != 0) - pi/(V omega^2)
-    q_P q_Q assembly of the native source. For a diffuse function that
-    assembly subtracts two nearly equal numbers. On LiH/def2-svp-jk, the
-    most diffuse Li s function has M_PP = 2.07e-4 left from a cancellation
-    of about 6e2. That leaves 1e-12 absolute, architecture-dependent
-    rounding on the eigenvalue 3.8e-10 the Cholesky-first fit keeps:
-    0.4 % of that mode, and 1.2e-7 Ha between Linux and macOS at (2,2,2).
-    The reciprocal sum has positive terms only and converges like
-    exp(-|G|^2 / (4 alpha_P)), so it is cut at |G|^2 = 4 alpha_max * 48
-    (terms below e^-48 ~ 1e-21 of the leading one). Returns the indices
-    replaced (empty: no diffuse function, nothing changed).
-    """
-    diffuse = _rsgdf_diffuse_auxiliary_indices(aux_basis, omega)
-    if diffuse.size == 0:
-        return diffuse
-    alpha = 0.0
-    for shell in aux_basis.shells():
-        if max(float(a) for a in shell.exponents) <= float(omega) ** 2:
-            alpha = max(alpha, max(float(a) for a in shell.exponents))
-    lattice = np.asarray(system.lattice, dtype=float)
-    volume = float(abs(np.linalg.det(lattice)))
-    reciprocal = 2.0 * np.pi * np.linalg.inv(lattice).T   # columns b_j
-    g2_max = 4.0 * alpha * 48.0
-    # Integer box enclosing the sphere: |n_j| <= |G| |a_j| / (2 pi).
-    bounds = [int(np.ceil(np.sqrt(g2_max) * np.linalg.norm(lattice[:, j]) / (2 * np.pi)))
-              for j in range(3)]
-    n_aux = int(aux_basis.nbasis)
-    block = np.zeros((diffuse.size, n_aux), dtype=np.complex128)
-    chunk = max(64, n_aux)
-    axes = [np.arange(-b, b + 1, dtype=float) for b in bounds]
-    first_axis = axes[0]
-    for n0 in first_axis:
-        grid = np.stack(np.meshgrid([n0], axes[1], axes[2], indexing='ij'), axis=-1).reshape(-1, 3)
-        vectors = grid @ reciprocal.T
-        g2 = np.einsum('gi,gi->g', vectors, vectors)
-        keep = (g2 <= g2_max) & (g2 > 1e-24)
-        vectors, g2 = vectors[keep], g2[keep]
-        for start in range(0, len(g2), chunk):
-            ft = rsgdf_aux_fourier_transform(aux_basis, vectors[start:start + chunk])
-            weights = (4.0 * np.pi / volume) / g2[start:start + chunk]
-            block += (ft[diffuse].conj() * weights) @ ft.T
-    metric[diffuse, :] = block
-    metric[:, diffuse] = block.conj().T
-    return diffuse
 
 
 def _rsgdf_metric_rounding_floor(eigvals: np.ndarray, n_aux: int) -> float:
@@ -6161,13 +6083,6 @@ def _build_lpq_range_separated_shared_q(
         **({} if shell_pair_cutoffs is None else dict(shell_pair_cutoffs=shell_pair_cutoffs)),
         **supplied,
     )
-    fractional_q = np.asarray(system.lattice, dtype=float).T @ q / (2 * np.pi)
-    if (not metric_hit and kernel == 'coulomb' and metric_decomposition == 'cholesky'
-            and np.linalg.norm(fractional_q - np.rint(fractional_q)) < 1e-12
-            and int(system.dim) == 3):
-        # vibe-qc#179: the full-rank fit resolves near-null diffuse modes, so
-        # their metric block avoids the SR p=0 cancellation (Ye 2021 Eq. 15).
-        _rsgdf_diffuse_metric_zero_transfer(system, aux_basis, omega, metric)
     if metric_hit:
         eigenvalues = _metric_state["eigenvalues"]
         eigenvectors = _metric_state["eigenvectors"]

@@ -58,28 +58,6 @@ Issue #676 implements the first P0-P3 molecular energy-fitting slice; see the
 [parameter-opt guide](user_guide/parameter_opt.md). Broader scientific acceptance
 remains open; no generally validated new parameter set is shipped.
 
-## Geometry-aware structure similarity (on the radar)
-
-Not scheduled, not release-gated and not part of any current paper. Spectral
-graph fingerprints (Toney, Farnood, Darouich and Kulik, *Chem. Sci.* 2026,
-doi:10.1039/d6sc06309h) turn 3D coordinates into a fixed-length,
-alignment-free vector from the Laplacian spectra of four interaction channels:
-electrostatic, bonding, steric and dispersion. They separate conformers and
-stereoisomers that 2D fingerprints merge, at the cost of one small eigensolve
-per channel. A prototype reproduces the reference implementation. As
-published, though, the similarity mostly tracks atom count, and every
-diatomic gets the same fingerprint. A size-normalised quantile variant with a
-per-channel scale term fixes both, at some cost to the locality of extensive
-properties such as polarisability.
-
-| Issue | Scope |
-|---|---|
-| #693 | Core module: upstream-compatible and size-normalised variants, citation entry |
-| #694 | Deduplication and diverse-frame selection for MD, metadynamics, scans, NEB/IRC |
-| #695 | Periodic fingerprint, invariant to cell choice |
-| #696 | Research: electronic-structure channels and metal-centre weighting |
-| vibe-view#163 | Chemical-space map and per-channel similarity view |
-
 ## Release table
 
 Every released minor, checked against `RELEASE_CODENAMES`, `CHANGELOG.md` and

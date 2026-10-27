@@ -1625,7 +1625,6 @@ UKSResult run_uks_scf_once(const BasisSet& basis,
                 {"residual_alpha", err_a}, {"residual_beta", err_b}};
         }
         diis.set_capture(captured ? &captured->diis : nullptr);
-        ediis.set_capture(captured ? &captured->ediis : nullptr);
         detail::UKSRecoveryFrame frame;
         if (diagnostic) {
             frame.iteration = iter;
@@ -1781,11 +1780,6 @@ UKSResult run_uks_scf_once(const BasisSet& basis,
                             grad_norm,
                             static_cast<Eigen::Index>(F_alpha.rows()),
                             2);
-                    if (captured) {
-                        captured->state.values["switch_metric"] = switch_metric;
-                        captured->state.values["switch_threshold"] =
-                            opts.ediis_diis_switch_threshold;
-                    }
                     if (switch_metric > opts.ediis_diis_switch_threshold) {
                         Fa_ext = std::move(e.first);
                         Fb_ext = std::move(e.second);
@@ -1862,7 +1856,6 @@ UKSResult run_uks_scf_once(const BasisSet& basis,
 
         if (captured) {
             captured->state.values["accelerator_step"] = accelerator_step_this_iter;
-            captured->state.values["diis_subspace"] = diis_sub;
             captured->state.matrices["search_fock_alpha"] = F_alpha;
             captured->state.matrices["search_fock_beta"] = F_beta;
         }
@@ -3040,32 +3033,15 @@ UKSResult run_uks_with_operator_capture(const Molecule& mol, const BasisSet& bas
 }
 UKSResult run_uks_with_diis_capture(const Molecule& mol, const BasisSet& basis,
     const UKSOptions& opts, UKSDIISCapture& report) {
-    // Each refusal names its own bound so tests can assert that bound rather
-    // than whichever check happens to fire first.
-    auto refuse = [](const char* why) {
-        throw std::invalid_argument(
-            std::string("Invalid bounded UKS DIIS capture request: ") + why);
-    };
-    if (diis_capture || operator_capture || recovery_diagnostic)
-        refuse("overlapping diagnostic context");
-    if (opts.stability_check) refuse("stability recursion is not captured");
-    // Per frame: <= 16 stacked (2n x n) DIIS (F, e) pairs, <= 12 EDIIS
-    // (F, D) spin pairs and the state matrices, about 3.8 MiB at n = 64 and
-    // scaling as n^2; 32 frames at n = 128 stay near 0.5 GiB.
-    if (basis.nbasis() > 128) refuse("more than 128 basis functions");
-    if (opts.diis_subspace_size > 16) refuse("DIIS history deeper than 16");
-    if (!opts.use_diis) refuse("DIIS disabled");
-    if (opts.scf_accelerator != SCFAccelerator::DIIS
-        && opts.scf_accelerator != SCFAccelerator::R_CDIIS
-        && opts.scf_accelerator != SCFAccelerator::AD_CDIIS
-        && opts.scf_accelerator != SCFAccelerator::EDIIS
-        && opts.scf_accelerator != SCFAccelerator::EDIIS_DIIS)
-        refuse("unsupported accelerator");
-    if (report.first < 1) refuse("window starts before iteration 1");
-    if (report.last < report.first) refuse("window ends before it starts");
-    if (report.last - report.first >= 32)
-        refuse("window spans more than 32 iterations");
-    if (report.last > opts.max_iter) refuse("window ends after max_iter");
+    if (diis_capture || operator_capture || recovery_diagnostic || opts.stability_check
+        || basis.nbasis() > 64 || opts.diis_subspace_size > 16 || !opts.use_diis
+        || (opts.scf_accelerator != SCFAccelerator::DIIS
+            && opts.scf_accelerator != SCFAccelerator::R_CDIIS
+            && opts.scf_accelerator != SCFAccelerator::AD_CDIIS)
+        || report.first < 1 || report.last < report.first
+        || report.last - report.first >= 32 || report.last > opts.max_iter) {
+        throw std::invalid_argument("Invalid bounded UKS DIIS capture request");
+    }
     report.frames.clear();
     report.frames.reserve(report.last - report.first + 1);
     struct Scope {

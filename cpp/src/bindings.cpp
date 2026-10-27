@@ -7483,24 +7483,7 @@ m.def("compute_cosx_k",
                 solve["rank"] = a.rank; solve["usable"] = a.usable;
                 attempts.append(solve);
             }
-            row["attempts"] = attempts;
-            py::dict ediis;
-            ediis["focks"] = py::cast(f.ediis.focks);
-            ediis["densities"] = py::cast(f.ediis.densities);
-            ediis["energies"] = py::cast(f.ediis.energies);
-            ediis["surviving"] = py::cast(f.ediis.surviving);
-            ediis["disposition"] = f.ediis.disposition;
-            py::list ediis_attempts;
-            for (const auto& a : f.ediis.attempts) {
-                py::dict solve; solve["linear"] = a.linear;
-                solve["quadratic"] = a.quadratic;
-                solve["coefficients"] = a.coefficients;
-                solve["interpolated_energy"] = a.interpolated_energy;
-                solve["erased_index"] = a.erased_index;
-                ediis_attempts.append(solve);
-            }
-            ediis["attempts"] = ediis_attempts;
-            row["ediis"] = ediis; frames.append(row);
+            row["attempts"] = attempts; frames.append(row);
         }
         py::dict report;
         report["overlap"] = capture.overlap; report["orthogonalizer"] = capture.orthogonalizer;

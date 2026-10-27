@@ -172,12 +172,12 @@
   },
   {
     "changed": false,
-    "export_sha256": "df2ecec1a29c1def97fdaff6e523ac7206559976c8468c638141ce689063994e",
+    "export_sha256": "6bf516474473f525bad17691f765bc3dd6696638f38b103e2c4c8d29965333eb",
     "mode": "100644",
     "path": ".gitlab-ci.yml",
     "reasons": [],
-    "source_blob": "a2908759c4c070a964491db2d70c0fbb4b2ad938",
-    "source_sha256": "df2ecec1a29c1def97fdaff6e523ac7206559976c8468c638141ce689063994e"
+    "source_blob": "f08e608009b3c103463fb1adc201569e25909cfa",
+    "source_sha256": "6bf516474473f525bad17691f765bc3dd6696638f38b103e2c4c8d29965333eb"
   },
   {
     "changed": false,
@@ -514,12 +514,12 @@
   },
   {
     "changed": false,
-    "export_sha256": "c595ec7ca72e2ba37c1e8da99be66c44eab81ce3eb5a9c713c819b6d334937a2",
+    "export_sha256": "24ef966bf629d08b59d1ac2443bd8961cd9a891d5f1ed12abceb2c63de7b0c99",
     "mode": "100644",
     "path": "benchmarks/gpu_g0.md",
     "reasons": [],
-    "source_blob": "9f84f369f80f2c1f273d9f4f5e8a5ef024aec008",
-    "source_sha256": "c595ec7ca72e2ba37c1e8da99be66c44eab81ce3eb5a9c713c819b6d334937a2"
+    "source_blob": "b111914cdb2e15b5965bfa1773c2a1204e259678",
+    "source_sha256": "24ef966bf629d08b59d1ac2443bd8961cd9a891d5f1ed12abceb2c63de7b0c99"
   },
   {
     "changed": false,
@@ -2062,33 +2062,6 @@
   },
   {
     "changed": false,
-    "export_sha256": "9f82972b266da4a132cd2b0d8dd8e51dca925b9d1a9a2caca6f035b2372019d7",
-    "mode": "100644",
-    "path": "changelog.d/basisopt-drivers-nonfinite.md",
-    "reasons": [],
-    "source_blob": "3de0b7bb4138d4588aa3b5f8cd0814eefd4d3402",
-    "source_sha256": "9f82972b266da4a132cd2b0d8dd8e51dca925b9d1a9a2caca6f035b2372019d7"
-  },
-  {
-    "changed": false,
-    "export_sha256": "7574acdc4752aaedaec25f40746214c085166d1b89b74dba4de8c68d658b5dff",
-    "mode": "100644",
-    "path": "changelog.d/rsgdf-diffuse-metric-zero-transfer.fixed.md",
-    "reasons": [],
-    "source_blob": "c2f67af98d50c9478dad168de087d57952be6084",
-    "source_sha256": "7574acdc4752aaedaec25f40746214c085166d1b89b74dba4de8c68d658b5dff"
-  },
-  {
-    "changed": false,
-    "export_sha256": "8049ca1643560fea37f278b5929d0445a9ebc5d4c4c08a5fb70b66c8109f423c",
-    "mode": "100644",
-    "path": "changelog.d/uks-ediis-diis-capture.md",
-    "reasons": [],
-    "source_blob": "e06dba1ab87faae3a60f699f2646b3d61f676514",
-    "source_sha256": "8049ca1643560fea37f278b5929d0445a9ebc5d4c4c08a5fb70b66c8109f423c"
-  },
-  {
-    "changed": false,
     "export_sha256": "d7ffe3721015f2e252e111277ab2903e3c10dc4b996c19cc12305591b02464b9",
     "mode": "100644",
     "path": "cpp/CMakeLists.txt",
@@ -2791,12 +2764,12 @@
   },
   {
     "changed": false,
-    "export_sha256": "73add339a702fa3a06f70c630b6c50380441de5ea536100ebce1c33a4f394201",
+    "export_sha256": "359e6b226695e1cad6403d027534b8cb1e50b1e65ada777fe49d478e68d36d83",
     "mode": "100644",
     "path": "cpp/include/vibeqc/ediis.hpp",
     "reasons": [],
-    "source_blob": "abf52d7c95682ed27166ac119fdee4695f380fea",
-    "source_sha256": "73add339a702fa3a06f70c630b6c50380441de5ea536100ebce1c33a4f394201"
+    "source_blob": "29ee558b48e12aa85eec33f0499a2e74bfdf3f0f",
+    "source_sha256": "359e6b226695e1cad6403d027534b8cb1e50b1e65ada777fe49d478e68d36d83"
   },
   {
     "changed": false,
@@ -5167,12 +5140,12 @@
   },
   {
     "changed": false,
-    "export_sha256": "392dd907d864352f24712f0266473a292733fbefd27309ea12ae18c37b18db4c",
+    "export_sha256": "5cfee5f079d76f8da388aeed4a6189d0f5ba9afccad15b57ac81c695620a526c",
     "mode": "100644",
     "path": "cpp/include/vibeqc/uks_recovery_diagnostic.hpp",
     "reasons": [],
-    "source_blob": "5808345a9e1e2a14297e9b3c09a69013e4833475",
-    "source_sha256": "392dd907d864352f24712f0266473a292733fbefd27309ea12ae18c37b18db4c"
+    "source_blob": "17afb97b8824610dc67b43b4eb0487667a4ef7a3",
+    "source_sha256": "5cfee5f079d76f8da388aeed4a6189d0f5ba9afccad15b57ac81c695620a526c"
   },
   {
     "changed": false,
@@ -5311,12 +5284,12 @@
   },
   {
     "changed": false,
-    "export_sha256": "9ef849e73c9463b4cb4ec5cda1c746ba48bf12009eb3f420ad61f59d8f114f78",
+    "export_sha256": "2dc7215901f464e92f56d25d3cada13722cc6c6106027e9a26f0a88ce0549db6",
     "mode": "100644",
     "path": "cpp/src/bindings.cpp",
     "reasons": [],
-    "source_blob": "5fba2c30458f40c4a36d41eeda0b195af50ca410",
-    "source_sha256": "9ef849e73c9463b4cb4ec5cda1c746ba48bf12009eb3f420ad61f59d8f114f78"
+    "source_blob": "70b7de4bcb9b5396d1bc630b549e90af18d32fb3",
+    "source_sha256": "2dc7215901f464e92f56d25d3cada13722cc6c6106027e9a26f0a88ce0549db6"
   },
   {
     "changed": false,
@@ -6031,12 +6004,12 @@
   },
   {
     "changed": false,
-    "export_sha256": "d1ab01df3537b200434080dc2ce0f621d7b7b2cc23c76d7fb14313c273075f65",
+    "export_sha256": "2d7498adf0e5531d9257b2adef150111d3ddb60f4a76819b6717dc8452b849a8",
     "mode": "100644",
     "path": "cpp/src/ediis.cpp",
     "reasons": [],
-    "source_blob": "c91738770fdacca006394ce958f5f5e7c5f6b407",
-    "source_sha256": "d1ab01df3537b200434080dc2ce0f621d7b7b2cc23c76d7fb14313c273075f65"
+    "source_blob": "f79992900405aea0a2a74880075d9d8ef8eee3aa",
+    "source_sha256": "2d7498adf0e5531d9257b2adef150111d3ddb60f4a76819b6717dc8452b849a8"
   },
   {
     "changed": false,
@@ -9595,12 +9568,12 @@
   },
   {
     "changed": false,
-    "export_sha256": "cf7086939e079e842f9d0df4b7cba0429c60543cec86a8257b69a4af43f5f9a8",
+    "export_sha256": "ff2492789edebee8d5b46ee726eee599a11fa44818fedbf29b5d7f24254020d2",
     "mode": "100644",
     "path": "cpp/src/uks.cpp",
     "reasons": [],
-    "source_blob": "d043903828712faa7d67dcc1dfe40bda6852b038",
-    "source_sha256": "cf7086939e079e842f9d0df4b7cba0429c60543cec86a8257b69a4af43f5f9a8"
+    "source_blob": "ed6bbb9c6de2ca2e8babb6d2da8884a7eee6043c",
+    "source_sha256": "ff2492789edebee8d5b46ee726eee599a11fa44818fedbf29b5d7f24254020d2"
   },
   {
     "changed": false,
@@ -14374,12 +14347,12 @@
   },
   {
     "changed": false,
-    "export_sha256": "ff7f9ac69dad58c2069691a42035cde943c539b9005c85e3c7c7972ace58df99",
+    "export_sha256": "64e25905a3e427c3298b0f09f7670ce85a64336a0a510e0d6219cefad10bf467",
     "mode": "100644",
     "path": "docs/roadmap.md",
     "reasons": [],
-    "source_blob": "6a47cb727dab11828c4cbb071a2a93445032eb60",
-    "source_sha256": "ff7f9ac69dad58c2069691a42035cde943c539b9005c85e3c7c7972ace58df99"
+    "source_blob": "544ee3a96fb00da7eaf0b823c1bc957bde860c2a",
+    "source_sha256": "64e25905a3e427c3298b0f09f7670ce85a64336a0a510e0d6219cefad10bf467"
   },
   {
     "changed": false,
@@ -15553,12 +15526,12 @@
   },
   {
     "changed": false,
-    "export_sha256": "dbcbf0e1a04bd89b49b2881186cfe0d08787c3a4ff03b31828474d28d0f5344e",
+    "export_sha256": "fd30c575b2cf3fed904c89255a3f0b5e8b2322e0d18f6c7395b08af243e849f2",
     "mode": "100644",
     "path": "docs/user_guide/basis_optimization.md",
     "reasons": [],
-    "source_blob": "175063cb47c1068e4d83f0ca19271c4cc2503b83",
-    "source_sha256": "dbcbf0e1a04bd89b49b2881186cfe0d08787c3a4ff03b31828474d28d0f5344e"
+    "source_blob": "b150b21d3ca17a7b11eb4d0af151c265f19b61cb",
+    "source_sha256": "fd30c575b2cf3fed904c89255a3f0b5e8b2322e0d18f6c7395b08af243e849f2"
   },
   {
     "changed": false,
@@ -29791,12 +29764,12 @@
   },
   {
     "changed": false,
-    "export_sha256": "76d86b320e790e16a8586e23500c25be9af12f709816a9a4023ab3a94a1cc962",
+    "export_sha256": "8932600ccea8c7f9577c0d99d9351a0247e4a8bcbcb0db3086205ff0da843386",
     "mode": "100644",
     "path": "examples/regression/gpu_profile.py",
     "reasons": [],
-    "source_blob": "4f058e2640d8b9af5c4951d5d487c4304cafd5c4",
-    "source_sha256": "76d86b320e790e16a8586e23500c25be9af12f709816a9a4023ab3a94a1cc962"
+    "source_blob": "7ec11aef53c06be93b647366709db74dec591023",
+    "source_sha256": "8932600ccea8c7f9577c0d99d9351a0247e4a8bcbcb0db3086205ff0da843386"
   },
   {
     "changed": false,
@@ -32419,12 +32392,12 @@
   },
   {
     "changed": false,
-    "export_sha256": "974cfc1d641a3f8d2534094812cc2499c28572f6ae604916b11e7f5a12f4a207",
+    "export_sha256": "3b701dd831443451f7a8a8ad0f7409b9290acc03aaaf895ad5d5f70894a74c09",
     "mode": "100644",
     "path": "python/vibeqc/aux_basis.py",
     "reasons": [],
-    "source_blob": "1489e081108c864ebc950a9b93f4951f6debb940",
-    "source_sha256": "974cfc1d641a3f8d2534094812cc2499c28572f6ae604916b11e7f5a12f4a207"
+    "source_blob": "21e26f0b3368d8107ec486058af06b823e697359",
+    "source_sha256": "3b701dd831443451f7a8a8ad0f7409b9290acc03aaaf895ad5d5f70894a74c09"
   },
   {
     "changed": false,
@@ -39124,12 +39097,12 @@
   },
   {
     "changed": false,
-    "export_sha256": "de914f200728eb2058814b188fb36f3ff4397a9633dccb0602cfeaa7b6b191b4",
+    "export_sha256": "4f967c9153880824b4e867327c35969f9e58d5e36d127157aa195b7f99f5cf11",
     "mode": "100644",
     "path": "python/vibeqc/basis_optimization/drivers.py",
     "reasons": [],
-    "source_blob": "e722fe2ca4c642454a141db044a8f4fe0cca35d9",
-    "source_sha256": "de914f200728eb2058814b188fb36f3ff4397a9633dccb0602cfeaa7b6b191b4"
+    "source_blob": "88467bdc4c9618e3fb532d089cf3952aeed9073e",
+    "source_sha256": "4f967c9153880824b4e867327c35969f9e58d5e36d127157aa195b7f99f5cf11"
   },
   {
     "changed": false,
@@ -39178,12 +39151,12 @@
   },
   {
     "changed": false,
-    "export_sha256": "557cd993484d77748bd58fc5af7a4675d929517a70d0acea5afbacf2403e10b1",
+    "export_sha256": "7764a5506217c73a2ca84c13ce513b794a6831d802c8a4fcf73281b9ce5301ef",
     "mode": "100644",
     "path": "python/vibeqc/basis_optimization/objective.py",
     "reasons": [],
-    "source_blob": "c7aac72215b7d512f7d8973c73edd41051be984a",
-    "source_sha256": "557cd993484d77748bd58fc5af7a4675d929517a70d0acea5afbacf2403e10b1"
+    "source_blob": "82dfc389c1159c3a0e6b066a33b23c7644a42f29",
+    "source_sha256": "7764a5506217c73a2ca84c13ce513b794a6831d802c8a4fcf73281b9ce5301ef"
   },
   {
     "changed": false,
@@ -48817,12 +48790,12 @@
   },
   {
     "changed": false,
-    "export_sha256": "fd3d954df93b16ee2661fa398f9cde5bdd4154fefc90158520145a76b3b8567e",
+    "export_sha256": "fd731055f1f82add14f3f577e0794861df646fe31c2a4e222bf8070e13a6903c",
     "mode": "100644",
     "path": "tests/basisset_dev/test_basis_opt_dfo_drivers.py",
     "reasons": [],
-    "source_blob": "adae25ad60c7061a90a2cb60e0c98d25aa7b77be",
-    "source_sha256": "fd3d954df93b16ee2661fa398f9cde5bdd4154fefc90158520145a76b3b8567e"
+    "source_blob": "c8ca387bbb44bb89f056db2e60760729d21c6310",
+    "source_sha256": "fd731055f1f82add14f3f577e0794861df646fe31c2a4e222bf8070e13a6903c"
   },
   {
     "changed": false,
@@ -53128,12 +53101,12 @@
   },
   {
     "changed": false,
-    "export_sha256": "7bb6a2f2d5c1828facdbf98f1ab7bb983c7961eb7ac27dc12992fc8ee16f0657",
+    "export_sha256": "d1607ccd85ac2987331146b058f32a3e97eeebd4eb68608d97c5ef8ee01cb1aa",
     "mode": "100644",
     "path": "tests/test_gpu_profile.py",
     "reasons": [],
-    "source_blob": "e950f9945ff5a7defd73fe004403f1b4328d55bb",
-    "source_sha256": "7bb6a2f2d5c1828facdbf98f1ab7bb983c7961eb7ac27dc12992fc8ee16f0657"
+    "source_blob": "34f672bcec97db2d7a5804952755869da3eb68ea",
+    "source_sha256": "d1607ccd85ac2987331146b058f32a3e97eeebd4eb68608d97c5ef8ee01cb1aa"
   },
   {
     "changed": false,
@@ -56458,12 +56431,12 @@
   },
   {
     "changed": false,
-    "export_sha256": "a1eb0d9223f870479fd45da3624282a2a84514f2592fd8b9cc1ce1bd3914c742",
+    "export_sha256": "46eb17b52dcbbdfa7f4144423c807a05385e604c976d077ca536520eb469095b",
     "mode": "100644",
     "path": "tests/test_periodic_feature_input_guards.py",
     "reasons": [],
-    "source_blob": "026a18e5662929967109bc92bda88a1d6ba46a94",
-    "source_sha256": "a1eb0d9223f870479fd45da3624282a2a84514f2592fd8b9cc1ce1bd3914c742"
+    "source_blob": "69731ca812dc04b3346dfc23d348b2d402200818",
+    "source_sha256": "46eb17b52dcbbdfa7f4144423c807a05385e604c976d077ca536520eb469095b"
   },
   {
     "changed": false,
@@ -58447,12 +58420,12 @@
   },
   {
     "changed": false,
-    "export_sha256": "550a35a3321605508ca0609501994fcf6973f607d844404f2afec10fddce20ca",
+    "export_sha256": "550e87f62464a276def5290be08f6beae412a8bd4fca911f940b1965e24e7b6c",
     "mode": "100644",
     "path": "tests/test_rsgdf_metric_cholesky_first.py",
     "reasons": [],
-    "source_blob": "cef49c6cf6beaf7e0f48dfaeafbd1e68fa030a41",
-    "source_sha256": "550a35a3321605508ca0609501994fcf6973f607d844404f2afec10fddce20ca"
+    "source_blob": "4388861e7b589b894c3737dc91aeb585a47409fc",
+    "source_sha256": "550e87f62464a276def5290be08f6beae412a8bd4fca911f940b1965e24e7b6c"
   },
   {
     "changed": false,
@@ -59968,12 +59941,12 @@
   },
   {
     "changed": false,
-    "export_sha256": "c0cb37a94ac386b9f9c1a33cd43338129ad98a477bd5147105c2d99e250d556f",
+    "export_sha256": "08f07810ef28c6b364df85a64260038958afe0ed9ba71f9a52477cde7382d8f1",
     "mode": "100644",
     "path": "tests/test_uks.py",
     "reasons": [],
-    "source_blob": "3086f44cd96d7960ada89848f6a9144c8d3be842",
-    "source_sha256": "c0cb37a94ac386b9f9c1a33cd43338129ad98a477bd5147105c2d99e250d556f"
+    "source_blob": "8af7331c25c58bf7719df9529eb7c364e44d3deb",
+    "source_sha256": "08f07810ef28c6b364df85a64260038958afe0ed9ba71f9a52477cde7382d8f1"
   },
   {
     "changed": false,

@@ -170,7 +170,7 @@ def test_redact_strips_paths_and_private_terms():
 # ---- timing accounting --------------------------------------------------
 
 
-def _timing(unclassified=0.1, scale=1.0):
+def _timing(unclassified=0.1):
     phases = [
         {"path": "setup.jk_construction", "inclusive_s": 1.0, "exclusive_s": 0.2, "calls": 1},
         {"path": "setup.jk_construction/df.construction", "inclusive_s": 0.8,
@@ -180,9 +180,6 @@ def _timing(unclassified=0.1, scale=1.0):
         {"path": "fock.jk_fused/df.k", "inclusive_s": 1.5, "exclusive_s": 1.5, "calls": 10},
         {"path": "diagonalization", "inclusive_s": 0.3, "exclusive_s": 0.3, "calls": 10},
     ]
-    for p in phases:
-        p["inclusive_s"] *= scale
-        p["exclusive_s"] *= scale
     wall = sum(p["exclusive_s"] for p in phases) + unclassified
     return {"enabled": True, "wall_s": wall, "unclassified_s": unclassified,
             "phases": phases, "iterations": [], "memory": {}}
@@ -212,8 +209,7 @@ def test_group_phases_and_reconcile():
 def _record(case_id="H2O__def2-svp__RHF__df", *, ct=True, label="rep0",
             energy=-76.0, wall=1.0, sha="a" * 40, native="b" * 64, dirty=False,
             converged=True):
-    # The native session lies inside the Python SCF interval: keep it shorter.
-    timing = _timing(unclassified=0.01, scale=0.1) if ct else {"enabled": False}
+    timing = _timing() if ct else {"enabled": False}
     if ct:
         timing["reconciliation"] = gp.reconcile(timing)
     return {
@@ -309,53 +305,3 @@ def test_deduplicate_keeps_both_labels_only_for_identical_settings():
     s = gp.summarize([rec])
     assert s["rows"][0]["aliases"] == ["x__auto"]
     assert "(= auto)" in gp.render_markdown(s)
-
-
-class _Row:
-    def __init__(self, g):
-        self.grad_norm = g
-
-
-def test_converging_residual_skips_the_final_grid_recompute():
-    trace = [_Row(1e-2), _Row(5e-7), _Row(4e-3)]
-    staged = {"enabled": True, "n_segments": 3, "iterations": [
-        {"segment": 0}, {"segment": 1}, {"segment": 2}]}
-    assert gp.converging_grad_norm(trace, staged) == 5e-7
-    full_final = {"enabled": True, "n_segments": 2, "iterations": [
-        {"segment": 0}, {"segment": 1}, {"segment": 1}]}
-    assert gp.converging_grad_norm(trace, full_final) == 4e-3
-    single = {"enabled": True, "n_segments": 1, "iterations": [{"segment": 0}] * 3}
-    assert gp.converging_grad_norm(trace, single) == 4e-3
-    assert gp.converging_grad_norm(trace, {"enabled": False}) is None
-    rec = _record()
-    rec["result"]["final_grad_norm"] = 4e-3
-    rec["result"]["converging_grad_norm"] = 5e-7
-    row = gp.summarize([rec])["rows"][0]
-    assert row["final_grad_above_recipe"] is False
-    assert row["converging_grad_norm_max"] == 5e-7
-
-
-def test_host_sleep_makes_timings_incomplete():
-    assert gp.host_sleep_s((10.0, 5.0), (30.0, 25.0)) == 0.0
-    assert gp.host_sleep_s((10.0, 5.0), (40.0, 25.0)) == 10.0
-    assert gp.host_sleep_s(None, (1.0, 1.0)) is None
-    pair = gp.sleep_clock_pair()
-    assert pair is None or len(pair) == 2
-    rec = _record()
-    rec["host_sleep_s"] = 1290.0
-    row = gp.summarize([rec])["rows"][0]
-    assert row["status"] == "INCOMPLETE" and row["fail_reasons"] == ["host_slept"]
-    rec2 = _record(converged=False)
-    rec2["host_sleep_s"] = 1290.0
-    assert gp.summarize([rec2])["rows"][0]["status"] == "FAIL"
-
-
-def test_sleep_derived_from_clock_disagreement_in_older_records():
-    rec = _record(wall=100.0)
-    rec["timing"]["wall_s"] = 1390.0
-    assert gp.record_sleep_s(rec) == pytest.approx(1290.0)
-    assert gp.summarize([rec])["rows"][0]["status"] == "INCOMPLETE"
-    awake = _record(wall=100.0)
-    awake["timing"]["wall_s"] = 99.99
-    assert gp.record_sleep_s(awake) == 0.0
-    assert gp.record_sleep_s(_record(ct=False)) is None

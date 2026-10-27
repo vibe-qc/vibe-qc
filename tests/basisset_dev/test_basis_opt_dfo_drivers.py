@@ -5,9 +5,7 @@ Covers ``optimize_bobyqa`` (Py-BOBYQA), ``optimize_dfols`` (DFO-LS),
 ``recipes.global_then_polish.optimize_global_then_polish`` on the same mock
 objectives the scipy and BDIIS driver tests use, plus the pack/unpack
 round trip through log space, bounds enforcement, the ``OptResult`` contract
-and the citation provenance of each driver. The failed-evaluation tests also
-cover ``optimize_scipy`` and ``optimize_minuit``: all four drivers hand their
-optimiser a finite stand-in for a non-finite objective value.
+and the citation provenance of each driver.
 
 Pure-Python: no vibe-qc SCF. Uses the guarded ``vibeqc`` namespace shim of
 ``test_bdiis_driver.py`` so it runs without a built C++ extension. Every
@@ -71,13 +69,6 @@ from vibeqc.basis_optimization import (  # noqa: E402
     optimize_bobyqa,
     optimize_cmaes,
     optimize_dfols,
-    optimize_minuit,
-    optimize_scipy,
-)
-from vibeqc.basis_optimization.drivers import (  # noqa: E402
-    _FiniteResidualStandIn,
-    _FiniteStandIn,
-    _StartNotFinite,
 )
 from vibeqc.basis_optimization.recipes.global_then_polish import (  # noqa: E402
     GLOBAL_THEN_POLISH_CITATION_KEYS,
@@ -220,13 +211,10 @@ def test_bobyqa_projects_starting_point_into_box(need_bobyqa):
 
 
 def test_bobyqa_half_open_bounds_and_inf_region(need_bobyqa):
-    """rhobeg=2 puts the second point at x = -0.5, in the +inf region; with
-    the default first step the run never left x > 0."""
     obj = InfBelowZero()
-    res = optimize_bobyqa(obj, x0=np.array([1.5]), bounds=[(None, 5.0)], rhobeg=2.0, rhoend=1e-10)
+    res = optimize_bobyqa(obj, x0=np.array([1.5]), bounds=[(None, 5.0)], rhoend=1e-10)
     assert res.success, res.message
     assert res.x[0] == pytest.approx(0.5, abs=1e-6)
-    assert sum(not np.isfinite(v) for _, v in res.history) >= 1
 
 
 def test_bobyqa_bounds_length_mismatch_raises(need_bobyqa):
@@ -395,170 +383,6 @@ def test_cmaes_missing_package_raises(monkeypatch):
     obj = MockEnergy(n_params=1, center=np.zeros(1))
     with pytest.raises(RuntimeError, match="pip install cma"):
         optimize_cmaes(obj, x0=np.zeros(1))
-
-
-# --------------------------------------------------------------------------
-# Failed evaluations: scipy, Minuit, Py-BOBYQA and DFO-LS see a finite stand-in
-# --------------------------------------------------------------------------
-
-# vibe-basis's infeasible-disc problem (tests/test_optimize.py there): the
-# minimum of |x - target|^2 lies past a disc of radius 0.433 that a first
-# step of 1.5 from the start lands in.
-_DISC_TARGET = np.array([1.485, -0.555])
-_DISC_CENTRE = np.array([0.393, -1.763])
-_DISC_START = np.array([-1.062, -2.099])
-_DISC_BOX = [(-5.0, 5.0)] * 2
-
-
-def _in_disc(x: np.ndarray) -> bool:
-    return bool(np.linalg.norm(np.asarray(x, dtype=float) - _DISC_CENTRE) < 0.433)
-
-
-def _replacements(res: OptResult) -> int:
-    """The stand-in count from the message, checked against the history."""
-    n_bad = sum(not np.isfinite(v) for _, v in res.history)
-    assert f"; {n_bad} non-finite evaluation(s) replaced by a finite stand-in" in res.message
-    return n_bad
-
-
-def test_the_stand_in_is_the_worst_finite_value_plus_a_margin():
-    with pytest.raises(_StartNotFinite):
-        _FiniteStandIn()(float("inf"))
-    s = _FiniteStandIn()
-    assert [s(v) for v in (-10.0, -12.0)] == [-10.0, -12.0]
-    assert s(float("nan")) == pytest.approx(-10.0 + 2.0)        # the spread
-    one = _FiniteStandIn()
-    one(-275.0)
-    assert one(float("inf")) == pytest.approx(-275.0 + 0.275)   # 1e-3 of |worst|
-    fixed = _FiniteStandIn(margin=100.0)
-    fixed(5.0)
-    assert fixed(float("inf")) == 105.0 and fixed.replaced == 1
-    assert fixed.evaluations == 2
-
-
-def test_the_residual_stand_in_scales_the_worst_finite_vector():
-    with pytest.raises(_StartNotFinite):
-        _FiniteResidualStandIn()(np.array([np.nan, 0.0]))
-    s = _FiniteResidualStandIn()
-    s(np.array([3.0, 4.0]))                                     # sum of squares 25, the worst
-    s(np.array([1.0, 0.0]))                                     # 1
-    # one nan entry fails the whole vector: 25 + (25 - 1) = 49 = |(3, 4) * 7/5|^2
-    np.testing.assert_allclose(s(np.array([np.nan, 1.0])), [4.2, 5.6])
-    s(np.array([1e200, 0.0]))                                   # sum of squares overflows
-    assert s.replaced == 2 and s.evaluations == 4
-    zero = _FiniteResidualStandIn()
-    zero(np.zeros(2))
-    np.testing.assert_allclose(zero(np.full(2, np.inf)), np.full(2, np.sqrt(0.5e-8)))
-
-
-@pytest.mark.parametrize("bad", [np.inf, np.nan])
-def test_raw_bobyqa_and_dfols_stop_at_a_failed_evaluation(need_bobyqa, need_dfols, bad):
-    """Why the drivers need the stand-in: called directly, Py-BOBYQA 1.5 and
-    DFO-LS 1.6 do not step away from a non-finite value, they stop at it with
-    a linear-algebra error. If a release changes that, revisit the module
-    docstring of vibeqc.basis_optimization.drivers."""
-    import dfols
-    import pybobyqa
-
-    box = (np.full(2, -5.0), np.full(2, 5.0))
-    soln = pybobyqa.solve(
-        lambda x: bad if _in_disc(x) else float(np.sum((x - _DISC_TARGET) ** 2)),
-        _DISC_START.copy(), bounds=box, rhobeg=1.5, maxfun=80, do_logging=False,
-    )
-    assert soln.flag == soln.EXIT_LINALG_ERROR and soln.f > 1.0
-    soln = dfols.solve(
-        lambda x: np.full(2, bad) if _in_disc(x) else x - _DISC_TARGET,
-        _DISC_START.copy(), bounds=box, rhobeg=1.5, maxfun=80, do_logging=False,
-    )
-    assert soln.flag == soln.EXIT_LINALG_ERROR and soln.obj > 1.0
-
-
-@pytest.mark.parametrize("bad", [np.inf, np.nan])
-def test_a_failed_evaluation_does_not_stall_bobyqa(need_bobyqa, bad):
-    """Py-BOBYQA itself stops at f = 6.49 on this problem; with the stand-in
-    it reaches the minimum. History keeps the value the objective returned."""
-
-    def obj(x: np.ndarray) -> float:
-        return bad if _in_disc(x) else float(np.sum((x - _DISC_TARGET) ** 2))
-
-    res = optimize_bobyqa(obj, x0=_DISC_START, bounds=_DISC_BOX, rhobeg=1.5, max_evaluations=80)
-    _assert_optresult_contract(res, "pybobyqa")
-    assert res.success, res.message
-    assert res.fun < 1e-10
-    assert res.x == pytest.approx(_DISC_TARGET, abs=1e-4)
-    assert _replacements(res) >= 1
-
-
-@pytest.mark.parametrize("bad", ["all inf", "one nan entry"])
-def test_a_failed_evaluation_does_not_stall_dfols(need_dfols, bad):
-    """DFO-LS itself stops at sum r^2 = 6.49 here; with the worst finite
-    residual vector scaled up in place of the failed one it reaches the
-    minimum. A single non-finite entry fails the whole vector."""
-
-    def resid(x: np.ndarray) -> np.ndarray:
-        if _in_disc(x):
-            return np.full(2, np.inf) if bad == "all inf" else np.array([np.nan, 0.0])
-        return np.asarray(x, dtype=float) - _DISC_TARGET
-
-    res = optimize_dfols(
-        None, x0=_DISC_START, residuals=resid, bounds=_DISC_BOX, rhobeg=1.5, max_evaluations=80,
-    )
-    _assert_optresult_contract(res, "dfols")
-    assert res.success, res.message
-    assert res.fun < 1e-10
-    assert res.x == pytest.approx(_DISC_TARGET, abs=1e-6)
-    assert _replacements(res) >= 1
-
-
-def test_scipy_carries_on_past_a_failed_evaluation():
-    """Raw L-BFGS-B stops at the start with ABNORMAL on this objective."""
-    pytest.importorskip("scipy")
-
-    def obj(x: np.ndarray) -> float:
-        return float("nan") if 3.0 < x[0] < 9.0 else float((x[0] - 2.0) ** 2)
-
-    res = optimize_scipy(obj, x0=np.array([0.0]), bounds=[(-10.0, 10.0)])
-    assert res.success and res.x[0] == pytest.approx(2.0, abs=1e-6)
-    assert _replacements(res) >= 1
-
-
-def test_minuit_carries_on_past_a_failed_evaluation():
-    """A rounded instance of the random disc problems in which MIGRAD lands in
-    the disc. MIGRAD copes with +inf on its own here too (ten evaluations in
-    the disc, f = 1e-5); the stand-in is pinned for its bookkeeping."""
-    pytest.importorskip("iminuit")
-    target, centre = np.array([-0.003, 0.244]), np.array([-0.887, 0.649])
-    hessian = np.array([[3.847, 3.705], [3.705, 5.822]])
-
-    def obj(x: np.ndarray) -> float:
-        if np.linalg.norm(x - centre) < 0.655:
-            return float("inf")
-        d = x - target
-        return float(d @ hessian @ d)
-
-    res = optimize_minuit(obj, x0=np.array([-3.468, 3.357]), bounds=_DISC_BOX)
-    _assert_optresult_contract(res, "minuit")
-    assert res.success, res.message
-    assert res.fun < 1e-6
-    assert res.x == pytest.approx(target, abs=1e-3)
-    assert _replacements(res) >= 1
-
-
-@pytest.mark.parametrize("driver", ["scipy", "minuit", "pybobyqa", "dfols"])
-def test_a_start_point_that_fails_stops_unsuccessfully(driver):
-    """Nothing to stand in from. Raw MIGRAD spent 626 evaluations here."""
-    pytest.importorskip({"scipy": "scipy", "minuit": "iminuit"}.get(driver, driver))
-    run = {
-        "scipy": optimize_scipy,
-        "minuit": optimize_minuit,
-        "pybobyqa": optimize_bobyqa,
-        "dfols": lambda f, **kw: optimize_dfols(None, residuals=lambda x: np.full(2, f(x)), **kw),
-    }[driver]
-    res = run(lambda x: float("nan"), x0=np.zeros(2), bounds=[(-1.0, 1.0)] * 2)
-    assert res.driver == driver
-    assert not res.success and np.isnan(res.fun)
-    assert "not finite at the start point" in res.message
-    assert res.n_evaluations == 1 and len(res.history) == 1
 
 
 # --------------------------------------------------------------------------

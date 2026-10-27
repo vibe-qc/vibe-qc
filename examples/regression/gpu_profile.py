@@ -89,10 +89,6 @@ RECIPE: Dict[str, Any] = {
     },
 }
 
-# Suspension longer than this voids a run's timings (clock pair resolution
-# is far finer; this only absorbs read-order jitter).
-HOST_SLEEP_TOL_S = 0.5
-
 PROTOCOL = {
     "warmup_runs": 1,
     "timed_runs": 3,
@@ -462,28 +458,6 @@ def runtime_provenance() -> Dict[str, Any]:
     return prov
 
 
-# (clock that advances during host sleep, clock that does not). A wall time
-# measured across a sleep is not a compute time on either clock.
-_SLEEP_CLOCKS = (
-    ("CLOCK_MONOTONIC", "CLOCK_UPTIME_RAW") if sys.platform == "darwin"
-    else ("CLOCK_BOOTTIME", "CLOCK_MONOTONIC"))
-
-
-def sleep_clock_pair() -> Optional[tuple]:
-    try:
-        return tuple(time.clock_gettime(getattr(time, name))
-                     for name in _SLEEP_CLOCKS)
-    except (AttributeError, OSError):
-        return None
-
-
-def host_sleep_s(before: Optional[tuple], after: Optional[tuple]) -> Optional[float]:
-    """Seconds the host spent suspended between two clock pairs, if known."""
-    if before is None or after is None:
-        return None
-    return (after[0] - before[0]) - (after[1] - before[1])
-
-
 def peak_rss_bytes() -> int:
     """Process high-water RSS (ru_maxrss is bytes on macOS, KiB on Linux)."""
     peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
@@ -510,30 +484,6 @@ def timing_to_dict(ct) -> Dict[str, Any]:
                        for it in ct.iterations],
         "memory": {m.label: m.bytes for m in ct.memory},
     }
-
-
-def converging_grad_norm(trace, timing: Dict[str, Any]) -> Optional[float]:
-    """Commutator at the end of the stage that established convergence.
-
-    Staged COSX (Helmich-Paris et al., J. Chem. Phys. 155, 104109 (2021),
-    Sec. IV.A; cpp/include/vibeqc/cosx_staged.hpp) converges on the
-    second-to-last grid and then recomputes once on the final grid, whose
-    residual reflects the grid change, not SCF error. With component timing
-    the segment sizes identify that one-iteration recompute; otherwise the
-    last trace residual is the converging residual only for a single
-    segment, and None is returned for an unidentified staged run.
-    """
-    if not trace:
-        return None
-    if not timing.get("enabled"):
-        return None
-    n_seg = timing.get("n_segments", 0)
-    if n_seg <= 1:
-        return float(trace[-1].grad_norm)
-    last = sum(1 for it in timing["iterations"] if it["segment"] == n_seg - 1)
-    if last == 1 and len(trace) >= 2:
-        return float(trace[-2].grad_norm)
-    return float(trace[-1].grad_norm)
 
 
 def group_phases(timing: Dict[str, Any]) -> Dict[str, float]:
@@ -605,14 +555,11 @@ def run_case(case: Dict[str, Any], *, out_dir: Path, component_timing: bool,
     resolved = resolve_settings(case, mol, basis, opts)
     options_view = serialize(opts)
     rss_before = peak_rss_bytes()
-    clocks0 = sleep_clock_pair()
     t0 = time.perf_counter()
     result = runner(mol, basis, opts)
     scf_wall = time.perf_counter() - t0
-    slept = host_sleep_s(clocks0, sleep_clock_pair())
     rss_after = peak_rss_bytes()
     trace = list(result.scf_trace)
-    timing_view = timing_to_dict(getattr(result, "component_timing", None))
     record: Dict[str, Any] = {
         "schema": SCHEMA,
         "run_label": run_label,
@@ -625,13 +572,11 @@ def run_case(case: Dict[str, Any], *, out_dir: Path, component_timing: bool,
         "resolved": resolved,
         "dedupe_key": dedupe_key(case, resolved, options_view),
         "scf_wall_s": scf_wall,
-        "host_sleep_s": slept,
         "result": {
             "energy": float(result.energy),
             "converged": bool(result.converged),
             "n_iter": int(result.n_iter),
             "final_grad_norm": float(trace[-1].grad_norm) if trace else None,
-            "converging_grad_norm": converging_grad_norm(trace, timing_view),
             "final_delta_e": float(trace[-1].delta_e) if trace else None,
             "stability_checked": bool(result.stability_checked),
             "stability_wall_s": float(result.stability_wall_s),
@@ -641,7 +586,7 @@ def run_case(case: Dict[str, Any], *, out_dir: Path, component_timing: bool,
             "process_peak_rss_before_scf_bytes": rss_before,
             "process_peak_rss_bytes": rss_after,
         },
-        "timing": timing_view,
+        "timing": timing_to_dict(getattr(result, "component_timing", None)),
         "provenance": runtime_provenance(),
     }
     if record["timing"]["enabled"]:
@@ -832,33 +777,6 @@ def assert_public_safe(value: Any, terms: Optional[Sequence[str]] = None) -> Non
             raise ValueError("private term in summary")
 
 
-def record_sleep_s(rec: Dict[str, Any]) -> Optional[float]:
-    """Host suspension during the SCF, from the clock pair when recorded.
-
-    Older records lack the pair. The native session clock counts suspension
-    while perf_counter does not, and the session lies inside the Python
-    interval, so a native wall exceeding the Python wall bounds the sleep
-    from below.
-    """
-    if rec.get("host_sleep_s") is not None:
-        return rec["host_sleep_s"]
-    timing = rec.get("timing", {})
-    if timing.get("enabled"):
-        return max(0.0, timing["wall_s"] - rec["scf_wall_s"])
-    return None
-
-
-def _max_or_none(values: List[Optional[float]]) -> Optional[float]:
-    vals = [v for v in values if v is not None]
-    return max(vals) if vals else None
-
-
-def _residual(rec: Dict[str, Any]) -> Optional[float]:
-    """Converging-stage residual when known, else the last trace residual."""
-    conv = rec["result"].get("converging_grad_norm")
-    return conv if conv is not None else rec["result"]["final_grad_norm"]
-
-
 def _stats(values: List[float]) -> Optional[Dict[str, float]]:
     vals = [v for v in values if v is not None]
     if not vals:
@@ -922,17 +840,9 @@ def summarize(records: List[Dict[str, Any]], *,
             reasons.append("runtime_identity_mismatch")
         if spread > energy_tol:
             reasons.append("energy_spread")
-        if any((record_sleep_s(r) or 0.0) > HOST_SLEEP_TOL_S for r in recs):
-            reasons.append("host_slept")
         if recon_ok is False:
             reasons.append("timing_not_reconciled")
-        if not reasons:
-            status = "PASS"
-        elif set(reasons) == {"host_slept"}:
-            # Numbers are fine, timings are not evidence: rerun awake.
-            status = "INCOMPLETE"
-        else:
-            status = "FAIL"
+        status = "FAIL" if reasons else "PASS"
         r0 = recs[0]
         p0 = prov[0]
         nbi = p0.get("native_build_info") or {}
@@ -972,10 +882,9 @@ def summarize(records: List[Dict[str, Any]], *,
             # A driver may report convergence with its last trace residual
             # above the recipe target (e.g. a final COSX grid stage); this
             # is recorded, not reclassified.
-            "converging_grad_norm_max": _max_or_none(
-                [r["result"].get("converging_grad_norm") for r in recs]),
             "final_grad_above_recipe": any(
-                (_residual(r) or 0.0) > RECIPE["conv_tol_grad"] for r in recs),
+                (r["result"]["final_grad_norm"] or 0.0) > RECIPE["conv_tol_grad"]
+                for r in recs),
             "converged": converged,
             "identity_ok": identity_ok,
             "source_sha": next(iter(sources)) if len(sources) == 1 else None,
@@ -1040,22 +949,18 @@ def _fmt(x: Optional[float], digits: int = 3) -> str:
 def render_markdown(summary: Dict[str, Any]) -> str:
     """Tables of measured values from a summary; no placeholders."""
     lines = ["| Case | Threads | Builder | Status | Iter | Energy (Eh) | "
-             "Converging residual | Last residual | "
-             "SCF wall median [min, max] (s) | Peak RSS (MiB) |",
-             "|---|---|---|---|---|---|---|---|---|---|"]
+             "Last residual | SCF wall median [min, max] (s) | Peak RSS (MiB) |",
+             "|---|---|---|---|---|---|---|---|---|"]
     rows = [r for r in summary["rows"] if r["component_timing"]]
     for r in rows:
         w = r["scf_wall_s"]
         rss = (r["memory"]["process_peak_rss_bytes"] or {}).get("median")
-        conv = ("n/a" if r.get("converging_grad_norm_max") is None
-                else f"{r['converging_grad_norm_max']:.1e}")
         alias = "".join(f" (= {a.rsplit('__', 1)[-1]})" for a in r["aliases"])
         lines.append(
             f"| {r['case_id']}{alias} | {r['threads_requested']} | {r['builder']} | "
             f"{r['status']} | {','.join(map(str, r['iterations']))} | "
-            f"{r['energy_eh']:.10f} | {conv}"
+            f"{r['energy_eh']:.10f} | {r['final_grad_norm_max']:.1e}"
             f"{' (above target)' if r['final_grad_above_recipe'] else ''} | "
-            f"{r['final_grad_norm_max']:.1e} | "
             f"{_fmt(w['median'])} "
             f"[{_fmt(w['min'])}, {_fmt(w['max'])}] | "
             f"{_fmt(None if rss is None else rss / 2**20, 0)} |")

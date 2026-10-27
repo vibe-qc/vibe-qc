@@ -2,7 +2,6 @@
 #pragma once
 #include "vibeqc/uks.hpp"
 #include "vibeqc/diis.hpp"
-#include "vibeqc/ediis.hpp"
 #include <map>
 #include <string>
 #include <vector>
@@ -29,14 +28,9 @@ struct UKSRecoveryDiagnostic {
 };
 // Opt-in latest-iteration observer. Never changes solver options or arithmetic.
 // An exception still propagates; callers may inspect the record while unwinding.
-// For EDIIS_DIIS both solves run every cycle (Kudin et al. 2002, Sec. III);
-// state.values records the switch metric/threshold and which return reached
-// the SCF (accelerator_step 3 = EDIIS, 1 = DIIS, 0 = none before
-// diis_start_iter), so the switch point is read from consecutive frames.
 struct UKSDIISFrame {
     UKSRecoveryFrame state;
     DIISCapture diis;
-    EDIISCapture ediis;
 };
 struct UKSDIISCapture {
     int first = 0, last = 0;

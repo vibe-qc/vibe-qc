@@ -35,32 +35,6 @@ All return the common :class:`OptResult` so recipe code can swap drivers
 without conditional branching. The optional backends are imported lazily
 inside the driver that needs them; vibe-qc's ``[basisopt-drivers]`` extra
 installs the whole set.
-
-**Failed evaluations.** An objective returns a non-finite value (``np.inf``
-or ``nan``) for a point it could not evaluate: a non-converged SCF, a
-degenerate overlap. Neither Py-BOBYQA nor DFO-LS steps away from such a
-point. Py-BOBYQA 1.5 stops at the first one with a linear-algebra error;
-DFO-LS 1.6 stops with the same error for ``inf`` and, for ``nan``,
-usually with ``EXIT_EVAL_ERROR``. On random two-parameter quadratics with
-an infeasible disc that the raw run evaluated, every raw run stopped at
-its first failed evaluation, and a finite stand-in did better in all 77
-Py-BOBYQA problems (median best value 10.6 raw, below 1e-20 with the
-stand-in; 60 reached the minimum) and all 61 DFO-LS ones (14.8 against
-1.43; 29 reached it, the rest stalled against the disc). L-BFGS-B, as
-measured for vibe-basis 0.14.0, stops at its start with ``ABNORMAL``.
-MIGRAD copes on its own: over 37 such problems the stand-in did better
-in 11 and worse in 11, all within MIGRAD's tolerance. From a start point
-that is not finite, though, MIGRAD spent 626 evaluations before reporting
-failure. :func:`optimize_scipy`, :func:`optimize_minuit`,
-:func:`optimize_bobyqa` and :func:`optimize_dfols` therefore hand their
-optimiser the worst finite value seen so far plus a margin
-(:class:`_FiniteStandIn`, the rule of ``vibe_basis.optimize`` 0.14.0;
-DFO-LS gets the worst finite residual vector scaled to that sum of
-squares). ``history`` keeps the value the objective returned, and the
-result's message counts the stand-ins. A start point that is itself not
-finite stops the run unsuccessfully: there is nothing to stand in from.
-``optimize_bdiis`` backtracks from a non-finite point and
-:func:`optimize_cmaes` ranks it last, so neither needs the stand-in.
 """
 
 from __future__ import annotations
@@ -116,120 +90,6 @@ class OptResult:
     raw: Any = None
 
 
-# ---------------------------------------------------------------------------
-# Failed evaluations: a finite stand-in for a non-finite objective value
-# ---------------------------------------------------------------------------
-#
-# The same rule as vibe_basis.optimize._FiniteStandIn (vibe-basis 0.14.0),
-# kept local: vibe-basis is only an optional extra of vibe-qc, and importing
-# it here would make it a requirement of ``import vibeqc.basis_optimization``
-# (see tests/basisset_dev/test_optresult_contract.py).
-
-
-class _StartNotFinite(Exception):
-    """The objective is not finite at the first point evaluated."""
-
-
-class _FiniteStandIn:
-    """Replace a non-finite objective value with a finite one.
-
-    The stand-in is the worst finite value seen plus ``margin``; by default
-    the spread of the finite values seen, and at least ``1e-3 * |worst|``,
-    so it is unmistakably worse than every real point on the objective's own
-    scale.
-    """
-
-    def __init__(self, margin: Optional[float] = None) -> None:
-        self.margin = margin
-        self.worst = -np.inf
-        self.best = np.inf
-        self.replaced = 0
-        self.evaluations = 0
-
-    def __call__(self, value: float) -> float:
-        self.evaluations += 1
-        if np.isfinite(value):
-            self.worst = max(self.worst, value)
-            self.best = min(self.best, value)
-            return value
-        if not np.isfinite(self.worst):
-            raise _StartNotFinite()
-        self.replaced += 1
-        margin = self.margin
-        if margin is None:
-            margin = max(self.worst - self.best, 1e-3 * abs(self.worst), 1e-8)
-        return self.worst + margin
-
-    def note(self, message: str) -> str:
-        if not self.replaced:
-            return message
-        return f"{message}; {self.replaced} non-finite evaluation(s) replaced by a finite stand-in"
-
-
-class _FiniteResidualStandIn:
-    """:class:`_FiniteStandIn` for a residual vector (DFO-LS).
-
-    A vector with any non-finite entry, or whose sum of squares overflows,
-    is a failed evaluation. It is replaced by the residual vector of the
-    worst finite point seen, scaled so that its sum of squares is the scalar
-    stand-in for ``sum r_i^2``. Scaling the best point's vector instead
-    measured the same (16 better, 17 worse over 71 three-residual problems),
-    so the vector mirrors the scalar rule.
-    """
-
-    def __init__(self, margin: Optional[float] = None) -> None:
-        self.scalar = _FiniteStandIn(margin)
-        self.worst_r: Optional[np.ndarray] = None
-
-    @property
-    def replaced(self) -> int:
-        return self.scalar.replaced
-
-    @property
-    def evaluations(self) -> int:
-        return self.scalar.evaluations
-
-    def __call__(self, r: np.ndarray) -> np.ndarray:
-        with np.errstate(over="ignore", invalid="ignore"):
-            ssq = float(r @ r)  # non-finite for an inf or nan entry, or on overflow
-        if np.isfinite(ssq):
-            if self.worst_r is None or ssq > self.scalar.worst:
-                self.worst_r = r.copy()
-            self.scalar(ssq)
-            return r
-        target = self.scalar(float("inf"))
-        assert self.worst_r is not None  # _StartNotFinite was raised otherwise
-        norm2 = float(self.worst_r @ self.worst_r)
-        if norm2 > 0.0:
-            return self.worst_r * np.sqrt(target / norm2)
-        return np.full(r.shape, np.sqrt(target / r.size))
-
-    def note(self, message: str) -> str:
-        return self.scalar.note(message)
-
-
-_START_NOT_FINITE = "the objective is not finite at the start point; nothing to optimise from"
-
-
-def _start_not_finite_result(
-    x0: np.ndarray,
-    driver: str,
-    stand_in: _FiniteStandIn | _FiniteResidualStandIn,
-    history: list[tuple[np.ndarray, float]],
-    t0: float,
-) -> OptResult:
-    return OptResult(
-        x=np.asarray(x0, dtype=float),
-        fun=float("nan"),
-        success=False,
-        message=_START_NOT_FINITE,
-        n_evaluations=stand_in.evaluations,
-        wall_seconds=time.perf_counter() - t0,
-        driver=driver,
-        history=history,
-    )
-
-
 def optimize_scipy(
     objective: "Objective",
     x0: np.ndarray,
@@ -239,45 +99,34 @@ def optimize_scipy(
     tol: float = 1e-6,
     max_iter: int = 200,
     record_history: bool = True,
-    failure_margin: Optional[float] = None,
 ) -> OptResult:
-    """Wrap ``scipy.optimize.minimize`` and return an :class:`OptResult`.
-
-    A non-finite objective value reaches scipy as a finite stand-in, the
-    worst finite value seen plus ``failure_margin`` (default: the spread of
-    the finite values seen, at least 1e-3 of the worst); see the module
-    docstring. A non-finite start point stops the run unsuccessfully.
-    """
+    """Wrap ``scipy.optimize.minimize`` and return an :class:`OptResult`."""
     from scipy.optimize import minimize  # type: ignore[import-not-found]
 
     history: list[tuple[np.ndarray, float]] = []
-    stand_in = _FiniteStandIn(failure_margin)
 
     def f(x: np.ndarray) -> float:
-        v = float(objective(x))
+        v = objective(x)
         if record_history:
-            history.append((np.asarray(x, dtype=float).copy(), v))
-        return stand_in(v)
+            history.append((np.asarray(x, dtype=float).copy(), float(v)))
+        return v
 
     t0 = time.perf_counter()
-    try:
-        res = minimize(
-            f,
-            np.asarray(x0, dtype=float),
-            method=method,
-            bounds=bounds,
-            tol=tol,
-            options={"maxiter": max_iter},
-        )
-    except _StartNotFinite:
-        return _start_not_finite_result(x0, "scipy", stand_in, history, t0)
+    res = minimize(
+        f,
+        np.asarray(x0, dtype=float),
+        method=method,
+        bounds=bounds,
+        tol=tol,
+        options={"maxiter": max_iter},
+    )
     dt = time.perf_counter() - t0
     return OptResult(
         x=np.asarray(res.x, dtype=float),
         fun=float(res.fun),
         success=bool(res.success),
-        message=stand_in.note(str(res.message)),
-        n_evaluations=stand_in.evaluations,
+        message=str(res.message),
+        n_evaluations=int(getattr(res, "nfev", objective.n_calls)),
         wall_seconds=dt,
         driver="scipy",
         history=history,
@@ -296,7 +145,6 @@ def optimize_minuit(
     max_iter: int = 200,
     record_history: bool = True,
     errordef: float = 1.0,
-    failure_margin: Optional[float] = None,
 ) -> OptResult:
     """Wrap ``iminuit.Minuit.migrad`` (Minuit2 underneath) and return :class:`OptResult`.
 
@@ -305,11 +153,6 @@ def optimize_minuit(
     least-squares-like target), 0.5 for log-likelihoods. Energy
     minimisation is neither cleanly, but 1.0 gives reasonable HESSE
     error scales for our use.
-
-    A non-finite objective value reaches MIGRAD as a finite stand-in, the
-    worst finite value seen plus ``failure_margin``, as in
-    :func:`optimize_scipy`. A non-finite start point stops the run
-    unsuccessfully.
     """
     try:
         from iminuit import Minuit  # type: ignore[import-not-found]
@@ -321,14 +164,13 @@ def optimize_minuit(
     history: list[tuple[np.ndarray, float]] = []
     n = len(x0)
     names = labels or [f"p{i}" for i in range(n)]
-    stand_in = _FiniteStandIn(failure_margin)
 
     def f(*args: float) -> float:
         x = np.asarray(args, dtype=float)
-        v = float(objective(x))
+        v = objective(x)
         if record_history:
-            history.append((x.copy(), v))
-        return stand_in(v)
+            history.append((x.copy(), float(v)))
+        return v
 
     f._parameters = {nm: tuple([None, None]) for nm in names}  # iminuit signature hint
 
@@ -344,10 +186,7 @@ def optimize_minuit(
             m.limits[nm] = (lo, hi)
 
     t0 = time.perf_counter()
-    try:
-        m.migrad(ncall=max_iter, iterate=5)
-    except _StartNotFinite:
-        return _start_not_finite_result(x0, "minuit", stand_in, history, t0)
+    m.migrad(ncall=max_iter, iterate=5)
     dt = time.perf_counter() - t0
 
     x_best = np.asarray(m.values, dtype=float)
@@ -355,9 +194,9 @@ def optimize_minuit(
         x=x_best,
         fun=float(m.fval if m.fval is not None else float("nan")),
         success=bool(m.valid),
-        message=stand_in.note("converged" if m.valid else "MIGRAD did not converge: "
-                              f"{m.fmin}"),
-        n_evaluations=stand_in.evaluations,
+        message=("converged" if m.valid else "MIGRAD did not converge: "
+                 f"{m.fmin}"),
+        n_evaluations=objective.n_calls,
         wall_seconds=dt,
         driver="minuit",
         history=history,
@@ -462,7 +301,6 @@ def optimize_bobyqa(
     seek_global_minimum: bool = False,
     scaling_within_bounds: bool = False,
     record_history: bool = True,
-    failure_margin: Optional[float] = None,
 ) -> OptResult:
     """Minimise a scalar objective with Py-BOBYQA and return an :class:`OptResult`.
 
@@ -483,13 +321,9 @@ def optimize_bobyqa(
     Parameters
     ----------
     objective
-        Callable ``x -> float``. May return ``+inf`` (or ``nan``) for a
-        forbidden iterate (failed SCF, degenerate overlap). Py-BOBYQA itself
-        does not step away from one: it stops at the first with a
-        linear-algebra error. It sees a finite stand-in instead, the worst
-        finite value seen plus ``failure_margin`` (see the module
-        docstring), and a non-finite start point stops the run
-        unsuccessfully.
+        Callable ``x -> float``. May return ``+inf`` for a forbidden iterate
+        (failed SCF, degenerate overlap); Py-BOBYQA treats it as a very
+        poor point and steps away from it.
     x0
         Starting point (optimiser space). Projected into ``bounds`` first.
     bounds
@@ -513,18 +347,12 @@ def optimize_bobyqa(
         Rescale every parameter to [0, 1] over its box before modelling.
         Needs a finite box on every parameter; silently off otherwise.
     record_history
-        Record ``(x_k, f_k)`` for every evaluation, ``f_k`` as the objective
-        returned it.
-    failure_margin
-        How far above the worst finite value a failed evaluation's stand-in
-        lies, in the objective's units. ``None``: the spread of the finite
-        values seen, at least 1e-3 of the worst one.
+        Record ``(x_k, f_k)`` for every evaluation.
 
     Returns
     -------
     OptResult
         ``driver == "pybobyqa"``; ``raw`` is Py-BOBYQA's ``OptimResults``.
-        ``message`` counts the evaluations replaced by a stand-in.
     """
     try:
         import pybobyqa  # type: ignore[import-not-found]
@@ -540,37 +368,33 @@ def optimize_bobyqa(
     x0 = _clip_to_box(x0, bounds)
 
     history: list[tuple[np.ndarray, float]] = []
-    stand_in = _FiniteStandIn(failure_margin)
 
     def f(x_in: np.ndarray) -> float:
         x = np.asarray(x_in, dtype=float)
         v = float(objective(x))
         if record_history:
             history.append((x.copy(), v))
-        return stand_in(v)
+        return v
 
     t0 = time.perf_counter()
-    try:
-        soln = pybobyqa.solve(
-            f,
-            x0,
-            bounds=box,
-            maxfun=int(max_evaluations),
-            rhobeg=rhobeg,
-            rhoend=rhoend,
-            objfun_has_noise=noisy,
-            seek_global_minimum=seek_global_minimum,
-            scaling_within_bounds=bool(scaling_within_bounds and _box_is_finite(box)),
-            do_logging=False,
-        )
-    except _StartNotFinite:
-        return _start_not_finite_result(x0, "pybobyqa", stand_in, history, t0)
+    soln = pybobyqa.solve(
+        f,
+        x0,
+        bounds=box,
+        maxfun=int(max_evaluations),
+        rhobeg=rhobeg,
+        rhoend=rhoend,
+        objfun_has_noise=noisy,
+        seek_global_minimum=seek_global_minimum,
+        scaling_within_bounds=bool(scaling_within_bounds and _box_is_finite(box)),
+        do_logging=False,
+    )
     dt = time.perf_counter() - t0
     return OptResult(
         x=np.asarray(soln.x, dtype=float),
         fun=float(soln.f),
         success=bool(soln.flag == soln.EXIT_SUCCESS),
-        message=stand_in.note(str(soln.msg)),
+        message=str(soln.msg),
         n_evaluations=int(soln.nf),
         wall_seconds=dt,
         driver="pybobyqa",
@@ -596,7 +420,6 @@ def optimize_dfols(
     noisy: bool = False,
     scaling_within_bounds: bool = False,
     record_history: bool = True,
-    failure_margin: Optional[float] = None,
 ) -> OptResult:
     """Minimise ``sum_i r_i(x)^2`` with DFO-LS and return an :class:`OptResult`.
 
@@ -627,24 +450,16 @@ def optimize_dfols(
         Starting point (optimiser space). Projected into ``bounds`` first.
     residuals
         ``x -> ndarray`` residual vector; overrides ``objective.residuals``.
-        Entries may be ``+inf`` (or ``nan``) for a forbidden iterate. DFO-LS
-        itself stops at the first such vector (a linear-algebra error, or
-        ``EXIT_EVAL_ERROR`` for most ``nan``), so it sees a finite
-        stand-in instead: the residual vector of the worst finite point
-        seen, scaled so its sum of squares is that point's plus
-        ``failure_margin`` (see the module docstring). A non-finite start
-        point stops the run unsuccessfully.
+        Entries may be ``+inf`` for a forbidden iterate.
     bounds, max_evaluations, rhobeg, rhoend, noisy, scaling_within_bounds,
-    record_history, failure_margin
-        As in :func:`optimize_bobyqa`, for ``sum r_i^2``; ``history`` keeps
-        the ``sum r_i^2`` of the vector the objective returned.
+    record_history
+        As in :func:`optimize_bobyqa`.
 
     Returns
     -------
     OptResult
         ``driver == "dfols"``; ``fun`` is DFO-LS's ``sum r_i^2`` at ``x`` and
         ``raw`` its ``OptimResults`` (with ``resid`` and ``jacobian``).
-        ``message`` counts the evaluations replaced by a stand-in.
     """
     resid_fn = residuals if residuals is not None else getattr(objective, "residuals", None)
     if resid_fn is None:
@@ -669,37 +484,32 @@ def optimize_dfols(
     x0 = _clip_to_box(x0, bounds)
 
     history: list[tuple[np.ndarray, float]] = []
-    stand_in = _FiniteResidualStandIn(failure_margin)
 
     def r(x_in: np.ndarray) -> np.ndarray:
         x = np.asarray(x_in, dtype=float)
         v = np.asarray(resid_fn(x), dtype=float).ravel()
         if record_history:
-            with np.errstate(over="ignore", invalid="ignore"):
-                history.append((x.copy(), float(v @ v)))
-        return stand_in(v)
+            history.append((x.copy(), float(v @ v)))
+        return v
 
     t0 = time.perf_counter()
-    try:
-        soln = dfols.solve(
-            r,
-            x0,
-            bounds=box,
-            maxfun=int(max_evaluations),
-            rhobeg=rhobeg,
-            rhoend=rhoend,
-            objfun_has_noise=noisy,
-            scaling_within_bounds=bool(scaling_within_bounds and _box_is_finite(box)),
-            do_logging=False,
-        )
-    except _StartNotFinite:
-        return _start_not_finite_result(x0, "dfols", stand_in, history, t0)
+    soln = dfols.solve(
+        r,
+        x0,
+        bounds=box,
+        maxfun=int(max_evaluations),
+        rhobeg=rhobeg,
+        rhoend=rhoend,
+        objfun_has_noise=noisy,
+        scaling_within_bounds=bool(scaling_within_bounds and _box_is_finite(box)),
+        do_logging=False,
+    )
     dt = time.perf_counter() - t0
     return OptResult(
         x=np.asarray(soln.x, dtype=float),
         fun=float(soln.obj),
         success=bool(soln.flag == soln.EXIT_SUCCESS),
-        message=stand_in.note(str(soln.msg)),
+        message=str(soln.msg),
         n_evaluations=int(soln.nf),
         wall_seconds=dt,
         driver="dfols",

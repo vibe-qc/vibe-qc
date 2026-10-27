@@ -458,21 +458,6 @@ the missing package, so a plain `import vibeqc.basis_optimization` never
 needs any of them. Py-BOBYQA and DFO-LS are GPL-3.0 licensed; they are
 opt-in for that reason and are never imported by the core package.
 
-An objective returns `+inf` for a point it cannot evaluate, such as a
-non-converged SCF. Py-BOBYQA and DFO-LS do not step away from such a
-point on their own; they stop at the first one with an error. So
-`optimize_scipy`, `optimize_minuit`, `optimize_bobyqa` and `optimize_dfols`
-hand their optimiser a finite stand-in: the worst finite value seen so
-far plus a margin (`failure_margin=`, by default the spread of the finite
-values seen and at least 1e-3 of the worst). DFO-LS gets the worst finite
-residual vector, scaled to that sum of squares. `history` keeps the value
-the objective returned, the result's `message` counts the replacements,
-and a start point that is not finite ends the run unsuccessfully.
-`optimize_bdiis` backtracks from such a point and `optimize_cmaes` ranks
-it last. A run can still stall against the edge of a failing region, so
-check the replacement count in `message` before trusting a minimum next
-to one.
-
 A starting basis that may sit in the wrong basin (a far-off guess, an
 exponent deliberately perturbed to test robustness) is the case for the
 CMA-ES pre-pass. The recipe chains it with a BDIIS polish:
