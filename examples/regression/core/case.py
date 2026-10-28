@@ -38,6 +38,8 @@ class CodeRow:
     n_electrons: Optional[int] = None
     n_alpha: Optional[int] = None  # resolved per-cell spin counts (#647)
     n_beta: Optional[int] = None
+    charge: Optional[int] = None  # resolved net charge per primitive cell
+    electrostatic_background: Optional[str] = None
     n_basis_functions: Optional[int] = None
     n_basis_shells: Optional[int] = None
     wall_s: float = 0.0
@@ -80,6 +82,8 @@ CSV_COLUMNS: Tuple[str, ...] = (
     "n_electrons",
     "n_alpha",
     "n_beta",
+    "charge",
+    "electrostatic_background",
     "n_basis_functions",
     "n_basis_shells",
     "wall_s",

@@ -345,7 +345,7 @@ parameter vector x_k = (log(H_s), log(Li_s), log(Li_p))
     │   → total HF energy (Hartree)
     │
     └─ return energy (or np.inf if SCF failed)
-           ↑ BOBYQA routes around infeasible points
+           ↑ optimize_nlopt hands BOBYQA a finite stand-in for inf
 ```
 
 ## 6. Inspecting convergence

@@ -176,10 +176,15 @@ def audit_range_separated_gdf_transport(
     ls, lt = sa[1], ta[1]
     es, et = sa[3], ta[3]
     threshold = _tolerance(source.fit_state.source_parameters[-1], 'metric threshold')
-    for arrays in (sa, ta):
+    from .aux_basis import _rsgdf_metric_keep
+    for batch, arrays in ((source, sa), (target, ta)):
         eigenvalues, vectors, keep = arrays[1], arrays[3], arrays[4]
+        # The producer's executed decomposition (#179): 'cholesky' keeps the
+        # full rank, 'eigen' the strict absolute lambda > threshold cut.
+        decomposition = getattr(batch.fit_state, 'metric_decomposition', 'eigen')
         if (np.any(np.diff(eigenvalues) < 0) or np.count_nonzero(keep) != r
-                or not np.array_equal(keep, eigenvalues > threshold)):
+                or not np.array_equal(keep, _rsgdf_metric_keep(
+                    eigenvalues, threshold, decomposition))):
             raise ValueError("GDF retained mask disagrees with strict metric rank policy")
         negative_tolerance = max(threshold, 64*np.finfo(float).eps*n
                                  * max(1., float(np.max(np.abs(eigenvalues)))))

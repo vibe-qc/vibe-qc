@@ -1203,25 +1203,94 @@ def test_native_ccm_fd_gradient_rejects_invalid_step(native_ccm_api, step):
         )
 
 
+@pytest.mark.parametrize("entrypoint", ["engine", "run_seccm", "run_job"])
 def test_ccm_native_nonconvergence_does_not_fall_back_to_python(
-    monkeypatch,
+    monkeypatch, tmp_path, entrypoint,
 ):
-    class NonconvergedResult:
-        converged = False
+    from vibeqc.semiempirical import CCMConvergenceError, run_seccm
+
+    native = ccm.CcmResult(
+        total_energy=-1.2, electronic_energy=-1.7, binding_energy=-0.3,
+        density=np.eye(2), mo_energies=np.array([-0.5, 0.2]),
+        converged=False, n_iter=7, frontier_seed_evaluations=3,
+        frontier_seed_orbitals=2, frontier_seed_completed=True,
+        orbital_optimization_used=True,
+    )
+    calls = []
 
     def nonconverged_native(*args, **kwargs):
-        return NonconvergedResult()
+        calls.append(kwargs)
+        return native
 
     monkeypatch.setattr(
         "vibeqc.semiempirical.methods.msindo_ccm._cpp_ccm_energy_kernel",
         lambda: (nonconverged_native, object()),
     )
-    with pytest.raises(RuntimeError, match="did not converge"):
-        run_ccm(
-            [1, 1],
-            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
-            [[5.0, 0.0, 0.0]],
-        )
+    def no_fallback(*args, **kwargs):
+        pytest.fail("Native failure must not launch another SCF")
+
+    monkeypatch.setattr(ccm, "_ccm_total_energy", no_fallback)
+    coords = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]
+    options = CCMOptions(translations=[[5.0, 0.0, 0.0]], madelung=False,
+                         max_iter=7, conv_tol=1e-8, stability="lowest")
+    with pytest.raises(CCMConvergenceError, match="did not converge") as caught:
+        if entrypoint == "engine":
+            run_ccm([1, 1], coords, options.translations, max_iter=7,
+                    conv_tol=1e-8, stability="lowest")
+        else:
+            mol = vq.Molecule([vq.Atom(1, list(np.array(x)*ANGSTROM_TO_BOHR))
+                               for x in coords], 0, 1)
+            if entrypoint == "run_seccm":
+                run_seccm(mol, options)
+            else:
+                vq.run_job(mol, method="seccm", ccm_options=options,
+                           output=str(tmp_path/"failed_ccm"), verbose=0)
+    error = caught.value
+    assert isinstance(error, RuntimeError)
+    assert (error.max_iter, error.conv_tol, error.stability) == (7, 1e-8, "lowest")
+    assert len(calls) == 1
+    assert calls[0]["lowest_stable"] is True
+    result = error.result
+    assert not result.converged and result.n_iter == 7
+    assert result.total_energy == native.total_energy
+    assert result.electronic_energy == native.electronic_energy
+    assert result.binding_energy == native.binding_energy
+    assert result.madelung_nuclear_energy == pytest.approx(0.5)
+    assert result.frontier_seed_evaluations == 3
+    assert result.frontier_seed_orbitals == 2 and result.frontier_seed_completed
+    assert result.orbital_optimization_used
+    assert not result.stability_checked and not result.stability_analysis_converged
+    np.testing.assert_array_equal(result.density, native.density)
+    np.testing.assert_array_equal(result.mo_energies, native.mo_energies)
+    result.density[0, 0] = 99
+    result.mo_energies[0] = 99
+    assert native.density[0, 0] == 1 and native.mo_energies[0] == -0.5
+
+
+def test_ccm_native_exhaustion_retains_the_returned_state(native_ccm_api, monkeypatch):
+    indo, params = native_ccm_api
+    retained = []
+
+    def observe(*args, **kwargs):
+        result = indo.run_ccm(*args, **kwargs)
+        retained.append(result)
+        return result
+
+    monkeypatch.setattr(ccm, "_cpp_ccm_energy_kernel", lambda: (observe, params))
+    with pytest.raises(ccm.CCMConvergenceError) as caught:
+        run_ccm([1, 1], [[0., 0., 0.], [1., 0., 0.]], [[5., 0., 0.]],
+                max_iter=1)
+    assert len(retained) == 1
+    native, result = retained[0], caught.value.result
+    assert not result.converged and result.n_iter == 1
+    assert np.isfinite(result.total_energy)
+    assert result.total_energy == native.total_energy
+    assert result.electronic_energy == native.electronic_energy
+    np.testing.assert_array_equal(result.density, native.density)
+    np.testing.assert_array_equal(result.mo_energies, native.mo_energies)
+    assert np.trace(result.density) == pytest.approx(2., abs=1e-12)
+    np.testing.assert_allclose(result.density @ result.density,
+                               2*result.density, atol=1e-12)
 
 
 def test_direct_ccm_gradient_rejects_unsupported_elements():

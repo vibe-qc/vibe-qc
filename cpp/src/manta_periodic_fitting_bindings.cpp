@@ -199,6 +199,34 @@ void bind_manta_periodic_fitting(py::module_& m) {
                 std::memcpy(out.mutable_data(),r.reference_magnitude_bounds.data(),r.reference_magnitude_bounds.size()*sizeof(double));
             out.attr("setflags")(py::arg("write")=false);return out;
         });
+    auto cb=py::class_<PeriodicGDFConstructionBounds>(m,"PeriodicGDFConstructionBounds");
+#define B(n) cb.def_readonly(#n,&PeriodicGDFConstructionBounds::n)
+    B(real_lower);B(real_upper);B(imag_lower);B(imag_upper);B(error_bounds);
+    B(source_identity);B(reference_identity);B(certificate_identity);B(reference_terms);B(maximum_error);
+#undef B
+    py::class_<PeriodicGDFConstructionTile,PeriodicGDFConstructionBounds>(m,"PeriodicGDFConstructionTile")
+        .def_readonly("evaluated",&PeriodicGDFConstructionTile::evaluated);
+    py::class_<PeriodicGDFConstructionAction,PeriodicGDFConstructionBounds>(m,"PeriodicGDFConstructionAction")
+        .def_readonly("evaluated",&PeriodicGDFConstructionAction::evaluated);
+    auto construction_action=[](const PeriodicGDFTiles& s,const py::array& input,const ResourceBudget& budget,bool forward) {
+        using Complex=std::complex<double>;
+        const auto& p=s.plan();
+        if(!input.dtype().is(py::dtype::of<Complex>()) ||
+            (forward?(input.ndim()!=3 || input.shape(0)!=py::ssize_t(p.momenta) ||
+                input.shape(1)!=py::ssize_t(p.n_orb) || input.shape(2)!=py::ssize_t(p.n_orb)):
+                (input.ndim()!=1 || input.shape(0)!=py::ssize_t(p.n_aux))))
+            throw py::value_error("MANTA coupling construction requires complex128 (ket,AO,AO) forward or (auxiliary,) adjoint input");
+        if(!(input.flags() & (py::array::c_style|py::array::f_style)))
+            throw py::value_error("MANTA coupling construction input must be C- or F-contiguous");
+        s.plan_coupling_construction(budget); // Admission before input copies.
+        std::vector<Complex> values(input.size());const auto* raw=static_cast<const char*>(input.data());Count out=0;
+        if(forward) for(py::ssize_t k=0;k<input.shape(0);++k)for(py::ssize_t i=0;i<input.shape(1);++i)
+            for(py::ssize_t j=0;j<input.shape(2);++j)
+                std::memcpy(&values[out++],raw+k*input.strides(0)+i*input.strides(1)+j*input.strides(2),sizeof(Complex));
+        else std::memcpy(values.data(),raw,values.size()*sizeof(Complex));
+        const ResourceBudget owned=budget;py::gil_scoped_release release;
+        return s.certify_coupling_action(values,forward,owned);
+    };
     auto action=[](const PeriodicGDFTiles& s,const py::array& input,const ResourceBudget& budget,bool forward,bool audit_roundoff,const py::object& input_errors) {
         using Complex=std::complex<double>;
         const auto& p=s.plan();
@@ -298,6 +326,14 @@ void bind_manta_periodic_fitting(py::module_& m) {
         .def_property_readonly("auxiliary_basis_identity",[](const PeriodicGDFTiles& s){return s.source().short_range.auxiliary_basis_identity;})
         .def_property_readonly("shell_extents",[](const PeriodicGDFTiles& s){return std::vector<Count>{s.auxiliary().nshells(),s.orbital().nshells(),s.orbital().nshells()};})
         .def("plan_coupling",&PeriodicGDFTiles::plan_coupling,py::arg("budget")=ResourceBudget{})
+        .def("plan_coupling_construction",&PeriodicGDFTiles::plan_coupling_construction,py::arg("budget")=ResourceBudget{})
+        .def("certify_coupling_tile",&PeriodicGDFTiles::certify_coupling_tile,py::arg("auxiliary_shell"),py::arg("bra_shell"),py::arg("ket_shell"),py::arg("budget")=ResourceBudget{},py::call_guard<py::gil_scoped_release>())
+        .def("certify_forward",[construction_action](const PeriodicGDFTiles& s,const py::array& input,const ResourceBudget& budget) {
+            return construction_action(s,input,budget,true);
+        },py::arg("input").noconvert(),py::arg("budget")=ResourceBudget{})
+        .def("certify_adjoint",[construction_action](const PeriodicGDFTiles& s,const py::array& input,const ResourceBudget& budget) {
+            return construction_action(s,input,budget,false);
+        },py::arg("input").noconvert(),py::arg("budget")=ResourceBudget{})
         .def("forward",[action](const PeriodicGDFTiles& s,const py::array& input,const ResourceBudget& budget,bool audit_roundoff,const py::object& input_errors) {
             return action(s,input,budget,true,audit_roundoff,input_errors);
         },py::arg("input").noconvert(),py::arg("budget")=ResourceBudget{},py::arg("audit_roundoff")=false,py::arg("input_errors")=py::none())

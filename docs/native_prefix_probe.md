@@ -68,3 +68,57 @@ alone does not attest the upstream archive. No default collector is installed
 or enabled, no archive is fetched, and no build is scheduled by this option.
 A successful receipt still needs semantic comparison and final-prefix native
 and data verification before a Queue adapter can qualify reuse.
+
+## Candidate adapter and prospective context
+
+`scripts/native_seed_adapter.py` implements Queue's plan/verify protocol for
+one deliberately narrow dependency: unpatched FFTW on Darwin with unwrapped
+Apple clang, system threads, no external OpenMP runtime, no compiler launcher
+or toolchain file, and no compiler/discovery environment overrides. It never
+qualifies libxc, libint, spglib, a Python interpreter or a whole runtime. All
+unsupported contexts return HOLD. Runtime-slot admission is opt-in; these
+scripts do not change a host's configuration or start a build.
+
+At the start of an already authorized fresh FFTW build, also select
+`VIBEQC_NATIVE_SEED_CONTEXT=1`. The collector hook captures the configured
+execution context before invoking the external collector and checks it again
+after successful compilation. This fingerprints the actual configured compiler,
+CMake and Ninja executables, the selected developer toolchain and SDK trees,
+relevant environment and host ABI. Tree hashing is streamed and bounded to
+90 seconds, 100,000 entries and 8 GiB per tree; escaping aliases are refused.
+External compiler configuration, patched sources, wrappers and toolchain files
+require a future transitive-input contract and cannot be asserted compatible.
+Context failure stops collection without retrying compilation.
+
+After a successful fresh collector receipt, the public helper checks its
+archive authentication, exact source inventory, configured compiler/cache/
+commands, recipe identities and complete install inventory. It exclusively
+writes `.vq-native-fftw.json` in that building generation, before activation.
+It will not overwrite an existing envelope or construct one from a historical
+cache hit. The original collector receipt is embedded; this is an additive
+public context contract, not a copy of any external collector implementation.
+The enclosing Queue generation's content authentication protects the envelope.
+
+For a later already authorized slot, the tracked executable adapter obtains
+the archive from `VIBEQC_NATIVE_SOURCE_ARCHIVE`, verifies the recipe pin,
+extracts regular source members into a temporary dependency directory, and
+resolves the actual candidate CMake invocation from the tracked build recipe.
+It runs **configure only**, outside the product tree. CMake may compile its
+normal compiler-identification checks; it never builds or installs an FFTW
+target here. Source-only adapter tests use a configure fixture, not CMake.
+The adapter compares all six Queue categories: archive/prefix, an explicitly
+empty patch set, exact recipe files, observed tools, normalized configured
+cache/compiler commands/Ninja and install graphs, and observed ABI. Only known
+source/build/install roots are normalized; changed flags, linkage rules,
+compiler files or host context refuse reuse. This is conservative: harmless
+recipe or environment differences can require a normal fresh build.
+
+Queue then copies the complete install, including contained sibling file
+aliases, into the unpublished candidate. Verification checks the complete
+candidate inventory and invokes the tracked serial/threaded probe with donor
+reads denied. Native observations use regular resolved candidate paths, never
+alias hashes. The envelope and original plan must match during verification.
+A qualified response covers only that FFTW install. Its header constants are
+the observed data; chemistry basis data and other dependencies remain outside
+this qualification. Actual following-slot acceptance is still required before
+claiming a successful reuse, and no source test is a substitute for that run.

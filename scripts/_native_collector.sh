@@ -4,11 +4,20 @@
 
 vibeqc_enable_native_collector() {
     if [ -z "${VIBEQC_NATIVE_BUILD_COLLECTOR:-}" ]; then
-        if [ -n "${VIBEQC_NATIVE_RECEIPT_DIR:-}${VIBEQC_NATIVE_SOURCE_ARCHIVE:-}" ]; then
+        if [ -n "${VIBEQC_NATIVE_RECEIPT_DIR:-}${VIBEQC_NATIVE_SOURCE_ARCHIVE:-}${VIBEQC_NATIVE_SEED_CONTEXT:+enabled}" ]; then
             echo "receipt/archive settings require VIBEQC_NATIVE_BUILD_COLLECTOR" >&2
             return 3
         fi
         return 0
+    fi
+    if [ "${VIBEQC_NATIVE_SEED_CONTEXT:-0}" != 0 ]; then
+        if [ "${VIBEQC_NATIVE_SEED_CONTEXT:-}" != 1 ] || [ "$1" != fftw ] || [ -z "${VIBEQC_NATIVE_SOURCE_ARCHIVE:-}" ]; then
+            echo "seed context requires opt-in unpatched FFTW archive collection" >&2
+            return 3
+        fi
+        [ ! -e "$REPO_ROOT/.vq-native-fftw.json" ] && [ ! -L "$REPO_ROOT/.vq-native-fftw.json" ] || {
+            echo "fresh seed envelope already exists" >&2; return 3;
+        }
     fi
     # Validate before removing/configuring a build tree. Resolve symlinks so an
     # external-looking receipt directory cannot write inside the product tree.
@@ -96,11 +105,21 @@ PYTHON
                 ;;
             --build)
                 if [ -n "$_vibeqc_collector_spec" ]; then
+                    if [ "${VIBEQC_NATIVE_SEED_CONTEXT:-0}" = 1 ]; then
+                        python3 "$SCRIPT_DIR/native_seed_context.py" before "$BUILD_DIR" "$REPO_ROOT" \
+                            "$VIBEQC_NATIVE_RECEIPT_DIR/fftw-context.json" || return $?
+                    fi
                     "$VIBEQC_NATIVE_BUILD_COLLECTOR" record \
                         --spec "$_vibeqc_collector_spec" \
                         --output "$VIBEQC_NATIVE_RECEIPT_DIR/$_vibeqc_collector_name.json" \
                         -- cmake "$@"
-                    return $?
+                    local collector_status=$?
+                    [ "$collector_status" -eq 0 ] || return "$collector_status"
+                    if [ "${VIBEQC_NATIVE_SEED_CONTEXT:-0}" = 1 ]; then
+                        python3 "$SCRIPT_DIR/native_seed_context.py" seal "$REPO_ROOT" "$BUILD_DIR" \
+                            "$VIBEQC_NATIVE_RECEIPT_DIR/fftw.json" "$VIBEQC_NATIVE_RECEIPT_DIR/fftw-context.json" || return $?
+                    fi
+                    return 0
                 fi
                 "$VIBEQC_NATIVE_BUILD_COLLECTOR" record \
                     --source "$_vibeqc_collector_name=$SRC_DIR" \

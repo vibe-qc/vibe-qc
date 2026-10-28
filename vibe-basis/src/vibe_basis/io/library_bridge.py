@@ -156,7 +156,11 @@ def parse_d12_geometry(path: Path) -> Optional[Structure]:
     Returns a vibe-basis :class:`Structure`, or None if the .d12
     doesn't contain a standard periodic geometry block.
     """
-    text = path.read_text()
+    return parse_d12_geometry_text(path.read_text())
+
+
+def parse_d12_geometry_text(text: str) -> Optional[Structure]:
+    """:func:`parse_d12_geometry` on deck text, such as an output's echoed input."""
     lines = text.splitlines()
     title = lines[0].strip()
 

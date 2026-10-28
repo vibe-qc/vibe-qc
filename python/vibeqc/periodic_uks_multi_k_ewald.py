@@ -116,7 +116,6 @@ from .periodic_rhf_multi_k_ewald import (
     _g0_block,
     _MultiKPulayDIIS,
 )
-from .periodic_uhf_ewald import _spin_squared
 from .periodic_k_density import (
     density_matrices_per_k as _density_matrices_per_k,
 )
@@ -2171,24 +2170,24 @@ def run_uks_periodic_multi_k_ewald3d(
             for w, da, db, s in zip(weights, D_a_used_per_k, D_b_used_per_k, S_k_list)
         )
     else:
-        # <S^2> from the Γ-block (or first) k-point -- same shortcut as
-        # multi-k UHF Ewald.
-        if n_alpha == 0 or n_beta == 0:
-            s2 = 0.25 * (n_alpha - n_beta) * (n_alpha - n_beta + 2) + n_beta
-        else:
-            k0_idx = 0
-            for i, k in enumerate(k_points):
-                if np.allclose(np.asarray(k), 0.0):
-                    k0_idx = i
-                    break
-            S_real = np.real(S_k_list[k0_idx])
-            s2 = _spin_squared(
-                n_alpha,
-                n_beta,
-                np.real(C_alpha_per_k[k0_idx]),
-                np.real(C_beta_per_k[k0_idx]),
-                S_real,
-            )
+        # Use the same BZ/occupation-weighted diagnostic as multi-k UHF.
+        # Complex MO phases cancel in |Ca^H S Cb|^2; taking real parts
+        # first instead creates gauge-dependent spin contamination.
+        # The density-trace form is consistent with Pulay and Hamilton,
+        # JCP 88, 4926 (1988), Sec. II Eq. (4), doi:10.1063/1.454704,
+        # for integer occupations. Smearing retains the shared diagnostic.
+        from .periodic_k_gdf import _multi_k_s_squared
+
+        s2 = _multi_k_s_squared(
+            n_alpha,
+            n_beta,
+            C_alpha_per_k,
+            C_beta_per_k,
+            S_k_list,
+            weights,
+            occ_alpha_k=occ_alpha_per_k,
+            occ_beta_k=occ_beta_per_k,
+        )
 
     plog.converged(n_iter=iter_idx, energy=E_total, converged=converged)
     from .eigs_preflight import _copy_lattice_opts

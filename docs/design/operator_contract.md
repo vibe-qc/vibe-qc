@@ -680,3 +680,13 @@ metric. After resolving the effective shift, dispatch continues through the
 same metric admission, retained-rank reduction and residual qualification as an
 unwrapped generalized request. Invalid metrics remain explicit refusals; the
 wrapper cannot turn an AO generalized problem into a Euclidean solve.
+
+All legacy descriptor routes require a finite, positive residual tolerance at
+common dispatch entry, including standard and interior problems. Invalid
+tolerances cannot disable convergence qualification or alter Krylov breakdown
+criteria. Valid solver requests retain their existing numerical behavior.
+
+Legacy Lanczos also refuses explicit root counts larger than its available
+Krylov dimension before any operator application. It cannot silently lower
+the requested count and certify a partial spectrum. A later Krylov breakdown
+that yields fewer roots still reports an unconverged result.

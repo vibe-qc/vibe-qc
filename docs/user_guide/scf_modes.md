@@ -261,6 +261,51 @@ was $1.53\times10^{-10}$ Ha. The
 $170^4$ allocation, separates the different-host direct validation, and
 defines a safe crossover sweep.
 
+## Component timing
+
+Set `component_timing = True` on `RHFOptions` or `RKSOptions` to record
+where a molecular restricted SCF spends its wall time. The option is off by
+default. Enabling it does not change energies, densities or iteration counts.
+
+```python
+opts = vq.RHFOptions()
+opts.density_fit = True
+opts.aux_basis = "def2-universal-jkfit"
+opts.component_timing = True
+result = vq.run_rhf(mol, basis, opts)
+ct = result.component_timing
+for phase in ct.phases:
+    print(phase.path, phase.inclusive_s, phase.exclusive_s, phase.calls)
+print(ct.wall_s, ct.unclassified_s)
+```
+
+Phase paths join nested names with `/`. The inclusive time of a phase
+contains its nested phases, while its exclusive time does not. The exclusive
+times of all phases plus `unclassified_s` equal `wall_s`, which runs from
+driver entry to return.
+
+| Phase | Covers |
+|---|---|
+| `setup.one_electron`, `setup.grids`, `setup.jk_construction`, `setup.guess`, `setup.scf_init` | Integrals, XC grid, J/K builder, DF tensor and COSX caches, initial guess and orthogonalization |
+| `fock.jk_fused` | One RHF `build_g_rhf` call. Direct and conventional builders fuse J and K, so no separate J/K times exist for them |
+| `df.j`, `df.k`, `cosx.k` | Separate DF and COSX kernels, nested under the driver phase that called them |
+| `fock.j`, `fock.k`, `xc` | RKS Coulomb, exchange and XC builds. `xc` includes AO collocation, density/XC evaluation and Vxc assembly, which run batched together. PBE has no exchange phase |
+| `accelerator`, `diagonalization`, `second_order_step`, `density` | DIIS-family extrapolation, Fock diagonalization or a second-order orbital step, and density construction |
+| `final_rebuild`, `stability` | The post-convergence Fock rebuild and the stability analysis |
+
+`ct.iterations` repeats the phase table per SCF iteration. An iteration runs
+from one loop start to the next, so it includes that iteration's
+diagonalization. For staged COSX grids, `segment` numbers the grid stages.
+`ct.memory` holds tracked DF container sizes at the end of construction:
+`df.live_tracked_bytes` is the retained tensors and
+`df.construction_tracked_peak_bytes` adds the temporary ones alive at that
+point. Neither includes BLAS or solver scratch, and neither is process RSS.
+
+Timers run only on the thread that called the driver. The G0 CPU profiling
+harness in `examples/regression/gpu_profile.py` combines these records with
+runtime provenance and process RSS; see the
+[G0 plan](../design/gpu_g0_g1m_plan.md).
+
 ## References
 
 * Almlöf, Fægri, Korsell, *J. Comput. Chem.* **3**, 385 (1982),

@@ -61,8 +61,10 @@ add_library(vibeqc_core STATIC
     src/manta_shells.cpp
     src/manta_provider.cpp
     src/manta_molecular_source.cpp
+    src/manta_quartet_enclosure.cpp
     src/manta_one_electron.cpp
     src/manta_metric_enclosure.cpp
+    src/manta_three_center_enclosure.cpp
     src/manta_fitting.cpp
     src/manta_fourier.cpp
     src/manta_bloch_fourier.cpp
@@ -144,6 +146,7 @@ add_library(vibeqc_core STATIC
     src/trah.cpp
     src/guess.cpp
     src/rhf.cpp
+    src/scf_profile.cpp
     src/uhf.cpp
     src/gradient.cpp
     src/basis_param_gradient.cpp

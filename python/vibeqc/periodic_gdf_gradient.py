@@ -1911,6 +1911,8 @@ def _compute_range_separated_cache_gradient(
                         reciprocal_candidate_cap=reciprocal_cap,
                         integral_screen_error=screen, retain_fit_state=True,
                         _metric_state=metric_state,
+                        metric_decomposition=getattr(
+                            cache, 'metric_decomposition', 'cholesky'),
                     )
                 except _RangeSeparatedGdfAdmissionError as exc:
                     if not exc.retry_with_fewer_kpoints or len(selected) == 1:
@@ -2106,9 +2108,17 @@ def _range_separated_jk_response_weights(
     eigenvalues, U = batch.metric_eigenvalues, state.eigenvectors
     spectral_tol = (64 * np.finfo(float).eps * n_aux
                     * max(1., float(np.max(np.abs(eigenvalues)))))
-    if np.any(np.abs(eigenvalues - linear_dep_thr) <= spectral_tol):
+    from .aux_basis import _rsgdf_metric_keep
+    decomposition = getattr(state, "metric_decomposition", "eigen")
+    if decomposition == "cholesky":
+        # Full-rank Cholesky-first fit (#179): no mode is truncated, so the
+        # threshold plays no role; the producer's near-singular guard keeps
+        # every eigenvalue above the rounding floor (spectral_tol).
+        if float(np.min(eigenvalues)) <= spectral_tol:
+            raise ValueError("SR/LR full-rank fit state lies below its near-singular guard")
+    elif np.any(np.abs(eigenvalues - linear_dep_thr) <= spectral_tol):
         raise RuntimeError("SR/LR metric mode lies on the fit threshold; derivative undefined")
-    expected_keep = eigenvalues > linear_dep_thr
+    expected_keep = _rsgdf_metric_keep(eigenvalues, linear_dep_thr, decomposition)
     if not np.array_equal(state.keep, expected_keep):
         raise ValueError("SR/LR fit response threshold differs from its source state")
     inverse, frechet = _signed_truncated_inverse_frechet(
@@ -2298,6 +2308,9 @@ class _SlabGdfGradientCache:
     lat_opts: LatticeSumOptions
     n_aux: int
     n_orb: int
+    # AO-pair support of the fit the SCF ran (#691); the 3c derivative
+    # kernel sums the same pairs.
+    support_policy: str = "physical_pairs"
 
 
 def _build_slab_gdf_gradient_cache(
@@ -2310,6 +2323,7 @@ def _build_slab_gdf_gradient_cache(
     lat_opts: LatticeSumOptions,
     linear_dep_thr: float,
     g_chunk: int = 65536,
+    support_policy: Optional[str] = None,
 ) -> _SlabGdfGradientCache:
     """Rebuild the slab-truncated M(q)/T(q, k) and prepare fit responses.
 
@@ -2351,10 +2365,10 @@ def _build_slab_gdf_gradient_cache(
     loudly instead of producing an undefined derivative.
     """
     from ._aopair_ft import ao_pair_fourier_transform_bloch
-    from ._vibeqc_core import direct_lattice_cells
     from .aux_basis import (
         _ao_scales_for_rsgdf,
         _canonical_reciprocal_transfer,
+        _slab_fit_pair_support,
         _slab_truncated_coulomb_kernel,
         _slab_truncated_dense_g_mesh,
         _slab_truncated_gdf_contractions,
@@ -2379,10 +2393,11 @@ def _build_slab_gdf_gradient_cache(
     n_aux = int(aux_modrho.nbasis)
     n_orb = int(ao_basis.nbasis)
     V = float(abs(np.linalg.det(np.asarray(system.lattice, dtype=float))))
-    cells = direct_lattice_cells(system, float(lat_opts.cutoff_bohr))
-    R_g = np.array([list(c.r_cart) for c in cells], dtype=float)
-    if R_g.size == 0:
-        R_g = np.zeros((1, 3), dtype=float)
+    # The SCF fit's own AO-pair support (#691), so T matches it bit for bit.
+    policy = "physical_pairs" if support_policy is None else str(support_policy)
+    R_g, pair_options = _slab_fit_pair_support(
+        system, ao_basis, lat_opts, policy
+    )
     ao_scales = _ao_scales_for_rsgdf(ao_basis)
     pair_scales = np.outer(ao_scales, ao_scales)
     chunk = max(int(g_chunk), 1)
@@ -2423,7 +2438,7 @@ def _build_slab_gdf_gradient_cache(
             for pair_pos, (i, _j) in enumerate(group_pairs):
                 ket = kpts[i] + q
                 pair_ft = ao_pair_fourier_transform_bloch(
-                    ao_basis, vectors, R_g, k_cart=ket
+                    ao_basis, vectors, R_g, k_cart=ket, **pair_options
                 )
                 pair_ft *= pair_scales[:, :, None]
                 metric_chunk, three_center_chunk = (
@@ -2505,6 +2520,7 @@ def _build_slab_gdf_gradient_cache(
         lat_opts=lat_opts,
         n_aux=n_aux,
         n_orb=n_orb,
+        support_policy=policy,
     )
 
 
@@ -2647,6 +2663,7 @@ def _compute_j_gradient_slab_gdf(
             lat_opts=cache.lat_opts,
             g_mesh=group.g_mesh,
             kernel_weights=group.kernel_weights,
+            support_policy=cache.support_policy,
         )
     return grad
 
@@ -2777,6 +2794,7 @@ def _compute_k_gradient_slab_gdf(
                 lat_opts=cache.lat_opts,
                 g_mesh=group.g_mesh,
                 kernel_weights=group.kernel_weights,
+                support_policy=cache.support_policy,
             )
     return grad
 

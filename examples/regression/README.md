@@ -131,7 +131,8 @@ at 28 bohr took 47 minutes locally.
 #### Charge and spin requests
 
 A row may override the system's electronic state with `charge`,
-`multiplicity` and `atomic_spins`; the same fields exist on `PeriodicSpec`.
+`multiplicity`, `atomic_spins` and `electrostatic_background`; the same fields
+exist on `PeriodicSpec`.
 Every count is per primitive cell and identical on every cell of the
 Born-von Karman supercell, so a mesh of N_k points carries
 N_k * (multiplicity - 1) unpaired electrons in total. That is vibe-qc's
@@ -147,8 +148,9 @@ a polarized state.
 
 These requests are refused before any calculation:
 
-- a nonzero `charge`, because no neutralizing-background convention is
-  declared for matched comparisons;
+- a nonzero `charge` without explicit `electrostatic_background: "uniform-jellium"`,
+  or outside BIPOLE versus PySCF UHF/UKS; restricted charged occupations and
+  charged CRYSTAL/CP2K comparisons are not implemented;
 - a restricted method (`rhf`, `rks-*`) with a multiplicity above 1, atomic
   spins or `is_open_shell`;
 - `is_open_shell` without a multiplicity or atomic spins that describe the
@@ -157,6 +159,21 @@ These requests are refused before any calculation:
 - nonzero float `magnetic_moments`, which no runner consumes;
 - `atomic_spins` without the SAD guess, or for the PySCF reference, which has
   no equivalent initial state here.
+
+Charged requests describe a 3D periodic ion with a uniform compensating
+background, not an isolated-ion finite-size correction (Makov and Payne,
+Phys. Rev. B 51, 4014 (1995), DOI:10.1103/PhysRevB.51.4014, Sec. III.B,
+Eqs. (11)-(13)). The PySCF worker sets `cell.charge` and pins both spin counts
+on every cell; its default supercell electron count subtracts the charge only
+once. Results and CSV record charge and background. Charged comparisons fail
+if either side omits or contradicts this confirmation. Existing charged-ECP
+refusals in the BIPOLE production route remain in force.
+
+Request support is not scientific acceptance. The six fixed-cell UHF checks
+in [the charged UHF benchmark](../../benchmarks/bipole_charged_uhf.md) retain
+their original AFTDF references and tolerances. The suite uses GDF, a different
+approximation; these references do not qualify arbitrary charged DFT, ECP,
+bulk materials or CRYSTAL23 performance. Completed 0.18 scope is unchanged.
 
 A secondary PySCF row that cannot represent the state reports `unavailable`.
 The CRYSTAL runner still refuses unrestricted methods.

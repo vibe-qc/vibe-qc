@@ -260,6 +260,9 @@ struct RKSOptions {
     double stability_wall_budget_s = 0.0;
     double stability_wall_fraction = 3.0;
     double stability_wall_floor_s = 600.0;
+
+    // Opt-in SCF component timing; see RHFOptions::component_timing.
+    bool component_timing = false;
 };
 
 struct RKSResult {
@@ -340,6 +343,8 @@ struct RKSResult {
     // next inner SCF can pre-populate its DIIS instead of starting fresh.
     std::vector<Eigen::MatrixXd> diis_fock_history;
     std::vector<Eigen::MatrixXd> diis_error_history;
+    // Filled only when RKSOptions::component_timing is set.
+    ScfComponentTiming component_timing;
 };
 
 RKSResult run_rks(const Molecule& mol,
@@ -391,6 +396,7 @@ inline RHFResult rhf_result_from_rks(const RKSResult& rks) {
     r.internal_instability = rks.internal_instability;
     r.stability_wall_s = rks.stability_wall_s;
     r.stability_cpu_s = rks.stability_cpu_s;
+    r.component_timing = rks.component_timing;
     return r;
 }
 

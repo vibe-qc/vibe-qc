@@ -50,6 +50,31 @@ claim Saitow 2017's additional `TScaleTCutPairs=0.33`, which assumes a single
 ROHF/QRO-like spatial-orbital set rather than independent UHF alpha and beta
 spaces.
 
+## Running the companion scripts
+
+Copy a companion script into a separate directory and run it with the
+installed engine's Python, for example:
+
+```sh
+python input-h2o-dlpno-mp2.py > console.log
+```
+
+The scripts write job artifacts next to the copied script and print their
+additional comparisons to stdout. Keep `console.log` alongside the `.out`
+and `.system` files; do not append analysis to a finalized job artifact.
+Use a fresh directory for each recipe so repeated runs do not replace the
+previous evidence.
+
+The MP2 script compares local correlation with a separate canonical RI-MP2
+calculation, sharing the RHF orbitals, chemical frozen core and fitting
+basis. Its signed difference is local minus canonical in microhartree.
+The CCSD script instead compares default and full-domain **local** CCSD on
+one RHF reference; it does not run an independent canonical solver. Both
+scripts stop on unconverged references or iterative amplitudes. Their
+recovery percentages describe these water calculations, not an accuracy
+bound for other geometries or relative energies. The CCSD(T) script reports
+one default calculation and provides no independent triples comparison.
+
 ## Before running
 
 Use a separate run directory and the installed engine's Python. Coordinates

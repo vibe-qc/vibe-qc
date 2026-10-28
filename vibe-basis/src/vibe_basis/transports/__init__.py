@@ -10,6 +10,9 @@ to a CPU and waits for completion. Implementations:
   targeting a remote daemon (compute-host for this lab). Used in
   production Stage 0+ runs where each evaluation fans out to N
   per-compound jobs.
+* ``ledger`` — wraps either and journals its submissions, so a
+  restarted campaign driver adopts the jobs its predecessor left on
+  the queue instead of submitting them again.
 
 The transport interface is intentionally minimal: ``submit``,
 ``poll``, ``wait`` (concrete poll-loop in the base class),
@@ -28,6 +31,7 @@ from .base import (
     Transport,
     TransportError,
 )
+from .ledger import LedgerTransport
 from .local import LocalTransport
 from .vq import VqTransport
 
@@ -40,6 +44,7 @@ __all__ = [
     "JobResult",
     "TERMINAL_STATES",
     "SUCCESS_STATES",
+    "LedgerTransport",
     "LocalTransport",
     "VqTransport",
 ]

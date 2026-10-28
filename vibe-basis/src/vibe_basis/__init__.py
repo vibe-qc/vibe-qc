@@ -34,6 +34,10 @@ Top-level surface
 ``vibe_basis.cache``
     Content-addressed energy cache with an append-only journal. Free-
     atom energies are shared across every system in a campaign.
+``vibe_basis.campaign``
+    The campaign directory: journal, job ledger, settings binding,
+    budget, a lock and one record per session, so a killed run resumes
+    identically. Refuses a directory inside a git checkout.
 ``vibe_basis.objective``
     The L1 objective: cohesive energies scored against a plane-wave-limit
     reference, with weights, four losses and a held-out validation split.
@@ -51,4 +55,4 @@ Top-level surface
 # Keep in lockstep with pyproject.toml's [project] version — ``vb
 # --version`` reads this one, so a drift makes the CLI lie about what is
 # installed. Pinned by tests/test_versioning.py; scheme in VERSIONING.md.
-__version__ = "0.13.0"
+__version__ = "0.14.0"

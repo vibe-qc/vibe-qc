@@ -410,18 +410,15 @@ void EDIIS::push_iterate(std::vector<Eigen::MatrixXd>&& fock_blocks,
 // ``test_ediis_convex_hull_uses_vibeqc_total_density_energy_convention`` and
 // ``test_ediis_open_shell_hull_uses_the_same_energy_convention`` in
 // tests/test_ediis.py.
-std::vector<double> EDIIS::solve_qp() const {
+void EDIIS::build_qp(Eigen::VectorXd& linear, Eigen::MatrixXd& M) const {
     const auto n = static_cast<Eigen::Index>(energy_history_.size());
-    if (n == 0) return {};
-    if (n == 1) return {1.0};
-
     const Eigen::Index ref = n - 1;
     const auto& F_ref = fock_history_[ref];
     const auto& D_ref = density_history_[ref];
     const double E_ref = energy_history_[ref];
 
-    Eigen::VectorXd linear(n);
-    Eigen::MatrixXd M = Eigen::MatrixXd::Zero(n, n);
+    linear.resize(n);
+    M = Eigen::MatrixXd::Zero(n, n);
     for (Eigen::Index i = 0; i < n; ++i) {
         linear(i) =
             2.0 * (energy_history_[i] - E_ref)
@@ -439,8 +436,39 @@ std::vector<double> EDIIS::solve_qp() const {
             M(j, i) = mij;
         }
     }
+}
+
+std::vector<double> EDIIS::solve_qp() const {
+    const auto n = static_cast<Eigen::Index>(energy_history_.size());
+    if (n == 0) return {};
+    if (n == 1) {
+        if (capture_) {
+            capture_->attempts.push_back({Eigen::VectorXd::Zero(1), {},
+                                          Eigen::MatrixXd::Zero(1, 1)});
+        }
+        return {1.0};
+    }
+    Eigen::VectorXd linear;
+    Eigen::MatrixXd M;
+    build_qp(linear, M);
+    if (capture_) capture_->attempts.push_back({linear, {}, M});
     return solve_simplex_qp(linear, M);
 }
+
+namespace {
+// Completes the newest capture attempt with the coefficients the solver
+// returned and f_EDIIS at them (see EDIISSolveCapture).
+void record_ediis_solution(EDIISCapture& capture,
+                           const std::vector<double>& coeffs,
+                           double newest_energy) {
+    auto& a = capture.attempts.back();
+    a.coefficients = Eigen::Map<const Eigen::VectorXd>(
+        coeffs.data(), static_cast<Eigen::Index>(coeffs.size()));
+    const double objective = a.coefficients.dot(a.quadratic * a.coefficients)
+                           + a.linear.dot(a.coefficients);
+    a.interpolated_energy = newest_energy + 0.5 * objective;
+}
+}  // namespace
 
 // Solve the QP, combine, and apply the anti-replay guard.
 //
@@ -478,7 +506,21 @@ std::vector<double> EDIIS::solve_qp() const {
 // ediis-antireplay-guard-molecular-basin-regression.md). Every call site
 // that drops a return therefore calls discard_last_extrapolation().
 std::vector<Eigen::MatrixXd> EDIIS::finish_extrapolation() {
+    if (capture_) {
+        *capture_ = {};
+        capture_->focks.assign(fock_history_.begin(), fock_history_.end());
+        capture_->densities.assign(density_history_.begin(),
+                                   density_history_.end());
+        capture_->energies.assign(energy_history_.begin(),
+                                  energy_history_.end());
+        for (std::size_t i = 0; i < energy_history_.size(); ++i) {
+            capture_->surviving.push_back(static_cast<long>(i));
+        }
+    }
     last_coeffs_ = solve_qp();
+    if (capture_) {
+        record_ediis_solution(*capture_, last_coeffs_, energy_history_.back());
+    }
     std::vector<Eigen::MatrixXd> F_extrap =
         combine_blocks(fock_history_, last_coeffs_);
     while (energy_history_.size() >= 2
@@ -493,8 +535,22 @@ std::vector<Eigen::MatrixXd> EDIIS::finish_extrapolation() {
         energy_history_.erase(energy_history_.begin()
                               + static_cast<std::ptrdiff_t>(pinned));
         ++replay_guard_erasures_;
+        if (capture_) {
+            auto& alive = capture_->surviving;
+            capture_->attempts.back().erased_index = alive[pinned];
+            alive.erase(alive.begin() + static_cast<std::ptrdiff_t>(pinned));
+        }
         last_coeffs_ = solve_qp();
+        if (capture_) {
+            record_ediis_solution(*capture_, last_coeffs_,
+                                  energy_history_.back());
+        }
         F_extrap = combine_blocks(fock_history_, last_coeffs_);
+    }
+    if (capture_) {
+        capture_->disposition =
+            capture_->attempts.size() > 1 ? "replay_guard_resolved"
+            : energy_history_.size() < 2 ? "single_iterate" : "extrapolated";
     }
     last_extrap_ = F_extrap;
     return F_extrap;

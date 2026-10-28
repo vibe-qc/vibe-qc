@@ -24,13 +24,19 @@ that runs the search and records the result (#225).
   BOBYQA as the worst energy seen so far plus a margin. An infinite value
   would poison BOBYQA's quadratic model: in a two-parameter test one
   infinite point stopped it at a wrong point with "xtol reached".
-* **Resume.** Every energy is journalled through
-  :class:`vibe_basis.cache.EnergyCache`, keyed by engine, system, basis text
-  and method, so a scan restarted on the same work directory reuses every
-  completed point. SCF failures are journalled. A point the transport loses
-  is retried, and when every retry fails the scan stops with
-  :class:`TransportUnavailable` rather than handing BOBYQA a penalty that is
-  about the host.
+* **Resume.** The work directory is a :class:`vibe_basis.campaign.Campaign`.
+  Every energy is journalled, keyed by engine, system, basis text and
+  method, so a scan restarted on the same directory replays every completed
+  point and follows the same trajectory; SCF failures are journalled. Each
+  point's directory is named by its key, so a restart cannot overwrite an
+  earlier point's outputs. The settings that shape the trajectory are bound
+  on the first session and a restart with other ones is refused; the round
+  cap, patience, parallelism and retry count may change. A transport wrapped
+  with ``Campaign.ledger`` lets a restart adopt the jobs a killed driver left
+  queued. A point the transport loses is retried, and when every retry fails
+  the scan stops with :class:`TransportUnavailable` rather than handing
+  BOBYQA a penalty that is about the host. A ``budget`` stops the scan with
+  :class:`vibe_basis.campaign.BudgetExhausted` after that many evaluations.
 
 With a total-energy objective, gate (c) of #225 asks whether the shipped
 topology is on the front or within the plateau threshold of it
@@ -42,6 +48,7 @@ the M2 cohesive objective.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import math
 import threading
@@ -51,8 +58,9 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 import numpy as np
-from vibe_basis.cache import EnergyCache, crystal_key
-from vibe_basis.engine import EngineEnergy
+from vibe_basis.cache import crystal_key
+from vibe_basis.campaign import Campaign, source_identity
+from vibe_basis.engine import TRANSIENT_FAILURE_MODES, EngineEnergy
 from vibe_basis.optimize import optimize_nlopt
 from vibe_basis.pipeline import HARTREE_TO_KJ_PER_MOL
 from vibe_basis.topology import (
@@ -95,7 +103,14 @@ DEFAULT_UPPER_BOUND = 100.0
 
 #: Engine failures that say nothing about the basis, so a resumed scan
 #: retries them rather than reading them back from the journal.
-_TRANSIENT_FAILURES = frozenset({"transport_error", "no_output_file"})
+_TRANSIENT_FAILURES = TRANSIENT_FAILURE_MODES
+
+#: Settings that only decide when the scan stops or how fast it runs. A
+#: resumed scan may change them; any other setting is bound by the campaign.
+_VOLATILE_SETTINGS = (
+    "vibeqc_version", "vibe_basis_version", "max_rounds", "patience",
+    "parallel", "transient_retries",
+)
 
 
 class TransportUnavailable(RuntimeError):
@@ -364,24 +379,37 @@ def _journalled_energy(
     engine_factory: Callable[[Path], Any],
     structure: Any,
     method: str,
-    workdir: Path,
-    cache: EnergyCache,
+    campaign: Campaign,
     transient_retries: int = 2,
 ) -> tuple[Callable[[str], EngineEnergy], str]:
-    engine_name = engine_factory(workdir / "points" / "probe").name
+    engine_name = engine_factory(campaign.workdir / "points" / "probe").name
+    cache = campaign.cache
     lock = threading.Lock()
-    counter = [0]
+    # Keys being computed, so a second candidate asking for the same basis
+    # waits for that result: the point directory and the job are one.
+    in_flight: dict[str, threading.Event] = {}
 
     def energy(basis_text: str) -> EngineEnergy:
         key = crystal_key(engine_name, structure.name, basis_text, method)
-        with lock:
-            hit = cache.get(key)
-            if hit is None:
-                counter[0] += 1
-                n = counter[0]
-        if hit is not None:
-            return hit
-        point_dir = workdir / "points" / f"point{n:04d}"
+        while True:
+            with lock:
+                if key in cache:
+                    return cache.get(key)
+                done = in_flight.get(key)
+                if done is None:
+                    in_flight[key] = threading.Event()
+                    cache.misses += 1
+                    break
+            done.wait()  # then read it from the journal, or compute it here
+        try:
+            return _compute(key, basis_text)
+        finally:
+            with lock:
+                in_flight.pop(key).set()
+
+    def _compute(key: str, basis_text: str) -> EngineEnergy:
+        campaign.charge()
+        point_dir = campaign.point_dir(key)
         point_dir.mkdir(parents=True, exist_ok=True)
         (point_dir / "basis.crystal").write_text(basis_text)
         # A lost submission or fetch says nothing about the basis, and handed
@@ -396,10 +424,12 @@ def _journalled_energy(
             # Still unreachable: stop rather than hand the optimiser a penalty
             # that is about the host, not the basis. The journal keeps every
             # finished point, so a restart resumes here.
-            raise TransportUnavailable(
+            reason = (
                 f"{point_dir.name}: {transient_retries + 1} attempts ended in "
                 f"{result.failure_mode} ({result.detail.get('error', '')})"
             )
+            campaign.halt(reason)
+            raise TransportUnavailable(reason)
         with lock:
             cache.put(key, result)
         return result
@@ -467,7 +497,7 @@ def run_topology_scan(
     element: str,
     shell_type: str,
     engine_factory: Callable[[Path], Any],
-    workdir: Path | str,
+    workdir: Path | str | Campaign,
     *,
     family: str = "pob-TZVP-rev2",
     method: str = "pw1pw",
@@ -477,6 +507,7 @@ def run_topology_scan(
     max_rounds: int = 8,
     beam_width: int = 1,
     transient_retries: int = 2,
+    budget: int | None = None,
     **relax: Any,
 ) -> TopologyScanReport:
     """Scan ``element``'s ``shell_type`` shells in ``structure`` from ``family``.
@@ -486,33 +517,63 @@ def run_topology_scan(
     are relaxed at once; each relaxation is sequential. A point lost to the
     transport is retried ``transient_retries`` times. ``relax`` passes
     through to :class:`ScanEvaluator` (bounds, ``max_eval``, tolerances).
-    The journal and the record, ``scan_record.json``, live in ``workdir``.
+
+    ``workdir`` is a directory, opened here as a campaign with ``budget``,
+    or a :class:`~vibe_basis.campaign.Campaign` the caller opened (with its
+    own budget, and with ``Campaign.ledger`` around the engines' transport
+    so a restart adopts queued jobs). The journal and the record,
+    ``scan_record.json``, live in the campaign directory.
     """
-    workdir = Path(workdir).resolve()
-    workdir.mkdir(parents=True, exist_ok=True)
     symbols = list(dict.fromkeys(SYMBOL[atom.Z] for atom in structure.crystal_asymm_unit))
     if element not in symbols:
         raise ValueError(f"{structure.name} has no {element}; its elements are {symbols}")
-    template = load_pob_atoms(family, symbols)
-    topology = topology_from_atoms(template)
-
-    cache = EnergyCache(workdir / "energies.jsonl")
-    energy, engine_name = _journalled_energy(
-        engine_factory, structure, method, workdir, cache, transient_retries
-    )
-    evaluator = ScanEvaluator(element, shell_type, template, energy, **relax)
-
-    with ThreadPoolExecutor(max_workers=max(1, parallel)) as pool:
-        result = greedy_scan(
-            topology, element, shell_type, evaluator,
-            threshold=threshold, patience=patience, max_rounds=max_rounds,
-            beam_width=beam_width, map_candidates=pool.map,
+    if isinstance(workdir, Campaign):
+        if budget is not None:
+            raise TypeError("pass budget to Campaign.open, not with an open campaign")
+        campaign, owned = workdir, contextlib.nullcontext(workdir)
+    else:
+        campaign = Campaign.open(
+            workdir, budget=budget,
+            sources={"vibe-qc": source_identity(Path(__file__).resolve().parents[4])},
+        )
+        owned = campaign
+    with owned:
+        return _scan_in(
+            campaign, structure, element, shell_type, engine_factory, symbols,
+            family=family, method=method, parallel=parallel, threshold=threshold,
+            patience=patience, max_rounds=max_rounds, beam_width=beam_width,
+            transient_retries=transient_retries, relax=relax,
         )
 
+
+def _scan_in(
+    campaign: Campaign,
+    structure: Any,
+    element: str,
+    shell_type: str,
+    engine_factory: Callable[[Path], Any],
+    symbols: list[str],
+    *,
+    family: str,
+    method: str,
+    parallel: int,
+    threshold: float,
+    patience: int,
+    max_rounds: int,
+    beam_width: int,
+    transient_retries: int,
+    relax: Mapping[str, Any],
+) -> TopologyScanReport:
     import vibe_basis
 
     from ... import __version__ as vibeqc_version
 
+    template = load_pob_atoms(family, symbols)
+    topology = topology_from_atoms(template)
+    energy, engine_name = _journalled_energy(
+        engine_factory, structure, method, campaign, transient_retries
+    )
+    evaluator = ScanEvaluator(element, shell_type, template, energy, **relax)
     settings = {
         "vibeqc_version": vibeqc_version,
         "vibe_basis_version": vibe_basis.__version__,
@@ -537,14 +598,24 @@ def run_topology_scan(
         "initial_step": evaluator.initial_step,
         "failure_margin_kj_per_mol": evaluator.failure_margin_kj,
     }
+    campaign.bind(settings, volatile=_VOLATILE_SETTINGS)
+
+    with ThreadPoolExecutor(max_workers=max(1, parallel)) as pool:
+        result = greedy_scan(
+            topology, element, shell_type, evaluator,
+            threshold=threshold, patience=patience, max_rounds=max_rounds,
+            beam_width=beam_width, map_candidates=pool.map,
+        )
+
     report = TopologyScanReport(
         result=result,
         settings=settings,
         shipped_gap_kj=front_gap(result.scores(), "round0:baseline"),
         shipped_on_front="round0:baseline" in result.front,
         threshold=threshold,
-        cache_stats=cache.stats,
+        cache_stats=campaign.cache.stats,
     )
-    report.record_path = workdir / "scan_record.json"
-    report.record_path.write_text(json.dumps(report.to_json(), indent=2, default=str) + "\n")
+    record = report.to_json()
+    record["campaign"] = campaign.summary()
+    report.record_path = campaign.write_record("scan_record.json", record)
     return report

@@ -3,8 +3,9 @@
 The reader is exercised on a small synthetic tree with the shapes of the pob
 cohesive reference set: an energy log citing each run, a bulk deck relaxed
 with OPTGEOM, counterpoise decks whose geometry lists the atoms in another
-order, a truncated atom output, and a bulk energy that the log gives only in
-its arithmetic. No reference data is in the repository.
+order, a truncated atom output, a bulk energy that the log gives only in its
+arithmetic, and an output whose echoed input differs from the ``.d12`` beside
+it. No reference data is in the repository.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from vibe_basis.engines.crystal23 import Crystal23Engine
 from vibe_basis.io.cohesive_reference import (
     conventional_cubic_a,
     deck_settings,
+    echoed_input,
     final_primitive_cell,
     load_reference_system,
 )
@@ -136,12 +138,19 @@ def tree(tmp_path):
     (d / "K2O_pob_r2SCAN.111.out").write_text(
         BANNER + _atom_list([(19, "K"), (19, "K"), (8, "O")]) + _scf(E_BULK) + final + END
     )
-    # K counterpoise atom: deck lists K first (IAT 1); converged output.
+    # K counterpoise atom: deck lists K first (IAT 1); converged output. The
+    # output echoes the deck that ran; the .d12 beside it was edited later.
     (d / "K2O_pob_r2SCAN_atombsse_K.d12").write_text(
-        _geometry(K_first, f"{A_START}") + "ATOMBSSE\n  1 20 7.5\nBASISSET\npob-tzvp-rev2\nEND\n"
+        _geometry(K_first, f"{A_START}") + "ATOMBSSE\n  1 60 7.5\nBASISSET\npob-tzvp-rev2\n"
+        "DFT\nr2SCAN\nSPIN\nENDDFT\nFMIXING\n 75\nANDERSON\nSPINLOC2\n 1 -3\nEND\n"
     )
     (d / "K2O_pob_r2SCAN_atombsse_K.222.out").write_text(
-        BANNER + _atom_list([(19, "K"), (0, "XX")]) + _scf(E_K) + END
+        "csub started on a compute node\n 1 nodes, 4 cores\n\n"
+        + _geometry(K_first, f"{A_START}") + "ATOMBSSE\n  1 20 7.5\nBASISSET\npob-tzvp-rev2\n"
+        "DFT\nr2SCAN\nSPIN\nEND\nTOLINTEG\n 9 9 9 18 54\nEXCHSIZE\n20651481\n"
+        "ATOMSPIN\n 1\n 1 1\nSPINLOCK\n 1 50\nFMIXING\n 75\nANDERSON\nEND\n"
+        "         4 PROCESSORS WORKING\n"
+        + BANNER + _atom_list([(19, "K"), (0, "XX")]) + _scf(E_K) + END
     )
     # O counterpoise atom: deck lists O first (IAT 1 again); the cited run is
     # gone, a truncated rerun of the same deck is there.
@@ -194,6 +203,33 @@ def test_a_published_value_reassembles_from_the_runs_the_log_cites(tree):
     assert shifted == pytest.approx(r.cohesive_kj() - 2 * 0.001 * HARTREE_TO_KJ_PER_MOL)
 
 
+def test_a_run_is_read_from_the_input_its_output_echoes(tree):
+    root, log, published = tree
+    r = load_reference_system(root, "K2O", published, log)
+    k = next(c for c in r.atoms if c.Z == 19)
+    o = next(c for c in r.atoms if c.Z == 8)
+    assert k.deck_source == "output"
+    # The echo, not the edited .d12: NSTAR 20, and the SCF input that ran.
+    assert k.settings.atombsse == (1, 20, 7.5)
+    assert k.settings.scf == ("ATOMSPIN", "1", "1 1", "SPINLOCK", "1 50", "FMIXING", "75", "ANDERSON")
+    assert (k.settings.spin, k.settings.n_unpaired, k.settings.symmremo) == (True, 1, False)
+    assert {"atombsse", "scf"} <= set(k.deck_file_differs)
+    # No output to echo: the .d12 is all there is.
+    assert (o.deck_source, o.deck_file_differs, o.settings.symmremo) == ("d12 file", (), True)
+    assert r.bulk.deck_source == "d12 file"
+
+
+def test_the_echo_ends_at_the_banner_or_the_processor_count():
+    deck = "T\nCRYSTAL\n0 0 0\n225\n4.2\n1\n12 0 0 0\nEND\n"
+    stars = " " + "*" * 79 + "\n"
+    assert echoed_input("header\n" + deck + stars + BANNER + "rest") == deck
+    assert echoed_input(deck + "   8 PROCESSORS WORKING\n" + stars) == deck
+    assert echoed_input(stars + BANNER + deck) is None
+    assert echoed_input("no deck at all") is None
+    closed = deck_settings(deck.replace("END\n", "BASISSET\nPOB\nDFT\nR2SCAN\nEND\nTOLDEE\n 14\nEND\n"))
+    assert (closed.scf, closed.spin, closed.n_unpaired) == (("TOLDEE", "14"), False, 0)
+
+
 def test_a_value_the_log_does_not_give_is_refused(tree):
     root, log, published = tree
     with pytest.raises(LookupError):
@@ -227,7 +263,7 @@ class _Finished:
         out = Path(dest) / "job"
         out.mkdir(parents=True, exist_ok=True)
         (out / "MgO.out").write_text(self.out_text)
-        return SimpleNamespace(output_dir=out)
+        return SimpleNamespace(output_dir=out, state="completed")
 
 
 def test_a_relaxation_that_did_not_converge_is_not_an_energy(tmp_path, monkeypatch):
@@ -241,3 +277,32 @@ def test_a_relaxation_that_did_not_converge_is_not_an_energy(tmp_path, monkeypat
     assert not bad.ok and bad.failure_mode == "optgeom_not_converged"
     sp = Crystal23Engine(transport=_Finished(scf)).crystal_energy("12 0\n99 0\n", STRUCTURES["MgO"], "r2scan")
     assert sp.ok
+
+
+# ---------------------------------------------------------------------------
+# A reference deck's own SCF input
+# ---------------------------------------------------------------------------
+
+
+def test_scf_lines_replace_the_emitters_own_convergence_input():
+    from vibe_basis.backends.crystal import emit_input_inline
+
+    scf = ("ATOMSPIN", "1", "1 1", "SPINLOCK", "1 50", "TOLDEE", "14", "FMIXING", "75", "ANDERSON")
+    deck = emit_input_atom_counterpoise(
+        K2O_K_FIRST, 1, INLINE, method="r2scan", nstar=20, rmax=7.5,
+        n_unpaired=1, symmremo=False, scf_lines=scf,
+    )
+    assert "SYMMREMO" not in deck and "SPIN\nEND" in deck
+    tail = deck[deck.index("TOLINTEG"):].splitlines()
+    assert tail == ["TOLINTEG", "9 9 9 18 54", *scf, "END"]
+    # Without them: the bare-atom convention, as before.
+    plain = emit_input_atom_counterpoise(K2O_K_FIRST, 1, INLINE, method="r2scan")
+    assert "SYMMREMO" in plain and plain.endswith("SPINLOCK\n1 50\nTOLDEE\n8\nEND\n")
+    # An element with no tabulated ground state (Zn) runs once its spin is given.
+    with pytest.raises(ValueError, match="no tabulated free-atom ground state for Z=30"):
+        emit_input_atom_counterpoise(STRUCTURES["ZnSe"], 1, INLINE, method="r2scan", Z=30)
+    znse = emit_input_atom_counterpoise(STRUCTURES["ZnSe"], 1, INLINE, method="r2scan", Z=30,
+                                        n_unpaired=0, scf_lines=("TOLDEE", "14"))
+    assert "SPIN" not in znse and znse.endswith("TOLDEE\n14\nEND\n")
+    bulk = emit_input_inline(STRUCTURES["MgO"], "12 0\n99 0\n", "r2scan", scf_lines=("FMIXING", "60"))
+    assert bulk.endswith("SHRINK\n8 8\nFMIXING\n60\nTOLDEE\n8\nEND\n")

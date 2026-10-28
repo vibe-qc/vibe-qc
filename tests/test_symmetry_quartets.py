@@ -1857,3 +1857,113 @@ def test_certified_map_execution_lifetime_and_old_api_fallback(monkeypatch):
     np.testing.assert_array_equal(j.reshape(new.j.shape),new.j)
     np.testing.assert_array_equal(k.reshape(new.k.shape),new.k)
     assert counts['scalar_products']==new.scalar_products
+
+
+def quartet_construction_reference(basis, key):
+    """800-digit Gaussian product integral; independent alternating F0 series."""
+    from decimal import Decimal as D, localcontext
+    from tests.test_manta_fourier import _decimal_phase
+    _decimal_phase([0.,0.,0.], [0.,0.,0.])
+    shells = [basis.shells()[k] for k in key]
+    with localcontext() as context:
+        context.prec = 800
+        pi = +_decimal_phase.pi
+        total = D(0)
+        for indices in product(*(range(len(s.exponents)) for s in shells)):
+            exps = [D(float(s.exponents[i])) for s,i in zip(shells,indices)]
+            coeff = [D(float(s.coefficients[i])) for s,i in zip(shells,indices)]
+            centers = [[D(float(x)) for x in s.origin] for s in shells]
+            a,b,c,d = exps; p,q = a+b,c+d
+            P = [(a*x+b*y)/p for x,y in zip(centers[0],centers[1])]
+            Q = [(c*x+d*y)/q for x,y in zip(centers[2],centers[3])]
+            decay = -a*b/p*sum((x-y)**2 for x,y in zip(centers[0],centers[1]))
+            decay -= c*d/q*sum((x-y)**2 for x,y in zip(centers[2],centers[3]))
+            t = p*q/(p+q)*sum((x-y)**2 for x,y in zip(P,Q))
+            term = D(1); f0 = term
+            if t:
+                for k in range(1,4000):
+                    term *= -t/k; value = term/(2*k+1); f0 += value
+                    if k>int(t)+50 and abs(value)<D('1e-700'): break
+                else: raise AssertionError('independent F0 series exhausted')
+            value = 2*pi**2*pi.sqrt()*decay.exp()*f0/(p*q*(p+q).sqrt())
+            for weight in coeff: value *= weight
+            total += value
+        return +total
+
+
+def quartet_construction_case(kind='general', pure=False):
+    distance = 60. if kind=='underflow' else 30. if kind=='farfield' else 1.3
+    scale = 1e-10 if kind=='diffuse' else 1e10 if kind=='tight' else 1.
+    positions = [[0.,0.,0.], [distance/np.sqrt(scale),.2/np.sqrt(scale),0.]]
+    if kind=='coincident': positions[1] = positions[0].copy()
+    mol = vq.Molecule([vq.Atom(1,xyz) for xyz in positions])
+    shells = []
+    for i,xyz in enumerate(positions):
+        exps = [.7*scale,.7*scale] if kind=='cancellation' else [(.7+.2*i)*scale]
+        coefficients = [1.,-1.+2e-12] if kind=='cancellation' else [1.]
+        shells.append(core.ShellInfo(i,0,pure,exps,coefficients,xyz))
+    basis = vq.BasisSet(mol,shells,'quartet enclosure witness',True)
+    key = (0,0,1,1) if kind=='farfield' else (0,1,0,1)
+    return basis,key
+
+
+@pytest.mark.parametrize('provider_name',['DirectJKBuilder','ReferenceJKBuilder'])
+@pytest.mark.parametrize('pure',[False,True])
+@pytest.mark.parametrize('kind',['general','coincident','cancellation','underflow','farfield','diffuse','tight'])
+def test_quartet_construction_encloses_independent_reference(provider_name,pure,kind):
+    from decimal import Decimal as D
+    native = core._manta
+    basis,key = quartet_construction_case(kind,pure)
+    provider = getattr(native,provider_name)(basis)
+    c = native.certify_molecular_quartet_construction(provider,key,native.ResourceBudget())
+    exact = quartet_construction_reference(basis,key)
+    assert D(c.lower) <= exact <= D(c.upper)
+    assert abs(D(c.evaluated)-exact) <= D(c.error_bound)
+    actual = provider.evaluate(key)
+    assert c.evaluated == actual['values'].item()
+    assert c.null_tile == bool(actual['null_tiles'])
+    assert c.plan.shell_calls == 1
+    assert c.plan.primitive_products == (16 if kind=='cancellation' else 1)
+    assert c.key == list(key) and c.source_identity == provider.source_identity
+    assert c.qualification_scope == 'finite-molecular-s-quartet-construction'
+    assert not c.arithmetic_equivariance_certified
+    c.validate(provider)
+    if kind=='underflow': assert c.error_bound>0 and exact!=0
+    if kind in ('general','coincident','diffuse','tight'):
+        assert c.error_bound < 1e-10*max(1.,abs(c.evaluated))
+    with pytest.raises(ValueError,match='different provider'):
+        c.validate(getattr(native,provider_name)(basis))
+    with pytest.raises(TypeError): native.MolecularQuartetConstruction()
+    with pytest.raises(AttributeError): c.error_bound = 0.
+    del provider
+    assert c.lower <= c.upper  # retained owner and immutable scalar receipt
+
+
+@pytest.mark.parametrize('field,quantity',[
+    ('memory_bytes','modeled_peak_bytes'),('scalar_terms','scalar_terms'),
+    ('kernel_terms','kernel_terms'),('shell_calls','shell_calls'),
+    ('primitive_quartets','primitive_products')])
+def test_quartet_construction_resource_caps(field,quantity):
+    native = core._manta; basis,key = quartet_construction_case()
+    provider = native.DirectJKBuilder(basis); budget = native.ResourceBudget()
+    p = native.plan_molecular_quartet_construction(provider,key,budget)
+    setattr(budget,field,getattr(p,quantity))
+    native.certify_molecular_quartet_construction(provider,key,budget)
+    setattr(budget,field,getattr(p,quantity)-1)
+    with pytest.raises((ValueError,MemoryError),match='budget'):
+        native.certify_molecular_quartet_construction(provider,key,budget)
+
+
+def test_quartet_construction_refuses_other_domains():
+    native = core._manta; _,basis,_,_ = molecular_case('cartesian')
+    provider = native.DirectJKBuilder(basis); budget = native.ResourceBudget()
+    for key in ((0,0,0,2),(2,0,0,0)):
+        with pytest.raises(ValueError,match='index'):
+            native.certify_molecular_quartet_construction(provider,key,budget)
+    with pytest.raises(ValueError,match='s shells'):
+        native.certify_molecular_quartet_construction(provider,(0,0,0,1),budget)
+    request = native.KernelRequest(); request.kernel='erf'; request.omega=.4
+    with pytest.raises(ValueError,match='Coulomb'):
+        native.certify_molecular_quartet_construction(native.DirectJKBuilder(basis,request),(0,)*4,budget)
+    with pytest.raises(TypeError):
+        native.certify_molecular_quartet_construction(provider,(-1,0,0,0),budget)

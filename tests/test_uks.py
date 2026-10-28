@@ -674,14 +674,9 @@ def test_uks_recovery_diagnostic_rejects_residual_below_gate(sh_read_witness):
     assert iterations == list(range(1, 43)), iterations
 
 
-def test_uks_diis_capture_preserves_trajectory_and_actual_history(sh_read_witness):
-    """The observer records the coupled solve without changing SCF choices."""
-    from vibeqc import _vibeqc_core as core
-
-    mol, basis, opts = sh_read_witness
-    opts.max_iter = 5
+def _assert_capture_is_passive(core, mol, basis, opts, first, last):
     plain = core.run_uks(mol, basis, opts)
-    observed, report = core._run_uks_with_diis_capture(mol, basis, opts, 2, 5)
+    observed, report = core._run_uks_with_diis_capture(mol, basis, opts, first, last)
     assert observed.energy == plain.energy
     assert observed.converged == plain.converged
     for spin in ("alpha", "beta"):
@@ -692,31 +687,172 @@ def test_uks_diis_capture_preserves_trajectory_and_actual_history(sh_read_witnes
     for a, b in zip(observed.scf_trace, plain.scf_trace):
         for field in ("energy", "grad_norm", "delta_e", "diis_subspace", "accelerator_step"):
             assert getattr(a, field) == getattr(b, field)
-    assert [f["iteration"] for f in report["frames"]] == [2, 3, 4, 5]
-    for frame in report["frames"]:
-        errors = frame["errors"]
-        gram = np.array([[np.sum(a * b) for b in errors] for a in errors])
-        np.testing.assert_allclose(frame["pushed_gram"], gram, rtol=1e-13, atol=1e-30)
-        state = frame["matrices"]
-        np.testing.assert_array_equal(errors[-1], np.vstack([
-            state["residual_alpha"], state["residual_beta"]]))
-        assert frame["attempts"][-1]["usable"]
-        solve = frame["attempts"][-1]
-        m = len(solve["solution"]) - 1
-        assert solve["rank"] == m + 1
+    assert [f["iteration"] for f in report["frames"]] == list(range(first, last + 1))
+    # A later ordinary call must not inherit a pointer into the expired report.
+    assert core.run_uks(mol, basis, opts).energy == plain.energy
+    return plain, report
+
+
+def _check_diis_frame(frame):
+    errors = frame["errors"]
+    gram = np.array([[np.sum(a * b) for b in errors] for a in errors])
+    np.testing.assert_allclose(frame["pushed_gram"], gram, rtol=1e-13, atol=1e-30)
+    state = frame["matrices"]
+    np.testing.assert_array_equal(errors[-1], np.vstack([
+        state["residual_alpha"], state["residual_beta"]]))
+    if not frame["attempts"]:
+        return None, 0
+    solve = frame["attempts"][-1]
+    m = len(solve["solution"]) - 1
+    return solve, m
+
+
+def _check_ediis_frame(frame):
+    """EDIIS history/model of Kudin, Scuseria & Cances (2002) Eqs. (8), (10)."""
+    state, ediis = frame["matrices"], frame["ediis"]
+    focks, dens, energies = ediis["focks"], ediis["densities"], ediis["energies"]
+    # The newest pushed iterate is this frame's evaluated (F[D], D, E).
+    np.testing.assert_array_equal(focks[-1][0], state["physical_fock_alpha"])
+    np.testing.assert_array_equal(focks[-1][1], state["physical_fock_beta"])
+    np.testing.assert_array_equal(dens[-1][0], state["density_alpha"])
+    np.testing.assert_array_equal(dens[-1][1], state["density_beta"])
+    assert energies[-1] == frame["values"]["energy"]
+    alive = list(range(len(energies)))
+    for solve in ediis["attempts"]:
+        n = len(alive)
+        F = [focks[i] for i in alive]
+        D = [dens[i] for i in alive]
+        E = [energies[i] for i in alive]
+        r = n - 1
+
+        def tr(i, j):
+            return sum(np.sum((F[i][b] - F[r][b]) * (D[j][b] - D[r][b])) for b in (0, 1))
+
+        if n > 1:
+            linear = np.array([2 * (E[i] - E[r]) - tr(i, i) for i in range(n)])
+            quad = np.array([[0.5 * (tr(i, j) + tr(j, i)) for j in range(n)]
+                             for i in range(n)])
+            scale = max(1.0, np.abs(quad).max(), np.abs(linear).max())
+            np.testing.assert_allclose(solve["linear"], linear, rtol=0, atol=1e-12 * scale)
+            np.testing.assert_allclose(solve["quadratic"], quad, rtol=0, atol=1e-12 * scale)
+        c = solve["coefficients"]
+        assert len(c) == n and np.all(c >= 0.0) and abs(c.sum() - 1.0) < 1e-12
+        # The simplex minimiser never exceeds the newest vertex's energy.
+        assert solve["interpolated_energy"] <= E[r] + 1e-9 * max(1.0, abs(E[r]))
+        if solve["erased_index"] >= 0:
+            alive.remove(solve["erased_index"])
+    assert alive == list(ediis["surviving"])
+    assert ediis["attempts"][-1]["erased_index"] == -1
+    c = ediis["attempts"][-1]["coefficients"]
+    return [sum(ci * focks[i][b] for ci, i in zip(c, alive)) for b in (0, 1)]
+
+
+def _check_search_fock(frame):
+    state, step = frame["matrices"], frame["values"]["accelerator_step"]
+    if step == 1:
+        solve, m = _check_diis_frame(frame)
+        assert solve is not None and solve["usable"] and solve["rank"] == m + 1
         coefficients = solve["solution"][:m]
         assert abs(np.sum(coefficients) - 1) < 1e-10
         expected = sum(c * f for c, f in zip(coefficients, frame["focks"][-m:]))
         np.testing.assert_allclose(expected, np.vstack([
             state["search_fock_alpha"], state["search_fock_beta"]]), rtol=1e-13, atol=1e-13)
-    # A later ordinary call must not inherit a pointer into the expired report.
-    assert core.run_uks(mol, basis, opts).energy == plain.energy
+    elif step == 3:
+        fa, fb = _check_ediis_frame(frame)
+        np.testing.assert_allclose(fa, state["search_fock_alpha"], rtol=1e-13, atol=1e-13)
+        np.testing.assert_allclose(fb, state["search_fock_beta"], rtol=1e-13, atol=1e-13)
+    else:
+        raise AssertionError(f"unexpected accelerator step {step}")
 
 
-@pytest.mark.parametrize("first,last", [(0, 3), (4, 3), (1, 33), (2, 121)])
-def test_uks_diis_capture_rejects_unbounded_windows(sh_read_witness, first, last):
+def test_uks_diis_capture_preserves_trajectory_and_actual_history(sh_read_witness):
+    """The observer records the coupled solve without changing SCF choices.
+
+    The witness keeps its default EDIIS_DIIS accelerator: both histories are
+    captured every cycle and the branch that reached the SCF is reconstructed.
+    """
+    from vibeqc import SCFAccelerator
     from vibeqc import _vibeqc_core as core
 
     mol, basis, opts = sh_read_witness
-    with pytest.raises(ValueError, match="bounded UKS DIIS capture"):
+    assert opts.scf_accelerator == SCFAccelerator.EDIIS_DIIS
+    opts.max_iter = 5
+    _, report = _assert_capture_is_passive(core, mol, basis, opts, 2, 5)
+    nbf = basis.nbasis
+    for frame in report["frames"]:
+        values = frame["values"]
+        assert values["switch_threshold"] == opts.ediis_diis_switch_threshold
+        assert values["switch_metric"] == values["gradient"] / (math.sqrt(2.0) * nbf)
+        expected_step = 3 if values["switch_metric"] > values["switch_threshold"] else 1
+        assert values["accelerator_step"] == expected_step
+        _check_diis_frame(frame)
+        _check_ediis_frame(frame)
+        _check_search_fock(frame)
+
+
+def test_uks_diis_capture_records_ediis_phase_and_switch(sh_read_witness):
+    """EDIIS cycles, the switch to DIIS and both histories are recorded.
+
+    Only the switch threshold differs from the witness (its accelerator stays
+    EDIIS_DIIS). At the default 1e-1 every witness cycle is DIIS-consumed (RMS
+    metric <= 6e-3); at 5e-4 cycles 2-3 consume EDIIS and cycle 4 switches.
+    """
+    from vibeqc import _vibeqc_core as core
+
+    mol, basis, opts = sh_read_witness
+    opts.max_iter = 8
+    opts.ediis_diis_switch_threshold = 5e-4
+    _, report = _assert_capture_is_passive(core, mol, basis, opts, 1, 8)
+    frames = report["frames"]
+    steps = [f["values"]["accelerator_step"] for f in frames]
+    assert steps[:4] == [0, 3, 3, 1], steps
+    assert set(steps[4:]) == {1}, steps
+    # Below diis_start_iter nothing is consumed: the search Fock is F[D].
+    first = frames[0]["matrices"]
+    for spin in ("alpha", "beta"):
+        np.testing.assert_array_equal(first[f"search_fock_{spin}"],
+                                      first[f"physical_fock_{spin}"])
+    assert frames[0]["ediis"]["disposition"] == "single_iterate"
+    for frame in frames[1:]:
+        values = frame["values"]
+        expected_step = 3 if values["switch_metric"] > values["switch_threshold"] else 1
+        assert values["accelerator_step"] == expected_step
+        # Both solves run each cycle, whichever return is consumed.
+        assert frame["ediis"]["disposition"] in ("extrapolated", "replay_guard_resolved")
+        assert frame["disposition"] == "extrapolated"
+        _check_search_fock(frame)
+    # EDIIS keeps every pushed iterate up to its depth: n = iteration.
+    assert [len(f["ediis"]["energies"]) for f in frames] == list(range(1, 9))
+
+
+def test_uks_diis_capture_accepts_largest_window(sh_read_witness):
+    from vibeqc import _vibeqc_core as core
+
+    mol, basis, opts = sh_read_witness
+    opts.max_iter = 32
+    _, report = core._run_uks_with_diis_capture(mol, basis, opts, 1, 32)
+    assert [f["iteration"] for f in report["frames"]] == list(range(1, 33))
+
+
+@pytest.mark.parametrize("first,last,bound", [
+    (0, 3, "starts before iteration 1"),
+    (4, 3, "ends before it starts"),
+    (1, 33, "spans more than 32 iterations"),
+    (100, 121, "ends after max_iter"),
+])
+def test_uks_diis_capture_rejects_unbounded_windows(sh_read_witness, first, last, bound):
+    from vibeqc import _vibeqc_core as core
+
+    mol, basis, opts = sh_read_witness
+    with pytest.raises(ValueError, match=f"bounded UKS DIIS capture request: window {bound}"):
         core._run_uks_with_diis_capture(mol, basis, opts, first, last)
+
+
+def test_uks_diis_capture_rejects_unsupported_accelerator(sh_read_witness):
+    from vibeqc import SCFAccelerator
+    from vibeqc import _vibeqc_core as core
+
+    mol, basis, opts = sh_read_witness
+    opts.scf_accelerator = SCFAccelerator.KDIIS
+    with pytest.raises(ValueError, match="capture request: unsupported accelerator"):
+        core._run_uks_with_diis_capture(mol, basis, opts, 2, 5)

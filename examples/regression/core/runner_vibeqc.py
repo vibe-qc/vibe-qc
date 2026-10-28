@@ -415,7 +415,7 @@ def run_periodic_case(
         log_path=log_path,
     )
     try:
-        state = periodic_state_request(spec, method, code="vibeqc")
+        state = periodic_state_request(spec, method, code="vibeqc", jk_method=jk_method)
     except ValueError as exc:
         row.status = "unavailable"
         row.note = f"vibeqc: state refused before execution: {exc}"
@@ -457,6 +457,8 @@ def run_periodic_case(
 
     try:
         system = _build_periodic_system(spec)
+        row.charge = int(system.charge)
+        row.electrostatic_background = state["electrostatic_background"]
         row.n_electrons = int(system.n_electrons())
         unpaired = int(system.multiplicity) - 1
         row.n_alpha = (row.n_electrons + unpaired) // 2

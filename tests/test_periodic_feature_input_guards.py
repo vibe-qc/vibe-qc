@@ -222,6 +222,16 @@ def controlled_gdf_memory_plan(monkeypatch):
             cutoff_bohr=4.0, nuclear_cutoff_bohr=3.0, pair_complete_1e=False,
         ),
     )
+    # The 3D pyscf_auto estimate routes through _oneel_admission_opts, which
+    # returns the per-primitive-pair bound set (_oneel_bound_opts) instead of
+    # _oneel_lattice_opts. Control both so the byte contract stays fixed on the
+    # same 4/3 bohr declaration the oracle declares.
+    monkeypatch.setattr(
+        gdf, "_oneel_bound_opts",
+        lambda *args, **kwargs: SimpleNamespace(
+            cutoff_bohr=4.0, nuclear_cutoff_bohr=3.0, pair_complete_1e=False,
+        ),
+    )
     density_cells = [np.zeros(3) for _ in range(5)]
     monkeypatch.setattr(runner, "direct_lattice_cells", lambda *args: density_cells)
     monkeypatch.setattr(gdf, "_xc_density_cells_for_domain", lambda *args: density_cells)

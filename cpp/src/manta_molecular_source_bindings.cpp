@@ -1,6 +1,7 @@
 #include "vibeqc/manta_molecular_source.hpp"
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 #include <cstring>
 namespace py=pybind11;
 namespace {
@@ -11,6 +12,24 @@ void check(const py::array& a,const py::dtype& dtype,int rank) {
 }
 void bind_manta_molecular_source(py::module_& m) {
     using namespace vibeqc::manta;
+    auto qp=py::class_<MolecularQuartetConstructionPlan>(m,"MolecularQuartetConstructionPlan");
+#define QP(n) qp.def_readonly(#n,&MolecularQuartetConstructionPlan::n)
+    QP(shell_calls); QP(primitive_products); QP(scalar_terms); QP(kernel_terms);
+    QP(additional_bytes); QP(modeled_peak_bytes);
+#undef QP
+    auto qc=py::class_<MolecularQuartetConstruction>(m,"MolecularQuartetConstruction");
+#define QC(n) qc.def_property_readonly(#n,&MolecularQuartetConstruction::n)
+    QC(plan); QC(source_identity); QC(key); QC(evaluated); QC(lower); QC(upper); QC(error_bound); QC(null_tile);
+#undef QC
+    qc.def("validate",&MolecularQuartetConstruction::validate)
+      .def_property_readonly("arithmetic_equivariance_certified",[](const MolecularQuartetConstruction&){return false;})
+      .def_property_readonly("qualification_scope",[](const MolecularQuartetConstruction&){return "finite-molecular-s-quartet-construction";});
+    m.def("plan_molecular_quartet_construction",&plan_molecular_quartet_construction,
+        py::arg("provider"),py::arg("key"),py::arg("budget"));
+    m.def("certify_molecular_quartet_construction",[](std::shared_ptr<OrderedJKBuilder> b,
+        const std::array<std::size_t,4>& key,const ResourceBudget& budget) {
+        return MolecularQuartetConstruction(std::move(b),key,budget);
+    },py::arg("provider"),py::arg("key"),py::arg("budget"));
     auto plan=py::class_<MolecularSourceSupportPlan>(m,"MolecularSourceSupportPlan");
 #define P(n) plan.def_readonly(#n,&MolecularSourceSupportPlan::n)
     P(operations); P(shell_checks); P(radial_values); P(additional_bytes); P(modeled_peak_bytes); P(scalar_terms);

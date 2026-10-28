@@ -64,9 +64,25 @@ template<class Scalar> HermitianSolution<Scalar> fock_solve(
     if (x.rows() != f.rows() || x.cols() == 0 || !x.allFinite())
         throw std::invalid_argument("Fock orthogonalizer has incompatible dimensions or values");
     using Matrix = Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic>;
-    const Matrix projected = x.adjoint() * f * x;
-    // Validate before removing roundoff. A builder error is not repaired by
-    // unconditionally dropping the anti-Hermitian part.
+    // validate(f) above is the refusal for a non-Hermitian builder. It runs on
+    // f exactly as supplied, so a builder error is never repaired by dropping
+    // its anti-Hermitian part. Only an f that passed it is projected, and it
+    // is projected through its Hermitian part (QC672).
+    //
+    // X^H A X amplifies an anti-Hermitian roundoff A by up to
+    // sigma_max(X)^2 = 1/lambda_min(S). A search Fock is a Pulay combination
+    // sum_i c_i F_i (Pulay 1980, Eq. 3; 1982, procedure step 3) with
+    // coefficients admitted up to 1e6 (diis.cpp), which scale the ~1e-16
+    // builder roundoff of each F_i[D]; it measured 1.1e-12 in the rejected
+    // f of QC672. The diffuse CH doublet (aug-cc-pVTZ,
+    // sigma_max(X) 69, cond(S) 2.4e4) then lifted that to 1.02e-10 in the X
+    // frame and crossed the guard, although every physical operator was
+    // symmetric to 7e-16. F C = S C e is defined for the Hermitian F, and
+    // LAPACK ?syev/?heev and Eigen's SelfAdjointEigenSolver read a single
+    // triangle, i.e. the same Hermitian part. The unchanged guard below now
+    // checks only the projection's own arithmetic.
+    const Matrix f_hermitian = 0.5 * (f + f.adjoint());
+    const Matrix projected = x.adjoint() * f_hermitian * x;
     validate(projected);
     const Matrix hermitian = 0.5 * (projected + projected.adjoint());
     return solve<Scalar>(hermitian, opts);

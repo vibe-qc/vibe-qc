@@ -8,8 +8,9 @@ let NLopt BOBYQA minimise the CRYSTAL14 HF energy.
 The objective function uses :func:`vibe_basis.backends.crystal_atom.emit_input_atom`
 to generate a .d12 deck with an inline basis, submits it through
 the transport (local or vq), parses the output, and returns the
-energy.  Failed SCF evaluations return ``np.inf`` so BOBYQA routes
-around them.
+energy.  Failed SCF evaluations return ``np.inf``, for which
+:func:`vibe_basis.optimize.optimize_nlopt` hands BOBYQA a finite
+stand-in: an infinite value stalls its quadratic model.
 
 This recipe lives in vibe-qc's basis_optimization (can import
 from both vibeqc and vibe_basis) rather than in vibe-basis's

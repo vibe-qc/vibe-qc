@@ -1109,6 +1109,42 @@ PYBIND11_MODULE(_vibeqc_core, m) {
           []() { return std::string{xc_version_string()}; },
           "libxc version string, e.g. \"7.0.0\".");
 
+    m.def("native_build_info",
+          []() {
+              py::dict info;
+#if defined(__clang__)
+              info["compiler_id"] = std::string{"clang"};
+#elif defined(__GNUC__)
+              info["compiler_id"] = std::string{"gcc"};
+#elif defined(_MSC_VER)
+              info["compiler_id"] = std::string{"msvc"};
+#else
+              info["compiler_id"] = std::string{"unknown"};
+#endif
+#if defined(__VERSION__)
+              info["compiler_version"] = std::string{__VERSION__};
+#else
+              info["compiler_version"] = py::none();
+#endif
+#if defined(_OPENMP)
+              info["openmp"] = static_cast<long>(_OPENMP);
+#else
+              info["openmp"] = py::none();
+#endif
+#if defined(NDEBUG)
+              info["ndebug"] = true;
+#else
+              info["ndebug"] = false;
+#endif
+              info["eigen_version"] = std::to_string(EIGEN_WORLD_VERSION)
+                  + "." + std::to_string(EIGEN_MAJOR_VERSION) + "."
+                  + std::to_string(EIGEN_MINOR_VERSION);
+              return info;
+          },
+          "Compile-time identity of the loaded native core: compiler id "
+          "and version string, OpenMP specification date (None when built "
+          "without OpenMP), NDEBUG and the Eigen version.");
+
     m.def("blas_info",
           []() {
               py::dict info;
@@ -3985,6 +4021,11 @@ m.def("compute_cosx_k",
                        &vibeqc::RHFOptions::stability_wall_fraction,
                        "Automatic stability wall budget as a multiple of "
                        "the SCF loop wall. Default 3.0.")
+        .def_readwrite("component_timing",
+                       &vibeqc::RHFOptions::component_timing,
+                       "Opt-in SCF component timing. When True the result's "
+                       "component_timing records phase clocks and tracked "
+                       "construction memory. Default False.")
         .def_readwrite("stability_wall_floor_s",
                        &vibeqc::RHFOptions::stability_wall_floor_s,
                        "Floor (s) of the automatic stability wall budget. "
@@ -4310,6 +4351,36 @@ m.def("compute_cosx_k",
           py::arg("f"), py::arg("a"), py::arg("b"), py::arg("c"),
           py::arg("tol") = 1e-5, py::arg("max_iter") = 100);
 
+    py::class_<vibeqc::ScfPhaseTiming>(m, "ScfPhaseTiming",
+        "One SCF phase: '/'-joined nesting path, inclusive and exclusive "
+        "wall seconds, and call count.")
+        .def_readonly("path", &vibeqc::ScfPhaseTiming::path)
+        .def_readonly("inclusive_s", &vibeqc::ScfPhaseTiming::inclusive_s)
+        .def_readonly("exclusive_s", &vibeqc::ScfPhaseTiming::exclusive_s)
+        .def_readonly("calls", &vibeqc::ScfPhaseTiming::calls);
+    py::class_<vibeqc::ScfIterationTiming>(m, "ScfIterationTiming",
+        "Phase clocks within one SCF iteration (loop-top to loop-top).")
+        .def_readonly("segment", &vibeqc::ScfIterationTiming::segment)
+        .def_readonly("iter", &vibeqc::ScfIterationTiming::iter)
+        .def_readonly("wall_s", &vibeqc::ScfIterationTiming::wall_s)
+        .def_readonly("phases", &vibeqc::ScfIterationTiming::phases);
+    py::class_<vibeqc::ScfMemorySample>(m, "ScfMemorySample",
+        "Tracked container bytes at a named construction boundary.")
+        .def_readonly("label", &vibeqc::ScfMemorySample::label)
+        .def_readonly("bytes", &vibeqc::ScfMemorySample::bytes);
+    py::class_<vibeqc::ScfComponentTiming>(m, "ScfComponentTiming",
+        "Opt-in SCF component timing (see cpp/include/vibeqc/scf_profile.hpp). "
+        "Exclusive phase seconds plus unclassified_s equal wall_s.")
+        .def(py::init<>())
+        .def_readonly("enabled", &vibeqc::ScfComponentTiming::enabled)
+        .def_readonly("wall_s", &vibeqc::ScfComponentTiming::wall_s)
+        .def_readonly("unclassified_s",
+                      &vibeqc::ScfComponentTiming::unclassified_s)
+        .def_readonly("n_segments", &vibeqc::ScfComponentTiming::n_segments)
+        .def_readonly("phases", &vibeqc::ScfComponentTiming::phases)
+        .def_readonly("iterations", &vibeqc::ScfComponentTiming::iterations)
+        .def_readonly("memory", &vibeqc::ScfComponentTiming::memory);
+
     py::class_<vibeqc::SCFIteration>(m, "SCFIteration")
         .def(py::init<>())
         .def(py::init([](int iter, double energy, double delta_e,
@@ -4486,6 +4557,10 @@ m.def("compute_cosx_k",
         .def_readonly("stability_cpu_s",
                       &vibeqc::RHFResult::stability_cpu_s,
                       "CPU seconds spent in the stability phase.")
+        .def_readonly("component_timing",
+                      &vibeqc::RHFResult::component_timing,
+                      "ScfComponentTiming; enabled only when the options "
+                      "requested component_timing.")
         .def("__repr__", [](const vibeqc::RHFResult& r) {
             return std::string{"RHFResult(energy="}
                    + std::to_string(r.energy)
@@ -4827,6 +4902,14 @@ m.def("compute_cosx_k",
           py::arg("grid_level"),
           py::arg("basis_cardinality"),
           "Resolve a COSX grid-level selector to a concrete GridX tier.");
+
+    m.def("resolve_scf_mode",
+          &vibeqc::resolve_scf_mode,
+          py::arg("mode"),
+          py::arg("n_bf"),
+          py::arg("auto_threshold"),
+          "Resolve SCFMode.AUTO to CONVENTIONAL or DIRECT exactly as the "
+          "molecular SCF drivers do; explicit modes are returned unchanged.");
 
     m.def("cosx_grid_options_for_level",
           &vibeqc::cosx_grid_options_for_level,
@@ -6726,6 +6809,11 @@ m.def("compute_cosx_k",
                        &vibeqc::RKSOptions::stability_wall_fraction,
                        "Automatic stability wall budget as a multiple of "
                        "the SCF loop wall. Default 3.0.")
+        .def_readwrite("component_timing",
+                       &vibeqc::RKSOptions::component_timing,
+                       "Opt-in SCF component timing. When True the result's "
+                       "component_timing records phase clocks and tracked "
+                       "construction memory. Default False.")
         .def_readwrite("stability_wall_floor_s",
                        &vibeqc::RKSOptions::stability_wall_floor_s,
                        "Floor (s) of the automatic stability wall budget. "
@@ -6824,6 +6912,10 @@ m.def("compute_cosx_k",
         .def_readonly("stability_cpu_s",
                       &vibeqc::RKSResult::stability_cpu_s,
                       "CPU seconds spent in the stability phase.")
+        .def_readonly("component_timing",
+                      &vibeqc::RKSResult::component_timing,
+                      "ScfComponentTiming; enabled only when the options "
+                      "requested component_timing.")
         .def_readonly("diis_fock_history",
                       &vibeqc::RKSResult::diis_fock_history,
                       "Final DIIS Fock-matrix history for CPCM warm-start "
@@ -7391,7 +7483,24 @@ m.def("compute_cosx_k",
                 solve["rank"] = a.rank; solve["usable"] = a.usable;
                 attempts.append(solve);
             }
-            row["attempts"] = attempts; frames.append(row);
+            row["attempts"] = attempts;
+            py::dict ediis;
+            ediis["focks"] = py::cast(f.ediis.focks);
+            ediis["densities"] = py::cast(f.ediis.densities);
+            ediis["energies"] = py::cast(f.ediis.energies);
+            ediis["surviving"] = py::cast(f.ediis.surviving);
+            ediis["disposition"] = f.ediis.disposition;
+            py::list ediis_attempts;
+            for (const auto& a : f.ediis.attempts) {
+                py::dict solve; solve["linear"] = a.linear;
+                solve["quadratic"] = a.quadratic;
+                solve["coefficients"] = a.coefficients;
+                solve["interpolated_energy"] = a.interpolated_energy;
+                solve["erased_index"] = a.erased_index;
+                ediis_attempts.append(solve);
+            }
+            ediis["attempts"] = ediis_attempts;
+            row["ediis"] = ediis; frames.append(row);
         }
         py::dict report;
         report["overlap"] = capture.overlap; report["orthogonalizer"] = capture.orthogonalizer;

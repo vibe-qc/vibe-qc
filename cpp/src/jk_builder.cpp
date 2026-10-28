@@ -1,3 +1,4 @@
+#include "vibeqc/scf_profile.hpp"
 #include "vibeqc/jk_builder.hpp"
 
 #include <utility>
@@ -425,6 +426,7 @@ public:
         return df_.last_df_unpack_workers_used();
     }
     Eigen::MatrixXd build_K(const Eigen::MatrixXd& D) const override {
+        ScfPhaseScope phase("cosx.k");
         // STANDARD → no overlap fit (cosx_q_ is empty and unused);
         // FITTED → apply the cached global Q-junction.
         const bool fit = (variant_ != CosxVariant::STANDARD);
@@ -443,6 +445,7 @@ public:
     void apply_one_center_correction(
         Eigen::Ref<Eigen::MatrixXd> K,
         const Eigen::MatrixXd& D) const override {
+        ScfPhaseScope phase("cosx.one_center");
         K.noalias() += one_center_.apply(
             D, grid_batches_, boys_table_, pp_cache_, shell_cutoffs_);
     }
@@ -458,6 +461,7 @@ public:
     // coarse→fine across SCF stages does not re-pay the expensive RI-J
     // build per stage.
     void set_cosx_grid(Grid cosx_grid) const override {
+        ScfPhaseScope phase("cosx.grid_stage");
         cosx_grid_ = std::move(cosx_grid);
         cosx_q_ = (variant_ == CosxVariant::STANDARD)
                       ? Eigen::MatrixXd()

@@ -10,11 +10,9 @@ are a **production** route in vibe-qc (closed-shell energies validated to
 and the [Theory](#theory) section below explains what the energy expression
 contains and why it is a `method=` rather than a `functional=`.
 
-| Rung | Input | Cost | Examples |
-|---|---|---|---|
-| 4. hybrid | + fraction of HF exchange | +~2× | B3LYP, PBE0 |
-| **5. range-separated** | + long-range HF exchange | +~3× | ωB97X, ωB97M-V (see [the ωB97X tutorial](range_separated_wb97x.md)) |
-| **6. double hybrid** | + post-SCF scaled MP2 correlation | +~10× | **B2PLYP**, DSD-PBEP86 |
+The comparison below separates hybrid, range-separated hybrid, and
+double-hybrid recipes. Runtime depends on the basis, integral route and
+system; fixed cost multipliers are not a resource estimate.
 
 This tutorial runs **B2PLYP** (Grimme, *J. Chem. Phys.* **124**,
 034108 (2006)) on water and compares against the rungs below it. The
@@ -29,6 +27,12 @@ documented improvement in reaction barriers, conformer ordering, and
 weak-interaction energies vs. plain hybrids.
 
 ## A single-line dispatch
+
+Use the installed engine's Python and a run directory outside the checkout.
+The first block defines `mol`, `basis`, and `run_b2plyp`; later blocks reuse
+them. Coordinates are in bohr and energies in hartree. The low-level call does
+not provide the complete `run_job` output family; the next example shows that
+archiving route. The displayed energies are historical measurements.
 
 `run_b2plyp` handles both steps of the recipe for you. This runs B2PLYP
 on water in a cc-pVDZ basis and reads back the total energy, the hybrid
@@ -45,6 +49,8 @@ mol = Molecule([
 basis = BasisSet(mol, "cc-pvdz")
 
 result = run_b2plyp(mol, basis)
+if not result.rks.converged:
+    raise RuntimeError("Hybrid SCF did not converge")
 
 print(result.e_total)               # the published B2PLYP energy
 print(result.rks.energy)            # the hybrid SCF step (= total − MP2 corr)
@@ -62,7 +68,9 @@ calculation is reachable through `run_job`, which returns the same
 import vibeqc as vq
 
 result = vq.run_job(mol, basis="cc-pvdz", method="b2plyp", output="h2o_b2plyp")
-print(result.e_total)               # -76.348110
+if not result.rks.converged:
+    raise RuntimeError("Hybrid SCF did not converge")
+print(result.e_total)               # historical example: -76.348110
 ```
 
 `run_b2plyp` defaults to **density fitting on both steps**: RI-J +
@@ -124,18 +132,12 @@ for SCS, `c_os = 1.3, c_ss = 0` for SOS). Total energies of different
 functionals are not comparable as accuracies; the table shows how much
 correlation each recipe recovers, not which is right.
 
-Reading across:
-
-* **Hybrids beat raw MP2 on this small system.** The DFT correlation
-  recovered by B3LYP / PBE0 outpaces MP2's, because MP2 captures
-  only dynamic correlation while a hybrid functional's GGA piece
-  models both dynamic and static contributions semi-empirically.
-* **B2PLYP sits between MP2 and B3LYP.** It pulls in 27 % of the MP2
-  correlation on top of a hybrid SCF, so the correction is smaller
-  than full MP2 but more rigorous than the GGA correlation alone.
-* **The 0.27 MP2 fraction is system-dependent in its impact.** On
-  this small molecule it adds ~64 mHa to the SCF step; on larger
-  weakly-interacting complexes the relative weight grows.
+Use this table to inspect the energy bookkeeping, not to rank the methods.
+A lower total from a different functional does not establish greater accuracy.
+For an accuracy comparison, choose an observable and a matched reference,
+then keep geometry, basis, frozen-core treatment, fitting and dispersion
+conventions explicit. The MP2 correction here is evaluated on the hybrid KS
+orbitals, so it is not interchangeable with an MP2 correction on RHF orbitals.
 
 ## What's inside the `DoubleHybridResult`
 
@@ -157,6 +159,24 @@ result.mp2.e_correlation         # 0.27 · (e_os + e_ss), the scaled MP2 piece
 result.e_total                   # result.rks.energy + result.mp2.e_correlation
 result.functional                # "b2plyp"
 ```
+
+The MP2 correction is already scaled. Do not multiply `e_correlation` by
+0.27 again, or add dispersion twice. Check the decomposition directly:
+
+```python
+# doc-audit: skip - inspects result from the preceding B2PLYP calculation
+from math import isclose
+
+e_dispersion = 0.0 if result.dispersion is None else result.dispersion.energy
+reconstructed = result.rks.energy + result.mp2.e_correlation + e_dispersion
+if not isclose(result.e_total, reconstructed, rel_tol=0.0, abs_tol=1e-10):
+    raise RuntimeError("Double-hybrid energy components do not reproduce the total")
+print(f"Reconstructed total = {reconstructed:.10f} Ha")
+```
+
+This is a bookkeeping check, not a validation of the method or integration
+accuracy. `DoubleHybridResult` exposes SCF convergence through `result.rks`;
+it does not share every attribute of the mean-field runner's result.
 
 The `Functional` resolver carries the recipe too:
 

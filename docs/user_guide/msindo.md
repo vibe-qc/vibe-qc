@@ -636,6 +636,18 @@ check within restricted HF, not a global-minimum guarantee or a test against
 unrestricted spin solutions. See [Lehtola et al. (2020), section
 10](https://doi.org/10.3390/molecules25051218) and issue #249.
 
+If the native SCF returns without convergence, `run_ccm`, `run_seccm` and
+`run_job` raise `vibeqc.semiempirical.CCMConvergenceError`, a `RuntimeError`
+subclass. Its `result` retains the native energy components, density, orbital
+energies, iteration count and available stability diagnostics. The error also
+records `max_iter`, `conv_tol` and `stability`. The density and spectrum are
+detached copies; reading them does not rerun the SCF. A failed state's values
+are diagnostic only and must not be used as an accepted energy, force or
+equilibrium point. In particular, an unchecked stability audit is not evidence
+of stability. Native exceptions raised before a result exists still propagate
+without a retained state. The Python reference path retains its existing
+behaviour of returning an unconverged `CcmResult`.
+
 ### CCM gradient details
 
 `ccm_gradient_fd` computes the nuclear gradient by central finite differences

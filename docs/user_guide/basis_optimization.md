@@ -184,18 +184,18 @@ from vibeqc.basis_optimization.recipes.topology_scan import (
 factory = crystal23_engine_factory(
     VqTransport(host="my-crystal-host", default_cpus=1), crystal_binary="crystal23"
 )
-report = run_topology_scan(STRUCTURES["MgO"], "Mg", "D", factory, "runs/mgo-d")
+report = run_topology_scan(STRUCTURES["MgO"], "Mg", "D", factory, "~/basis-runs/mgo-d")
 print(report.shipped_gap_kj, report.result.stopped_because)
 ```
 
 Each candidate is scored on three things: the total energy per cell in
 kJ/mol, its primitive count, and the log10 condition number of the
 element's one-centre overlap. `report.ranked_front()` lists the Pareto
-front, and `runs/mgo-d/scan_record.json` records every candidate. Each
-record holds its move, its seed and relaxed exponents and every energy
-point. Every energy is journalled in `energies.jsonl`. A scan restarted on
-the same directory reuses each finished point, and retries a point that
-was lost in transit instead of passing it to the optimiser as a failure.
+front, and `~/basis-runs/mgo-d/scan_record.json` records every candidate.
+Each record holds its move, its seed and relaxed exponents and every energy
+point. The directory is a campaign directory, described in the next
+section: a scan restarted on it reuses each finished point, and a point
+lost in transit is retried instead of reaching the optimiser as a failure.
 
 With total energy as the objective, an added function never raises the
 energy. The shipped topology therefore lands on, or within the threshold
@@ -204,6 +204,59 @@ front membership depends on the relaxation tolerance, which is why the
 gap is the reported quantity. A scan on total energy checks that the
 search runs and ranks. A claim that a topology is better needs the
 cohesive objective, `vibe_basis.objective.CohesiveObjective`.
+
+### Restarting a long campaign
+
+A scan is hundreds of SCF energies over days, and its driver will stop
+before the scan does: the machine sleeps, a host stops answering, or you
+stop it to pick up a fix. `vibe_basis.campaign.Campaign` keeps everything
+a restart needs in one directory, and that directory must be outside every
+git checkout. `Campaign.open` refuses a path inside one before it writes
+anything.
+
+```python
+from vibe_basis.campaign import Campaign, source_identity
+from vibe_basis.io.structures import STRUCTURES
+from vibe_basis.transports.vq import VqTransport
+from vibeqc.basis_optimization.recipes.topology_scan import (
+    crystal23_engine_factory, run_topology_scan,
+)
+
+with Campaign.open("~/basis-runs/mgo-d", budget=400,
+                   sources={"vibe-qc": source_identity("path/to/vibe-qc")}) as campaign:
+    transport = campaign.ledger(VqTransport(host="my-crystal-host", default_cpus=4))
+    factory = crystal23_engine_factory(transport, crystal_binary="Pcrystal23",
+                                       invocation="mpi", cpus=4)
+    report = run_topology_scan(STRUCTURES["MgO"], "Mg", "D", factory, campaign)
+```
+
+Run the same script again on the same directory to resume. What the
+directory holds, and what each part does on a restart:
+
+| File | Role on a restart |
+|---|---|
+| `energies.jsonl` | Every finished energy, keyed by what was computed. A restart replays them, so the optimiser follows the same path. |
+| `submissions.jsonl` | Every job handed to the queue. A restart adopts a job that is still queued or running instead of submitting it again. |
+| `points/<key>/` | One directory per energy, named by its key, so a restart never overwrites an earlier point's output. |
+| `campaign.json` | The settings the campaign was started with, and one record per session: start, end, why it stopped, the code it ran. |
+| `campaign.lock` | The running driver. A second driver on the same directory is refused; a lock left by a driver that died on this machine is taken over. |
+
+A restart must bring the settings the campaign was started with. Different
+bounds, tolerances or thresholds would mix two scans in one journal, so
+`run_topology_scan` stops with `CampaignMismatch` and names the settings
+that differ. You may raise `max_rounds` or `patience` and change
+`parallel`: those decide when the scan stops and how fast it runs, not
+where it goes. A `budget` caps the energies computed over all sessions;
+when it is spent the scan stops with `BudgetExhausted`, and a later
+session with a larger budget continues.
+
+After a clean stop, `campaign.json` lists under `open_submissions` the
+jobs that were still on the queue. A later session adopts them; if you
+abandon the campaign instead, cancel them. A job the queue killed or
+interrupted is not adopted and is retried, because its partial output
+says nothing about the basis. One gap remains: a driver killed between
+the queue accepting a job and the ledger recording it leaves that one job
+unknown to the restart, which computes the point again.
 
 ## The one-call recipe
 
@@ -404,6 +457,21 @@ Each driver imports its backend lazily and raises a `RuntimeError` naming
 the missing package, so a plain `import vibeqc.basis_optimization` never
 needs any of them. Py-BOBYQA and DFO-LS are GPL-3.0 licensed; they are
 opt-in for that reason and are never imported by the core package.
+
+An objective returns `+inf` for a point it cannot evaluate, such as a
+non-converged SCF. Py-BOBYQA and DFO-LS do not step away from such a
+point on their own; they stop at the first one with an error. So
+`optimize_scipy`, `optimize_minuit`, `optimize_bobyqa` and `optimize_dfols`
+hand their optimiser a finite stand-in: the worst finite value seen so
+far plus a margin (`failure_margin=`, by default the spread of the finite
+values seen and at least 1e-3 of the worst). DFO-LS gets the worst finite
+residual vector, scaled to that sum of squares. `history` keeps the value
+the objective returned, the result's `message` counts the replacements,
+and a start point that is not finite ends the run unsuccessfully.
+`optimize_bdiis` backtracks from such a point and `optimize_cmaes` ranks
+it last. A run can still stall against the edge of a failing region, so
+check the replacement count in `message` before trusting a minimum next
+to one.
 
 A starting basis that may sit in the wrong basin (a far-off guess, an
 exponent deliberately perturbed to test robustness) is the case for the

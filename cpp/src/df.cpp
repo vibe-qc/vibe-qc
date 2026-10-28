@@ -3,6 +3,7 @@
 // libint2 driver loop for the two-centre Coulomb metric (P|Q) and the
 // three-centre tensor (P|μν).
 
+#include "vibeqc/scf_profile.hpp"
 #include "vibeqc/df.hpp"
 #include "vibeqc/build_config.hpp"
 #include "vibeqc/init.hpp"
@@ -283,6 +284,7 @@ std::pair<Eigen::MatrixXd, int> solve_df_half_transform(
 // -----------------------------------------------------------------------------
 
 DensityFitting::DensityFitting(const BasisSet& orbital, const BasisSet& aux) {
+    ScfPhaseScope construction_phase("df.construction");
     orbital_basis_ = &orbital;
     aux_basis_     = &aux;
     n_orb_ = orbital.nbasis();
@@ -417,9 +419,31 @@ DensityFitting::DensityFitting(const BasisSet& orbital, const BasisSet& aux) {
         }
         last_df_unpack_workers_used_ = actual_workers;
     }
+
+    if (scf_profile_active()) {
+        // Tracked container sizes at the end of construction, when V, its
+        // factorization, raw T, packed T, transformed B and per-P B are all
+        // alive. Solver/BLAS scratch is not included.
+        constexpr double kDouble = sizeof(double);
+        const double tensor = static_cast<double>(n_aux_)
+            * static_cast<double>(n_orb_) * static_cast<double>(n_orb_);
+        double per_p = 0.0;
+        for (const auto& Bp : B_per_P_) per_p += static_cast<double>(Bp.size());
+        const double live = kDouble * (static_cast<double>(L_.size())
+            + static_cast<double>(T_flat_.size()) + per_p);
+        const double peak = live + kDouble * (
+            static_cast<double>(V.size())
+            + static_cast<double>(llt.matrixLLT().size())
+            + static_cast<double>(T.data.size())
+            + static_cast<double>(B_flat.size()));
+        scf_profile_memory("df.tensor_extent_bytes", kDouble * tensor);
+        scf_profile_memory("df.live_tracked_bytes", live);
+        scf_profile_memory("df.construction_tracked_peak_bytes", peak);
+    }
 }
 
 Eigen::MatrixXd DensityFitting::build_J(const Eigen::MatrixXd& D) const {
+    ScfPhaseScope phase("df.j");
     // γ_P = sum_μν B^P_μν D_μν = (B^P : D) — a Frobenius inner product.
     Eigen::VectorXd gamma(static_cast<Eigen::Index>(n_aux_));
     Eigen::MatrixXd J = Eigen::MatrixXd::Zero(
@@ -548,6 +572,7 @@ Eigen::MatrixXd DensityFitting::build_J_screened(
 
 Eigen::MatrixXd DensityFitting::build_K_density(
     const Eigen::MatrixXd& D) const {
+    ScfPhaseScope phase("df.k");
     // K_μν = Σ_λσ D_λσ (μλ|νσ) ≈ Σ_P (B^P · D · B^P)_{μν}.
     // The triple product B^P D B^P is symmetric whenever both factors are
     // (matrix algebra: (ABA)^T = A^T B^T A^T = A B A when A and B are

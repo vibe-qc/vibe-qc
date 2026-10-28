@@ -27,7 +27,7 @@ def validated_reference_version(reference_code, value):
 STATE_CONVENTION = "per primitive cell, identical on every Born-von Karman cell"
 
 
-def periodic_state_request(spec, method, *, code: str) -> dict:
+def periodic_state_request(spec, method, *, code: str, jk_method: str | None = None) -> dict:
     """Resolve the electronic state a code must run, or refuse it (#647).
 
     Refusals happen before execution so a magnetic or charged request is
@@ -37,10 +37,14 @@ def periodic_state_request(spec, method, *, code: str) -> dict:
     spins = tuple(spec.atomic_spins or ())
     polarized = spec.multiplicity != 1 or any(spins)
     if spec.charge != 0:
-        raise ValueError(
-            f"{spec.id}: charge {spec.charge} per cell needs a declared "
-            "neutralizing-background convention, which the comparison suite "
-            "does not define")
+        if spec.electrostatic_background != "uniform-jellium":
+            raise ValueError(f"{spec.id}: charge {spec.charge} per cell needs a declared "
+                             "neutralizing-background convention: uniform-jellium")
+        if code not in ("vibeqc", "pyscf") or (code == "vibeqc" and jk_method != "bipole"):
+            raise ValueError(f"{spec.id}: charged comparisons require BIPOLE versus PySCF")
+        if method.scf not in ("uhf", "uks") or method.post is not None:
+            raise ValueError(f"{spec.id}: charged comparisons require unrestricted SCF; "
+                             "restricted per-cell occupations are not implemented")
     if any(spec.magnetic_moments or ()):
         raise ValueError(
             f"{spec.id}: magnetic_moments are not consumed by any runner; "
@@ -60,13 +64,15 @@ def periodic_state_request(spec, method, *, code: str) -> dict:
     return {"charge": spec.charge, "multiplicity": spec.multiplicity,
             "n_alpha": n_alpha, "n_beta": n_beta,
             "atomic_spins": list(spins) if any(spins) else None,
+            "electrostatic_background": spec.electrostatic_background,
             "convention": STATE_CONVENTION}
 
 
 def state_overrides(spec) -> dict:
     """The state fields carried across process isolation."""
     return {"charge": spec.charge, "multiplicity": spec.multiplicity,
-            "atomic_spins": None if spec.atomic_spins is None else list(spec.atomic_spins)}
+            "atomic_spins": None if spec.atomic_spins is None else list(spec.atomic_spins),
+            "electrostatic_background": spec.electrostatic_background}
 
 
 def apply_state_overrides(spec, overrides: dict):
@@ -74,7 +80,9 @@ def apply_state_overrides(spec, overrides: dict):
     spins = overrides.get("atomic_spins")
     return replace(spec, charge=overrides.get("charge", spec.charge),
                    multiplicity=overrides.get("multiplicity", spec.multiplicity),
-                   atomic_spins=None if spins is None else tuple(spins))
+                   atomic_spins=None if spins is None else tuple(spins),
+                   electrostatic_background=overrides.get(
+                       "electrostatic_background", spec.electrostatic_background))
 
 
 def state_tag(state: dict) -> str:
@@ -87,6 +95,8 @@ def state_tag(state: dict) -> str:
     if "atomic_spins" in state:
         parts.append("spins" + "".join({1: "u", -1: "d", 0: "0"}[s]
                                        for s in state["atomic_spins"]))
+    if state.get("electrostatic_background") is not None:
+        parts.append("bgjellium")
     return "_".join(parts)
 
 
@@ -129,6 +139,7 @@ class PeriodicCaseRequest:
     charge: int | None = None  # None keeps the system module's state.
     multiplicity: int | None = None
     atomic_spins: tuple[int, ...] | None = None
+    electrostatic_background: str | None = None
     lattice_cutoff_bohr: float | None = None  # None keeps the system default.
     nuclear_cutoff_bohr: float | None = None
 
@@ -143,7 +154,9 @@ class PeriodicCaseRequest:
     def state(self) -> dict:
         return {k: v for k, v in (("charge", self.charge),
                                   ("multiplicity", self.multiplicity),
-                                  ("atomic_spins", self.atomic_spins)) if v is not None}
+                                  ("atomic_spins", self.atomic_spins),
+                                  ("electrostatic_background", self.electrostatic_background))
+                if v is not None}
 
 
 def load_periodic_matrix(path: Path, *, load_system):
@@ -166,7 +179,7 @@ def load_periodic_matrix(path: Path, *, load_system):
     required = {"system_id", "basis", "method_id", "kmesh", "tolerance_ha",
                 "tolerance_rationale", "reference_code"}
     optional = {"notes", "reference_version", "charge", "multiplicity", "atomic_spins",
-                "lattice_cutoff_bohr", "nuclear_cutoff_bohr"}
+                "lattice_cutoff_bohr", "nuclear_cutoff_bohr", "electrostatic_background"}
     cases, identities = [], set()
     for index, row in enumerate(data["cases"], 1):
         if (not isinstance(row, dict) or not required <= set(row)
@@ -211,8 +224,8 @@ def load_periodic_matrix(path: Path, *, load_system):
         spec = apply_state_overrides(load_system(row["system_id"]), request.state())
         spec = apply_lattice_cutoffs(spec, request.lattice())
         for code in {"vibeqc", row["reference_code"]}:
-            periodic_state_request(spec, method, code=code)
-        state = (spec.charge, spec.multiplicity, spec.atomic_spins,
+            periodic_state_request(spec, method, code=code, jk_method=data["jk_method"])
+        state = (spec.charge, spec.multiplicity, spec.atomic_spins, spec.electrostatic_background,
                  spec.default_cutoff_bohr, spec.default_nuclear_cutoff_bohr)
         identity = (row["system_id"], basis, row["method_id"], mesh, state)
         if identity in identities:

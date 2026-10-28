@@ -1,3 +1,4 @@
+#include "vibeqc/scf_profile.hpp"
 #include "vibeqc/hermitian_operator.hpp"
 #include "vibeqc/rks.hpp"
 #include "vibeqc/orbital_scf.hpp"
@@ -582,9 +583,65 @@ OrbitalXCFunction make_orbital_rks_xc(const BasisSet& basis, const Grid& grid, c
     };
 }
 
+namespace {
+
+RKSResult run_rks_impl(const Molecule& mol,
+                       const BasisSet& basis,
+                       const RKSOptions& opts);
+RKSResult run_rks_scf_with_jk_impl(
+    const BasisSet& basis, int n_electrons, const Eigen::MatrixXd& S,
+    const Eigen::MatrixXd& Hcore, double E_nuc, const JKBuilder& jk,
+    const Grid& grid, const RKSOptions& opts,
+    const Eigen::MatrixXd& initial_density, const Grid* vv10_grid,
+    const std::vector<Eigen::MatrixXd>* warm_fock_history,
+    const std::vector<Eigen::MatrixXd>* warm_error_history,
+    const Molecule* guess_molecule, const GuessSelection* prepared_guess);
+
+}  // namespace
+
 RKSResult run_rks(const Molecule& mol,
                   const BasisSet& basis,
                   const RKSOptions& opts) {
+    ScfProfileSession profile_session(opts.component_timing,
+                                      /*scf_segment=*/false);
+    RKSResult result = run_rks_impl(mol, basis, opts);
+    if (profile_session.owns()) {
+        result.component_timing = profile_session.finish();
+    }
+    return result;
+}
+
+RKSResult run_rks_scf_with_jk(const BasisSet& basis,
+                              int n_electrons,
+                              const Eigen::MatrixXd& S,
+                              const Eigen::MatrixXd& Hcore,
+                              double E_nuc,
+                              const JKBuilder& jk,
+                              const Grid& grid,
+                              const RKSOptions& opts,
+                              const Eigen::MatrixXd& initial_density,
+                              const Grid* vv10_grid,
+                              const std::vector<Eigen::MatrixXd>* warm_fock_history,
+                              const std::vector<Eigen::MatrixXd>* warm_error_history,
+                              const Molecule* guess_molecule,
+                              const GuessSelection* prepared_guess) {
+    ScfProfileSession profile_session(opts.component_timing,
+                                      /*scf_segment=*/true);
+    RKSResult result = run_rks_scf_with_jk_impl(
+        basis, n_electrons, S, Hcore, E_nuc, jk, grid, opts,
+        initial_density, vv10_grid, warm_fock_history, warm_error_history,
+        guess_molecule, prepared_guess);
+    if (profile_session.owns()) {
+        result.component_timing = profile_session.finish();
+    }
+    return result;
+}
+
+namespace {
+
+RKSResult run_rks_impl(const Molecule& mol,
+                       const BasisSet& basis,
+                       const RKSOptions& opts) {
     validate_orbital_optimizer(opts);
     validate_initial_guess(opts.initial_guess);
     validate_guess_ecp(opts.initial_guess, molecular_guess_ecp_context(opts), &mol);
@@ -608,6 +665,7 @@ RKSResult run_rks(const Molecule& mol,
         opts.ecp_total_ncore, "run_rks");
 
     // ---- One-electron integrals ----
+    ScfPhaseScope one_electron_phase("setup.one_electron");
     const Eigen::MatrixXd S = compute_overlap(basis);
     const Eigen::MatrixXd T = compute_kinetic(basis);
     const auto ecp_h = ecp_input == MolecularECPInput::INLINE_PRIMITIVES
@@ -619,6 +677,7 @@ RKSResult run_rks(const Molecule& mol,
               basis, mol, opts.ecp_centers, opts.ecp_library);
     const Eigen::MatrixXd Hcore = T + ecp_h.V + ecp_h.V_ecp;
     const double E_nuc = ecp_h.E_nuc;
+    one_electron_phase.stop();
 
     // Effective electron count: subtract ECP-replaced core electrons.
     const int n_elec = mol.n_electrons() - ecp_h.total_ncore;
@@ -660,7 +719,10 @@ RKSResult run_rks(const Molecule& mol,
         };
 
     // ---- XC grid + (when needed) COSX grid ---------------------------------
+    ScfPhaseScope grid_phase("setup.grids");
+    ScfPhaseScope xc_grid_phase("xc_grid");
     Grid grid = build_grid(mol, opts.grid);
+    xc_grid_phase.stop();
 
     // VV10 nonlocal correlation grid (when the functional needs it).
     // Built at a coarser resolution than the semilocal XC grid because
@@ -698,12 +760,15 @@ RKSResult run_rks(const Molecule& mol,
         }
     }
 
+    grid_phase.stop();
+
     // Range-separated hybrids (ωB97X, …) need the erf-attenuated K
     // build, which only the direct-SCF Fock builder implements. Probe
     // the functional once to drive the JKBuilder dispatch below.
     const bool functional_is_rsh = functional.is_range_separated();
 
     // ---- Two-electron infrastructure (JKBuilder dispatch) ------------------
+    ScfPhaseScope jk_phase("setup.jk_construction");
     std::unique_ptr<BasisSet> aux;
     std::unique_ptr<JKBuilder> jk;
     if (opts.density_fit) {
@@ -751,11 +816,14 @@ RKSResult run_rks(const Molecule& mol,
             jk = make_four_index_jk_builder(basis);
         }
     }
+    jk_phase.stop();
 
+    ScfPhaseScope guess_phase("setup.guess");
     auto prepared = prepare_closed_guess(
         &mol, basis, n_elec / 2, opts.initial_guess, S, Hcore, *jk,
         {}, opts.read_density, opts.linear_dep_threshold, nullptr, molecular_guess_ecp_context(opts));
     const auto& guess_D = prepared.density;
+    guess_phase.stop();
 
     if (cosx_multistage) {
         Eigen::MatrixXd D = guess_D;
@@ -776,7 +844,7 @@ RKSResult run_rks(const Molecule& mol,
         vv10_grid, nullptr, nullptr, &mol, &prepared.selection));
 }
 
-RKSResult run_rks_scf_with_jk(const BasisSet& basis,
+RKSResult run_rks_scf_with_jk_impl(const BasisSet& basis,
                               int n_electrons,
                               const Eigen::MatrixXd& S,
                               const Eigen::MatrixXd& Hcore,
@@ -790,6 +858,7 @@ RKSResult run_rks_scf_with_jk(const BasisSet& basis,
                               const std::vector<Eigen::MatrixXd>* warm_error_history,
                               const Molecule* guess_molecule,
                               const GuessSelection* prepared_guess) {
+    ScfPhaseScope init_phase("setup.scf_init");
     validate_initial_guess(opts.initial_guess);
     validate_guess_ecp(opts.initial_guess, molecular_guess_ecp_context(opts), guess_molecule);
     validate_orbital_optimizer(opts);
@@ -1057,7 +1126,9 @@ RKSResult run_rks_scf_with_jk(const BasisSet& basis,
     // (BUG87-A truthful-timers fix): each trace row is charged
     // with the wall time since the previous row was recorded.
     auto t_iter_prev = std::chrono::steady_clock::now();
+    init_phase.stop();
     for (int iter = 1; iter <= opts.max_iter; ++iter) {
+        scf_profile_begin_iteration(iter);
         const bool validating_first_full_build =
             full_fock_validation_pending;
         full_fock_validation_pending = false;
@@ -1095,21 +1166,27 @@ RKSResult run_rks_scf_with_jk(const BasisSet& basis,
         // (DirectJKBuilder). ``build_J_slot`` / ``build_K_slot`` fall
         // back to the stateless path on non-Direct builders + when
         // ``incremental_fock = false``.
+        ScfPhaseScope j_phase("fock.j");
         const Eigen::MatrixXd J = jk.build_J_slot(D_used, 0);
+        j_phase.stop();
         // Effective exchange matrix K_eff = cam_a·K + cam_b·K_erf(ω).
         // For a global hybrid cam_b == 0 → K_eff = α·K; for a pure
         // functional need_k is false and K_eff stays empty.
         Eigen::MatrixXd K_mat;
         if (need_k) {
+            ScfPhaseScope k_phase("fock.k");
             K_mat = cam_a * jk.build_K_slot(D_used, 0);
             if (cam_b != 0.0) {
                 K_mat.noalias() += cam_b * jk.build_K_erf(D_used, rsh_omega);
             }
         }
 
-        // XC on the grid.
+        // XC on the grid. AO collocation, density/XC evaluation and Vxc
+        // assembly run batched inside build_xc, so they share one timer.
+        ScfPhaseScope xc_phase("xc");
         XcContribution xc = build_xc(
             functional, basis, grid, D_used, vv10_grid, xc_functionals);
+        xc_phase.stop();
         result.xc_batch_workers_used = std::max(
             result.xc_batch_workers_used, xc.batch_workers);
 
@@ -1239,6 +1316,7 @@ RKSResult run_rks_scf_with_jk(const BasisSet& basis,
         // SCFIteration::accelerator_step for the codes.
         int accelerator_step_this_iter = 0;
         if (opts.use_diis && !in_quadratic_phase && !in_second_order_phase) {
+            ScfPhaseScope accelerator_phase("accelerator");
             Eigen::MatrixXd F_ext = F;
             switch (opts.scf_accelerator) {
                 // R_CDIIS / AD_CDIIS share the DIIS extrapolation; the
@@ -1388,6 +1466,10 @@ RKSResult run_rks_scf_with_jk(const BasisSet& basis,
         // uses the same D = 2·C_occ·C_occ^T convention.
         Eigen::MatrixXd C_new;
         Eigen::VectorXd eps_new;
+        ScfPhaseScope update_phase(
+            (in_newton_phase || in_trah_phase || in_soscf_phase
+             || in_quadratic_phase)
+                ? "second_order_step" : "diagonalization");
         if (in_newton_phase) {
             // D2c-KS Newton step. Build the unpolarised LDA/GGA kernel
             // pinned at D_used (the current iteration density), then a
@@ -1442,11 +1524,14 @@ RKSResult run_rks_scf_with_jk(const BasisSet& basis,
             std::tie(C_new, eps_new) = diagonalize_fock(apply_level_shift(
                 F, S, D_used, b, LevelShiftDensity::TOTAL));
         }
+        update_phase.stop();
         C_prev_mo = C_new;
         eps_prev_mo = eps_new;
         seed_frame_stale = false;
         D_prev = D_used;
+        ScfPhaseScope density_phase("density");
         D = build_density(C_new, nocc);
+        density_phase.stop();
 
         // ---- deterministic orbital-rotation restart (BUG 64) --------
         if (iter == 1) {
@@ -1581,6 +1666,8 @@ RKSResult run_rks_scf_with_jk(const BasisSet& basis,
         result.n_iter = iter;
 
         if (converged) {
+            scf_profile_end_iteration();
+            ScfPhaseScope final_phase("final_rebuild");
             // Final self-consistency pass (same convention as RHF):
             // rebuild F on the fresh D so the returned MOs and Fock
             // correspond to F(D_final), not F(D_{final-1}).
@@ -1599,10 +1686,13 @@ RKSResult run_rks_scf_with_jk(const BasisSet& basis,
             // iterated SCF surface (~1e-4 Ha) and break the parity
             // decomposition self-consistency (test_parity_hf_dft.py);
             // a no-op for non-COSX builders.
+            ScfPhaseScope final_j_phase("j");
             const Eigen::MatrixXd J_f = jk.build_J_slot(D, 0);
+            final_j_phase.stop();
             Eigen::MatrixXd K_f;   // effective exchange cam_a·K + cam_b·K_erf
             double E_K_f = 0.0;
             if (need_k) {
+                ScfPhaseScope final_k_phase("k");
                 K_f = cam_a * jk.build_K_slot(D, 0);
                 if (cam_b != 0.0) {
                     K_f.noalias() += cam_b * jk.build_K_erf(D, rsh_omega);
@@ -1613,8 +1703,10 @@ RKSResult run_rks_scf_with_jk(const BasisSet& basis,
                 E_K_f = -0.25 * (D.array() * K_f.array()).sum();
                 jk.apply_one_center_correction(K_f, D);
             }
+            ScfPhaseScope final_xc_phase("xc");
             XcContribution xc_f = build_xc(
                 functional, basis, grid, D, vv10_grid, xc_functionals);
+            final_xc_phase.stop();
             result.xc_batch_workers_used = std::max(
                 result.xc_batch_workers_used, xc_f.batch_workers);
             Eigen::MatrixXd F_f = Hcore + J_f + xc_f.V;
@@ -1626,7 +1718,9 @@ RKSResult run_rks_scf_with_jk(const BasisSet& basis,
                 F_f += vu_f.V;
                 result.e_dft_plus_u = 2.0 * vu_f.energy;
             }
+            ScfPhaseScope final_diag_phase("diagonalization");
             auto [C_f, eps_f] = diagonalize_fock(F_f);
+            final_diag_phase.stop();
             const double E_core_f = (D.array() * Hcore.array()).sum();
             const double E_J_f    = 0.5 * (D.array() * J_f.array()).sum();
             const double E_xc_f   = xc_f.energy;
@@ -1644,6 +1738,7 @@ RKSResult run_rks_scf_with_jk(const BasisSet& basis,
             result.e_hf_exchange = E_K_f;
             result.e_xc = E_xc_f;
             result.converged = true;
+            final_phase.stop();
             // Save DIIS history for CPCM warm-start (BUG 100).
             {
                 const auto& fh = diis.fock_history();
@@ -1662,6 +1757,7 @@ RKSResult run_rks_scf_with_jk(const BasisSet& basis,
             // UHF/UKS: skip silently on unsupported routes by default,
             // fail closed on an explicit request).
             if (opts.stability_check) {
+                ScfPhaseScope stability_phase("stability");
                 const auto t_stab_wall0 = std::chrono::steady_clock::now();
                 const std::clock_t t_stab_cpu0 = std::clock();
                 const auto charge_stability_phase = [&]() {
@@ -1815,6 +1911,7 @@ RKSResult run_rks_scf_with_jk(const BasisSet& basis,
 
         E_prev = E_total;
     }
+    scf_profile_end_iteration();
 
     result.converged = false;
     // Save DIIS history even on non-convergence — the partial subspace
@@ -1827,5 +1924,7 @@ RKSResult run_rks_scf_with_jk(const BasisSet& basis,
     }
     return result;
 }
+
+}  // namespace
 
 }  // namespace vibeqc

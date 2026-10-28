@@ -55,7 +55,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 
 # ---------------------------------------------------------------------------
 # Regex toolbox
@@ -173,6 +173,32 @@ def _shrink_line(shrink) -> str:
         return f"{shrink} {shrink}"
     is_, isp = shrink
     return f"{int(is_)} {int(isp)}"
+
+
+def _scf_keywords(scf_lines) -> set[str]:
+    """Upper-case keywords among *scf_lines* (value lines start with a digit or sign)."""
+    return {
+        line.strip().upper() for line in scf_lines
+        if line.strip() and not re.match(r"^[-+.\d]", line.strip())
+    }
+
+
+def _scf_tail(scf_lines, *, toldee: int, spinlock: str = "") -> str:
+    """The SCF-convergence input closing a deck: *scf_lines* verbatim, then
+    the emitter's own ``SPINLOCK`` and ``TOLDEE`` unless *scf_lines* sets them.
+
+    *scf_lines* carries a reference deck's own convergence settings
+    (``FMIXING``, ``ANDERSON``, ``ATOMSPIN``, ``SPINLOCK``, ``TOLDEE`` ...),
+    so a reproduction steers the SCF the way the reference did: an open-shell
+    atom that converged with ``FMIXING 75`` + ``ANDERSON`` can collapse under
+    plain DIIS to a state tens of hartree higher and still print
+    ``SCF ENDED - CONVERGENCE ON ENERGY``.
+    """
+    keys = _scf_keywords(scf_lines)
+    body = "".join(f"{line.strip()}\n" for line in scf_lines if line.strip())
+    own = "" if "SPINLOCK" in keys else spinlock
+    tol = "" if "TOLDEE" in keys else f"TOLDEE\n{toldee}\n"
+    return f"{body}{own}{tol}"
 
 
 def _tolinteg_block(tolinteg) -> str:
@@ -669,6 +695,7 @@ def emit_input_inline(
     toldeg: Optional[int] = None,
     tolinteg: Optional[tuple[int, ...]] = REFERENCE_TOLINTEG,
     hugegrid: bool = False,
+    scf_lines: Sequence[str] = (),
 ) -> Optional[str]:
     """Build a CRYSTAL ``.d12`` deck with an inline basis set.
 
@@ -722,6 +749,10 @@ def emit_input_inline(
     toldeg
         ``TOLDEG`` (RMS gradient threshold) inside the ``OPTGEOM`` block;
         CRYSTAL's default when ``None``. Needs ``optgeom``.
+    scf_lines
+        Extra SCF-section input written verbatim before the closing
+        ``END``, such as a reference deck's ``FMIXING`` / ``ANDERSON``; a
+        ``TOLDEE`` among them replaces ``toldee``.
 
     Returns
     -------
@@ -783,7 +814,6 @@ def emit_input_inline(
         f"{tolinteg_block}"
         "SHRINK\n"
         f"{_shrink_line(shrink)}\n"
-        "TOLDEE\n"
-        f"{toldee}\n"
+        f"{_scf_tail(scf_lines, toldee=toldee)}"
         "END\n"
     ))

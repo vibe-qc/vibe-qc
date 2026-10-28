@@ -1571,10 +1571,17 @@ def run_local_dlpno_uccsd(
                 overlap_t = precursor.T @ pair_u[key]
                 amplitude = overlap_t @ t2[key] @ overlap_t.T
                 density += amplitude @ amplitude.T + amplitude.T @ amplitude
+            # Retained TNO Fock recanonicalization follows density selection
+            # (Riplinger et al., doi:10.1063/1.4821834, p. 134101-4).
+            # The local occupied indices and pair-union rank stay unchanged.
             vectors, eps_t = _domain_from_density(
                 density,
                 precursor.T @ f_vv @ precursor,
                 options.tcut_tno,
+                fock_basis_id=(f"dlpno-uccsd:{result.source_identity}:frozen={nf}:"
+                               f"local-{triples_mode}-triple={i},{j},{k}:"
+                               "retained-tno:alpha-beta"),
+                spin="alpha-beta",
             )
             return np.ascontiguousarray(precursor @ vectors), eps_t
 

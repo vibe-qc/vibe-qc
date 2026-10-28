@@ -572,3 +572,5 @@ cache; exporting it does not request another calculation. Missing or invalid
 values produce `forces_unavailable`, never invented zero forces. The optimizer
 convergence flag retains its original criterion; consumers can additionally
 check the maximum atom force norm against their own declared threshold.
+
+The ASE backend refuses a line search that ends with a warning or error, including a minimum-step warning. It reports the status and retains the last accepted geometry; this refusal does not establish force convergence. Check energy and force consistency before retrying, without relaxing the requested force threshold.

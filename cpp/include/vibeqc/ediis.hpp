@@ -46,6 +46,7 @@
 #include <cstddef>
 #include <deque>
 #include <cmath>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -116,6 +117,34 @@ inline double ediis_diis_switch_metric(double commutator_norm,
     if (denom < 1.0) denom = 1.0;
     return commutator_norm / denom;
 }
+
+// Opt-in records of EDIIS solves, mirroring DIISCapture (diis.hpp). Kudin,
+// Scuseria & Cances, J. Chem. Phys. 116, 8255 (2002): the interpolation
+// coefficients minimise Eq. (8) on the simplex (sum c_i = 1, c_i >= 0) and
+// the returned Fock is Eq. (10), F~ = sum_i c_i F_i. Each solve stores the
+// newest-relative quadratic model actually handed to the simplex solver,
+//   minimise c^T M c + linear^T c = 2 (f_EDIIS(c) - E_newest),
+// with linear_i = 2(E_i - E_r) - <dF_i|dD_i>, M_ij = sym <dF_i|dD_j>, so
+// interpolated_energy = E_r + objective / 2 is f_EDIIS at the returned
+// coefficients (exact at the HF level; the paper's FON indicator for KS).
+struct EDIISSolveCapture {
+    Eigen::VectorXd linear, coefficients;
+    Eigen::MatrixXd quadratic;
+    double interpolated_energy = 0.0;
+    // Pushed-history index the anti-replay guard erased after this solve
+    // (-1 when the solve's coefficients were returned).
+    long erased_index = -1;
+};
+struct EDIISCapture {
+    // History immediately after this iterate was pushed (oldest first),
+    // before any anti-replay erasure. Blocks are (alpha, beta) for UKS.
+    std::vector<std::vector<Eigen::MatrixXd>> focks, densities;
+    std::vector<double> energies;
+    std::vector<EDIISSolveCapture> attempts;
+    // Pushed-history indices that the returned coefficients refer to.
+    std::vector<long> surviving;
+    std::string disposition = "not_called";
+};
 
 class EDIIS {
 public:
@@ -210,11 +239,17 @@ public:
     void discard_last_extrapolation() noexcept { last_extrap_.clear(); }
 
     void clear();
+    // Caller owns storage; null disables all copying. Does not change the
+    // history, the solve or the anti-replay guard.
+    void set_capture(EDIISCapture* capture) noexcept { capture_ = capture; }
 
 private:
+    EDIISCapture* capture_ = nullptr;
     void push_iterate(std::vector<Eigen::MatrixXd>&& fock_blocks,
                       std::vector<Eigen::MatrixXd>&& density_blocks,
                       double energy);
+    // Newest-relative quadratic model of Eq. (8) handed to the simplex solver.
+    void build_qp(Eigen::VectorXd& linear, Eigen::MatrixXd& M) const;
     std::vector<double> solve_qp() const;
     // Solve + combine + anti-replay guard. See the guard note in
     // cpp/src/ediis.cpp: a QP solution with zero weight on the newest

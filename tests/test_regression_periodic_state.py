@@ -49,7 +49,8 @@ def test_electron_counts_are_per_cell_and_check_parity():
 @pytest.mark.parametrize("changes", [
     {"atomic_spins": (1,)}, {"atomic_spins": (1, 2)}, {"atomic_spins": (True, 0)},
     {"magnetic_moments": (1.0,)}, {"multiplicity": 0}, {"multiplicity": 2.0},
-    {"charge": True},
+    {"charge": True}, {"electrostatic_background": "isolated-ion"},
+    {"electrostatic_background": []},
 ])
 def test_spec_rejects_malformed_state_fields(changes):
     with pytest.raises(ValueError):
@@ -128,7 +129,8 @@ def test_state_survives_isolation_and_inherited_state_cannot_leak(tmp_path, monk
             method=METHODS["uhf"], log_path=tmp_path / "case.log", workdir=None,
             artifact_dir=None, run_id="t", target="dev", code_version="t")
         sent = json.loads(captured["env"]["VIBEQC_REGRESSION_PERIODIC_STATE"])
-        assert sent == {"charge": 0, "multiplicity": multiplicity, "atomic_spins": None}
+        assert sent == {"charge": 0, "multiplicity": multiplicity, "atomic_spins": None,
+                        "electrostatic_background": None}
 
     monkeypatch.setenv("VIBEQC_REGRESSION_PERIODIC_STATE", captured["env"]["VIBEQC_REGRESSION_PERIODIC_STATE"])
     monkeypatch.setattr(runner_vibeqc, "run_periodic_case",
@@ -225,3 +227,168 @@ def test_pyscf_multik_triplet_is_the_uniform_per_cell_state(tmp_path):
     assert row.converged and (row.n_alpha, row.n_beta) == (2, 0)
     # E_PYSCF_H2_KUHF_TRIPLET_211 in tests/test_bipole_fock_ewald_exchange.py
     assert row.energy_ha == pytest.approx(-0.5337291457, abs=1e-8)
+
+
+@pytest.mark.parametrize("method", ["uhf", "uks-pbe"])
+def test_charged_state_requires_explicit_supported_route(method):
+    spec = replace(H2, charge=1, multiplicity=2,
+                   electrostatic_background="uniform-jellium")
+    for code in ("vibeqc", "pyscf"):
+        state = periodic_state_request(spec, METHODS[method], code=code, jk_method="bipole")
+        assert (state["charge"], state["n_alpha"], state["n_beta"]) == (1, 1, 0)
+        assert state["electrostatic_background"] == "uniform-jellium"
+    for code, route in (("vibeqc", "gdf"), ("vibeqc", None),
+                        ("crystal", "bipole"), ("cp2k", "bipole")):
+        with pytest.raises(ValueError, match="BIPOLE versus PySCF"):
+            periodic_state_request(spec, METHODS[method], code=code, jk_method=route)
+    with pytest.raises(ValueError, match="restricted per-cell occupations"):
+        periodic_state_request(replace(spec, charge=2, multiplicity=1), METHODS["rhf"],
+                               code="pyscf")
+
+
+def test_matrix_carries_charged_convention_and_refuses_other_routes(tmp_path):
+    path = _matrix(tmp_path, [_row(charge=1, multiplicity=2,
+                                  electrostatic_background="uniform-jellium")])
+    route, cases = load_periodic_matrix(path, load_system=run_suite._load_periodic_spec)
+    assert route == "bipole"
+    assert cases[0].tag() == "qp1_mult2_bgjellium"
+    spec = apply_state_overrides(H2, cases[0].state())
+    assert spec.charge == 1 and spec.electrostatic_background == "uniform-jellium"
+    # A neutral isolated request must clear a background inherited in its base spec.
+    assert apply_state_overrides(spec, {"charge": 0, "multiplicity": 1,
+                                       "electrostatic_background": None}).electrostatic_background is None
+    data = json.loads(path.read_text())
+    data["jk_method"] = "gdf"
+    path.write_text(json.dumps(data))
+    with pytest.raises(ValueError, match="BIPOLE versus PySCF"):
+        load_periodic_matrix(path, load_system=run_suite._load_periodic_spec)
+
+
+def test_charged_suite_dispatch_preserves_background(tmp_path, monkeypatch):
+    seen = []
+    def fake_call(**kw):
+        seen.append((kw["spec"].charge, kw["spec"].electrostatic_background))
+        return CodeRow("t", "dev", H2.id, H2.family, "sto-3g", "uhf", "2x1x1",
+                       kw["code"], "t", status="unavailable")
+    monkeypatch.setattr(run_suite, "_isolated_runner_call", fake_call)
+    case = run_suite.run_one_periodic_case_dev(
+        run_id="t", system_id=H2.id, basis="sto-3g", method_id="uhf", target="dev",
+        env={}, run_dir=tmp_path, kmesh=(2, 1, 1), tolerance_ha=1e-4,
+        periodic_jk_method="bipole",
+        state={"charge": 1, "multiplicity": 2, "electrostatic_background": "uniform-jellium"})
+    assert case.label.endswith("__qp1_mult2_bgjellium")
+    assert seen == [(1, "uniform-jellium"), (1, "uniform-jellium")]
+
+
+@pytest.mark.parametrize("changes", [
+    {"charge": None}, {"charge": 0}, {"charge": -1},
+    {"electrostatic_background": None}, {"electrostatic_background": "isolated-ion"},
+    {"n_alpha": None, "n_beta": None},
+])
+def test_charged_comparison_rejects_missing_or_contradictory_state(changes):
+    row = replace(_counted("vibeqc", 1, 0), n_electrons=1, charge=1,
+                  electrostatic_background="uniform-jellium")
+    ref = replace(row, code="pyscf")
+    assert not _case_mismatch(row, ref)
+    assert _case_mismatch(row, replace(ref, **changes))
+    assert _case_mismatch(replace(ref, **changes), row)
+
+
+def test_charged_payload_and_confirmed_result_state(tmp_path, monkeypatch):
+    spec = replace(H2, charge=1, multiplicity=2,
+                   electrostatic_background="uniform-jellium")
+    def fake_external(payload, log_path, artifact_dir=None):
+        assert payload["charge"] == 1
+        assert payload["electrostatic_background"] == "uniform-jellium"
+        assert payload["nelec_per_cell"] == [1, 0]
+        return {"status": "ok", "charge": 1, "electrostatic_background": "uniform-jellium",
+                "energy_ha": -0.5, "converged": True, "nelec_per_cell": [1, 0]}
+    monkeypatch.setattr(runner_pyscf, "_run_external_pyscf", fake_external)
+    row = runner_pyscf.run_periodic_case(
+        run_id="t", target="dev", spec=spec, basis_name="sto-3g", method=METHODS["uhf"],
+        kmesh=(2, 1, 1), log_path=tmp_path / "case.log")
+    assert row.charge == 1 and row.electrostatic_background == "uniform-jellium"
+    assert (row.n_alpha, row.n_beta) == (1, 0)
+
+
+@pytest.mark.skipif(importlib.util.find_spec("pyscf") is None, reason="PySCF not installed")
+@pytest.mark.parametrize("mesh", [(1, 1, 1), (2, 1, 1)])
+def test_pyscf_charged_helium_retains_per_cell_charge_and_spin(tmp_path, mesh):
+    from vibeqc_spec import AtomFrac
+    # One occupied alpha AO and an empty beta channel. On two cells, PySCF's
+    # default total_electrons/spin would instead give (2, 1), not (2, 0).
+    ang = 8 * 0.529177210903
+    spec = replace(H2, id="he_ion", atoms=(AtomFrac("He", 2, (0., 0., 0.)),),
+                   lattice_ang=((ang, 0., 0.), (0., ang, 0.), (0., 0., ang)),
+                   charge=1, multiplicity=2, electrostatic_background="uniform-jellium")
+    row = runner_pyscf.run_periodic_case(
+        run_id="t", target="dev", spec=spec, basis_name="sto-3g", method=METHODS["uhf"],
+        kmesh=mesh, log_path=tmp_path / "case.log", artifact_dir=tmp_path / "artifacts")
+    assert row.converged and row.n_electrons == 1
+    assert row.charge == 1 and row.electrostatic_background == "uniform-jellium"
+    assert (row.n_alpha, row.n_beta) == (1, 0)
+    # Independent AFTDF 101^3 reference (#689). GDF is a different J/K
+    # approximation: retain the suite's 0.1 mHa comparison tolerance.
+    reference = {(1, 1, 1): -2.117738604293459, (2, 1, 1): -2.1155674148922383}
+    assert row.energy_ha == pytest.approx(reference[mesh], abs=1e-4)
+
+
+@pytest.mark.parametrize("changes", [
+    {"electrostatic_background": None}, {"dimension": 2},
+    {"method": {"scf": "rhf"}}, {"nelec_per_cell": None}, {"charge": True},
+])
+def test_external_worker_rejects_unsupported_charged_payload_before_cell(changes, monkeypatch):
+    pytest.importorskip("pyscf")
+    from pyscf.pbc import gto
+    namespace = {"__name__": "worker_test"}
+    exec(runner_pyscf._PYSCF_EXTERNAL_SCRIPT, namespace)
+    monkeypatch.setattr(gto, "M", lambda **kw: pytest.fail("cell built for invalid payload"))
+    payload = {"charge": 1, "electrostatic_background": "uniform-jellium",
+               "method": {"scf": "uhf"}, "nelec_per_cell": [1, 0], **changes}
+    with pytest.raises(ValueError, match="charge"):
+        namespace["run_periodic"](payload)
+
+
+def test_charged_vibeqc_request_reaches_public_driver(tmp_path, monkeypatch):
+    captured = {}
+    def fake_job(system, basis, **kw):
+        captured["state"] = (system.charge, system.multiplicity, system.n_electrons())
+        captured.update(kw)
+        return SimpleNamespace(energy=-1., converged=True, n_iter=2, backend="pbc-bipole")
+    monkeypatch.setattr(runner_vibeqc.vq, "run_periodic_job", fake_job)
+    spec = replace(H2, charge=1, multiplicity=2, electrostatic_background="uniform-jellium")
+    row = runner_vibeqc.run_periodic_case(
+        run_id="t", target="dev", code_version="t", spec=spec, basis_name="sto-3g",
+        method=METHODS["uhf"], kmesh=(2, 1, 1), jk_method="bipole",
+        log_path=tmp_path / "case.log", artifact_dir=tmp_path / "artifacts")
+    assert row.converged and captured["state"] == (1, 2, 1)
+    assert captured["jk_method"] == "bipole" and captured["kpoints"] == (2, 1, 1)
+    assert row.charge == 1 and row.electrostatic_background == "uniform-jellium"
+    recorded = json.loads((tmp_path / "artifacts/input.json").read_text())
+    assert recorded["state"]["electrostatic_background"] == "uniform-jellium"
+
+
+def test_charged_state_serialization_survives_process_boundary(tmp_path, monkeypatch):
+    captured = {}
+    spec = replace(H2, charge=1, multiplicity=2, electrostatic_background="uniform-jellium")
+    row = replace(_counted("vibeqc", 1, 0), charge=1, electrostatic_background="uniform-jellium")
+    def fake_process(*args, **kw):
+        captured.update(kw["env"])
+        return SimpleNamespace(returncode=0, stdout=run_suite._RESULT_MARKER
+                               + json.dumps(row.__dict__) + "\n", stderr="")
+    monkeypatch.setattr(run_suite.subprocess, "run", fake_process)
+    run_suite._isolated_runner_call(
+        code="vibeqc", spec_kind="periodic", spec=spec, basis="sto-3g",
+        method=METHODS["uhf"], log_path=tmp_path / "case.log", workdir=None,
+        artifact_dir=None, run_id="t", target="dev", code_version="t")
+    sent = captured["VIBEQC_REGRESSION_PERIODIC_STATE"]
+    assert json.loads(sent)["electrostatic_background"] == "uniform-jellium"
+    monkeypatch.setenv("VIBEQC_REGRESSION_PERIODIC_STATE", sent)
+    monkeypatch.setenv("VIBEQC_REGRESSION_PERIODIC_JK_METHOD", "bipole")
+    def receive(**kw):
+        assert (kw["spec"].charge, kw["spec"].multiplicity) == (1, 2)
+        assert kw["spec"].electrostatic_background == "uniform-jellium"
+        return row
+    monkeypatch.setattr(runner_vibeqc, "run_periodic_case", receive)
+    _isolated_runner._run_periodic("vibeqc", H2, "sto-3g", METHODS["uhf"],
+                                   tmp_path / "case.log", "t", "dev", "t")

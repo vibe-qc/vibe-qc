@@ -168,3 +168,62 @@ def test_action_rejects_bad_input_without_silent_projection(direction, fault):
         data[:] = complex(1e308, 1e308)
     with pytest.raises((ValueError, RuntimeError, TypeError, OverflowError)):
         getattr(source, direction)(data, a['budget'])
+
+
+@pytest.mark.parametrize('gamma',[False,True])
+def test_coupling_construction_actions_independent_complex_contractions(gamma):
+    from decimal import Decimal as D,localcontext
+    from tests.test_manta_periodic_gdf_tiles import construction_case,decimal_coupling_tile,check_construction_bounds
+    a=construction_case(gamma);s=manta.PeriodicGDFTiles(**a);x,c=inputs(s);tensor=decimal_coupling_tile(a)
+    with localcontext() as ctx:
+        ctx.prec=180
+        def product(z,v,conjugate=False):
+            re,im=z;im=-im if conjugate else im;vr,vi=D(float(v.real)),D(float(v.imag))
+            return re*vr-im*vi,re*vi+im*vr
+        f=np.empty(c.shape,dtype=object);adj=np.empty(x.shape,dtype=object)
+        for p in range(s.plan.n_aux):
+            terms=[product(tensor[k,p,i,j],x[k,i,j],True) for k,i,j in np.ndindex(x.shape)]
+            f[p]=(sum(z[0] for z in terms),sum(z[1] for z in terms))
+        for k,i,j in np.ndindex(x.shape):
+            terms=[product(tensor[k,p,i,j],c[p]) for p in range(s.plan.n_aux)]
+            adj[k,i,j]=(sum(z[0] for z in terms),sum(z[1] for z in terms))
+    for direction,arg,expected in [('forward',x,f),('adjoint',c,adj)]:
+        proof=getattr(s,'certify_'+direction)(np.asfortranarray(arg),a['budget'])
+        check_construction_bounds(proof,expected)
+        baseline=getattr(s,direction)(arg,a['budget'])
+        np.testing.assert_array_equal(proof.evaluated.values,baseline.values)
+        assert proof.evaluated.receipt.snapshot_identity==baseline.receipt.snapshot_identity
+        assert proof.certificate_identity==getattr(s,'certify_'+direction)(arg,a['budget']).certificate_identity
+        changed=getattr(s,'certify_'+direction)(2*arg,a['budget'])
+        assert changed.reference_identity==proof.reference_identity and changed.certificate_identity!=proof.certificate_identity
+
+
+@pytest.mark.parametrize('route',['screened','multipole','compressed','global','pair_tree'])
+@pytest.mark.parametrize('gamma',[False,True])
+def test_coupling_construction_approximate_routes_share_unscreened_reference(route,gamma):
+    from tests.test_manta_periodic_ri_compressed import compressed_case,check_compressed_receipt
+    from tests.test_manta_periodic_ri_pair_tree import pair_actions_case,check_pair_actions
+    from tests.test_manta_periodic_ri_global import check_global
+    a=pair_actions_case(gamma,0) if route=='pair_tree' else compressed_case(gamma,0)
+    if route in ('screened','multipole'):a['options'].coupling_multipole_compress=False
+    if route=='screened':
+        a['options'].coupling_multipole_error=0.;a['options'].integral_screen_error=1e-3
+    if route=='global':a['options'].coupling_multipole_global_actions=True
+    source=manta.PeriodicGDFTiles(**a);x,c=inputs(source)
+    exact_options=manta.PeriodicGDFShortRangeOptions()
+    for name in ('omega','pair_cutoff_bohr','auxiliary_cutoff_bohr','image_candidate_cap'):setattr(exact_options,name,getattr(a['options'],name))
+    exact=manta.PeriodicGDFTiles(**dict(a,options=exact_options))
+    for direction,arg in [('forward',x),('adjoint',c)]:
+        baseline=getattr(source,direction)(arg,a['budget'])
+        proof=getattr(source,'certify_'+direction)(arg,a['budget'])
+        control=getattr(exact,'certify_'+direction)(arg,a['budget'])
+        np.testing.assert_array_equal(proof.evaluated.values,baseline.values)
+        assert proof.evaluated.receipt.snapshot_identity==baseline.receipt.snapshot_identity
+        assert proof.reference_identity==control.reference_identity
+        for key in ('real_lower','real_upper','imag_lower','imag_upper'):assert getattr(proof,key)==getattr(control,key)
+        if route=='compressed':check_compressed_receipt(proof.evaluated)
+        if route=='pair_tree':check_pair_actions(proof.evaluated,source)
+        if route=='global':check_global(proof.evaluated,source)
+        difference=np.abs(proof.evaluated.values-control.evaluated.values).ravel()
+        assert np.all(difference<=np.array(proof.error_bounds)+np.array(control.error_bounds))
+        if route!='screened':assert proof.maximum_error>1e-12

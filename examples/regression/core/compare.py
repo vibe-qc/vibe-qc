@@ -124,6 +124,14 @@ def _case_key(row):
 def _case_mismatch(row, reference) -> bool:
     if _case_key(row) != _case_key(reference):
         return True
+    # Charged rows require both runners to confirm charge and convention.
+    # Legacy neutral results may lack these additional fields.
+    if any(r.charge not in (None, 0) for r in (row, reference)):
+        if (any(r.n_alpha is None or r.n_beta is None for r in (row, reference))
+                or row.charge != reference.charge
+                or row.electrostatic_background != "uniform-jellium"
+                or reference.electrostatic_background != "uniform-jellium"):
+            return True
     # A polarized state counts as matched only when both sides report it.
     spins = [(r.n_alpha, r.n_beta) for r in (row, reference)]
     if (spins[0] != spins[1] and any(None in s for s in spins)

@@ -8,12 +8,13 @@ but for isolated atoms with non-periodic MOLECULE geometry
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 
 from .crystal import (
     _CRYSTAL_DFT_FUNCTIONALS,
     _deck,
     _NEEDS_HUGEGRID,
+    _scf_tail,
     _tolinteg_block,
     REFERENCE_TOLINTEG,
 )
@@ -174,6 +175,8 @@ def emit_input_atom_counterpoise(
     spinlock_cycles: int = 50,
     tolinteg: Optional[tuple[int, ...]] = REFERENCE_TOLINTEG,
     hugegrid: bool = False,
+    symmremo: Optional[bool] = None,
+    scf_lines: Sequence[str] = (),
 ) -> Optional[str]:
     """Build a **counterpoise-corrected** free-atom deck via ``ATOMBSSE``.
 
@@ -247,6 +250,14 @@ def emit_input_atom_counterpoise(
         SCF energy-convergence exponent.
     n_unpaired, spinlock_cycles
         As for :func:`emit_input_atom`.
+    symmremo
+        Write ``SYMMREMO``. ``None`` writes it for an open shell, as the
+        bare-atom convention does; the pob reference decks do not, and set
+        the atom's spin with ``ATOMSPIN`` in ``scf_lines`` instead.
+    scf_lines
+        Extra SCF-section input written verbatim before the closing
+        ``END``; a ``SPINLOCK`` or ``TOLDEE`` among them replaces the
+        emitter's own.
 
     Returns
     -------
@@ -301,6 +312,8 @@ def emit_input_atom_counterpoise(
     n_unpaired, symmetry_block, method_block, spinlock_block = _spin_blocks(
         Z, method_lower, n_unpaired, spinlock_cycles, hugegrid
     )
+    if symmremo is not None:
+        symmetry_block = "SYMMREMO\n" if symmremo else ""
 
     lattice_line = _format_lattice_line(struct)
     atom_lines = "\n".join(
@@ -347,10 +360,8 @@ def emit_input_atom_counterpoise(
         f"{inline_basis.strip()}\n"
         "ENDBS\n"
         f"{method_block}\n"
-        f"{spinlock_block}"
         f"{_tolinteg_block(tolinteg)}"
-        "TOLDEE\n"
-        f"{toldee}\n"
+        f"{_scf_tail(scf_lines, toldee=toldee, spinlock=spinlock_block)}"
         "END\n"
     ))
 

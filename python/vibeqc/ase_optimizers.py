@@ -293,3 +293,73 @@ def resolve_ase_optimizer(name: str) -> type:
         )
     module_name, class_name = avail.location.rsplit(".", 1)
     return getattr(importlib.import_module(module_name), class_name)
+
+
+class ASELineSearchError(RuntimeError):
+    """A line search stopped without satisfying its convergence conditions."""
+
+
+def checked_bfgs_linesearch() -> type:
+    """Return ASE BFGSLineSearch with fail-closed line-search status handling.
+
+    ASE 3.29's warning check slices three characters and compares four, so
+    a WARNING can escape as a usable step. Bind the installed step function
+    to a private globals dictionary with a checked LineSearch dependency.
+    This executes ASE's own algorithm without copying it, changing optimizer
+    parameters, or mutating dependency globals used by other optimizers.
+    """
+    from types import FunctionType
+
+    ensure_ase_scipy_compat()
+    from ase.optimize import BFGSLineSearch
+    from ase.utils.linesearch import LineSearch
+
+    step = BFGSLineSearch.step
+    if (
+        not isinstance(step, FunctionType)
+        or "LineSearch" not in step.__code__.co_names
+        or step.__globals__.get("LineSearch") is not LineSearch
+    ):
+        raise RuntimeError(
+            "Unsupported ASE BFGSLineSearch implementation: cannot install "
+            "the line-search convergence guard safely"
+        )
+
+    class CheckedLineSearch(LineSearch):
+        def _line_search(self, *args, **kwargs):
+            result = super()._line_search(*args, **kwargs)
+            if self.task != "CONVERGENCE" or result[0] is None:
+                raise ASELineSearchError(
+                    f"ASE BFGS line search did not converge: {self.task}; "
+                    f"step={result[0]!r}, function evaluations={self.fc}, "
+                    f"gradient evaluations={self.gc}. Last accepted geometry "
+                    "retained; check energy/force consistency before retrying."
+                )
+            return result
+
+    namespace = dict(step.__globals__, LineSearch=CheckedLineSearch)
+    checked_step = FunctionType(
+        step.__code__, namespace, step.__name__, step.__defaults__, step.__closure__
+    )
+    checked_step.__kwdefaults__ = step.__kwdefaults__
+
+    class CheckedBFGSLineSearch(BFGSLineSearch):
+        def step(self, *args, **kwargs):
+            # Trial evaluations change the optimizable's coordinates. A refused
+            # trial must not become the apparent last accepted geometry.
+            optimizable = getattr(self, "optimizable", None)
+            positions = (
+                optimizable.get_x().copy()
+                if optimizable is not None
+                else self.atoms.get_positions().copy()
+            )
+            try:
+                return checked_step(self, *args, **kwargs)
+            except ASELineSearchError:
+                if optimizable is not None:
+                    optimizable.set_x(positions)
+                else:  # ASE versions predating the Optimizable interface.
+                    self.atoms.set_positions(positions)
+                raise
+
+    return CheckedBFGSLineSearch

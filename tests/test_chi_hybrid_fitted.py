@@ -24,6 +24,8 @@ def fitted():
              '_fitted_support_policy', '_immutable_fit_array', '_fit_record_json',
              '_classic_source_descriptor', '_record_classic_support',
              '_RsgdfQMetricCacheEntry', '_metric_keep_mask',
+             '_rsgdf_metric_rounding_floor', '_rsgdf_metric_keep',
+             '_rsgdf_select_metric_decomposition',
              'build_lpq_bloch_native_fft_shared_q',
              '_build_lpq_range_separated_shared_q', '_RangeSeparatedGdfBatch',
              '_RangeSeparatedGdfAdmissionError'}
@@ -57,6 +59,8 @@ def fitted():
         _canonical_reciprocal_transfer=lambda s, q: q,
         _classic_reciprocal_mesh=lambda s, q, cutoff, *a: vectors[np.sum(vectors**2, axis=1) <= 2*cutoff],
         _rsgdf_shifted_sphere_boundary_tolerance=lambda *a: 0.,
+        # Explicit cutoffs without a screening budget use one global radius.
+        _rsgdf_reciprocal_shell_pair_cutoffs=lambda *a, **kw: None,
         _range_separated_gdf_source_signature=lambda *a: 'synthetic-finite-source',
         _fit_basis_record=lambda b: dict(name=b.name),
         _rsgdf_aux_ft_cache_budget_bytes=lambda: 1024**2,

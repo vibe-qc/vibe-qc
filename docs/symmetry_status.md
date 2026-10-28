@@ -3450,3 +3450,83 @@ own periodic metric inputs; they do not certify molecular four-center source
 or angular-transport arithmetic. Fock state/frame semantics, periodic/Seitz and
 screening/bubble authority, correlation retained spaces, gradients and stress
 remain independent. No default dispatch or release prerequisite changes.
+
+## Molecular quartet construction enclosure: explicit s-shell diagnostic
+
+The producer now issues an immutable construction-error certificate for one
+contracted s-shell quartet from its actual molecular full-Coulomb source.
+It shares MANTA's verified radial and elementary enclosures with the metric
+producer. Numerical integral evaluation, source identities, whole-orbit masks,
+finite-Gram conversions, physical Fock snapshots and default dispatch do not
+change. This is experimental arithmetic evidence, not source-wide equivariance
+certification; all ordered and stabilizer audits remain required.
+
+The rebuilt native module passed 90 affected checks, with 408 unrelated checks
+deselected. Independent 800-digit Gaussian-product/alternating-Boys references
+cover both native producers, pure/Cartesian s shells, signed cancellation,
+coincident centers, diffuse/tight exponents, large arguments and nonzero
+underflow. Rejections cover angular/kernel/key domains, foreign live providers,
+immutable evidence and exact memory/scalar/kernel/shell/primitive caps. The
+changelog checks also passed (10). No new test file or suite lane was added.
+
+A complete screened ammonia cc-pVDZ RHF calculation through the queue used the
+rebuilt native at source base `9f0ee5f4` plus this increment. Its SHA256 was
+`e4b07c42a6e9c17551ea782c238c3d12e2f732f0bc170fa84ca179d297cda3a3`.
+All build-input pins, three payload pins and 429 loaded module identities were
+checked. The first isolated payload stopped on a missing test-helper import
+path before SCF; only that harness path was repaired. The replacement run
+passed using the same native build. Full job/output provenance is recorded
+with the issue outside the product checkout.
+
+The 15-iteration energy was -56.18855210065024 Eh, bit-identical to the accepted
+prior RHF result and 7.03238356e-10 Eh from the reused identical-geometry,
+method, basis, charge/spin and convergence ORCA reference. Energy and gradient
+convergence thresholds stayed 1e-11 and 1e-9. Independent same-source Fock error
+was 2.33146835e-14; independent energy error was zero at reported binary64
+precision. Nonsymmetric complex-density J/K agreed with the dense same-mask
+reference to 1.51055624e-14. Captured and cold terminal identities agreed.
+Prior finite-Gram, UHF, periodic and other unaffected evidence was reused.
+
+Eight distinct four-s quartets spanning the ammonia s channels consumed 4,372
+primitive reference terms and eight actual native tile calls. Every 800-digit
+reference was enclosed and its observed finite-producer error was below the
+certificate. Maximum observed absolute integral error was 2.21690095e-16;
+maximum bound was 1.08446585e-12. These are sampled arithmetic diagnostics,
+not certification of all ammonia quartets or a source tolerance waiver.
+
+| Measured quantity | Result |
+|---|---:|
+| Eight construction certificates, including their native evaluations | 0.0292878 s |
+| Separate eight native control evaluations | 0.0007340 s |
+| Independent 800-digit witnesses | 14.3553 s |
+| Geometry/basis plus one-electron/metric preparation | 0.0152023 s |
+| Source qualification including basis actions and full ordered audit | 7.73828 s |
+| Nonsymmetric complex J/K including transport, reconstruction and contraction | 0.143467 s |
+| Complete RHF iterations | 10.2478 s |
+| Captured terminal / cold terminal build | 0.0003097 / 0.0376765 s |
+| Geometry, one-electron, proof, full qualification, SCF and captured terminal | 18.0309 s |
+| Entire harness after imports, including independent references | 34.3736 s |
+| Maximum proof logical reservation / quartet plan | 26,881,244 / 11,108,435 bytes |
+| Maximum method logical reservation / whole-process peak RSS | 20,456,921 / 255,705,088 bytes |
+
+Timings are single observations, not a speedup or crossover measurement.
+The certificate adds proof work and native reads; it does not avoid physical
+work. Its eight actual tile calls are additional to the full audit's 50,625
+calls, 1,874,161 requested primitive products and 707,281 values. A reduced J/K
+still uses 1,763 calls, 104,454 primitive products, 29,963 values, 1,373,210
+contraction products and 712,318 transport products. Complete RHF still uses
+92 builds, 162,196 calls, 9,609,768 requested primitive products, 73,466,735
+contraction products and 65,533,256 transport products. Native internal libint
+primitive evaluations are not inferred from requested counts. Logical caps
+and RSS have different scopes and are not additive memory measurements.
+
+Open production work: reference/bounds for higher angular quartets; uniform
+producer arithmetic evidence that does not first read every member; finite
+angular/inverse and geometry-mismatch terms; operation-compatible screening
+and bubble coverage; useful hierarchical source-wide residuals; and measured
+reduced-pipeline optimization. Stored normalized basis generation is outside
+this reference. Large-argument and cancellation enclosures can be wide.
+Complex kernels, antiunitary actions, periodic domains, fitting/correlation
+projectors, gradients and stress keep their separate acceptance obligations.
+No QC0.18 route or release gate depends on this new diagnostic. The broader
+symmetry production-readiness goal remains unfinished.

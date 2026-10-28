@@ -16,11 +16,15 @@ RI-MP2 — the table every DLPNO user should see once. See
 ``docs/user_guide/dlpno_mp2.md`` and ``docs/tutorial/dlpno_local_correlation.md``.
 
 Run:
-    .venv/bin/python examples/molecular/input-h2o-dlpno-mp2.py
+    python input-h2o-dlpno-mp2.py > console.log
+
+Copy this script to a separate run directory first, and use the installed
+engine's Python. Coordinates are in bohr and energies are in hartree.
+The comparison table is printed to stdout; console.log captures it together
+with progress messages. Existing files with the same stem are overwritten.
 
 Outputs (next to this script):
     input-h2o-dlpno-mp2.out     — banner + RHF trace + DLPNO-MP2 block
-                                  + appended threshold-sweep table
     input-h2o-dlpno-mp2.molden  — orbitals at the RHF solution
     input-h2o-dlpno-mp2.system  — provenance manifest
 """
@@ -33,7 +37,7 @@ from vibeqc.dlpno.mp2 import DLPNOMP2Options, run_dlpno_mp2
 HERE = Path(__file__).resolve().parent
 STEM = Path(__file__).stem  # → "input-h2o-dlpno-mp2"
 
-# H2O at the same experimental geometry used across the tutorials.
+# Illustrative H2O geometry, in bohr; no geometry optimization is performed.
 mol = vq.Molecule(
     [
         vq.Atom(8, [0.0, 0.00, 0.00]),
@@ -48,9 +52,13 @@ result = vq.run_job(
     mol,
     basis="cc-pvdz",
     method="dlpno-mp2",
+    frozen_core="published",
+    dlpno_thresholds="normal",
     output=HERE / STEM,
 )
 dlpno = result.dlpno_mp2
+if not result.converged or not dlpno.converged:
+    raise RuntimeError("RHF or DLPNO amplitudes did not converge; inspect the job log")
 
 # 2. Threshold sweep: rerun the DLPNO step at different TCutPNO against
 #    the canonical RI-MP2 anchor (same fitting basis).
@@ -58,6 +66,8 @@ basis = vq.BasisSet(mol, "cc-pvdz")
 rhf_opts = vq.RHFOptions()
 rhf_opts.conv_tol_energy = 1e-10
 hf = vq.run_rhf(mol, basis, rhf_opts)
+if not hf.converged:
+    raise RuntimeError("Comparison RHF did not converge")
 
 n_frozen = vq.chemical_core_orbital_count(mol)
 mp2_opts = vq.MP2Options()
@@ -106,7 +116,7 @@ for label, opts in (
         ),
     ),
     # The exactness limit: no PNO truncation AND full domains — this row
-    # must (and does) reproduce canonical RI-MP2 to sub-µHa.
+    # compare its measured difference with canonical RI-MP2 below.
     (
         "0*",
         DLPNOMP2Options(
@@ -120,22 +130,18 @@ for label, opts in (
     ),
 ):
     r = run_dlpno_mp2(mol, basis, hf, df, opts)
+    if not r.converged:
+        raise RuntimeError(f"DLPNO-MP2 did not converge at TCutPNO={label}")
     avg_pno = sum(r.pno_per_pair.values()) / max(len(r.pno_per_pair), 1)
-    rows.append((label, r.e_corr, r.e_corr / canonical.e_correlation, avg_pno))
+    delta_uha = 1e6 * (r.e_corr - canonical.e_correlation)
+    recovery = r.e_corr / canonical.e_correlation
+    rows.append((label, r.e_corr, recovery, delta_uha, avg_pno))
 
-# 3. Append the sweep to the .out file run_job already wrote.
-out_path = (HERE / STEM).with_suffix(".out")
-with open(out_path, "a") as fh:
-    fh.write("\n=== TCutPNO convergence vs canonical RI-MP2/cc-pVDZ ===\n")
-    fh.write(f"  E_corr(canonical RI-MP2) = {canonical.e_correlation:14.8f} Ha\n")
-    fh.write(f"  {'TCutPNO':>9s}  {'E_corr (Ha)':>14s}  {'recovery':>9s}  {'avg PNOs':>8s}\n")
-    for label, e, rec, avg in rows:
-        fh.write(f"  {label:>9s}  {e:14.8f}  {rec:9.4%}  {avg:8.1f}\n")
-    fh.write("  (* = all screens zero: the exactness limit)\n")
-
+# 3. Print analysis separately from the finalized run_job artifacts.
 print(f"  E(RHF)                  = {hf.energy:14.8f} Ha")
 print(f"  E_corr(canonical RI-MP2)= {canonical.e_correlation:14.8f} Ha")
-print(f"  {'TCutPNO':>9s}  {'E_corr (Ha)':>14s}  {'recovery':>9s}  {'avg PNOs':>8s}")
-for label, e, rec, avg in rows:
-    print(f"  {label:>9s}  {e:14.8f}  {rec:9.4%}  {avg:8.1f}")
+print(f"  {'TCutPNO':>9s}  {'E_corr (Ha)':>14s}  {'recovery':>9s}  {'delta (uHa)':>12s}  {'avg PNOs':>8s}")
+for label, e, rec, delta, avg in rows:
+    print(f"  {label:>9s}  {e:14.8f}  {rec:9.4%}  {delta:12.4f}  {avg:8.1f}")
 print("  (* = all screens zero: the exactness limit)")
+print("  delta = local minus canonical; recovery alone is not an error bound")

@@ -32,6 +32,13 @@ label. Numbers on this page were re-run on a vibe-qc 0.17.10 development build.
 
 ## Quick start
 
+Run these inputs with the installed engine's Python in a directory outside
+the checkout. Coordinates are in bohr. The quick-start geometry and the
+later convergence-scan geometry differ: compare solver settings within one
+fixed geometry and Hamiltonian, not their absolute energies across sections.
+A solver's convergence flag concerns its configured problem; it does not
+establish convergence to full CI as the selected space grows.
+
 The simplest possible non-mean-field calculation, Selected-CI on
 H₂O / STO-3G, through ``run_job``:
 
@@ -44,13 +51,16 @@ mol = vq.Molecule([
     vq.Atom(1, [ 0.0, -1.43, -0.98]),
 ])
 
-vq.run_job(
+result = vq.run_job(
     mol,
     basis="sto-3g",
     method="selected_ci",
     selected_ci_options=vq.SelectedCIOptions(target_size=100, verbose=1),
     output="h2o_selci",
 )
+if not result.converged:
+    raise RuntimeError("Selected-CI did not converge; inspect its solver diagnostics")
+print(f"Selected-CI total = {result.energy:.8f} Ha")
 ```
 
 That's it.  vibe-qc runs RHF to get the MO basis, builds the
@@ -88,6 +98,8 @@ H = build_hamiltonian_mo(mol, basis, C)
 # 3. Solve
 opts = SelectedCIOptions(target_size=100, verbose=1)
 result = solve_selected_ci(H, opts)
+if not result.converged:
+    raise RuntimeError("Selected-CI did not converge")
 
 print(f"E(Selected-CI) = {result.energy:.8f} Ha")
 print(f"ndet           = {len(result.ci_labels)}")
@@ -198,6 +210,9 @@ for target in [1, 3, 5, 10, 20, 50, 100, 200]:
         verbose=0,
     )
     result = solve_selected_ci(H, ci_opts)
+    if not result.converged:
+        print(f"target={target}: unconverged; inspect diagnostics before extending the scan")
+        break
     dt = time.perf_counter() - t0
     ndet = len(result.ci_labels) if result.ci_labels else 0
     e_var = result.energy - (result.pt2_correction or 0.0)

@@ -1,9 +1,21 @@
 # GPU support concept and implementation plan
 
-**Status: discussion draft, 2026-10-27.** This is a proposal for iterative
-technical and product review, not an approved implementation, dependency
-addition, licensing change or performance claim. No GPU calculation was run
-for this document. The source assessment starts at `0cbc072f`.
+**Status: accepted roadmap concept, 2026-10-27.** The
+[GPU delivery stages](../roadmap.md#gpu-delivery-stages) integrate this
+concept into the acceleration program, beginning with G0-A CPU profiling.
+This is an implementation direction, not shipped GPU support, an approved
+dependency/licensing change or a performance claim. No GPU calculation was
+run for this document. The source assessment starts at `0cbc072f`.
+
+**Research refinement:** the [literature and architecture review](gpu_research_review.md)
+adds library methods/SI reading and 2025-2026 online research, checked against
+source at `9cae35c7`. Its corrections and the round 3 decisions are
+incorporated below; measurements and the listed product decisions remain open.
+
+**Round 3:** the [G0/G1m implementation plan](gpu_g0_g1m_plan.md) records
+accepted amendments, CPU baselines, Apple experiments and the measured gate
+between DF integration and grid work. Execution follows the scope of each
+implementation task. G0 is CPU-only; G1m requires an Apple GPU and Metal tools.
 
 ## 1. Recommended direction
 
@@ -120,6 +132,17 @@ separates Coulomb, exchange, paired-spin exchange and range-separated exchange.
 integration seam; the [Python DF implementation](../../python/vibeqc/density_fitting.py)
 is also useful for small independent reference checks.
 
+Audit storage and streaming before reuse. The native object retains both raw
+and transformed three-index tensors; two helpers currently read the raw tensor
+but can be rewritten in terms of B alone.
+The unused streaming methods have independently reproduced dimension/layout
+defects described in the research review. Delete them or replace them with a
+tested design; their presence does not establish a bounded-memory route.
+The two remaining raw-tensor consumers can be expressed in B alone. Aim for one
+resident tensor, preserving layout and accessor contracts; measure construction
+peak separately. Factorized-density K should be an independently tested optimization,
+with rank/error controls and density-form fallback.
+
 The present builder returns host `Eigen::MatrixXd` objects. A first adapter can
 retain B and scratch space on the device and return J/K to the CPU. That gives
 a bounded integration, but not a fully resident SCF loop. Measure that boundary
@@ -154,6 +177,13 @@ them. Avoid exposing proprietary handles or Eigen types in an eventual public
 ABI. Synchronization, ownership, array strides and scratch-space budgets must
 be explicit. Keep buffers resident across iterations and reuse execution plans.
 
+Include strided-batched products, SYRK/HERK, triangular solves and segmented
+reductions when required. Allow independent J/K/XC execution, but measure
+concurrency against sequential execution: competing streams can increase memory
+use or bandwidth contention. Concurrent plans need safe handle/workspace
+ownership. Transfer cost remains a measurement, not an assumed negligible
+quantity derived from peak PCIe bandwidth.
+
 Backend selection and numerical-method selection are separate. Requesting a
 GPU must not silently change direct HF into density-fitted HF, change a grid,
 or substitute an auxiliary basis. An automatic hardware choice may fall back
@@ -187,6 +217,16 @@ residual and energy tolerances. A single final energy recomputation is not a
 convergence certificate. Recheck the density, occupations and state identity;
 near-degenerate states may require a full strict restart.
 
+At the switch, discard lower-precision DIIS history and reset stateful builder
+caches. Record route-specific residuals, density changes, strict iterations and
+fallback reasons. A provisional two-consecutive-iteration check is convergence
+evidence, not a general proof of stability or state identity. Preserve requested
+occupations, including MOM or fractional occupations; compare subspaces/densities
+rather than demanding unchanged orbital-energy ordering. Energy and residual
+must correspond to the final reported density, even if a final diagonalization
+changes it. Numerical limits and restart policies remain experiment parameters.
+Call the result a verification record.
+
 FP64 accumulation cannot recover input information already discarded by FP32
 conversion. Cancellation, diffuse bases, ill-conditioned metrics, tiny gaps
 and long reductions need targeted tests. Pairwise or compensated sums help
@@ -201,12 +241,27 @@ Apple prototype. NVIDIA documents tunable [GEMM emulation in cuEST][emulation],
 including an explicit native-FP64 mode; the adapter must set and report its
 policy rather than silently accept vendor defaults.
 
+The 2026 [adaptive-precision DF-K study][huang26] strengthens the consumer-GPU
+case while explicitly leaving a general convergence guarantee open. Distinguish
+native FP64, emulation and FP32 per operation. A passing benchmark does not make
+fixed-bit emulation equivalent to IEEE FP64. cuBLAS's current
+[dynamic/fixed mantissa and special-value controls][cublas] need an explicit
+accuracy contract; initial strict mode remains native FP64.
+
 Published mixed-precision evidence is method-specific. Pokhilko et al.,
 [10.1021/acs.jctc.8b00321][pokhilko], section 2 and SI section 1/Figure S2,
 retain the SCF/integral preparation in double precision and use cleanup in
 correlated iterations. This supports testing selective precision and recovery,
 not claiming that all HF/DFT work is safe in FP32. Our Apple SCF recovery is a
 proposed extension requiring its own evidence.
+
+Also test an Apple grid/seminumerical-exchange path early.
+[Laqua et al. 2021][laqua21], sections II-IV, provide a direct precedent:
+contribution-dependent FP32/FP64 evaluation and increments relative to a fixed
+mixed-precision exchange anchor. This is not automatically the same as vibe-qc
+COSX. Collocation, full exchange batches, FP64 contribution routing and recovery
+must all be measured before selecting the first useful Metal workflow. The
+paper does not qualify M5/M6 hardware.
 
 ## 6. Implementation sequence and roadmap fit
 
@@ -218,8 +273,9 @@ or periodic parity and without assigning a release version prematurely.
 
 | Stage | Deliverable | Exit evidence and dependency |
 |---|---|---|
-| G0: measure and design | Component timings, memory estimates, operation contracts and CPU baselines | Representative HF, PBE and PBE0 workloads; identify real bottlenecks and read accepted scientific contracts |
-| G1: feasibility on three vendors | One blocked DF-K operation on CUDA, HIP and Metal, with CPU DF factors | Same inputs and explicit precision; measure copies, initialization, peak memory and crossover; Apple includes strict recovery cost |
+| G0: CPU measure and design | Component timings, DF storage/streaming audit, operation contracts and CPU baselines | Explicit direct, actual AUTO default, DF and RIJ-COSX workloads; establish priority shortlist, not a measured GPU speedup |
+| G1: CUDA/HIP feasibility | Blocked DF-J/K primitives over vendor BLAS, with CPU DF factors | Qualify each backend independently; native FP64 baseline, copies, initialization, peak memory and crossover; no Metal or FP32 DF-K SCF recovery pilot |
+| G1m: early Apple alternatives | Metal collocation, DF-shaped GEMM and complete seminumerical K-batch experiments | Alongside G0/G1; select the first Apple route by error and total cost; a one-week timebox does not guarantee a result |
 | G2: molecular integration | Optional native GPU DF-J/K behind JKBuilder; RHF/UHF and selected RKS/UKS global hybrids | Complete `vq` calculations against CPU and matched ORCA; missing SDK and low-memory fallback checked |
 | G3: DFT grid and derivatives | AO collocation, density and XC matrix batches; then gradients | Start LDA/GGA; independent grid and functional parity, energy and force acceptance; connect to GPU-XC1 |
 | G4: remove measured bottlenecks | Native 2c/3c generation, larger resident workflow and selected solvers | Implement only where G2/G3 profiles justify it; direct four-center builds are a separate subproject |
@@ -227,18 +283,36 @@ or periodic parity and without assigning a release version prematurely.
 | G6: correlated scaling | RI-MP2 then selected CCSD/(T) and batched local-correlation work | Memory-bounded tensors and scientific references; fits the production correlated-scaling `v2.x` theme |
 | N1: optional NVIDIA study | cuEST component adapter and bounded molecular demonstration | Separate licensing/packaging assessment, exact method equivalence and permitted publication; does not block G1-G6 |
 
-G2 depends on G1, G3 on the common device infrastructure and an admitted SCF
-route, and G4 on measurements. G5 and G6 can proceed independently once their
+G2 depends on the relevant G1 backend, not completion of all vendors. Prioritize
+G2 only after G1 replay measurements, combined with G0 CPU setup/remaining-SCF
+costs, show a credible end-to-end win over the actual CPU default on the medium
+and large regression cases at matched accuracy. G0 alone cannot measure that
+win. If the gate fails, put a bounded grid-kernel pilot ahead of G2; a prototype
+grid pilot does not require an integrated GPU SCF route. Final G2 acceptance
+still requires complete measured SCF calculations, not replay estimates.
+G3 production integration needs the common device infrastructure and an admitted
+SCF route; G4 needs measured
+bottlenecks. G5 and G6 can proceed independently once their
 shared operations and CPU routes qualify. Multi-GPU execution follows a useful
 single-GPU implementation and the existing MPI plan; it is not an initial
 prerequisite. Parameter fitting can later reuse qualified backends and batch
 independent cases without changing its objective or reference protocol.
+
+Qualify each route as it lands; do not hold a working molecular DF backend for
+completion of all XC/Metal work. G1m may reorder Apple's integration while
+retaining its product objective. Raw site-specific profiling evidence stays
+outside the checkout; public-safe benchmark definitions and summaries can be
+published. Periodic grid work has a concrete recent reference in
+[Li et al. 2026][gpw26], distinct from molecular atom-centered quadrature.
 
 Planning allowance, not a delivery commitment: G0-G1 about 3-6 engineer-weeks;
 G2 another 4-8; G3 another 4-8. These assume access to NVIDIA and AMD hardware,
 GPU expertise and existing valid reference cases. A robust direct integral
 engine, periodic coverage and CC are separate multi-month efforts. Re-estimate
 after G1, especially if Apple recovery or device-memory traffic erases the gain.
+These allowances cover bounded initial slices, not complete three-vendor grid,
+exchange and derivative coverage. The expanded G1m alternatives and native-versus-
+GauXC decision need a new estimate before implementation is committed.
 
 The first prototype should compare at least a small overhead-dominated system,
 a medium molecular DF hybrid, and a larger memory-constrained case. Carry the
@@ -380,6 +454,10 @@ Local-library reading supporting the design, beyond vendor API documentation:
 | Datta and Gordon, 2023, [10.1021/acs.jctc.3c00876][datta] | RI amplitude formulation around equations 1-16 and GPU contraction/transfer discussion | Reuse three-index factors and tile dominant CC contractions; a useful general library extends beyond integrals |
 
 These papers are implementation precedents, not vibe-qc benchmark results.
+The [research review](gpu_research_review.md) extends this evidence with Laqua,
+GPU4PySCF, high-angular-momentum J engines, adaptive DF-K, JuliaChem,
+periodic GPW and recent PAW/Abinit work. It distinguishes local manuscript
+versions, primary full-text reading and abstract-only findings.
 No new recurrence, mixed-precision proof or derivative algorithm is adopted
 here. Before implementing those stages, complete the method-specific primary
 paper/SI review and citation entries through the configured literature library.
@@ -389,8 +467,9 @@ Questions for the next design iteration:
 
 1. Is the priority order DF-K plus J, XC, then integral generation right for
    the actual workloads, or do G0 profiles justify a different first kernel?
-2. Can the first Metal experiment recover strict SCF accuracy cheaply enough
-   to be useful? What cases should force CPU from the start?
+2. Which Metal operation passes the G1m error and complete-cost gates? If
+   DF-shaped products pass, does a later SCF pilot recover strict accuracy
+   cheaply enough to be useful? What cases should force CPU from the start?
 3. Should G3 use optional GauXC on CUDA/HIP, and how should it share grids and
    functional definitions with Metal and existing CPU routes?
 4. Is an internal C++ layer with a later C ABI sufficient, or is there already
@@ -423,3 +502,7 @@ Questions for the next design iteration:
 [barca]: https://doi.org/10.1021/acs.jctc.1c00720
 [pokhilko]: https://doi.org/10.1021/acs.jctc.8b00321
 [datta]: https://doi.org/10.1021/acs.jctc.3c00876
+[huang26]: https://arxiv.org/html/2601.08077v3
+[cublas]: https://docs.nvidia.com/cuda/cublas/index.html#floating-point-emulation
+[laqua21]: https://doi.org/10.1063/5.0045084
+[gpw26]: https://arxiv.org/abs/2603.24881v1

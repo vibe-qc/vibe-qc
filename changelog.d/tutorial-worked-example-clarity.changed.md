@@ -1,1 +1,0 @@
-- Clarify tutorial setup and continuation blocks, check convergence before analysis, reuse basis-sweep results, and add a reproducible radial-grid sweep with explicit reference and cache handling.

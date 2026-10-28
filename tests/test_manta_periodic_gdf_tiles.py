@@ -354,3 +354,148 @@ def test_metric_prefactor_caps_and_unresolved_volume(field,quantity):
     for lattice in (np.ones((3,3)),np.array([[1.,1.,1.],[1.,1.+1e-8,1.],[1.,1.,1.+1e-8]])):
         with pytest.raises(RuntimeError,match='volume sign'):manta.certify_periodic_gdf_lattice_weight(lattice,np.ones(3),.65,p,False,0.,b)
     with pytest.raises((RuntimeError,OverflowError),match='overflow'):manta.certify_periodic_gdf_lattice_weight(1e200*np.eye(3),np.ones(3),.65,p,False,0.,b)
+
+
+def construction_case(gamma=False, angular=False):
+    """Small skew cell with nontrivial integer images and signed contractions."""
+    a=case(gamma)
+    system=vq.PeriodicSystem(3,np.array([[3.7,.13,-.09],[.07,4.1,.21],[.11,-.17,4.3]]),[vq.Atom(2,[.21,-.13,.31]),vq.Atom(2,[-.23,.19,.07])])
+    def basis(l,origin):
+        shell=core.ShellInfo(0,l,True,[.73,1.21],[.8,-.17],origin)
+        return vq.BasisSet(system.unit_cell_molecule(),[shell],'construction-witness',True)
+    a.update(system=system,orbital=basis(int(angular),[.21,-.13,.31]),auxiliary=basis(2 if angular else 0,[-.23,.19,.07]),
+        vectors=np.array([[0,0,0],[1,0,0],[-1,0,0]])@system.reciprocal_lattice().T+a['q'])
+    a['options'].pair_cutoff_bohr=3.95;a['options'].auxiliary_cutoff_bohr=2.2;a['options'].compute_metric=False
+    return a
+
+
+def decimal_coupling_tile(a):
+    """Independent finite index census and high-precision Gaussian component sum.
+
+    The brute-force census is intentionally separate from the native image box.
+    Decimal lattice products and center sums avoid a rounded-center reference.
+    """
+    from decimal import Decimal as D,localcontext
+    from types import SimpleNamespace as NS
+    from tests.test_manta_fourier import _decimal_phase,_decimal_auxiliary_fourier,_decimal_pair_fourier
+    from tests.test_manta_fitting import _decimal_three_center
+    def mul(a,b):return (a[0]*b[0]-a[1]*b[1],a[0]*b[1]+a[1]*b[0])
+    def plus(a,b):return (a[0]+b[0],a[1]+b[1])
+    def proxy(s,center):return NS(l=s.l,pure=s.pure,exponents=s.exponents,coefficients=s.coefficients,origin=center)
+    def basis(s):return NS(shells=lambda:[s],nbasis=2*s.l+1 if s.pure else (s.l+1)*(s.l+2)//2)
+    _decimal_phase([0.],[0.]);o=a['options'];lattice=a['system'].lattice
+    sp,sm,sn=a['auxiliary'].shells()[0],a['orbital'].shells()[0],a['orbital'].shells()[0]
+    kernel=getattr(a.get('physical_kernel'),'kernel','coulomb');physical_omega=getattr(a.get('physical_kernel'),'omega',0.)
+    shape=(len(a['ket_kpoints']),a['auxiliary'].nbasis,a['orbital'].nbasis,a['orbital'].nbasis)
+    with localcontext() as ctx:
+        ctx.prec=180
+        out=np.empty(shape,dtype=object)
+        for idx in np.ndindex(shape):out[idx]=(D(0),D(0))
+        L=[[D(float(x)) for x in row] for row in lattice]
+        # Explicit cyclic determinant, independent of Eigen/LU.
+        det=sum(L[0][j]*(L[1][(j+1)%3]*L[2][(j+2)%3]-L[1][(j+2)%3]*L[2][(j+1)%3]) for j in range(3))
+        pi=_decimal_phase.pi;prefactor=4*pi/abs(det);eta=D(o.omega)
+        indices=list(itertools.product(range(-2,3),repeat=3))
+        images=[(idx,lattice@np.array(idx),[sum(L[i][j]*idx[j] for j in range(3)) for i in range(3)]) for idx in indices]
+        assert np.linalg.svd(lattice,compute_uv=False)[-1]*3>o.pair_cutoff_bohr+o.auxiliary_cutoff_bohr+np.linalg.norm(sp.origin)+np.linalg.norm(sm.origin)
+        A=np.array(sm.origin);P=np.array(sp.origin);B=np.array(sn.origin)
+        for ri,rounded,r in images:
+            end=B+rounded;segment=end-A;length2=segment@segment
+            if np.linalg.norm(segment)>o.pair_cutoff_bohr:continue
+            C=[D(x)+v for x,v in zip(sn.origin,r)];bra=basis(proxy(sm,list(map(D,sm.origin))));ket=basis(proxy(sn,C))
+            phases=[_decimal_phase(k,r) for k in a['ket_kpoints']]
+            if kernel!='erf':
+                for ti,rounded_t,t in images:
+                    delta=P+rounded_t-A;u=np.clip(delta@segment/length2,0.,1.) if length2 else 0.
+                    if np.linalg.norm(delta-u*segment)>o.auxiliary_cutoff_bohr:continue
+                    centers=[proxy(sp,[D(x)+v for x,v in zip(sp.origin,t)]),bra.shells()[0],ket.shells()[0]]
+                    values=_decimal_three_center(centers,'erfc',o.omega)
+                    phase=_decimal_phase(-a['q'],t)
+                    for k,kr in enumerate(phases):
+                        z=mul(kr,phase)
+                        for idx,value in values.items():out[(k,*idx)]=plus(out[(k,*idx)],(z[0]*value,z[1]*value))
+            waves=list(a['vectors']);zero=np.linalg.norm(lattice.T@a['q']/(2*np.pi)-np.round(lattice.T@a['q']/(2*np.pi)))<1e-12
+            if zero and kernel!='erf':waves.append(np.zeros(3))
+            af=_decimal_auxiliary_fourier(a['auxiliary'],waves);bf=_decimal_pair_fourier(bra,ket,waves)
+            for g,wave in enumerate(waves):
+                squared=sum(D(float(x))**2 for x in wave)
+                if g==len(a['vectors']):weight=-prefactor/(4*eta**2) if kernel=='coulomb' else prefactor/4*(1/D(physical_omega)**2-1/eta**2)
+                elif squared<=D(1e-24):weight=D(0)
+                else:
+                    split=(-squared/(4*eta**2)).exp()
+                    physical=D(0) if kernel=='coulomb' else (-squared/(4*D(physical_omega)**2)).exp()
+                    weight=prefactor/squared*(split if kernel=='coulomb' else physical if kernel=='erf' else split-physical)
+                for k,kr in enumerate(phases):
+                    for p,i,j in np.ndindex(shape[1:]):
+                        z=mul(mul((af[g][p][0],-af[g][p][1]),bf[g][i,j]),kr)
+                        out[k,p,i,j]=plus(out[k,p,i,j],(weight*z[0],weight*z[1]))
+        return out
+
+
+def check_construction_bounds(c,reference):
+    from decimal import Decimal as D,localcontext
+    actual=c.evaluated.values.ravel();ref=reference.ravel()
+    with localcontext() as ctx:
+        ctx.prec=180
+        for i,(re,im) in enumerate(ref):
+            assert D(c.real_lower[i])<=re<=D(c.real_upper[i]),(i,'real',re,c.real_lower[i],c.real_upper[i])
+            assert D(c.imag_lower[i])<=im<=D(c.imag_upper[i]),(i,'imag',im,c.imag_lower[i],c.imag_upper[i])
+            assert abs(D(float(actual[i].real))-re)+abs(D(float(actual[i].imag))-im)<=D(c.error_bounds[i])
+    assert np.isfinite(c.maximum_error) and c.maximum_error==max(c.error_bounds)
+    assert len(c.reference_identity)==len(c.certificate_identity)==64 and c.reference_terms>0
+
+
+@pytest.mark.parametrize('gamma',[False,True])
+@pytest.mark.parametrize('kernel',['coulomb','erf','erfc'])
+def test_coupling_construction_finite_complex_gaussian_witness(gamma,kernel):
+    from tests.test_manta_periodic_range_fitting import physical
+    a=construction_case(gamma)
+    if kernel!='coulomb':a['physical_kernel']=physical(kernel,.43)
+    s=manta.PeriodicGDFTiles(**a);c=s.certify_coupling_tile(0,0,0,a['budget'])
+    np.testing.assert_array_equal(c.evaluated.values,s.evaluate(0,0,0).values)
+    check_construction_bounds(c,decimal_coupling_tile(a))
+    assert c.source_identity==s.three_center_source_identity
+
+
+def test_coupling_construction_signed_angular_representation():
+    a=construction_case(True,True);s=manta.PeriodicGDFTiles(**a)
+    check_construction_bounds(s.certify_coupling_tile(0,0,0,a['budget']),decimal_coupling_tile(a))
+
+
+@pytest.mark.parametrize('field,quantity',CAPS)
+def test_coupling_construction_strict_joint_admission(field,quantity):
+    a=construction_case();s=manta.PeriodicGDFTiles(**a);b=a['budget'];p=s.plan_coupling_construction(b)
+    for key,name in CAPS:setattr(b,key,getattr(p,name))
+    s.certify_coupling_tile(0,0,0,b)
+    setattr(b,field,getattr(p,quantity)-1)
+    x=np.full((s.plan.momenta,s.plan.n_orb,s.plan.n_orb),complex(np.nan,0.))
+    for call in (lambda:s.certify_coupling_tile(0,0,0,b),lambda:s.certify_forward(x,b),lambda:s.certify_adjoint(x.ravel()[:s.plan.n_aux],b)):
+        with pytest.raises((ValueError,RuntimeError),match='budget'):call()
+
+
+def test_coupling_construction_refuses_nonfinite_and_singular_boundary():
+    a=construction_case();s=manta.PeriodicGDFTiles(**a)
+    with pytest.raises((ValueError,RuntimeError),match='finite'):s.certify_forward(np.full((2,1,1),complex(np.nan,0.)),a['budget'])
+    with pytest.raises((ValueError,RuntimeError),match='complex128'):s.certify_forward(np.zeros((2,1,1)))
+    with pytest.raises(IndexError):s.certify_coupling_tile(1,0,0,a['budget'])
+    a['q']=np.array([1e-12,0.,0.]);a['vectors']=a['q'][None,:].copy()
+    s=manta.PeriodicGDFTiles(**a)
+    with pytest.raises(RuntimeError,match='singular boundary'):s.certify_coupling_tile(0,0,0,a['budget'])
+
+
+def test_shared_primitive_screen_streamed_and_dense_coupling_agree():
+    a=case();a['system'],a['orbital'],a['auxiliary']=_weighted_gradient_fixture(1)
+    a['vectors']=np.array([[0,0,0],[1,0,0],[-1,0,0]])@a['system'].reciprocal_lattice().T+a['q']
+    a['options'].pair_cutoff_bohr=8.;a['options'].auxiliary_cutoff_bohr=20.;a['options'].compute_metric=False
+    a['options'].integral_screen_error=.01
+    source=manta.PeriodicGDFTiles(**a);dense=manta.compute_periodic_gdf(**a)
+    np.testing.assert_array_equal(assemble(source),dense.three_center)
+    np.testing.assert_allclose(dense.three_center,legacy(a)[1],atol=2e-11,rtol=2e-12)
+    proof=source.certify_coupling_tile(1,1,1,a['budget'])
+    np.testing.assert_array_equal(proof.evaluated.values,source.evaluate(1,1,1).values)
+    a['options'].integral_screen_error=0.;exact=manta.PeriodicGDFTiles(**a)
+    reference=exact.certify_coupling_tile(1,1,1,a['budget'])
+    assert proof.reference_identity==reference.reference_identity
+    for field in ('real_lower','real_upper','imag_lower','imag_upper'):assert getattr(proof,field)==getattr(reference,field)
+    difference=np.abs(proof.evaluated.values-reference.evaluated.values).ravel()
+    assert np.all(difference<=np.array(proof.error_bounds)+np.array(reference.error_bounds))

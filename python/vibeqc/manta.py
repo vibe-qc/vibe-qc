@@ -23,6 +23,7 @@ from ._vibeqc_core._manta import (
     DerivativeTiles,
     plan_derivatives,
     BlochPhasePlan, BlochPhaseCertificate, plan_bloch_phase, certify_bloch_phase,
+    plan_pair_fourier_construction, certify_pair_fourier_panel,
     FourierConstructionPlan, FourierConstructionCertificate, plan_auxiliary_fourier_construction, certify_auxiliary_fourier_panel,
     FourierPlan,
     FourierReceipt,
@@ -104,6 +105,7 @@ __all__ = [
     "one_electron_capability", "plan_one_electron", "compute_one_electron",
     "OneElectronDerivative", "plan_one_electron_derivative", "compute_one_electron_derivative",
     "BlochPhasePlan", "BlochPhaseCertificate", "plan_bloch_phase", "certify_bloch_phase",
+    "plan_pair_fourier_construction", "certify_pair_fourier_panel",
     "FourierConstructionPlan", "FourierConstructionCertificate", "plan_auxiliary_fourier_construction", "certify_auxiliary_fourier_panel",
     "FourierPlan", "FourierReceipt", "FourierResult", "plan_fourier", "plan_auxiliary_fourier",
     "compute_fourier_panel", "compute_auxiliary_fourier_panel",
@@ -697,3 +699,9 @@ __all__ += ["MetricConstructionPlan", "MetricConstructionCertificate", "plan_met
 
 from ._vibeqc_core._manta import RepresentationCertificate, plan_representation, certify_representation
 __all__ += ["RepresentationCertificate", "plan_representation", "certify_representation"]
+
+from ._vibeqc_core._manta import ThreeCenterConstructionTiles, plan_three_center_construction
+__all__ += ["ThreeCenterConstructionTiles", "plan_three_center_construction"]
+
+from ._vibeqc_core._manta import PeriodicGDFConstructionBounds, PeriodicGDFConstructionTile, PeriodicGDFConstructionAction
+__all__ += ["PeriodicGDFConstructionBounds", "PeriodicGDFConstructionTile", "PeriodicGDFConstructionAction"]

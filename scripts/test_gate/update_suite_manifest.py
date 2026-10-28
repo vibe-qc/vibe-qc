@@ -40,6 +40,16 @@ FILE_OWNERS = {
 # here therefore widens or narrows the release gate on its own; pin one only as
 # the file's owning chat, and say why in the rationale.
 CURATED: dict[str, dict[str, str]] = {
+    "tests/test_gpu_profile.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "performance",
+        "disposition": "new",
+        "rationale": "GPU G0-A CPU profiling harness: fixed workload manifest on the parity_matrix_orca geometries, explicit matched recipe without a hidden tolerance clamp, AUTO/DIRECT resolution and deduplication, PBE exchange not applicable, provenance fields, redaction and summary identity/unavailable/on-off semantics on synthetic records; bookkeeping only, not profiling evidence.",
+    },
+    "tests/test_scf_component_timing.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "molecular/DFT",
+        "disposition": "new",
+        "rationale": "Opt-in SCF component timing on small H2O RHF/RKS runs: enabled timing leaves energies, densities and iteration counts unchanged; executed phases have positive clocks; the RHF fused JK timer is never split; PBE has no exchange timer; exclusive phases reconcile with the session wall; DF tracked memory; staged COSX segments. Timings exercise bookkeeping, not performance.",
+    },
     "tests/test_parameter_opt.py": {
         "maturity": "experimental", "tier": "T3", "owner": "semiempirical",
         "disposition": "new",
@@ -124,7 +134,11 @@ CURATED: dict[str, dict[str, str]] = {
     },
     "tests/basisset_dev/test_cohesive_reference_recipe.py": {
         "maturity": "under-review", "tier": "T2", "owner": "basis/integrals", "disposition": "new",
-        "rationale": "M2 rung 2b recipe (#224) against a stand-in engine: the bulk is a single point at the relaxed cell with the deck's SHRINK pair, each counterpoise atom carries its deck's ATOMBSSE label, element, NSTAR and RMAX, a keyword deck gets the bundled pob record, a run without a deck is reported, and the cohesive energy is assembled as the reference was. No SCF; seconds.",
+        "rationale": "M2 rung 2b recipe (#224) against a stand-in engine: the bulk is a single point at the relaxed cell with the deck's SHRINK pair, each counterpoise atom carries its deck's ATOMBSSE label, element, NSTAR, RMAX, SCF input, spin and SYMMREMO setting, a keyword deck gets the bundled pob record, a run without a deck is reported, the cohesive energy is assembled as the reference was, and a restart reads finished runs from the journal. No SCF; seconds.",
+    },
+    "tests/basisset_dev/test_campaign_resume_gate.py": {
+        "maturity": "under-review", "tier": "T2", "owner": "basis/integrals", "disposition": "new",
+        "rationale": "M4 gate: the M3 topology scan through Crystal23Engine, a LedgerTransport and a file-backed stand-in queue runs about 200 evaluations; killed with SIGKILL while waiting on its 100th job, the restarted driver adopts every unfetched job, recomputes no journalled point and writes the record an uninterrupted run writes; the managed checkout it ran in is untouched, and a campaign directory inside a checkout is refused before any write. Model energies, three driver subprocesses; seconds.",
     },
     "tests/basisset_dev/test_topology_scan_recipe.py": {
         "maturity": "under-review", "tier": "T2", "owner": "basis/integrals", "disposition": "new",

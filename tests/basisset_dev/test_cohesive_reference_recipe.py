@@ -3,9 +3,10 @@
 A stand-in engine records what it is asked for and answers with the reference
 energy plus a known offset. Pinned here: the bulk is a single point at the
 relaxed cell with the deck's SHRINK pair, each counterpoise atom carries its
-deck's IAT label, element, NSTAR and RMAX, a keyword deck gets the bundled
-pob record as its inline basis, a run without a deck is reported rather than
-guessed, and the cohesive energy is assembled exactly as the reference was.
+deck's IAT label, element, NSTAR, RMAX, SCF input, spin and symmetry setting,
+a keyword deck gets the bundled pob record as its inline basis, a run without
+a deck is reported rather than guessed, and the cohesive energy is assembled
+exactly as the reference was.
 """
 
 from __future__ import annotations
@@ -36,11 +37,15 @@ K_FIRST = replace(K2O, crystal_asymm_unit=K2O.crystal_asymm_unit[::-1])
 E = {"bulk.out": -1203.25, "k.out": -599.6, "o.out": -75.06}
 
 
-def _settings(atombsse=None, keyword="pob-tzvp-rev2", inline=None, shrink=(8, 24)):
+K_SCF = ("ATOMSPIN", "1", "1 1", "SPINLOCK", "1 50", "TOLDEE", "14", "FMIXING", "75", "ANDERSON")
+
+
+def _settings(atombsse=None, keyword="pob-tzvp-rev2", inline=None, shrink=(8, 24), scf=(), n_unpaired=0):
     return DeckSettings(
         spacegroup=225, lattice=(6.4,), optgeom=atombsse is None, atombsse=atombsse,
         basis_keyword=None if inline else keyword, inline_basis=inline,
         functional="r2SCAN", tolinteg=(9, 9, 9, 18, 54), shrink=shrink if atombsse is None else None,
+        scf=scf, spin=bool(n_unpaired), n_unpaired=n_unpaired,
     )
 
 
@@ -50,9 +55,9 @@ def _system(o_deck=True):
         ReferenceComponent("bulk", "bulk.out", None, None, E["bulk.out"], "converged", E["bulk.out"],
                            _settings(), relaxed),
         ReferenceComponent("atom", "k.out", None, None, E["k.out"], "converged", E["k.out"],
-                           _settings((1, 20, 7.5)), K_FIRST, Z=19),
+                           _settings((1, 20, 7.5), scf=K_SCF, n_unpaired=1), K_FIRST, Z=19),
         ReferenceComponent("atom", "o.out", None, None, E["o.out"], "crashed", E["o.out"],
-                           _settings((3, 10, 7.5), inline="8 0\n19 0\n99 0\n") if o_deck else None,
+                           _settings((3, 10, 7.5), inline="8 0\n19 0\n99 0\n", n_unpaired=2) if o_deck else None,
                            K_FIRST if o_deck else None, Z=8),
     ]
     published = (2 * E["k.out"] + E["o.out"] - E["bulk.out"]) * HARTREE_TO_KJ_PER_MOL
@@ -82,11 +87,18 @@ def test_each_run_is_recomputed_with_its_own_deck_settings(tmp_path):
     StandIn.calls = []
     report = reproduce_reference_system(_system(), StandIn, tmp_path)
     bulk, k, o = StandIn.calls
-    assert bulk[:4] == ("bulk", {"shrink": (8, 24), "optgeom": False}, 6.36, "r2scan")
+    assert bulk[:4] == ("bulk", {"shrink": (8, 24), "optgeom": False, "scf_lines": ()}, 6.36, "r2scan")
     # The keyword deck got the bundled pob-TZVP-rev2 record of both elements.
     assert bulk[4].startswith("19 ") and "\n8 " in bulk[4]
-    assert k[:5] == ("atom", {"bsse_nstar": 20, "bsse_rmax": 7.5}, 19, 1, "r2scan")
-    assert o[:5] == ("atom", {"bsse_nstar": 10, "bsse_rmax": 7.5}, 8, 3, "r2scan")
+    # The K atom converges as its reference did: the deck's ATOMSPIN,
+    # SPINLOCK and mixing, its spin, and no SYMMREMO. Its TOLDEE 14 is
+    # roundoff and is capped at 10, with the departure recorded.
+    capped = tuple("10" if v == "14" else v for v in K_SCF)
+    assert k[:5] == ("atom", {"bsse_nstar": 20, "bsse_rmax": 7.5, "scf_lines": capped,
+                              "n_unpaired": 1, "symmremo": False}, 19, 1, "r2scan")
+    assert report.runs[1].settings["toldee_capped_from"] == 14
+    assert o[:5] == ("atom", {"bsse_nstar": 10, "bsse_rmax": 7.5, "scf_lines": (),
+                              "n_unpaired": 2, "symmremo": False}, 8, 3, "r2scan")
     assert o[5] == "8 0\n19 0\n99 0\n"
     # Three atoms (2 K + 1 O) each 1 mHa higher raise sum(n E_atom) - E_bulk
     # by 3 mHa: the cohesive energy grows.
@@ -107,7 +119,7 @@ def test_a_consistent_variant_changes_only_the_named_runs(tmp_path):
     )
     bulk, k, o = StandIn.calls
     # Relaxed from the deck's starting cell, not the reference's relaxed 6.36.
-    assert bulk[:4] == ("bulk", {"shrink": (8, 24), "optgeom": True}, 6.4, "r2scan")
+    assert bulk[:4] == ("bulk", {"shrink": (8, 24), "optgeom": True, "scf_lines": ()}, 6.4, "r2scan")
     assert report.runs[0].settings["optgeom"] is True
     # The K atom keeps its deck; the O atom gets the bundled record.
     assert k[5] == bulk[4] and o[5] != "8 0\n19 0\n99 0\n" and o[5].startswith("19 ")
@@ -125,6 +137,37 @@ def test_a_run_without_its_deck_is_reported_not_guessed(tmp_path):
 
 def test_the_crystal23_factory_carries_the_per_run_settings(tmp_path):
     make = crystal23_reference_factory(object(), crystal_binary="Pcrystal23", invocation="mpi", cpus=4)
-    eng = make(tmp_path, shrink=(8, 24), bsse_nstar=20, bsse_rmax=7.5)
+    eng = make(tmp_path, shrink=(8, 24), bsse_nstar=20, bsse_rmax=7.5, scf_lines=["FMIXING", "75"],
+               n_unpaired=1, symmremo=False)
     assert (eng.shrink, eng.bsse_nstar, eng.bsse_rmax, eng.invocation, eng.cpus) == ((8, 24), 20, 7.5, "mpi", 4)
+    assert (eng.scf_lines, eng.atom_n_unpaired, eng.atom_symmremo) == (("FMIXING", "75"), 1, False)
     assert eng.strict_version
+
+
+def test_a_restarted_reproduction_reads_its_finished_runs_from_the_journal(tmp_path):
+    class LostO(StandIn):
+        def atom_energy(self, basis_text, Z, method="rhf", *, host=None, atom_label=None):
+            if Z == 8:
+                StandIn.calls.append(("lost", Z))
+                return EngineEnergy.failed(self.name, "job_killed")
+            return super().atom_energy(basis_text, Z, method, host=host, atom_label=atom_label)
+
+    StandIn.calls = []
+    first = reproduce_reference_system(_system(), LostO, tmp_path)
+    assert first.reproduced_kj is None and first.runs[2].failure_mode == "job_killed"
+    StandIn.calls = []
+    again = reproduce_reference_system(_system(), StandIn, tmp_path)
+    # Bulk and K come from the journal; the killed O run is computed again.
+    assert [call[0] for call in StandIn.calls] == ["atom"] and StandIn.calls[0][2] == 8
+    assert again.delta_kj == pytest.approx(3e-3 * HARTREE_TO_KJ_PER_MOL)
+    # A consistent variant changes the runs it names, so it is no journal hit.
+    StandIn.calls = []
+    reproduce_reference_system(_system(), StandIn, tmp_path, relax={"bulk.out"}, label="consistent")
+    assert [call[0] for call in StandIn.calls] == ["bulk"]
+
+
+def test_the_reference_toldee_is_kept_when_asked(tmp_path):
+    StandIn.calls = []
+    report = reproduce_reference_system(_system(), StandIn, tmp_path, record=False, max_toldee=None)
+    assert StandIn.calls[1][1]["scf_lines"] == K_SCF
+    assert "toldee_capped_from" not in report.runs[1].settings

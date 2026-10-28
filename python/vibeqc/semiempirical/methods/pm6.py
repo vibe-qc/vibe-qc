@@ -26,6 +26,17 @@ from vibeqc.semiempirical.model import SemiempiricalModel
 from vibeqc.semiempirical.routes import SemiempiricalRoutePlan
 
 
+def _require_converged(result, method: str) -> None:
+    """Do not promote a failed native iterate to a model energy or derivative."""
+    if not result.converged:
+        from vibeqc.semiempirical.runner import SemiempiricalEnergyError
+
+        raise SemiempiricalEnergyError(
+            f"{method} SCF did not converge after {result.n_iter} iterations; "
+            "energy and derivatives are unavailable."
+        )
+
+
 class PM6Model(SemiempiricalModel):
     """PM6 semiempirical model (closed-shell).
 
@@ -114,16 +125,19 @@ class PM6Model(SemiempiricalModel):
         self._n_iter = int(result.n_iter)
         self._converged = bool(result.converged)
         self._last_result = result
+        _require_converged(result, "PM6")
         return float(result.energy)
 
     def _energy_at(self, mol: Molecule) -> float:
         result = _nddo.run_pm6(mol, self._params, self._max_iter, self._conv_tol)
+        _require_converged(result, "PM6")
         return float(result.energy)
 
     def gradient(self) -> np.ndarray:
         """Finite-difference gradient bound to the retained energy snapshot."""
         if self._last_result is None:
             self.energy()
+        _require_converged(self._last_result, "PM6")
         return np.asarray(
             _nddo.compute_pm6_gradient_fd_from_result(
                 self._mol,
@@ -233,16 +247,19 @@ class UPM6Model(SemiempiricalModel):
         self._n_alpha = int(result.n_alpha)
         self._n_beta = int(result.n_beta)
         self._last_result = result
+        _require_converged(result, "UPM6")
         return float(result.energy)
 
     def _energy_at(self, mol: Molecule) -> float:
         result = _nddo.run_upm6(mol, self._params, self._max_iter, self._conv_tol)
+        _require_converged(result, "UPM6")
         return float(result.energy)
 
     def gradient(self) -> np.ndarray:
         """Finite-difference gradient bound to the retained energy snapshot."""
         if self._last_result is None:
             self.energy()
+        _require_converged(self._last_result, "UPM6")
         return np.asarray(
             _nddo.compute_upm6_gradient_fd_from_result(
                 self._mol,

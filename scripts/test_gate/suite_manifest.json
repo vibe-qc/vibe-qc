@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at_sha": "c05f0b981bfb1a10f68953fd789ecfe4d1d14db2",
-  "test_file_count": 1200,
+  "generated_at_sha": "ab42842641672f76f9f8f557e115e54bcc1ea865",
+  "test_file_count": 1205,
   "policy": {
     "blocking_tiers": [
       "T0",
@@ -112,6 +112,18 @@
       "last_verified_sha": "eaffc8e90fe0af248e6c07016628a023b35b358a"
     },
     {
+      "file": "tests/basisset_dev/test_campaign_resume_gate.py",
+      "maturity": "under-review",
+      "tier": "T2",
+      "owner": "basis/integrals",
+      "memory_tier": "unmeasured",
+      "measured_runtime_s": null,
+      "measured_peak_rss_mb": null,
+      "disposition": "new",
+      "rationale": "M4 gate: the M3 topology scan through Crystal23Engine, a LedgerTransport and a file-backed stand-in queue runs about 200 evaluations; killed with SIGKILL while waiting on its 100th job, the restarted driver adopts every unfetched job, recomputes no journalled point and writes the record an uninterrupted run writes; the managed checkout it ran in is untouched, and a campaign directory inside a checkout is refused before any write. Model energies, three driver subprocesses; seconds.",
+      "last_verified_sha": null
+    },
+    {
       "file": "tests/basisset_dev/test_cohesive_reference_arithmetic.py",
       "maturity": "verified",
       "tier": "T2",
@@ -132,7 +144,7 @@
       "measured_runtime_s": null,
       "measured_peak_rss_mb": null,
       "disposition": "new",
-      "rationale": "M2 rung 2b recipe (#224) against a stand-in engine: the bulk is a single point at the relaxed cell with the deck's SHRINK pair, each counterpoise atom carries its deck's ATOMBSSE label, element, NSTAR and RMAX, a keyword deck gets the bundled pob record, a run without a deck is reported, and the cohesive energy is assembled as the reference was. No SCF; seconds.",
+      "rationale": "M2 rung 2b recipe (#224) against a stand-in engine: the bulk is a single point at the relaxed cell with the deck's SHRINK pair, each counterpoise atom carries its deck's ATOMBSSE label, element, NSTAR, RMAX, SCF input, spin and SYMMREMO setting, a keyword deck gets the bundled pob record, a run without a deck is reported, the cohesive energy is assembled as the reference was, and a restart reads finished runs from the journal. No SCF; seconds.",
       "last_verified_sha": null
     },
     {
@@ -4984,6 +4996,18 @@
       "last_verified_sha": null
     },
     {
+      "file": "tests/test_gamma_fermi_seed_policy.py",
+      "maturity": "verified",
+      "tier": "T2",
+      "owner": "release/test-health",
+      "memory_tier": "unmeasured",
+      "measured_runtime_s": null,
+      "measured_peak_rss_mb": null,
+      "disposition": "demote T2",
+      "rationale": "verified inventory or parity coverage retained post-cut",
+      "last_verified_sha": null
+    },
+    {
       "file": "tests/test_gapw_diis_kernel.py",
       "maturity": "production",
       "tier": "T2",
@@ -5137,6 +5161,18 @@
       "measured_peak_rss_mb": null,
       "disposition": "demote T2",
       "rationale": "Sub-minute Bash-level regressions for scripts/_verify_source.sh git_clone_pinned (#241): the commit pin refuses a moved tag, VIBEQC_GIT_REFERENCE_DIR serves the pinned commit from a local repository offline and only from one holding that commit, upstream failures retry a bounded number of times, and the clone deadline escalates to SIGKILL and honours Ctrl-C. Throwaway local repositories only; no network, no native build.",
+      "last_verified_sha": null
+    },
+    {
+      "file": "tests/test_gpu_profile.py",
+      "maturity": "under-review",
+      "tier": "T2",
+      "owner": "performance",
+      "memory_tier": "unmeasured",
+      "measured_runtime_s": null,
+      "measured_peak_rss_mb": null,
+      "disposition": "new",
+      "rationale": "GPU G0-A CPU profiling harness: fixed workload manifest on the parity_matrix_orca geometries, explicit matched recipe without a hidden tolerance clamp, AUTO/DIRECT resolution and deduplication, PBE exchange not applicable, provenance fields, redaction and summary identity/unavailable/on-off semantics on synthetic records; bookkeeping only, not profiling evidence.",
       "last_verified_sha": null
     },
     {
@@ -12208,6 +12244,18 @@
       "last_verified_sha": null
     },
     {
+      "file": "tests/test_rsgdf_metric_cholesky_first.py",
+      "maturity": "under-review",
+      "tier": "T2",
+      "owner": "GDF",
+      "memory_tier": "unmeasured",
+      "measured_runtime_s": null,
+      "measured_peak_rss_mb": null,
+      "disposition": "demote T2",
+      "rationale": "SR/LR fit metric Cholesky-first policy (#179): selection, guard, full-metric Gram and PySCF LiH parity; no production qualification",
+      "last_verified_sha": null
+    },
+    {
       "file": "tests/test_rsgdf_physical_support.py",
       "maturity": "experimental",
       "tier": "T3",
@@ -12541,6 +12589,18 @@
       "measured_peak_rss_mb": null,
       "disposition": "demote T2",
       "rationale": "production inventory or parity coverage retained post-cut",
+      "last_verified_sha": null
+    },
+    {
+      "file": "tests/test_scf_component_timing.py",
+      "maturity": "under-review",
+      "tier": "T2",
+      "owner": "molecular/DFT",
+      "memory_tier": "unmeasured",
+      "measured_runtime_s": null,
+      "measured_peak_rss_mb": null,
+      "disposition": "new",
+      "rationale": "Opt-in SCF component timing on small H2O RHF/RKS runs: enabled timing leaves energies, densities and iteration counts unchanged; executed phases have positive clocks; the RHF fused JK timer is never split; PBE has no exchange timer; exclusive phases reconcile with the session wall; DF tracked memory; staged COSX segments. Timings exercise bookkeeping, not performance.",
       "last_verified_sha": null
     },
     {

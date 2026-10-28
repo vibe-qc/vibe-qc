@@ -10,6 +10,7 @@
 #include <string>
 
 #include "basis.hpp"
+#include "scf_profile.hpp"
 #include "cosx.hpp"
 #include "davidson.hpp"      // Davidson iterative diagonalizer
 #include "dft_plus_u.hpp"   // HubbardSiteCxx for the optional +U Fock term
@@ -460,6 +461,11 @@ struct RHFOptions {
     double stability_wall_budget_s = 0.0;
     double stability_wall_fraction = 3.0;
     double stability_wall_floor_s = 600.0;
+
+    // Opt-in SCF component timing (scf_profile.hpp). Off by default; when
+    // set, the result's ``component_timing`` carries phase clocks and
+    // tracked construction memory. Numerical behaviour is unchanged.
+    bool component_timing = false;
 };
 
 // Per-iteration record populated during the SCF loop. Captured for every
@@ -575,6 +581,8 @@ struct RHFResult {
     Eigen::MatrixXd density;        // D = 2 C_occ C_occ^T
     Eigen::MatrixXd fock;           // converged F (includes V_U if +U is on)
     std::vector<SCFIteration> scf_trace;  // one entry per SCF iteration
+    // Filled only when RHFOptions::component_timing is set.
+    ScfComponentTiming component_timing;
 };
 
 RHFResult run_rhf(const Molecule& mol,

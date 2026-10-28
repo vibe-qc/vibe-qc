@@ -503,6 +503,8 @@ def solve_eigenproblem(
         options = SolverOptions()
 
     strategy = get_solver(solver)
+    if not np.isfinite(options.tol) or options.tol <= 0:
+        raise ValueError("tol must be positive and finite")
     effective_sigma = options.sigma
     if effective_sigma is None and isinstance(problem, InteriorEigenProblem):
         effective_sigma = problem.sigma
@@ -543,8 +545,6 @@ def solve_eigenproblem(
                 raise NotImplementedError(f"{solver} does not support warm starts")
         if not isinstance(options.n_roots, (int, np.integer)) or options.n_roots < 0:
             raise ValueError("n_roots must be a nonnegative integer")
-        if not np.isfinite(options.tol) or options.tol <= 0:
-            raise ValueError("tol must be positive and finite")
         if not strategy.supports_generalized:
             # Canonical reduction: H' = S^(-1/2) H S^(-1/2)
             if problem.overlap is None:
@@ -1150,7 +1150,8 @@ class LanczosSolver(SolverStrategy):
         n_krylov = options.ncv or min(n, max(2 * (options.n_roots or 10), 20))
         n_krylov = min(n_krylov, n)
         n_roots = options.n_roots if options.n_roots > 0 else n_krylov
-        n_roots = min(n_roots, n_krylov)
+        if n_roots > n_krylov:
+            raise ValueError("n_roots must fit the Lanczos Krylov dimension")
 
         # Build matvec from problem
         if problem.matvec is not None:

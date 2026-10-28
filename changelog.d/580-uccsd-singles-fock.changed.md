@@ -1,1 +1,0 @@
-- Route retained singles-PNO Fock blocks in compiled molecular DLPNO-UCCSD through the shared residual-checked eigensolver, preserving independent spin and frozen partitions, density selection and PAO projection. The default full singles space needs no additional solve.

@@ -1,1 +1,0 @@
-- Keep the MgO multicell symmetry fixture on its documented no-tail profile on both sides, retaining the original factor-level tolerance.

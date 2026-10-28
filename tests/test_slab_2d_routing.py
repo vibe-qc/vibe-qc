@@ -798,6 +798,63 @@ def test_public_multik_slab_gdf_rhf_is_compact_a3_invariant():
         )
 
 
+def _h_pair_sheet_energy_per_pair(n_pairs, kx, **kwargs):
+    from vibeqc.periodic_k_gdf import run_krhf_periodic_gdf
+
+    atoms = [
+        vq.Atom(1, [i * 3.9 + d, 0.3, 0.0])
+        for i in range(n_pairs) for d in (0.0, 1.4)
+    ]
+    sysp = vq.PeriodicSystem(2, np.diag([n_pairs * 3.9, 15.0, 40.0]), atoms)
+    basis = vq.BasisSet(sysp.unit_cell_molecule(), "sto-3g")
+    opts = vq.PeriodicRHFOptions()
+    opts.conv_tol_energy = 1e-9
+    opts.conv_tol_grad = 1e-7
+    opts.max_iter = 80
+    opts.damping = 0.3
+    opts.dynamic_damping = False
+    result = run_krhf_periodic_gdf(
+        sysp, basis, (kx, 1, 1), opts, rsgdf_ke_cutoff=30.0, **kwargs
+    )
+    assert result.converged
+    return result.energy / n_pairs, result.slab_fit_support_policy
+
+
+def test_slab_gdf_supercell_matches_folded_mesh_on_physical_pairs():
+    """#691: a Gamma supercell and its folded k mesh are the same torus.
+
+    H2 pairs 3.9 bohr apart along a1 in a 15-bohr a2 period, default 15-bohr
+    cutoff. The 4-pair cell (|a1| = 15.6 bohr) has no a1 image within 15 bohr
+    of the origin, so the former origin ball dropped every AO pair crossing
+    its a1 face, in the fit and in S/T/V_ne alike, and Gamma sat 8.0 mHa per
+    pair below the (4,1,1) mesh with converged=True. The physical AO-pair
+    domain (pairs within the cutoff of each other) closes it. The replay
+    keeps the old operator and still shows the split.
+    """
+    e_mesh, policy = _h_pair_sheet_energy_per_pair(1, 4)
+    e_super, _ = _h_pair_sheet_energy_per_pair(4, 1)
+    assert policy == "physical_pairs"
+    assert abs(e_super - e_mesh) < 1e-8
+
+    replay = {"classic_support_policy": "historical_index_ball"}
+    old_mesh, old_policy = _h_pair_sheet_energy_per_pair(1, 4, **replay)
+    old_super, _ = _h_pair_sheet_energy_per_pair(4, 1, **replay)
+    assert old_policy == "historical_index_ball"
+    # Pre-#691 main (58ccaea8) at these settings: -1.0971586748044 and
+    # -1.1051190925575 Ha per pair.
+    assert abs(old_mesh - (-1.0971586748044)) < 1e-9
+    assert abs(old_super - (-1.1051190925575)) < 1e-9
+    assert old_super - old_mesh < -7e-3
+    # The physical mesh value equals the converged ball (cutoff 25 bohr:
+    # -1.097158699291) up to the pairs farther than 15 bohr apart.
+    assert abs(e_mesh - (-1.097158699291)) < 1e-8
+
+
+def test_slab_gdf_support_policy_is_validated():
+    with pytest.raises(ValueError, match="classic_support_policy"):
+        _h_pair_sheet_energy_per_pair(1, 2, classic_support_policy="ball")
+
+
 def test_slab_gdf_occupations_use_one_global_fermi_level():
     """Slab GDF fills the mesh under ONE Fermi level, not per-k Aufbau.
 
@@ -970,8 +1027,11 @@ def test_slab_energy_identity_from_parts():
     assert result.converged
 
     # The public adapter runs the private driver under a cloned lat_opts with
-    # the slab gauge forced on; reproduce that exact object.
+    # the slab gauge forced on and, on the default physical AO-pair support,
+    # pair-complete one-electron sums (#691); reproduce that exact object.
     lat_opts = _clone_slab_lattice_options(opts.lattice_opts)
+    assert result.slab_fit_support_policy == "physical_pairs"
+    lat_opts.pair_complete_1e = True
 
     kmesh = _mp_native(sysp, list(mesh), [0, 0, 0], False)
     kpoints = np.asarray(kmesh.kpoints, dtype=float)

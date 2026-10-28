@@ -100,6 +100,167 @@ def _metric_keep_mask(
     return w > thr
 
 
+# --- SR/LR (rsgdf) metric: Cholesky first, eigenvalue cut as fallback -------
+#
+# Maintainer decision on vibe-qc#179 (2026-10-27, option 2 of issue note
+# 40366). The SR/LR fit (``_build_lpq_range_separated_shared_q``, the shipped
+# ``gdf_method='rsgdf'`` source) follows the reference implementation of the
+# GDF/RSGDF papers -- Sun, Berkelbach, McClain & Chan, J. Chem. Phys. 147,
+# 164119 (2017), doi:10.1063/1.4998644, and Ye & Berkelbach, J. Chem. Phys.
+# 154, 131104 (2021), doi:10.1063/5.0046617 -- in PySCF
+# (``pyscf/pbc/df/rsdf_builder.py``, ``cholesky_decomposed_metric``): the
+# Coulomb metric of each momentum transfer is Cholesky-factored and, when that
+# succeeds, every auxiliary function is kept. Only a failed factorisation
+# falls back to the absolute eigenvalue cut ``linear_dep_thr``. Sun et al.
+# (Sec. II B) prescribe the eigenvalue cut for the near-singular PW-dressed
+# MDF metric; for a positive definite Gaussian Coulomb metric the full fit is
+# the variational Coulomb-metric fit (Dunlap's robust fit) in the complete
+# auxiliary space, and dropping modes only adds fitting error. Measured on
+# #179: at the old 1e-9 cut LiH/STO-3G (2,2,2) sat -31.9 uHa below PySCF GDF;
+# with every mode kept it agrees to < 1e-7 Ha.
+#
+# The full-rank fit is applied in the metric's eigenbasis (all modes), so it
+# forms the same fitted operator T^dagger M^-1 T as L^-1 T to rounding, while
+# the eigenmode factor frames, fit-response gradients and symmetry transport
+# keep one representation. The guard for a positive definite but near
+# singular metric: full rank is accepted only when the smallest eigenvalue
+# also exceeds the eigensolver rounding floor 64 eps n_aux max(1, |lambda|max)
+# (the same spectral tolerance the fit-response and transport validators
+# use). Below it the eigenvalue is not resolved from rounding and its
+# 1/sqrt(lambda) whitening would amplify noise, so the cut applies instead.
+# compcell and MDF keep their relative floors (decision scope).
+#
+# Accuracy of the kept modes: the full-rank fit resolves near-null modes of
+# diffuse auxiliary functions, so the q=0 metric rows of those functions are
+# summed in reciprocal space (_rsgdf_diffuse_metric_zero_transfer); the
+# range-separated assembly leaves them with architecture-dependent rounding
+# of about 1e-12 (Linux/macOS 1.2e-7 Ha on LiH (2,2,2) before 2026-10-28).
+
+
+def _rsgdf_diffuse_auxiliary_indices(aux_basis, omega: float) -> np.ndarray:
+    """Auxiliary functions whose every primitive exponent is <= omega**2.
+
+    These are wider than the SR range 1/omega, so their real-space erfc
+    lattice sum at zero transfer is almost entirely the finite SR p=0 mode
+    pi/(V omega^2) q_P q_Q that is subtracted afterwards (vibe-qc#179).
+    """
+    indices, first = [], 0
+    for shell in aux_basis.shells():
+        width = 2 * int(shell.l) + 1
+        if max(float(a) for a in shell.exponents) <= float(omega) ** 2:
+            indices.extend(range(first, first + width))
+        first += width
+    return np.asarray(indices, dtype=np.intp)
+
+
+def _rsgdf_diffuse_metric_zero_transfer(system, aux_basis, omega, metric):
+    """Replace the diffuse rows/columns of the q=0 SR/LR metric in place.
+
+    Ye & Berkelbach, J. Chem. Phys. 154, 131104 (2021), Eq. 15 and Fig. 1
+    (and PySCF's ``rsdf_builder.get_2c2e``, whose smooth auxiliary block is
+    a plain reciprocal sum): integrals with a diffuse auxiliary function are
+    evaluated entirely in reciprocal space with the bare Coulomb kernel,
+
+        M_PQ = (4 pi / V) sum_{G != 0} conj(chi_P(G)) chi_Q(G) / |G|^2,
+
+    which is mathematically the SR(erfc) + LR(erf, G != 0) - pi/(V omega^2)
+    q_P q_Q assembly of the native source. For a diffuse function that
+    assembly subtracts two nearly equal numbers. On LiH/def2-svp-jk, the
+    most diffuse Li s function has M_PP = 2.07e-4 left from a cancellation
+    of about 6e2. That leaves 1e-12 absolute, architecture-dependent
+    rounding on the eigenvalue 3.8e-10 the Cholesky-first fit keeps:
+    0.4 % of that mode, and 1.2e-7 Ha between Linux and macOS at (2,2,2).
+    The reciprocal sum has positive terms only and converges like
+    exp(-|G|^2 / (4 alpha_P)), so it is cut at |G|^2 = 4 alpha_max * 48
+    (terms below e^-48 ~ 1e-21 of the leading one). Returns the indices
+    replaced (empty: no diffuse function, nothing changed).
+    """
+    diffuse = _rsgdf_diffuse_auxiliary_indices(aux_basis, omega)
+    if diffuse.size == 0:
+        return diffuse
+    alpha = 0.0
+    for shell in aux_basis.shells():
+        if max(float(a) for a in shell.exponents) <= float(omega) ** 2:
+            alpha = max(alpha, max(float(a) for a in shell.exponents))
+    lattice = np.asarray(system.lattice, dtype=float)
+    volume = float(abs(np.linalg.det(lattice)))
+    reciprocal = 2.0 * np.pi * np.linalg.inv(lattice).T   # columns b_j
+    g2_max = 4.0 * alpha * 48.0
+    # Integer box enclosing the sphere: |n_j| <= |G| |a_j| / (2 pi).
+    bounds = [int(np.ceil(np.sqrt(g2_max) * np.linalg.norm(lattice[:, j]) / (2 * np.pi)))
+              for j in range(3)]
+    n_aux = int(aux_basis.nbasis)
+    block = np.zeros((diffuse.size, n_aux), dtype=np.complex128)
+    chunk = max(64, n_aux)
+    axes = [np.arange(-b, b + 1, dtype=float) for b in bounds]
+    first_axis = axes[0]
+    for n0 in first_axis:
+        grid = np.stack(np.meshgrid([n0], axes[1], axes[2], indexing='ij'), axis=-1).reshape(-1, 3)
+        vectors = grid @ reciprocal.T
+        g2 = np.einsum('gi,gi->g', vectors, vectors)
+        keep = (g2 <= g2_max) & (g2 > 1e-24)
+        vectors, g2 = vectors[keep], g2[keep]
+        for start in range(0, len(g2), chunk):
+            ft = rsgdf_aux_fourier_transform(aux_basis, vectors[start:start + chunk])
+            weights = (4.0 * np.pi / volume) / g2[start:start + chunk]
+            block += (ft[diffuse].conj() * weights) @ ft.T
+    metric[diffuse, :] = block
+    metric[:, diffuse] = block.conj().T
+    return diffuse
+
+
+def _rsgdf_metric_rounding_floor(eigvals: np.ndarray, n_aux: int) -> float:
+    """Eigensolver rounding floor of an SR/LR metric spectrum."""
+    w = np.asarray(eigvals)
+    scale = max(1.0, float(np.max(np.abs(w)))) if w.size else 1.0
+    return 64 * np.finfo(float).eps * int(n_aux) * scale
+
+
+def _rsgdf_metric_keep(
+    eigvals: np.ndarray, linear_dep_thr: float, decomposition: str,
+) -> np.ndarray:
+    """Retained SR/LR metric modes for an executed decomposition.
+
+    ``'cholesky'`` (the metric factored and passed the near-singular
+    guard) keeps every mode; ``'eigen'`` keeps ``lambda > linear_dep_thr``.
+    Validators of retained fit state use this one predicate.
+    """
+    if decomposition == "cholesky":
+        return np.ones(np.shape(eigvals), dtype=bool)
+    if decomposition == "eigen":
+        return _metric_keep_mask(eigvals, linear_dep_thr)
+    raise ValueError(f"unknown SR/LR metric decomposition {decomposition!r}")
+
+
+def _rsgdf_select_metric_decomposition(
+    metric: np.ndarray, eigvals: np.ndarray, requested: str,
+) -> str:
+    """Cholesky-first selection for the SR/LR metric (#179 option 2).
+
+    Returns ``'cholesky'`` when ``requested`` is ``'cholesky'``, LAPACK
+    ``potrf`` factors the Hermitian ``metric`` and its smallest eigenvalue
+    exceeds :func:`_rsgdf_metric_rounding_floor`; otherwise ``'eigen'``.
+    The factor itself is discarded; the caller whitens in the eigenbasis.
+    """
+    if requested not in ("cholesky", "eigen"):
+        raise ValueError(
+            "SR/LR metric_decomposition must be 'cholesky' or 'eigen'"
+        )
+    if requested == "eigen":
+        return "eigen"
+    from scipy.linalg import get_lapack_funcs
+
+    potrf, = get_lapack_funcs(("potrf",), (metric,))
+    # potrf factors a private copy; the caller's metric is left intact.
+    _, info = potrf(metric, lower=1, overwrite_a=0, clean=0)
+    if info != 0:
+        return "eigen"
+    w = np.asarray(eigvals)
+    if not w.size or float(w[0]) <= _rsgdf_metric_rounding_floor(w, metric.shape[0]):
+        return "eigen"
+    return "cholesky"
+
+
 # Noise floor for the PLAIN compensated Coulomb metric decomposed by the
 # compcell and bare-native builders. Set to preserve exactly the effective
 # cut those builders were validated at: they historically compared
@@ -3534,8 +3695,9 @@ def _rsgdf_weighted_3c_tensor_gradient_bloch(
     V = float(abs(np.linalg.det(np.asarray(system.lattice, dtype=float))))
     policy = _fitted_support_policy(support_policy)
     if policy == "physical_pairs":
+        # The slab GDF gradient (#691) shares this kernel and its support.
         R_g = _classic_pair_cells(
-            system, ao_basis, lat_opts.cutoff_bohr, policy
+            system, ao_basis, lat_opts.cutoff_bohr, policy, allow_slab=True
         )
         pair_options = {"pair_cutoff_bohr": float(lat_opts.cutoff_bohr)}
         pair_groups = _physical_pair_cell_groups(
@@ -4756,14 +4918,24 @@ def _fit_basis_record(basis):
              coefficients=np.asarray(sh.coefficients)) for sh in basis.shells()])
 
 
-def _classic_pair_cells(system, ao_basis, cutoff, policy, candidate_cap=2_000_000):
+def _classic_pair_cells(system, ao_basis, cutoff, policy, candidate_cap=2_000_000,
+                        *, allow_slab=False):
+    """Lattice cells for the AO-pair Fourier transform of a reciprocal-only fit.
+
+    ``physical_pairs`` returns the pair-complete list: every cell that holds
+    an AO pair within ``cutoff`` of each other. Consumers then filter each
+    pair with ``pair_cutoff_bohr``. ``historical_index_ball`` returns the
+    cells within ``cutoff`` of the origin. ``allow_slab`` admits a ``dim=2``
+    slab; the native enumerators keep only its in-plane translations (#691).
+    """
     from ._vibeqc_core import direct_lattice_cells, pair_complete_lattice_cells
     radius = float(cutoff)
     if not np.isfinite(radius) or radius < 0:
         raise ValueError("classic AO-pair cutoff must be finite and nonnegative")
     lattice = np.asarray(system.lattice, dtype=float)
     origins = np.asarray([sh.origin for sh in ao_basis.shells()], dtype=float)
-    if int(system.dim) != 3 or not np.isfinite(lattice).all() or not np.isfinite(origins).all():
+    dims = (2, 3) if allow_slab else (3,)
+    if int(system.dim) not in dims or not np.isfinite(lattice).all() or not np.isfinite(origins).all():
         raise ValueError("explicit fitted support requires finite three-dimensional geometry")
     # The existing shared selector returns an enclosure, not a term trace.
     # Bound its padded Cartesian ball before entering native allocation.
@@ -4771,7 +4943,7 @@ def _classic_pair_cells(system, ao_basis, cutoff, policy, candidate_cap=2_000_00
     extent = radius + (span if policy == "physical_pairs" else 0.0)
     reach = extent * np.linalg.norm(np.linalg.inv(lattice), axis=1)
     candidates = 1
-    for bound in reach:
+    for bound in reach[:int(system.dim)]:
         candidates *= 2 * int(np.ceil(bound)) + 3
         if candidates > candidate_cap:
             raise MemoryError("classic AO-pair candidate enclosure exceeds explicit capacity")
@@ -5535,6 +5707,9 @@ class _RangeSeparatedGdfFitState(NamedTuple):
     ket_kpoints: np.ndarray
     source_parameters: Optional[tuple] = None
     source_signature: str = ""
+    # Executed metric decomposition, ``'cholesky'`` (full rank) or
+    # ``'eigen'`` (``lambda > threshold``); see _rsgdf_metric_keep.
+    metric_decomposition: str = "eigen"
 
 
 def _range_separated_gdf_source_signature(system, orbital, auxiliary):
@@ -5857,6 +6032,7 @@ def _build_lpq_range_separated_shared_q(
     kernel: str = 'coulomb',
     omega_screen: float = 0.0,
     _sr_three_center: Optional[np.ndarray] = None,
+    metric_decomposition: str = 'cholesky',
 ) -> _RangeSeparatedGdfBatch:
     """One admitted SR/LR fit for Gamma or a general shared-q batch.
 
@@ -5882,6 +6058,12 @@ def _build_lpq_range_separated_shared_q(
     while physical erf uses only its smooth reciprocal source. Both M and T
     use the selected kernel before whitening. All fits omit p=0, whose
     finite physical constant and full/LR exchange Madelung belong to SCF.
+
+    ``metric_decomposition='cholesky'`` (default; vibe-qc#179) keeps every
+    auxiliary mode when the metric Cholesky-factors and passes the
+    near-singular guard, falling back to the absolute ``linear_dep_thr`` cut
+    otherwise; ``'eigen'`` always applies the cut. The executed choice is
+    recorded on the fit state and the support record.
     """
     from scipy.linalg import get_lapack_funcs
     from ._vibeqc_core import compute_gdf_range_separated_integrals
@@ -5901,6 +6083,8 @@ def _build_lpq_range_separated_shared_q(
         raise ValueError("range-separated GDF omega and cutoffs must be finite and positive")
     if not np.isfinite(linear_dep_thr) or linear_dep_thr < 0.0:
         raise ValueError("range-separated GDF metric threshold must be finite and nonnegative")
+    if metric_decomposition not in ('cholesky', 'eigen'):
+        raise ValueError("range-separated GDF metric_decomposition must be 'cholesky' or 'eigen'")
     if canonical_auxiliary_basis and retain_fit_state:
         raise ValueError("range-separated GDF fit-response retention requires eigenmode factors")
     metric_bytes = 16 * n_aux * n_aux
@@ -5942,6 +6126,7 @@ def _build_lpq_range_separated_shared_q(
     source_key = (
         source_signature, tuple(q), omega, pair_cutoff, auxiliary_cutoff,
         ke_cutoff, linear_dep_thr, integral_screen_error, bool(canonical_auxiliary_basis),
+        metric_decomposition,
     )
     if kernel != 'coulomb':
         source_key += (kernel, omega_screen)
@@ -5976,11 +6161,19 @@ def _build_lpq_range_separated_shared_q(
         **({} if shell_pair_cutoffs is None else dict(shell_pair_cutoffs=shell_pair_cutoffs)),
         **supplied,
     )
+    fractional_q = np.asarray(system.lattice, dtype=float).T @ q / (2 * np.pi)
+    if (not metric_hit and kernel == 'coulomb' and metric_decomposition == 'cholesky'
+            and np.linalg.norm(fractional_q - np.rint(fractional_q)) < 1e-12
+            and int(system.dim) == 3):
+        # vibe-qc#179: the full-rank fit resolves near-null diffuse modes, so
+        # their metric block avoids the SR p=0 cancellation (Ye 2021 Eq. 15).
+        _rsgdf_diffuse_metric_zero_transfer(system, aux_basis, omega, metric)
     if metric_hit:
         eigenvalues = _metric_state["eigenvalues"]
         eigenvectors = _metric_state["eigenvectors"]
         whitener = _metric_state["whitener"]
         kept = _metric_state["kept"]
+        executed_decomposition = _metric_state["metric_decomposition"]
     else:
         scale, hermiticity_error = 1.0, 0.0
         for column in range(n_aux):
@@ -6006,7 +6199,15 @@ def _build_lpq_range_separated_shared_q(
         )
         if eigenvalues[0] < -negative_tolerance:
             raise ValueError("range-separated GDF metric has negative modes; converge the integral cutoffs")
-        kept = np.flatnonzero(_metric_keep_mask(eigenvalues, linear_dep_thr))
+        # #179 option 2: Cholesky first. The LAPACK heevd workspace is
+        # released here, so potrf's private metric copy stays inside the
+        # reserved eigensolver envelope above.
+        executed_decomposition = _rsgdf_select_metric_decomposition(
+            metric, eigenvalues, metric_decomposition,
+        )
+        kept = np.flatnonzero(_rsgdf_metric_keep(
+            eigenvalues, linear_dep_thr, executed_decomposition,
+        ))
         if len(kept) == 0:
             raise ValueError("range-separated GDF metric has no retained positive modes")
         whitener = np.empty((len(kept), n_aux), dtype=np.complex128)
@@ -6021,13 +6222,14 @@ def _build_lpq_range_separated_shared_q(
         # released before the canonical whitener is allocated.
         whitener = eigenvectors[:, int(kept[0]):] @ whitener
     fit_state = None
+    keep_mask = _rsgdf_metric_keep(eigenvalues, linear_dep_thr, executed_decomposition)
     if retain_fit_state:
         fit_state = _RangeSeparatedGdfFitState(
             three_center, eigenvectors,
-            _metric_keep_mask(eigenvalues, linear_dep_thr), vectors, k_kets,
+            keep_mask, vectors, k_kets,
             (omega, pair_cutoff, auxiliary_cutoff, image_candidate_cap,
              integral_screen_error, linear_dep_thr),
-            source_signature,
+            source_signature, executed_decomposition,
         )
     elif _metric_state is None:
         del eigenvectors
@@ -6049,6 +6251,7 @@ def _build_lpq_range_separated_shared_q(
         _metric_state.update(
             source_key=source_key, eigenvalues=eigenvalues,
             eigenvectors=eigenvectors, whitener=whitener, kept=kept,
+            metric_decomposition=executed_decomposition,
         )
     executed_support = None
     if _support_recorder is not None:
@@ -6069,7 +6272,8 @@ def _build_lpq_range_separated_shared_q(
                     "native ShellEnvelope and GaussianSRBound with recorded normalized shell data, omega, integral_screen_error")),
             reciprocal_vectors=vectors, reciprocal_nonzero_count=int(n_g),
             reciprocal_evidence="actual ordered native reciprocal input; singular p squared <= 1e-24 omitted",
-            metric_eigenvalues=eigenvalues, metric_keep=_metric_keep_mask(eigenvalues, linear_dep_thr),
+            metric_eigenvalues=eigenvalues, metric_keep=keep_mask,
+            metric_decomposition=executed_decomposition,
             rank_threshold=float(linear_dep_thr), canonical_auxiliary_basis=bool(canonical_auxiliary_basis),
             kernel=dict(volume=float(abs(np.linalg.det(system.lattice))),
                 real="none" if kernel == 'erf' else "erfc(omega*r)/r",
@@ -7400,6 +7604,37 @@ def _slab_truncated_dense_g_mesh(
     return shifted[order]
 
 
+def _slab_fit_pair_support(system, ao_basis, lat_opts, support_policy):
+    """Cells and pair-FT options of the slab GDF fit's AO-pair support (#691).
+
+    One definition for the slab SCF builder and its gradient cache, so the
+    energy and its derivative always sum the same AO pairs.
+    """
+    from ._vibeqc_core import direct_lattice_cells
+
+    policy = "physical_pairs" if support_policy is None else support_policy
+    if policy not in ("physical_pairs", "historical_index_ball"):
+        raise ValueError(
+            "slab GDF support_policy must be 'physical_pairs' or "
+            f"'historical_index_ball'; got {support_policy!r}"
+        )
+    cutoff = float(lat_opts.cutoff_bohr)
+    if policy == "physical_pairs":
+        cells = _classic_pair_cells(
+            system, ao_basis, cutoff, policy, allow_slab=True
+        )
+        options = {"pair_cutoff_bohr": cutoff}
+    else:
+        cells = np.array(
+            [list(c.r_cart) for c in direct_lattice_cells(system, cutoff)],
+            dtype=float,
+        )
+        options = {}
+    if cells.size == 0:
+        cells = np.zeros((1, 3), dtype=float)
+    return np.ascontiguousarray(cells.reshape(-1, 3)), options
+
+
 def _build_lpq_bloch_slab_truncated(
     system: PeriodicSystem,
     ao_basis: BasisSet,
@@ -7411,8 +7646,16 @@ def _build_lpq_bloch_slab_truncated(
     lat_opts: Optional[LatticeSumOptions] = None,
     linear_dep_thr: float = 1e-10,
     g_chunk: int = 65536,
+    support_policy: Optional[str] = None,
 ) -> _SlabGdfBlochFit:
     r"""Build one private Bloch cderi block with the truncated-slab kernel.
+
+    ``support_policy`` selects the AO pairs of the fit (#691, the slab twin
+    of #466). ``None`` and ``'physical_pairs'`` take every pair within
+    ``lat_opts.cutoff_bohr`` of each other, the term set of the native
+    lattice integrals. ``'historical_index_ball'`` replays the former cells
+    within that distance of the origin, which drops the pairs crossing the
+    face of a cell whose in-plane extent approaches the cutoff.
 
     This is the Inc-D integration seam between the full three-axis reciprocal
     support, the ket-Bloch AO-pair Fourier transform, and the signed slab
@@ -7428,7 +7671,6 @@ def _build_lpq_bloch_slab_truncated(
     :func:`build_lpq_bloch_native_fft`.
     """
     from ._aopair_ft import ao_pair_fourier_transform_bloch
-    from ._vibeqc_core import direct_lattice_cells
 
     _, normal, _ = _slab_truncation_geometry(system)
     bra = np.asarray(k_bra, dtype=float)
@@ -7459,10 +7701,9 @@ def _build_lpq_bloch_slab_truncated(
     )
     if lat_opts is None:
         lat_opts = LatticeSumOptions()
-    cells = direct_lattice_cells(system, float(lat_opts.cutoff_bohr))
-    lattice_vectors = np.array([list(cell.r_cart) for cell in cells], dtype=float)
-    if lattice_vectors.size == 0:
-        lattice_vectors = np.zeros((1, 3), dtype=float)
+    lattice_vectors, pair_options = _slab_fit_pair_support(
+        system, ao_basis, lat_opts, support_policy
+    )
 
     n_aux = int(aux_basis.nbasis)
     n_ao = int(ao_basis.nbasis)
@@ -7475,7 +7716,7 @@ def _build_lpq_bloch_slab_truncated(
         vectors = physical_vectors[lo : lo + chunk]
         aux_ft = rsgdf_aux_fourier_transform(aux_basis, vectors)
         pair_ft = ao_pair_fourier_transform_bloch(
-            ao_basis, vectors, lattice_vectors, k_cart=ket
+            ao_basis, vectors, lattice_vectors, k_cart=ket, **pair_options
         )
         pair_ft *= pair_scales[:, :, None]
         metric_chunk, three_center_chunk = _slab_truncated_gdf_contractions(

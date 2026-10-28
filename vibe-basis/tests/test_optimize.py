@@ -70,27 +70,31 @@ class TestOptimizeNlopt:
         assert result.x[0] == pytest.approx(2.0, abs=0.1)
         assert result.x[1] == pytest.approx(-1.0, abs=0.1)
 
-    def test_inf_objective_is_handled(self):
-        """BOBYQA should route around np.inf from failed evals."""
-        calls = [0]
+    def test_a_failed_evaluation_does_not_stall_bobyqa(self):
+        """One infinite value stalled raw BOBYQA at f = 5.66 on this problem
+        (a quadratic with an infeasible disc); the finite stand-in reaches
+        the minimum. History keeps the value the objective returned."""
+        target, centre = np.array([1.485, -0.555]), np.array([0.393, -1.763])
 
         def obj(x: np.ndarray) -> float:
-            calls[0] += 1
-            # First call is the start; return inf for a narrow region.
-            if 1.5 < x[0] < 2.5:
+            if np.linalg.norm(x - centre) < 0.433:
                 return float("inf")
-            return _quadratic(x, np.array([3.0]))
+            return float(np.sum((x - target) ** 2))
 
         result = optimize_nlopt(
-            obj,
-            x0=np.array([0.0]),
-            bounds=[(-10.0, 10.0)],
-            max_eval=50,
+            obj, x0=np.array([-1.062, -2.099]), bounds=[(-5.0, 5.0)] * 2,
+            tol=0.0, xtol_abs=1e-6, max_eval=80, initial_step=1.5,
         )
-        # Should still converge (or at least not crash)
-        assert calls[0] > 0
-        # May be inf at some points, but the result should be finite
-        assert not np.isnan(result.fun)
+        assert result.fun < 1e-10
+        assert result.x == pytest.approx(target, abs=1e-4)
+        assert "1 non-finite evaluation(s) replaced by a finite stand-in" in result.message
+        assert sum(not np.isfinite(v) for _, v in result.history) == 1
+
+    def test_a_start_point_that_fails_stops_unsuccessfully(self):
+        result = optimize_nlopt(lambda x: float("nan"), x0=np.zeros(2), bounds=[(-1.0, 1.0)] * 2)
+        assert not result.success and np.isnan(result.fun)
+        assert "not finite at the start point" in result.message
+        assert result.n_evaluations == 1
 
     def test_absolute_tolerances_hold_on_a_total_energy_scale(self):
         """ftol_rel is relative to |f|: on a -7e5 kJ/mol cell energy it stops
@@ -196,3 +200,33 @@ class TestOptResult:
         assert r.success
         assert r.driver == "nlopt"
         assert len(r.x) == 2
+
+
+def test_the_stand_in_is_the_worst_finite_value_plus_a_margin():
+    from vibe_basis.optimize import _FiniteStandIn, _StartNotFinite
+
+    with pytest.raises(_StartNotFinite):
+        _FiniteStandIn()(float("inf"))
+    s = _FiniteStandIn()
+    assert [s(v) for v in (-10.0, -12.0)] == [-10.0, -12.0]
+    assert s(float("nan")) == pytest.approx(-10.0 + 2.0)        # the spread
+    one = _FiniteStandIn()
+    one(-275.0)
+    assert one(float("inf")) == pytest.approx(-275.0 + 0.275)   # 1e-3 of |worst|
+    fixed = _FiniteStandIn(margin=100.0)
+    fixed(5.0)
+    assert fixed(float("inf")) == 105.0 and fixed.replaced == 1
+
+
+def test_scipy_carries_on_past_a_failed_evaluation():
+    """Raw L-BFGS-B stops at the start with ABNORMAL on this objective."""
+    pytest.importorskip("scipy")
+
+    def obj(x: np.ndarray) -> float:
+        return float("nan") if 3.0 < x[0] < 9.0 else float((x[0] - 2.0) ** 2)
+
+    result = optimize_scipy(obj, x0=np.array([0.0]), bounds=[(-10.0, 10.0)])
+    assert result.success and result.x[0] == pytest.approx(2.0, abs=1e-6)
+    assert "replaced by a finite stand-in" in result.message
+    bad = optimize_scipy(lambda x: float("inf"), x0=np.array([0.0]), bounds=[(-1.0, 1.0)])
+    assert not bad.success and "not finite at the start point" in bad.message

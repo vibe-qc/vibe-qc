@@ -1926,6 +1926,9 @@ class _RangeSeparatedGdfCache(Mapping):
     native_workspace_byte_cap: int = 0
     factor_frame: str = "eigenmode"
     execution: dict = field(default_factory=dict)
+    # SR/LR metric policy the leaf was asked for (#179): 'cholesky' is
+    # Cholesky-first with the eigenvalue-cut fallback, 'eigen' always cuts.
+    metric_decomposition: str = "cholesky"
 
     # The SCF consumes the pair mapping; derivatives also need its source.
     # Keeping one object prevents dropping that provenance at the builder
@@ -2002,6 +2005,7 @@ def _build_range_separated_lpq_cache(
     integral_screen_error: float = 0.0,
     raw_integral_error: Optional[float] = None,
     pair_cache_builder=None, _q_executor=None,
+    metric_decomposition: str = 'cholesky',
 ) -> Mapping:
     """Build shared-q fits while reserving the complete retained cache.
 
@@ -2016,6 +2020,8 @@ def _build_range_separated_lpq_cache(
     raw-integral accuracy silently.
     Without an error target all three finite cutoffs must be explicit.
     This leaf does not distribute storage across MPI.
+    ``metric_decomposition`` is the SR/LR metric policy (vibe-qc#179):
+    Cholesky-first by default, ``'eigen'`` for the absolute cut only.
 
     A private pair-cache adapter may select and transport representatives.
     It receives this same admitted SR/LR source, with an optional canonical
@@ -2036,6 +2042,8 @@ def _build_range_separated_lpq_cache(
                               raw_integral_error=raw_integral_error,
                               integral_screen_error=integral_screen_error,
                               linear_dep_thr=linear_dep_thr, need_k_pairs=bool(need_k_pairs))
+    if metric_decomposition not in ('cholesky', 'eigen'):
+        raise ValueError("range-separated GDF metric_decomposition must be 'cholesky' or 'eigen'")
     kpoints = np.asarray(kpoints_cart)
     if (kpoints.ndim != 2 or kpoints.shape[1] != 3 or len(kpoints) == 0
             or np.iscomplexobj(kpoints) or not np.isfinite(kpoints).all()):
@@ -2126,6 +2134,8 @@ def _build_range_separated_lpq_cache(
     elif any(cutoff is None for cutoff in (pair_cutoff, auxiliary_cutoff, ke_cutoff)):
         raise ValueError("range-separated GDF requires a raw error target or all three explicit cutoffs")
     if _q_executor is not None:
+        if metric_decomposition != 'cholesky':
+            raise NotImplementedError('SR q MPI runs the default Cholesky-first metric policy only')
         if pair_cache_builder is not None:
             raise NotImplementedError('SR q MPI only admits the unadapted SR q-batch source')
         return _q_executor(
@@ -2194,6 +2204,7 @@ def _build_range_separated_lpq_cache(
                 reciprocal_candidate_cap=reciprocal_candidate_cap,
                 integral_screen_error=integral_screen_error, _metric_state=metric_state,
                 canonical_auxiliary_basis=canonical_auxiliary_basis,
+                metric_decomposition=metric_decomposition,
             )
             count = batch.reciprocal_vector_count
             if key in counts and counts[key] != count:
@@ -2233,6 +2244,7 @@ def _build_range_separated_lpq_cache(
             tuple(tuple(float(v) for v in k) for k in kpoints),
             auxiliary, int(memory_byte_cap), int(native_workspace_byte_cap),
             'canonical' if True in frames else 'eigenmode',
+            metric_decomposition=metric_decomposition,
         )
     cache = {}
     peak, retained, counts, batch_sizes = cache_reservation, 0, [], []
@@ -2287,6 +2299,7 @@ def _build_range_separated_lpq_cache(
                     reciprocal_candidate_cap=reciprocal_candidate_cap,
                     integral_screen_error=integral_screen_error,
                     _metric_state=metric_state,
+                    metric_decomposition=metric_decomposition,
                     _sr_three_center=(
                         None if group_source is None else
                         np.ascontiguousarray(group_source[first:first + len(selected)])
@@ -2327,6 +2340,7 @@ def _build_range_separated_lpq_cache(
         _range_separated_gdf_source_signature(system, basis, auxiliary),
         tuple(tuple(float(v) for v in k) for k in kpoints),
         auxiliary, int(memory_byte_cap), int(native_workspace_byte_cap),
+        metric_decomposition=metric_decomposition,
     )
 
 
@@ -2937,8 +2951,13 @@ def _run_closed_shell_slab_gdf(
     progress: Union[bool, ProgressLogger, None],
     verbose: Optional[int],
     compute_gradient: bool = False,
+    support_policy: Optional[str] = None,
 ) -> PeriodicKRHFGDFResult:
-    """Public adapter for the bounded closed-shell slab-GDF envelope."""
+    """Public adapter for the bounded closed-shell slab-GDF envelope.
+
+    ``support_policy`` is the slab fit's AO-pair support (#691), resolved
+    by the caller from ``classic_support_policy``.
+    """
     if isinstance(kmesh, (KPoints, BlochKMesh)):
         raise NotImplementedError(
             "slab GDF currently requires a full Gamma-centered tuple mesh; "
@@ -3035,6 +3054,10 @@ def _run_closed_shell_slab_gdf(
 
     original_lattice_opts = _clone_lattice_options(opts.lattice_opts)
     slab_lat_opts = _clone_slab_lattice_options(original_lattice_opts)
+    if support_policy in (None, "physical_pairs"):
+        # The SCF driver runs its one-electron terms pair complete under the
+        # physical fit (#691); the gradient below must see the same domain.
+        slab_lat_opts.pair_complete_1e = True
     opts.lattice_opts = slab_lat_opts
     try:
         slab = _run_krhf_periodic_slab_gdf(
@@ -3049,6 +3072,7 @@ def _run_closed_shell_slab_gdf(
             gdf_linear_dep_threshold=gdf_linear_dep_threshold,
             progress=progress,
             verbose=verbose,
+            support_policy=support_policy,
         )
     finally:
         opts.lattice_opts = original_lattice_opts
@@ -3108,6 +3132,8 @@ def _run_closed_shell_slab_gdf(
             else "native-multik-slab-truncated-gdf-rhf"
         ),
     )
+    # Executed AO-pair support of the slab fit (#691).
+    result.slab_fit_support_policy = str(slab.support_policy)
     if compute_gradient and result.converged:
         # G-PBC-002 § 6 rung 5: the slab analytic gradient on the
         # converged D(k)/C(k)/eps(k). The adapter (not the SCF driver)
@@ -3139,6 +3165,7 @@ def _run_closed_shell_slab_gdf(
             ke_cutoff=float(rsgdf_ke_cutoff),
             lat_opts=slab_lat_opts,
             linear_dep_thr=float(gdf_linear_dep_threshold),
+            support_policy=slab.support_policy,
         )
         grad_plog.info(
             "analytic gradient: slab signed-fit rebuilt "
@@ -4716,13 +4743,15 @@ def run_krhf_periodic_gdf(
     linear_dep_threshold
         Per-k overlap eigenvalue floor for canonical orthogonalisation.
     gdf_linear_dep_threshold
-        Auxiliary metric eigenvalue floor for ``Lpq`` Cholesky-style
-        fitting. RSGDF FFT builders interpret this as an absolute
-        eigenvalue threshold, matching PySCF's convention; legacy
-        compcell/MDF/bare builders interpret it relative to their
-        largest metric eigenvalue. Keep the default when comparing
-        builder families unless you intentionally want builder-specific
-        truncation behavior.
+        Auxiliary metric eigenvalue floor for ``Lpq`` fitting. The
+        default SR/LR ``'rsgdf'`` fit is Cholesky-first like PySCF
+        (vibe-qc#179): it keeps every auxiliary function when the metric
+        of a momentum transfer factors and is not near singular, and
+        applies this absolute eigenvalue cut only otherwise. The classic
+        RSGDF FFT builders always apply it as an absolute cut; the
+        compcell/MDF builders add their relative noise floors. Keep the
+        default when comparing builder families unless you intentionally
+        want builder-specific truncation behavior.
     apply_modrho
         Whether the auxiliary basis is renormalised via
         :func:`aux_basis.modrho_renormalise` before fitting (default
@@ -4937,14 +4966,20 @@ def run_krhf_periodic_gdf(
         fit_source, gdf_method=gdf_method, dimension=int(system.dim))
     driver_builds_classic = (selected_fit_source == "classic" and fitted_support is None
                              and int(system.dim) == 3)
-    if classic_support_policy is not None and not driver_builds_classic:
+    # The 2-D slab route builds its own reciprocal-only fit with the same
+    # AO-pair support choice (#691).
+    slab_builds_fit = int(system.dim) == 2 and fitted_support is None
+    if (classic_support_policy is not None and not driver_builds_classic
+            and not slab_builds_fit):
         raise ValueError(
             "classic_support_policy applies to the classic fit this driver builds "
-            "(fit_source='classic' on a 3-D cell without fitted_support); the "
-            f"selected source is {selected_fit_source!r}")
+            "(fit_source='classic' on a 3-D cell, or the 2-D slab fit, without "
+            f"fitted_support); the selected source is {selected_fit_source!r}")
     classic_policy = (resolve_classic_support_policy(
         classic_support_policy, fit_screen_threshold=fit_screen_threshold)
         if driver_builds_classic else None)
+    slab_support_policy = (resolve_classic_support_policy(classic_support_policy)
+                           if slab_builds_fit else None)
     if fit_source != "auto" and _lpq_cache_builder is not None:
         raise NotImplementedError("explicit fit_source cannot be combined with a private fit adapter")
     if fit_source == "classic" and compute_gradient:
@@ -5087,6 +5122,7 @@ def run_krhf_periodic_gdf(
             progress=progress,
             verbose=verbose,
             compute_gradient=compute_gradient,
+            support_policy=slab_support_policy,
         )
         return _finish_density_return(slab_result)
     _reject_slab_dim(system, "run_krhf_periodic_gdf")

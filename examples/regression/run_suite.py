@@ -738,7 +738,7 @@ def run_one_periodic_case_dev(
     # Refuse an impossible or unsupported state before any runner starts;
     # a secondary PySCF row that cannot represent it reports unavailable.
     for code in {"vibeqc", reference_code}:
-        periodic_state_request(spec, method, code=code)
+        periodic_state_request(spec, method, code=code, jk_method=periodic_jk_method)
     kmesh = spec.default_kmesh
     expected = (
         _load_expected(system_id, basis, method_id, kmesh)

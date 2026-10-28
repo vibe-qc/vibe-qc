@@ -1928,3 +1928,37 @@ is unchanged; an unavailable binding API uses `consume_orbit` with explicit
 checked maps. Integral and scalar-product counters retain their meanings.
 Profile map conversions separately from numerical work and include complete
 qualification, transport, reconstruction and terminal costs in comparisons.
+
+### Inspect molecular quartet construction error
+
+The explicit experimental native API is
+`core._manta.plan_molecular_quartet_construction(provider,key,budget)` followed by
+`certify_molecular_quartet_construction(provider,key,budget)`. The key contains
+four native shell indices. Both entry points require an immutable native
+MANTA or reference builder with real molecular four-center full Coulomb and
+four single-contraction s channels. The other basis shells may have higher
+angular momentum; selecting one of them refuses the certificate.
+
+The immutable result exposes `evaluated`, `lower`, `upper`, `error_bound`,
+`null_tile`, `key`, `source_identity`, `plan` and `validate(provider)`. Its
+`qualification_scope` is `finite-molecular-s-quartet-construction` and
+`arithmetic_equivariance_certified` is false. It does not mutate the builder,
+change its physical source identity, select a mask or authorize a reduced
+calculation. The existing full-audit fallback is the only qualified path.
+
+`plan.shell_calls` counts one actual source evaluation;
+`primitive_products` counts all primitive reference terms and requested native
+primitive products, not measured libint internal evaluations. Scalar/kernel
+counts are conservative admission caps, not measured floating-point work.
+`additional_bytes` includes another native workspace reservation and constant
+proof/receipt controls. `modeled_peak_bytes` includes the live builder, other
+live bytes and backend margin too. These logical reservations are not RSS.
+No all-quartet array or integral cache is retained. Measure native evaluation,
+proof and total setup costs separately when evaluating future audit savings.
+
+The shared `coulomb_boys_enclosure` wrapper exposes the existing verified radial
+reference to this proof without changing the numerical radial kernel. Broader
+MANTA radial improvements must remain shared; do not duplicate an integral
+engine or transfer a Coulomb certificate to another kernel. The exact stored
+basis data define the reference. Normalization generation, higher angular
+transport, geometry mismatch and source-wide permission remain open.

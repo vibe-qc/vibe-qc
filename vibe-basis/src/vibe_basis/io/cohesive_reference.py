@@ -12,10 +12,15 @@ What this module reads, and why each piece is needed:
   log line that produces the value and the output names cited above it. File
   names alone are not enough: the tree holds several runs per compound, and
   the log is the only record of which were combined.
-* **How each run was set up.** :func:`deck_settings` reads a ``.d12``: the
+* **How each run was set up.** :func:`deck_settings` reads a deck: the
   basis (``BASISSET`` keyword or inline block), functional, ``TOLINTEG``,
-  ``SHRINK``, ``OPTGEOM`` and ``ATOMBSSE IAT NSTAR RMAX``. The reference set
-  varies all of these per system, and ``NSTAR``/``RMAX`` even per atom.
+  ``SHRINK``, ``OPTGEOM``, ``ATOMBSSE IAT NSTAR RMAX``, the spin and the
+  SCF-convergence input (``FMIXING``, ``ANDERSON``, ``ATOMSPIN``,
+  ``SPINLOCK`` ...). The reference set varies all of these per system, and
+  ``NSTAR``/``RMAX`` even per atom. The deck is the input the output echoes
+  (:func:`echoed_input`): a ``.d12`` beside it may have been edited after
+  the run, and in this set some were (NSTAR, RMAX, cell, basis, SCF input).
+  The ``.d12`` file is read only for a run whose output does not echo it.
 * **Where the bulk ended up.** A bulk deck with ``OPTGEOM`` reports its
   energy at the relaxed cell (:func:`final_primitive_cell`), and that is the
   cell a single point must use. The ghost cluster of a counterpoise atom is
@@ -37,7 +42,7 @@ from typing import Optional, Sequence
 
 from ..backends.crystal import parse_output
 from ..pipeline import HARTREE_TO_KJ_PER_MOL
-from .library_bridge import parse_d12_geometry
+from .library_bridge import parse_d12_geometry_text
 from .structures import Structure
 from ..backends.crystal_atom import _ELEMENT_SYMBOLS
 
@@ -50,6 +55,7 @@ __all__ = [
     "cited_outputs",
     "conventional_cubic_a",
     "deck_settings",
+    "echoed_input",
     "final_primitive_cell",
     "load_reference_system",
 ]
@@ -76,6 +82,78 @@ class DeckSettings:
     functional: Optional[str]
     tolinteg: Optional[tuple[int, ...]]
     shrink: Optional[tuple[int, int]]
+    #: SCF-section input other than TOLINTEG, SHRINK and buffer sizes, verbatim.
+    scf: tuple[str, ...] = ()
+    #: Spin-polarised: ``SPIN`` in the DFT block, or ``UHF``.
+    spin: bool = False
+    #: Unpaired electrons: the ``SPINLOCK`` value, 0 when not spin-polarised.
+    n_unpaired: Optional[int] = None
+    #: ``SYMMREMO`` in the geometry input.
+    symmremo: bool = False
+
+
+#: SCF-section keywords :class:`DeckSettings` keeps elsewhere or that only
+#: size buffers, each followed by one value line.
+_NOT_SCF = frozenset({"TOLINTEG", "SHRINK", "EXCHSIZE", "BIPOSIZE"})
+
+
+def echoed_input(out_text: str) -> Optional[str]:
+    """The deck an output echoes before CRYSTAL's banner, or ``None``.
+
+    The reference runs print their input ahead of the banner (and, for MPI
+    runs, ahead of ``N PROCESSORS WORKING``). The deck starts on the title
+    line above the ``CRYSTAL`` keyword.
+    """
+    lines = out_text.splitlines()
+    start = None
+    for i, line in enumerate(lines):
+        if re.match(r"^\s*\*{30,}", line):
+            return None
+        if line.strip() == "CRYSTAL" and i > 0:
+            start = i - 1
+            break
+    if start is None:
+        return None
+    for j in range(start, len(lines)):
+        if "PROCESSORS WORKING" in lines[j] or re.match(r"^\s*\*{30,}", lines[j]):
+            return "\n".join(lines[start:j]).rstrip() + "\n"
+    return None
+
+
+def _scf_section(lines: list[str]) -> tuple[tuple[str, ...], bool]:
+    """``(scf lines, spin)``: the input after the DFT block or basis, before the last END."""
+    upper = [line.strip().upper() for line in lines]
+    last_end = max((i for i, u in enumerate(upper) if u == "END"), default=len(lines))
+    dft = next((i for i, u in enumerate(upper) if u == "DFT"), None)
+    spin = False
+    if dft is not None:
+        close = next(
+            (i for i in range(dft + 1, last_end) if upper[i] in ("END", "ENDDFT")), last_end
+        )
+        spin = "SPIN" in upper[dft + 1:close]
+        first = close + 1
+    else:
+        basis_end = max(
+            (i for i, u in enumerate(upper[:last_end]) if u in ("ENDBS", "99 0") or re.match(r"^99\s+0$", u)),
+            default=None,
+        )
+        keyword = next((i for i, u in enumerate(upper) if u == "BASISSET"), None)
+        first = (basis_end + 1) if basis_end is not None else (keyword + 2 if keyword is not None else last_end)
+        if first < len(upper) and upper[first] == "ENDBS":
+            first += 1
+    out: list[str] = []
+    skip = 0
+    for line, u in zip(lines[first:last_end], upper[first:last_end]):
+        if skip:
+            skip -= 1
+            continue
+        if u in _NOT_SCF:
+            skip = 1
+            continue
+        if u:
+            out.append(line.strip())
+    spin = spin or "UHF" in out
+    return tuple(out), spin
 
 
 def deck_settings(text: str) -> DeckSettings:
@@ -112,6 +190,15 @@ def deck_settings(text: str) -> DeckSettings:
     functional = after("DFT")
     tolinteg = after("TOLINTEG")
     shrink = after("SHRINK")
+    scf, spin = _scf_section(lines)
+    n_unpaired: Optional[int] = 0 if not spin else None
+    for i, line in enumerate(scf[:-1]):
+        if line.upper() == "SPINLOCK":
+            n_unpaired = int(scf[i + 1].split()[0])
+    geometry_end = next(
+        (i for i, l in enumerate(lines) if i > 5 and l.strip().upper() in ("END", "ENDGEOM", "BASISSET")),
+        len(lines),
+    )
     return DeckSettings(
         spacegroup=spacegroup,
         lattice=lattice,
@@ -122,6 +209,10 @@ def deck_settings(text: str) -> DeckSettings:
         functional=functional.split()[0] if functional else None,
         tolinteg=tuple(int(x) for x in tolinteg.split()) if tolinteg else None,
         shrink=tuple(int(x) for x in shrink.split()[:2]) if shrink else None,
+        scf=scf,
+        spin=spin,
+        n_unpaired=n_unpaired,
+        symmremo=any(l.strip().upper() == "SYMMREMO" for l in lines[:geometry_end]),
     )
 
 
@@ -223,6 +314,10 @@ class ReferenceComponent:
     settings: Optional[DeckSettings]
     structure: Optional[Structure]   # the cell this run used (relaxed, for a bulk OPTGEOM)
     Z: Optional[int] = None          # the counterpoise atom's element, for role "atom"
+    #: Where ``settings`` were read: ``"output"`` (its echoed input) or ``"d12 file"``.
+    deck_source: Optional[str] = None
+    #: Settings in which the ``.d12`` file beside the output differs from the echo.
+    deck_file_differs: tuple[str, ...] = ()
 
     @property
     def family(self) -> str:
@@ -302,18 +397,37 @@ def _output_state(text: str) -> tuple[str, Optional[float]]:
     return parsed.failure_mode or "unknown", energy
 
 
+def _differs(a: DeckSettings, b: DeckSettings) -> tuple[str, ...]:
+    def basis(s: DeckSettings) -> Optional[str]:
+        return s.basis_keyword or re.sub(r"\s+", " ", s.inline_basis or "").strip()
+
+    names = [f for f in DeckSettings.__dataclass_fields__ if f not in ("basis_keyword", "inline_basis")]
+    out = [f for f in names if getattr(a, f) != getattr(b, f)]
+    return tuple(out + (["basis"] if basis(a) != basis(b) else []))
+
+
 def _component(folder: Path, name: str, energy: float) -> ReferenceComponent:
     output = folder / Path(name).name
     status, out_energy = "missing", None
+    out_text = None
     if output.exists():
-        status, out_energy = _output_state(output.read_text(encoding="latin-1", errors="replace"))
+        out_text = output.read_text(encoding="latin-1", errors="replace")
+        status, out_energy = _output_state(out_text)
     else:
         output = None
     deck = _deck_for(folder, name)
-    settings = structure = None
-    if deck is not None:
-        settings = deck_settings(deck.read_text(encoding="latin-1"))
-        structure = parse_d12_geometry(deck)
+    file_settings = deck_settings(deck.read_text(encoding="latin-1")) if deck is not None else None
+    settings = structure = source = None
+    differs: tuple[str, ...] = ()
+    echo = echoed_input(out_text) if out_text is not None else None
+    if echo is not None:
+        settings, structure, source = deck_settings(echo), parse_d12_geometry_text(echo), "output"
+        if file_settings is not None:
+            differs = _differs(settings, file_settings)
+    elif deck is not None:
+        settings = file_settings
+        structure = parse_d12_geometry_text(deck.read_text(encoding="latin-1"))
+        source = "d12 file"
     by_name = re.search(r"_atombsse_([A-Z][a-z]?)\b", Path(name).name)
     role = "atom" if by_name or (settings is not None and settings.atombsse) else "bulk"
     Z = None
@@ -333,6 +447,7 @@ def _component(folder: Path, name: str, energy: float) -> ReferenceComponent:
         role=role, output_name=Path(name).name, output=output, deck=deck,
         energy_ha=float(energy), output_status=status, output_energy_ha=out_energy,
         settings=settings, structure=structure, Z=Z,
+        deck_source=source, deck_file_differs=differs,
     )
 
 

@@ -11,6 +11,7 @@ question here is "do we get to the same number as fast?".
 | file | what it measures | how to regenerate |
 |---|---|---|
 | [`orca_vs_vibeqc_speed.md`](orca_vs_vibeqc_speed.md) | wall-clock parity of ORCA 6.1.1 vs vibe-qc on a 3 → 50 atom ladder, direct + RIJCOSX paths, HF + B3LYP | `python -m examples.regression.parity_matrix_orca.run_speed_benchmark` |
+| [`gpu_g0.md`](gpu_g0.md) | GPU G0-A CPU component timing, provenance and memory; H2O pilot only | `python -m examples.regression.gpu_profile submit ...`, then `summarize` |
 | [`manta_bupo.md`](manta_bupo.md) | bounded molecular J construction, setup/components, memory, work and accuracy for MANTA and libint schedules | `.venv/bin/python benchmarks/manta_bupo.py` |
 
 The script that generates `orca_vs_vibeqc_speed.md` lives at

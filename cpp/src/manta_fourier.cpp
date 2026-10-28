@@ -32,23 +32,9 @@ std::string source_identity(const BasisSet& bra,const BasisSet* ket,const md::Ma
 }
 } // namespace
 
-BlochPhasePlan plan_bloch_phase(const ResourceBudget& b) {
-    using namespace admission;margin(b);BlochPhasePlan p;
-    // At most 1028 binary squarings for any finite binary64 dot enclosure,
-    // 12 Taylor steps per component, endpoints, remainders and owned exports.
-    p.modeled_peak_bytes=add(add(b.other_live_bytes,b.backend_margin_bytes),4096);
-    p.scalar_terms=262144;p.kernel_terms=2097152;
-    cap(p.modeled_peak_bytes,b.memory_bytes,"MANTA phase enclosure memory budget exceeded");
-    cap(p.scalar_terms,b.scalar_terms,"MANTA phase enclosure scalar budget exceeded");
-    cap(p.kernel_terms,b.kernel_terms,"MANTA phase enclosure work budget exceeded");return p;
-}
-BlochPhaseCertificate certify_bloch_phase(const Eigen::Vector3d& q,const Eigen::Vector3d& r,
-    std::complex<double> evaluated,const ResourceBudget& b) {
-    plan_bloch_phase(b);namespace si=spectral_interval;si::require_arithmetic();
-    if(!q.allFinite() || !r.allFinite() || !std::isfinite(evaluated.real()) || !std::isfinite(evaluated.imag()))
-        throw std::invalid_argument("MANTA phase enclosure requires finite vectors and witness");
-    si::Interval angle;
-    for(int i=0;i<3;++i)angle=si::add(angle,si::product(q[i],r[i]));
+namespace {
+spectral_interval::ComplexInterval phase_enclosure(spectral_interval::Interval angle,Count& squarings) {
+    namespace si=spectral_interval;
     int exponent=0;std::frexp(std::max(std::abs(angle.lo),std::abs(angle.hi)),&exponent);
     const int scaling=(angle.lo==0. && angle.hi==0.)?0:std::max(0,exponent+4);
     const auto x=si::product(angle,si::Interval{std::ldexp(1.,-scaling),std::ldexp(1.,-scaling)});
@@ -82,6 +68,34 @@ BlochPhaseCertificate certify_bloch_phase(const Eigen::Vector3d& q,const Eigen::
     };
     phase=circle(phase);
     for(int j=0;j<scaling;++j)phase=circle(si::product(phase,phase));
+    squarings=scaling;return phase;
+}
+} // namespace
+
+spectral_interval::ComplexInterval bloch_phase_enclosure(const EnclosedPoint& q,const EnclosedPoint& r) {
+    spectral_interval::Interval angle;
+    for(int i=0;i<3;++i)angle=spectral_interval::add(angle,spectral_interval::product(q[i],r[i]));
+    Count squarings=0;return phase_enclosure(angle,squarings);
+}
+
+BlochPhasePlan plan_bloch_phase(const ResourceBudget& b) {
+    using namespace admission;margin(b);BlochPhasePlan p;
+    // At most 1028 binary squarings for any finite binary64 dot enclosure,
+    // 12 Taylor steps per component, endpoints, remainders and owned exports.
+    p.modeled_peak_bytes=add(add(b.other_live_bytes,b.backend_margin_bytes),4096);
+    p.scalar_terms=262144;p.kernel_terms=2097152;
+    cap(p.modeled_peak_bytes,b.memory_bytes,"MANTA phase enclosure memory budget exceeded");
+    cap(p.scalar_terms,b.scalar_terms,"MANTA phase enclosure scalar budget exceeded");
+    cap(p.kernel_terms,b.kernel_terms,"MANTA phase enclosure work budget exceeded");return p;
+}
+BlochPhaseCertificate certify_bloch_phase(const Eigen::Vector3d& q,const Eigen::Vector3d& r,
+    std::complex<double> evaluated,const ResourceBudget& b) {
+    plan_bloch_phase(b);namespace si=spectral_interval;si::require_arithmetic();
+    if(!q.allFinite() || !r.allFinite() || !std::isfinite(evaluated.real()) || !std::isfinite(evaluated.imag()))
+        throw std::invalid_argument("MANTA phase enclosure requires finite vectors and witness");
+    si::Interval angle;
+    for(int i=0;i<3;++i)angle=si::add(angle,si::product(q[i],r[i]));
+    Count scaling=0;const auto phase=phase_enclosure(angle,scaling);
     BlochPhaseCertificate out;out.real_lower=phase.real.lo;out.real_upper=phase.real.hi;
     out.imag_lower=phase.imag.lo;out.imag_upper=phase.imag.hi;out.squarings=scaling;
     if(phase.real.lo!=evaluated.real() || phase.real.hi!=evaluated.real() ||
@@ -258,6 +272,132 @@ FourierConstructionCertificate certify_auxiliary_fourier_panel(const BasisSet& b
             out.error_bounds[k]=spectral_interval::magnitude(spectral_interval::sub(spectral_interval::point(out.evaluated.values[k]),z));
         }
         offset+=shell.size();
+    }
+    return out;
+}
+FourierConstructionPlan plan_pair_fourier_construction(const BasisSet& bra,const BasisSet& ket,Count vectors,const ResourceBudget& budget) {
+    using namespace admission;margin(budget);
+    const auto actual=plan_fourier(bra,&ket,vectors,ResourceBudget{});
+    const auto a=census(bra,6),b=census(ket,6);
+    const Count elements=mul(vectors,mul(bra.nbasis(),ket.nbasis()));
+    const Count cart=mul(a.maximum_cartesian,b.maximum_cartesian);
+    FourierConstructionPlan p;p.shell_calls=actual.shell_calls;p.primitive_products=actual.primitive_pairs;
+    // Per primitive/vector: phase/elementary proof, <=13 moments per axis,
+    // <=49 binomial products per axis/cartesian pair, then two transforms.
+    // Both transforms are conservatively charged once per shell pair/vector.
+    p.scalar_terms=add(elements,add(mul(mul(p.primitive_products,vectors),add(2097152,mul(32768,cart))),
+        mul(mul(p.shell_calls,vectors),add(2097152,mul(128,square(cart))))));
+    p.kernel_terms=add(actual.kernel_terms,mul(8,p.scalar_terms));
+    p.modeled_peak_bytes=add(add(budget.other_live_bytes,budget.backend_margin_bytes),
+        add(actual.modeled_peak_bytes,add(1048576,add(mul(256,elements),mul(256,square(cart))))));
+    cap(p.modeled_peak_bytes,budget.memory_bytes,"MANTA pair Fourier construction memory budget exceeded");
+    cap(p.scalar_terms,budget.scalar_terms,"MANTA pair Fourier construction scalar budget exceeded");
+    cap(p.kernel_terms,budget.kernel_terms,"MANTA pair Fourier construction work budget exceeded");
+    cap(p.shell_calls,budget.shell_calls,"MANTA pair Fourier construction shell budget exceeded");
+    cap(p.primitive_products,budget.primitive_quartets,"MANTA pair Fourier construction primitive budget exceeded");
+    return p;
+}
+std::vector<spectral_interval::ComplexInterval> pair_fourier_enclosure(
+    const libint2::Shell& a,const libint2::Shell& b,const md::Matrix& vectors) {
+    return pair_fourier_enclosure(a,b,vectors,enclosed_center(a),enclosed_center(b));
+}
+std::vector<spectral_interval::ComplexInterval> pair_fourier_enclosure(
+    const libint2::Shell& a,const libint2::Shell& b,const md::Matrix& vectors,const EnclosedPoint& ac,const EnclosedPoint& bc) {
+    namespace si=spectral_interval;namespace math=verified_math;si::require_arithmetic();
+    const Count ng=vectors.rows(),na=a.size(),nb=b.size();
+    std::vector<si::ComplexInterval> result(na*nb*ng);if(!ng)return result;
+    const int la=a.contr[0].l,lb=b.contr[0].l;
+    const auto& ca=md::cartesians(la);const auto& cb=md::cartesians(lb);
+    const Count nca=ca.size(),ncb=cb.size();
+    const auto ta=representation_enclosure(la,a.contr[0].pure),tb=representation_enclosure(lb,b.contr[0].pure);
+    // Gaussian product theorem and integration-by-parts Fourier moments,
+    // Neese2023/Sun2017 conventions, contract 5.66. Product-center and
+    // polynomial arithmetic is enclosed independently of rounded MD E data.
+    // Inputs are stored normalized shells; generating these is excluded.
+    double choose[7][7]{};for(int n=0;n<=6;++n) {
+        choose[n][0]=choose[n][n]=1.;
+        for(int k=1;k<n;++k)choose[n][k]=choose[n-1][k-1]+choose[n-1][k];
+    }
+    const auto pi=math::pi();
+    for(Count g=0;g<ng;++g) {
+        std::vector<si::ComplexInterval> contracted(nca*ncb);
+        si::Interval q2;for(int axis=0;axis<3;++axis)q2=si::add(q2,si::product(vectors(g,axis),vectors(g,axis)));
+        q2.lo=std::max(0.,q2.lo);
+        for(Count ia=0;ia<a.alpha.size();++ia)for(Count ib=0;ib<b.alpha.size();++ib) {
+            const si::Interval alpha{a.alpha[ia],a.alpha[ia]},beta{b.alpha[ib],b.alpha[ib]};
+            const auto p=si::add(alpha,beta),fraction=math::divide(beta,p);
+            const auto rho=si::product(alpha,fraction),half=math::divide({1.,1.},si::product({2.,2.},p));
+            si::Interval distance,angle;
+            std::array<si::Interval,3> pa,pb;
+            for(int axis=0;axis<3;++axis) {
+                const auto d=si::sub(bc[axis],ac[axis]);
+                distance=si::add(distance,si::product(d,d));
+                pa[axis]=si::product(fraction,d);pb[axis]=si::sub(pa[axis],d);
+                const auto center=si::add(ac[axis],pa[axis]);
+                angle=si::add(angle,si::product({-vectors(g,axis),-vectors(g,axis)},center));
+            }
+            distance.lo=std::max(0.,distance.lo);Count squarings=0;
+            const auto phase=phase_enclosure(angle,squarings);
+            auto exponent=si::add(si::product(rho,distance),math::divide(q2,si::product({4.,4.},p)));
+            exponent.lo=std::max(0.,exponent.lo);
+            const auto ratio=math::divide(pi,p);
+            const auto seed=si::product(si::product(ratio,math::sqrt_positive(ratio)),math::exp_negative(exponent));
+            const auto weight=si::product(seed,si::product(a.contr[0].coeff[ia],b.contr[0].coeff[ib]));
+            const auto common=si::product(si::ComplexInterval{weight,{}},phase);
+            std::array<std::vector<si::ComplexInterval>,3> axes;
+            for(int axis=0;axis<3;++axis) {
+                std::vector<si::ComplexInterval> h(la+lb+1);h[0]=si::point(1.);
+                const si::ComplexInterval step{{},si::product(half,{-vectors(g,axis),-vectors(g,axis)})};
+                for(int n=1;n<=la+lb;++n) {
+                    h[n]=si::product(step,h[n-1]);
+                    if(n>1)h[n]=si::add(h[n],si::product(si::ComplexInterval{si::product(half,{double(n-1),double(n-1)}),{}},h[n-2]));
+                }
+                std::vector<si::Interval> ap(la+1),bp(lb+1);ap[0]=bp[0]={1.,1.};
+                for(int i=1;i<=la;++i)ap[i]=si::product(ap[i-1],pa[axis]);
+                for(int j=1;j<=lb;++j)bp[j]=si::product(bp[j-1],pb[axis]);
+                axes[axis].resize((la+1)*(lb+1));
+                for(int i=0;i<=la;++i)for(int j=0;j<=lb;++j)
+                    for(int u=0;u<=i;++u)for(int v=0;v<=j;++v) {
+                        const auto coefficient=si::product(si::product(ap[i-u],bp[j-v]),si::product(choose[i][u],choose[j][v]));
+                        auto& z=axes[axis][i*(lb+1)+j];
+                        z=si::add(z,si::product(si::ComplexInterval{coefficient,{}},h[u+v]));
+                    }
+            }
+            for(Count i=0;i<nca;++i)for(Count j=0;j<ncb;++j) {
+                auto z=common;for(int axis=0;axis<3;++axis)z=si::product(z,axes[axis][ca[i][axis]*(lb+1)+cb[j][axis]]);
+                contracted[i*ncb+j]=si::add(contracted[i*ncb+j],z);
+            }
+        }
+        // Two successive transforms avoid an unnecessary four-axis tensor.
+        std::vector<si::ComplexInterval> intermediate(na*ncb);
+        for(Count i=0;i<na;++i)for(Count j=0;j<ncb;++j)for(Count c=0;c<nca;++c)
+            intermediate[i*ncb+j]=si::add(intermediate[i*ncb+j],si::product(si::ComplexInterval{ta[i*nca+c],{}},contracted[c*ncb+j]));
+        for(Count i=0;i<na;++i)for(Count j=0;j<nb;++j)for(Count c=0;c<ncb;++c)
+            result[(i*nb+j)*ng+g]=si::add(result[(i*nb+j)*ng+g],si::product(si::ComplexInterval{tb[j*ncb+c],{}},intermediate[i*ncb+c]));
+    }
+    return result;
+}
+FourierConstructionCertificate certify_pair_fourier_panel(const BasisSet& bra,const BasisSet& ket,
+    const md::Matrix& vectors,const ResourceBudget& budget) {
+    plan_pair_fourier_construction(bra,ket,vectors.rows(),budget);
+    if(vectors.cols()!=3 || !vectors.allFinite())throw std::invalid_argument("MANTA pair Fourier construction requires finite Cartesian vectors");
+    FourierConstructionCertificate out;out.evaluated=compute_fourier_panel(bra,&ket,vectors,ResourceBudget{});
+    const Count na=bra.nbasis(),nb=ket.nbasis(),ng=vectors.rows(),elements=admission::mul(ng,admission::mul(na,nb));
+    out.real_lower.resize(elements);out.real_upper.resize(elements);out.imag_lower.resize(elements);out.imag_upper.resize(elements);out.error_bounds.resize(elements);
+    Count row=0;
+    for(const auto& a:bra.libint()) {
+        Count col=0;for(const auto& b:ket.libint()) {
+            const auto proof=pair_fourier_enclosure(a,b,vectors);
+            for(Count i=0;i<a.size();++i)for(Count j=0;j<b.size();++j)for(Count g=0;g<ng;++g) {
+                const auto& z=proof[(i*b.size()+j)*ng+g];const Count k=(g*na+row+i)*nb+col+j;
+                const auto value=out.evaluated.values[k];
+                if(!std::isfinite(value.real()) || !std::isfinite(value.imag()))throw std::overflow_error("MANTA pair Fourier construction witness overflow");
+                out.real_lower[k]=z.real.lo;out.real_upper[k]=z.real.hi;out.imag_lower[k]=z.imag.lo;out.imag_upper[k]=z.imag.hi;
+                out.error_bounds[k]=spectral_interval::magnitude(spectral_interval::sub(spectral_interval::point(value),z));
+            }
+            col+=b.size();
+        }
+        row+=a.size();
     }
     return out;
 }

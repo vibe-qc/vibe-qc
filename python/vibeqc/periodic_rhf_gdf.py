@@ -229,6 +229,9 @@ class _PrivateSlabKRHFGDFResult:
     #: ``(k_i, k_j)`` fit tensors the SCF built (``len(fits)``).
     gdf_cderi_pairs: int = 0
     backend: str = "private-multik-slab-truncated-gdf"
+    #: AO-pair support of the slab fit (#691): ``physical_pairs`` or the
+    #: explicit ``historical_index_ball`` replay.
+    support_policy: str = "physical_pairs"
 
     restart_basis: object = None
     restart_lattice: object = None
@@ -1360,6 +1363,12 @@ def run_rhf_periodic_gamma_gdf(
                 ke_cutoff=float(_slab_ke_cutoff),
                 lat_opts=lat_opts,
                 linear_dep_thr=float(gdf_linear_dep_threshold),
+                # One AO-pair domain with this route's one-electron terms
+                # (#691): physical fit pairs only beside pair-complete S/T/V.
+                support_policy=(
+                    "physical_pairs" if lat_opts.pair_complete_1e
+                    else "historical_index_ball"
+                ),
             )
             Lpq = slab_fit.factors
         else:
@@ -2053,8 +2062,13 @@ def _run_krhf_periodic_slab_gdf(
     gdf_linear_dep_threshold: float = 1e-9,
     progress: Union[bool, ProgressLogger, None] = None,
     verbose: Optional[int] = None,
+    support_policy: Optional[str] = None,
 ) -> _PrivateSlabKRHFGDFResult:
     """Run the private multi-k RHF/RKS slab-GDF validation route.
+
+    ``support_policy`` is the fit's AO-pair support (#691): ``None`` or
+    ``'physical_pairs'`` (the default), or the ``'historical_index_ball'``
+    replay of the former origin-centred cell list.
 
     The implementation is intentionally narrow: closed-shell zero-temperature
     RHF or RKS on a full Gamma-centered slab mesh, with no public dispatch,
@@ -2088,6 +2102,24 @@ def _run_krhf_periodic_slab_gdf(
             "private multi-k slab GDF requires "
             "coulomb_method=SLAB_EWALD_2D"
         )
+    slab_support_policy = (
+        "physical_pairs" if support_policy is None else str(support_policy)
+    )
+    if slab_support_policy not in ("physical_pairs", "historical_index_ball"):
+        raise ValueError(
+            "slab GDF support_policy must be 'physical_pairs' or "
+            f"'historical_index_ball'; got {support_policy!r}"
+        )
+    if slab_support_policy == "physical_pairs" and not lat_opts.pair_complete_1e:
+        # One AO-pair domain for the whole Hamiltonian (#691): the fit's
+        # physical pairs need the pair-complete S, T and V_ne (#483) beside
+        # them. A pair-centred fit on origin-ball one-electron matrices is
+        # less consistent than either (H8 sheet Gamma: -17.6 mHa/pair from
+        # its folded (4,1,1) mesh, against -8.0 with both on the ball).
+        from .periodic_k_gdf import _clone_lattice_options
+
+        lat_opts = _clone_lattice_options(lat_opts)
+        lat_opts.pair_complete_1e = True
     mesh_raw = np.asarray(mesh, dtype=float)
     if (
         mesh_raw.shape != (3,)
@@ -2185,6 +2217,7 @@ def _run_krhf_periodic_slab_gdf(
                 ke_cutoff=ke_cutoff,
                 lat_opts=lat_opts,
                 linear_dep_thr=gdf_linear_dep_threshold,
+                support_policy=support_policy,
             )
     xi_bvk = _slab_probe_charge_madelung_for_kmesh(system, mesh_tuple)
     e_nuclear = float(nuclear_repulsion_per_cell(system, lat_opts))
@@ -2515,6 +2548,7 @@ def _run_krhf_periodic_slab_gdf(
                     if is_ks
                     else "private-multik-slab-truncated-gdf-rhf"
                 ),
+                support_policy=slab_support_policy,
             )
 
         diis_active = use_diis and iteration >= diis_start_iter
@@ -2602,6 +2636,7 @@ def _run_krhf_periodic_slab_gdf(
             if is_ks
             else "private-multik-slab-truncated-gdf-rhf"
         ),
+        support_policy=slab_support_policy,
     )
 
 

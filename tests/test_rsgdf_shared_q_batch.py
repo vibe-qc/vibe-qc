@@ -2060,18 +2060,28 @@ def test_dense_silicon_fixed_density_jk_matches_independent_reference(omega):
     workspace = max(64*1024**2, core.gdf_short_range_workspace_bytes(
         basis, auxiliary, core.get_num_threads(),
     ))
-    cache = _build_range_separated_lpq_cache(
-        system, basis, auxiliary, kpoints, True,
-        omega=omega, raw_integral_error=1e-10, linear_dep_thr=1e-9,
-        memory_byte_cap=8*1024**3, native_workspace_byte_cap=workspace,
-        image_candidate_cap=10_000_000, reciprocal_candidate_cap=10_000_000,
-    )
-    assert cache.source_parameters[3] < 200.  # no exponent-sized reciprocal tail
+    # The stored PySCF 2.6.2 J/K were generated with this metric's three
+    # near-null modes (lambda = 5.13e-10) cut at 1e-9, so the matrix
+    # comparison runs the explicit eigenvalue-cut policy.
     weights = np.ones(1)
-    j = np.asarray(_build_coulomb_from_diagonal_factors(
-        [cache.factors[0, 0]], densities, weights,
-    ))
-    k = np.asarray(_build_k_from_lpq_cache(cache.factors, densities, weights, nbasis=44))
+
+    def jk(metric_decomposition):
+        cache = _build_range_separated_lpq_cache(
+            system, basis, auxiliary, kpoints, True,
+            omega=omega, raw_integral_error=1e-10, linear_dep_thr=1e-9,
+            memory_byte_cap=8*1024**3, native_workspace_byte_cap=workspace,
+            image_candidate_cap=10_000_000, reciprocal_candidate_cap=10_000_000,
+            metric_decomposition=metric_decomposition,
+        )
+        assert cache.source_parameters[3] < 200.  # no exponent-sized reciprocal tail
+        j = np.asarray(_build_coulomb_from_diagonal_factors(
+            [cache.factors[0, 0]], densities, weights,
+        ))
+        k = np.asarray(_build_k_from_lpq_cache(cache.factors, densities, weights, nbasis=44))
+        return cache, j, k
+
+    cache, j, k = jk('eigen')
+    assert cache.factors[0, 0].shape[0] == 253
     corrected = np.asarray(apply_exxdiv_ewald_to_K(
         k, overlap, densities, _madelung_for_kmesh(system, (1, 1, 1)),
     ))
@@ -2080,6 +2090,17 @@ def test_dense_silicon_fixed_density_jk_matches_independent_reference(omega):
         np.testing.assert_allclose(actual, expected, atol=3e-8, rtol=0)
         energy_error = factor * np.trace(densities[0] @ (actual[0]-expected[0])).real
         assert abs(energy_error) < 3e-7
+
+    # Default Cholesky-first policy (#179): all 256 modes are kept, as PySCF
+    # 2.14.0 does on this cell (GDF, same bases, precision 1e-11, Cholesky
+    # succeeds). PySCF 2.14.0's own fixed-density exchange energy minus the
+    # stored 2.6.2 one is -3.177128136616091e-06 Ha; vibe-qc must reproduce
+    # that shift, while J is unaffected by the three modes.
+    cache, j, k = jk('cholesky')
+    assert cache.factors[0, 0].shape[0] == 256
+    np.testing.assert_allclose(j, ordered(reference['J_0.6']), atol=3e-8, rtol=0)
+    shift = -.25 * np.trace(densities[0] @ (k[0]-ordered(reference['K_0.6'])[0])).real
+    assert abs(shift - -3.177128136616091e-06) < 3e-8
 
 
 @pytest.mark.parametrize("retryable,expected", [(True, [3, 1]), (False, [3])])

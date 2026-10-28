@@ -137,7 +137,8 @@ def make_multi_crystal_objective(
     The joint optimum is the best compromise.
 
     Failed evaluations (non-converged SCF, transport error) return
-    ``np.inf`` so BOBYQA routes around infeasible parameter regions.
+    ``np.inf``; the ``vibe_basis.optimize`` drivers hand the optimiser a
+    finite stand-in for it, since an infinite value stalls BOBYQA.
     If any single compound fails, the entire evaluation returns inf --
     the optimizer treats the whole parameter vector as infeasible.
 

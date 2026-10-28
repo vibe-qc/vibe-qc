@@ -208,6 +208,24 @@ class CcmResult:
     internal_instability: bool = False
 
 
+class CCMConvergenceError(RuntimeError):
+    """Native CCM refusal with its retained, unaccepted electronic state.
+
+    ``result`` contains the energy, density, spectrum and available audit
+    diagnostics returned by the failed native solve. These are diagnostics,
+    not an accepted energy or a converged/stable electronic state.
+    """
+
+    def __init__(self, result: CcmResult, *, max_iter, conv_tol, stability):
+        super().__init__(
+            "C++ MSINDO CCM did not converge within the iteration budget"
+        )
+        self.result = result
+        self.max_iter = max_iter
+        self.conv_tol = conv_tol
+        self.stability = stability
+
+
 def _stability_flag(stability):
     """``lowest_stable`` for a validated ``stability`` policy name."""
     from .msindo_ccm_stability import STABILITY_POLICIES
@@ -822,8 +840,11 @@ def run_ccm(atomic_numbers, coords_angstrom, translations_angstrom, *,
     from every detected saddle to a stable minimum. Check state continuity
     under geometry changes; local stability does not prove uniqueness.
     Unresolved rank-one frontiers are seeded variationally within the same
-    cumulative ``max_iter`` budget. Native nonconvergence raises; the Python
-    reference path returns an unconverged result with its last state.
+    cumulative ``max_iter`` budget. Native nonconvergence raises
+    :class:`CCMConvergenceError`, whose ``result`` retains the failed state
+    and available audit diagnostics. The Python reference path returns an
+    unconverged result with its last state. A native exception raised before
+    a result exists still propagates without a retained state.
     """
     Z = list(atomic_numbers)
     _require_supported_msindo_elements(Z)
@@ -869,8 +890,33 @@ def run_ccm(atomic_numbers, coords_angstrom, translations_angstrom, *,
                 charge=charge,
                 lowest_stable=lowest_stable,
             )
-            if getattr(result_obj, "converged", False):
-                density = np.asarray(result_obj.density, dtype=float)
+            density = np.array(result_obj.density, dtype=float, copy=True)
+            result = CcmResult(
+                total_energy=float(result_obj.total_energy),
+                electronic_energy=float(result_obj.electronic_energy),
+                binding_energy=float(result_obj.binding_energy),
+                madelung_nuclear_energy=(
+                    float(result_obj.total_energy)
+                    - float(result_obj.electronic_energy)
+                ),
+                mo_energies=np.array(result_obj.mo_energies, dtype=float, copy=True),
+                density=density,
+                n_iter=int(result_obj.n_iter),
+                converged=bool(result_obj.converged),
+                **{name: getattr(result_obj, name, default) for name, default in (
+                    ("stability_checked", False),
+                    ("stability_analysis_converged", False),
+                    ("stability_eigenvalue", 0.0),
+                    ("n_stability_restarts", 0),
+                    ("frontier_seed_orbitals", 0),
+                    ("frontier_seed_expansions", 0),
+                    ("frontier_seed_evaluations", 0),
+                    ("frontier_seed_completed", False),
+                    ("orbital_optimization_used", False),
+                    ("internal_instability", False),
+                )},
+            )
+            if result.converged:
                 if madelung:
                     net = _net_charges(density, blocks, cz)
                     if abs(float(np.sum(net))) > 1e-3:
@@ -879,33 +925,9 @@ def run_ccm(atomic_numbers, coords_angstrom, translations_angstrom, *,
                             f"cell charge = {float(np.sum(net)):.4f} "
                             "(ewaldcharges.f)."
                         )
-                return CcmResult(
-                    total_energy=float(result_obj.total_energy),
-                    electronic_energy=float(result_obj.electronic_energy),
-                    binding_energy=float(result_obj.binding_energy),
-                    madelung_nuclear_energy=(
-                        float(result_obj.total_energy)
-                        - float(result_obj.electronic_energy)
-                    ),
-                    mo_energies=np.asarray(result_obj.mo_energies, dtype=float),
-                    density=density,
-                    n_iter=int(result_obj.n_iter),
-                    converged=True,
-                    **{name: getattr(result_obj, name, default) for name, default in (
-                        ("stability_checked", False),
-                        ("stability_analysis_converged", False),
-                        ("stability_eigenvalue", 0.0),
-                        ("n_stability_restarts", 0),
-                        ("frontier_seed_orbitals", 0),
-                        ("frontier_seed_expansions", 0),
-                        ("frontier_seed_evaluations", 0),
-                        ("frontier_seed_completed", False),
-                        ("orbital_optimization_used", False),
-                        ("internal_instability", False),
-                    )},
-                )
-            raise RuntimeError(
-                "C++ MSINDO CCM did not converge within the iteration budget"
+                return result
+            raise CCMConvergenceError(
+                result, max_iter=max_iter, conv_tol=conv_tol, stability=stability,
             )
 
     nocc = nelec // 2

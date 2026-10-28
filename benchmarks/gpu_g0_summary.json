@@ -1,0 +1,5351 @@
+{
+ "incomplete_cases": [],
+ "protocol": {
+  "order": "randomized with recorded seed",
+  "per_run_budget_s": 3600,
+  "process": "one fresh process per run",
+  "timed_runs": 3,
+  "warmup_runs": 1
+ },
+ "recipe": {
+  "conv_tol_energy": 1e-09,
+  "conv_tol_grad": 1e-06,
+  "cosx_grid_level": 2,
+  "df_aux_basis": "def2-universal-jkfit",
+  "initial_guess": "SAD",
+  "max_iter": 200,
+  "rijcosx_aux_basis": "def2-universal-jfit",
+  "scf_mode_auto_threshold": 140,
+  "xc_grid": {
+   "angular": "ProductGaussLegendre",
+   "angular_pruning": "None",
+   "atomic_grid_profile": "Generic",
+   "becke_k": 3,
+   "n_phi": 36,
+   "n_radial": 75,
+   "n_theta": 17,
+   "partition": "Becke"
+  }
+ },
+ "rows": [
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "conventional_four_index",
+   "case_id": "H2O__def2-svp__PBE0__auto",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": false,
+   "converged": true,
+   "cosx_variant": null,
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "1ec388a47f28a0c7",
+   "dims": {
+    "cosx_stage_points": null,
+    "n_ao": 24,
+    "n_aux": null,
+    "n_occ": 5,
+    "xc_grid_points": 137700
+   },
+   "energy_eh": -76.27331205067205,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": false,
+   "final_grad_norm_max": 2.712595666441159e-07,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    9
+   ],
+   "k_build": "exact_or_df",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 278888448,
+     "median": 275677184,
+     "min": 275628032,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": null,
+    "tracked_live_tensor_bytes": null
+   },
+   "method": "PBE0",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.0002687919986783527,
+    "median": 0.00026645899924915284,
+    "min": 0.00023958400561241433,
+    "n": 3
+   },
+   "phase_exclusive_s": {},
+   "route": "auto",
+   "scf_mode_resolved": "CONVENTIONAL",
+   "scf_wall_s": {
+    "max": 4.539756333004334,
+    "median": 4.449723458994413,
+    "min": 4.415270582998346,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 2.672231375,
+    "median": 2.668107375,
+    "min": 2.613146417,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    1
+   ],
+   "threads_requested": 1,
+   "timing_reconciled": null
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "conventional_four_index",
+   "case_id": "H2O__def2-svp__PBE0__auto",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": true,
+   "converged": true,
+   "cosx_variant": null,
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "1ec388a47f28a0c7",
+   "dims": {
+    "cosx_stage_points": null,
+    "n_ao": 24,
+    "n_aux": null,
+    "n_occ": 5,
+    "xc_grid_points": 137700
+   },
+   "energy_eh": -76.27331205067205,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": false,
+   "final_grad_norm_max": 2.712595666441159e-07,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    9
+   ],
+   "k_build": "exact_or_df",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 275595264,
+     "median": 275578880,
+     "min": 275316736,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": null,
+    "tracked_live_tensor_bytes": null
+   },
+   "method": "PBE0",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.000323416999890469,
+    "median": 0.0003089160018134862,
+    "min": 0.00026775000151246786,
+    "n": 3
+   },
+   "phase_exclusive_s": {
+    "accelerator": {
+     "max": 0.000648167,
+     "median": 0.0006165809999999999,
+     "min": 0.0006034580000000001,
+     "n": 3
+    },
+    "ao_xc_vxc": {
+     "max": 1.9008643330000001,
+     "median": 1.847413335,
+     "min": 1.815748584,
+     "n": 3
+    },
+    "density": {
+     "max": 1.954e-05,
+     "median": 1.629e-05,
+     "min": 1.5417e-05,
+     "n": 3
+    },
+    "diagonalization": {
+     "max": 0.00037916800000000004,
+     "median": 0.000376876,
+     "min": 0.000374542,
+     "n": 3
+    },
+    "final_rebuild_other": {
+     "max": 6.210000000006488e-06,
+     "median": 4.748999999998338e-06,
+     "min": 4.125000000021473e-06,
+     "n": 3
+    },
+    "grid_construction": {
+     "max": 0.00504475,
+     "median": 0.004587916,
+     "min": 0.004336625,
+     "n": 3
+    },
+    "j": {
+     "max": 0.0023691240000000002,
+     "median": 0.0022781669999999998,
+     "min": 0.002224915,
+     "n": 3
+    },
+    "k": {
+     "max": 0.0023617520000000004,
+     "median": 0.0022417089999999997,
+     "min": 0.0022253729999999997,
+     "n": 3
+    },
+    "setup": {
+     "max": 0.0032817930000000007,
+     "median": 0.003009331999999999,
+     "min": 0.003008543,
+     "n": 3
+    },
+    "stability": {
+     "max": 2.684092333,
+     "median": 2.628918625,
+     "min": 2.600390958,
+     "n": 3
+    },
+    "unclassified": {
+     "max": 0.00015228999999994386,
+     "median": 0.0001435419999999965,
+     "min": 0.0001269609999994259,
+     "n": 3
+    }
+   },
+   "route": "auto",
+   "scf_mode_resolved": "CONVENTIONAL",
+   "scf_wall_s": {
+    "max": 4.545210084004793,
+    "median": 4.516443625005195,
+    "min": 4.458714667001914,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 2.68408825,
+    "median": 2.628915917,
+    "min": 2.60038825,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    1
+   ],
+   "threads_requested": 1,
+   "timing_reconciled": true
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "conventional_four_index",
+   "case_id": "H2O__def2-svp__PBE0__auto",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": false,
+   "converged": true,
+   "cosx_variant": null,
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "1ec388a47f28a0c7",
+   "dims": {
+    "cosx_stage_points": null,
+    "n_ao": 24,
+    "n_aux": null,
+    "n_occ": 5,
+    "xc_grid_points": 137700
+   },
+   "energy_eh": -76.27331205067205,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": false,
+   "final_grad_norm_max": 2.712595666441159e-07,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    9
+   ],
+   "k_build": "exact_or_df",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 311803904,
+     "median": 310165504,
+     "min": 309772288,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": null,
+    "tracked_live_tensor_bytes": null
+   },
+   "method": "PBE0",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.00031083300564205274,
+    "median": 0.00028995799948461354,
+    "min": 0.0002480000039213337,
+    "n": 3
+   },
+   "phase_exclusive_s": {},
+   "route": "auto",
+   "scf_mode_resolved": "CONVENTIONAL",
+   "scf_wall_s": {
+    "max": 1.587868916001753,
+    "median": 1.5865994170017075,
+    "min": 1.561768999999913,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 0.978860166,
+    "median": 0.9779995,
+    "min": 0.964922667,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    4
+   ],
+   "threads_requested": 4,
+   "timing_reconciled": null
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "conventional_four_index",
+   "case_id": "H2O__def2-svp__PBE0__auto",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": true,
+   "converged": true,
+   "cosx_variant": null,
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "1ec388a47f28a0c7",
+   "dims": {
+    "cosx_stage_points": null,
+    "n_ao": 24,
+    "n_aux": null,
+    "n_occ": 5,
+    "xc_grid_points": 137700
+   },
+   "energy_eh": -76.27331205067205,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": false,
+   "final_grad_norm_max": 2.712595666441159e-07,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    9
+   ],
+   "k_build": "exact_or_df",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 310231040,
+     "median": 310099968,
+     "min": 310050816,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": null,
+    "tracked_live_tensor_bytes": null
+   },
+   "method": "PBE0",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.00035458300408208743,
+    "median": 0.00035058399953413755,
+    "min": 0.00033029200130840763,
+    "n": 3
+   },
+   "phase_exclusive_s": {
+    "accelerator": {
+     "max": 0.000760335,
+     "median": 0.000610583,
+     "min": 0.000579168,
+     "n": 3
+    },
+    "ao_xc_vxc": {
+     "max": 0.6943262099999999,
+     "median": 0.6294552910000001,
+     "min": 0.576429832,
+     "n": 3
+    },
+    "density": {
+     "max": 1.9707e-05,
+     "median": 1.7625999999999997e-05,
+     "min": 1.4666e-05,
+     "n": 3
+    },
+    "diagonalization": {
+     "max": 0.000440458,
+     "median": 0.00035633199999999995,
+     "min": 0.000348749,
+     "n": 3
+    },
+    "final_rebuild_other": {
+     "max": 7.541999999985394e-06,
+     "median": 6.12600000000213e-06,
+     "min": 5.166000000007831e-06,
+     "n": 3
+    },
+    "grid_construction": {
+     "max": 0.001878292,
+     "median": 0.001731291,
+     "min": 0.001535958,
+     "n": 3
+    },
+    "j": {
+     "max": 0.0008910830000000001,
+     "median": 0.000721084,
+     "min": 0.000702541,
+     "n": 3
+    },
+    "k": {
+     "max": 0.0008714150000000001,
+     "median": 0.0007066660000000001,
+     "min": 0.0006915420000000001,
+     "n": 3
+    },
+    "setup": {
+     "max": 0.002984208,
+     "median": 0.0026484179999999996,
+     "min": 0.002633626,
+     "n": 3
+    },
+    "stability": {
+     "max": 1.191311625,
+     "median": 1.016579708,
+     "min": 0.981950459,
+     "n": 3
+    },
+    "unclassified": {
+     "max": 0.00020487500000010428,
+     "median": 0.00017158199999989243,
+     "min": 0.00016350199999992654,
+     "n": 3
+    }
+   },
+   "route": "auto",
+   "scf_mode_resolved": "CONVENTIONAL",
+   "scf_wall_s": {
+    "max": 1.8946434160025092,
+    "median": 1.618948666000506,
+    "min": 1.600678834001883,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 1.191307584,
+    "median": 1.016576125,
+    "min": 0.981946584,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    4
+   ],
+   "threads_requested": 4,
+   "timing_reconciled": true
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "df_j_k",
+   "case_id": "H2O__def2-svp__PBE0__df",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": false,
+   "converged": true,
+   "cosx_variant": null,
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "f8ce4d37fba10fe5",
+   "dims": {
+    "cosx_stage_points": null,
+    "n_ao": 24,
+    "n_aux": 113,
+    "n_occ": 5,
+    "xc_grid_points": 137700
+   },
+   "energy_eh": -76.27331772774806,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": false,
+   "final_grad_norm_max": 2.7243008657408294e-07,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    9
+   ],
+   "k_build": "exact_or_df",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 279707648,
+     "median": 276660224,
+     "min": 276529152,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": null,
+    "tracked_live_tensor_bytes": null
+   },
+   "method": "PBE0",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.0002723750003497116,
+    "median": 0.0002600840016384609,
+    "min": 0.0002337500045541674,
+    "n": 3
+   },
+   "phase_exclusive_s": {},
+   "route": "df",
+   "scf_mode_resolved": "not_used",
+   "scf_wall_s": {
+    "max": 4.549129500002891,
+    "median": 4.5265692500033765,
+    "min": 4.387483666003391,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 2.678690042,
+    "median": 2.628298291,
+    "min": 2.584685666,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    1
+   ],
+   "threads_requested": 1,
+   "timing_reconciled": null
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "df_j_k",
+   "case_id": "H2O__def2-svp__PBE0__df",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": true,
+   "converged": true,
+   "cosx_variant": null,
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "f8ce4d37fba10fe5",
+   "dims": {
+    "cosx_stage_points": null,
+    "n_ao": 24,
+    "n_aux": 113,
+    "n_occ": 5,
+    "xc_grid_points": 137700
+   },
+   "energy_eh": -76.27331772774806,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": false,
+   "final_grad_norm_max": 2.7243008657408294e-07,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    9
+   ],
+   "k_build": "exact_or_df",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 276791296,
+     "median": 276660224,
+     "min": 276512768,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": 2389272.0,
+    "tracked_live_tensor_bytes": 1143560.0
+   },
+   "method": "PBE0",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.0003570829940144904,
+    "median": 0.00033045899908756837,
+    "min": 0.00030958300339989364,
+    "n": 3
+   },
+   "phase_exclusive_s": {
+    "accelerator": {
+     "max": 0.0006467930000000001,
+     "median": 0.0006206250000000001,
+     "min": 0.0005685839999999999,
+     "n": 3
+    },
+    "ao_xc_vxc": {
+     "max": 1.830431208,
+     "median": 1.829231293,
+     "min": 1.8284732080000001,
+     "n": 3
+    },
+    "density": {
+     "max": 1.9458e-05,
+     "median": 1.7957e-05,
+     "min": 1.4667e-05,
+     "n": 3
+    },
+    "df_construction": {
+     "max": 0.001452917,
+     "median": 0.001352541,
+     "min": 0.001344417,
+     "n": 3
+    },
+    "diagonalization": {
+     "max": 0.000371543,
+     "median": 0.000366083,
+     "min": 0.00036166700000000003,
+     "n": 3
+    },
+    "final_rebuild_other": {
+     "max": 5.375000000029662e-06,
+     "median": 5.0829999999890685e-06,
+     "min": 4.79200000000346e-06,
+     "n": 3
+    },
+    "grid_construction": {
+     "max": 0.004828208,
+     "median": 0.004765375,
+     "min": 0.004415,
+     "n": 3
+    },
+    "j": {
+     "max": 0.000585999,
+     "median": 0.000580749,
+     "min": 0.000557666,
+     "n": 3
+    },
+    "k": {
+     "max": 0.004339791000000001,
+     "median": 0.004228078999999999,
+     "min": 0.0040035439999999995,
+     "n": 3
+    },
+    "setup": {
+     "max": 0.0038395830000000014,
+     "median": 0.003767961,
+     "min": 0.003493417000000001,
+     "n": 3
+    },
+    "stability": {
+     "max": 2.647774081,
+     "median": 2.644889589,
+     "min": 2.585076669,
+     "n": 3
+    },
+    "unclassified": {
+     "max": 0.00015870799999984087,
+     "median": 0.0001420410000001482,
+     "min": 0.00011953799999986359,
+     "n": 3
+    }
+   },
+   "route": "df",
+   "scf_mode_resolved": "not_used",
+   "scf_wall_s": {
+    "max": 4.494392833003076,
+    "median": 4.493530249994365,
+    "min": 4.43475466700329,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 2.65128025,
+    "median": 2.648282417,
+    "min": 2.588569834,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    1
+   ],
+   "threads_requested": 1,
+   "timing_reconciled": true
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "df_j_k",
+   "case_id": "H2O__def2-svp__PBE0__df",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": false,
+   "converged": true,
+   "cosx_variant": null,
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "f8ce4d37fba10fe5",
+   "dims": {
+    "cosx_stage_points": null,
+    "n_ao": 24,
+    "n_aux": 113,
+    "n_occ": 5,
+    "xc_grid_points": 137700
+   },
+   "energy_eh": -76.27331772774806,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": false,
+   "final_grad_norm_max": 2.7243008657408294e-07,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    9
+   ],
+   "k_build": "exact_or_df",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 310312960,
+     "median": 310280192,
+     "min": 310018048,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": null,
+    "tracked_live_tensor_bytes": null
+   },
+   "method": "PBE0",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.000333791998855304,
+    "median": 0.0002670419999049045,
+    "min": 0.0002554160018917173,
+    "n": 3
+   },
+   "phase_exclusive_s": {},
+   "route": "df",
+   "scf_mode_resolved": "not_used",
+   "scf_wall_s": {
+    "max": 1.7925699159968644,
+    "median": 1.6110000000044238,
+    "min": 1.60515195899643,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 1.13465825,
+    "median": 1.013766375,
+    "min": 1.003922458,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    4
+   ],
+   "threads_requested": 4,
+   "timing_reconciled": null
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "df_j_k",
+   "case_id": "H2O__def2-svp__PBE0__df",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": true,
+   "converged": true,
+   "cosx_variant": null,
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "f8ce4d37fba10fe5",
+   "dims": {
+    "cosx_stage_points": null,
+    "n_ao": 24,
+    "n_aux": 113,
+    "n_occ": 5,
+    "xc_grid_points": 137700
+   },
+   "energy_eh": -76.27331772774806,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": false,
+   "final_grad_norm_max": 2.7243008657408294e-07,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    9
+   ],
+   "k_build": "exact_or_df",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 323403776,
+     "median": 309886976,
+     "min": 309772288,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": 2389272.0,
+    "tracked_live_tensor_bytes": 1143560.0
+   },
+   "method": "PBE0",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.0003828330009127967,
+    "median": 0.0003525829961290583,
+    "min": 0.00034966599923791364,
+    "n": 3
+   },
+   "phase_exclusive_s": {
+    "accelerator": {
+     "max": 0.000695376,
+     "median": 0.0006503349999999999,
+     "min": 0.0006277519999999999,
+     "n": 3
+    },
+    "ao_xc_vxc": {
+     "max": 0.6204182930000001,
+     "median": 0.6038844569999999,
+     "min": 0.545166458,
+     "n": 3
+    },
+    "density": {
+     "max": 1.8500000000000002e-05,
+     "median": 1.7999e-05,
+     "min": 1.5291e-05,
+     "n": 3
+    },
+    "df_construction": {
+     "max": 0.001365458,
+     "median": 0.001323667,
+     "min": 0.001225416,
+     "n": 3
+    },
+    "diagonalization": {
+     "max": 0.000382418,
+     "median": 0.00036804100000000005,
+     "min": 0.0003197110000000001,
+     "n": 3
+    },
+    "final_rebuild_other": {
+     "max": 6.875000000003406e-06,
+     "median": 6.124999999995717e-06,
+     "min": 5.7089999999995755e-06,
+     "n": 3
+    },
+    "grid_construction": {
+     "max": 0.001719833,
+     "median": 0.00168975,
+     "min": 0.001609292,
+     "n": 3
+    },
+    "j": {
+     "max": 0.0006540839999999999,
+     "median": 0.000652791,
+     "min": 0.00061646,
+     "n": 3
+    },
+    "k": {
+     "max": 0.004936625,
+     "median": 0.0048862509999999994,
+     "min": 0.004570792000000001,
+     "n": 3
+    },
+    "setup": {
+     "max": 0.0038633740000000006,
+     "median": 0.003755126,
+     "min": 0.0037345010000000003,
+     "n": 3
+    },
+    "stability": {
+     "max": 1.120739207,
+     "median": 1.0955684159999999,
+     "min": 1.005463625,
+     "n": 3
+    },
+    "unclassified": {
+     "max": 0.00020074700000005663,
+     "median": 0.0001845010000001146,
+     "min": 0.00016274400000004796,
+     "n": 3
+    }
+   },
+   "route": "df",
+   "scf_mode_resolved": "not_used",
+   "scf_wall_s": {
+    "max": 1.7414175829981104,
+    "median": 1.7331059170028311,
+    "min": 1.5667421670004842,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 1.124718208,
+    "median": 1.099852875,
+    "min": 1.009249542,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    4
+   ],
+   "threads_requested": 4,
+   "timing_reconciled": true
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "direct",
+   "case_id": "H2O__def2-svp__PBE0__direct",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": false,
+   "converged": true,
+   "cosx_variant": null,
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "0812f23c7ccb7009",
+   "dims": {
+    "cosx_stage_points": null,
+    "n_ao": 24,
+    "n_aux": null,
+    "n_occ": 5,
+    "xc_grid_points": 137700
+   },
+   "energy_eh": -76.27331205067208,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": false,
+   "final_grad_norm_max": 1.0450380029558079e-07,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    12
+   ],
+   "k_build": "exact_or_df",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 273186816,
+     "median": 272990208,
+     "min": 272924672,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": null,
+    "tracked_live_tensor_bytes": null
+   },
+   "method": "PBE0",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.00027262500225333497,
+    "median": 0.00026987500314135104,
+    "min": 0.00023729099484626204,
+    "n": 3
+   },
+   "phase_exclusive_s": {},
+   "route": "direct",
+   "scf_mode_resolved": "DIRECT",
+   "scf_wall_s": {
+    "max": 5.059714334005548,
+    "median": 4.9359840420002,
+    "min": 4.877896416997828,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 2.694593208,
+    "median": 2.6449425,
+    "min": 2.629718875,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    1
+   ],
+   "threads_requested": 1,
+   "timing_reconciled": null
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "direct",
+   "case_id": "H2O__def2-svp__PBE0__direct",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": true,
+   "converged": true,
+   "cosx_variant": null,
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "0812f23c7ccb7009",
+   "dims": {
+    "cosx_stage_points": null,
+    "n_ao": 24,
+    "n_aux": null,
+    "n_occ": 5,
+    "xc_grid_points": 137700
+   },
+   "energy_eh": -76.27331205067208,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": false,
+   "final_grad_norm_max": 1.0450380029558079e-07,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    12
+   ],
+   "k_build": "exact_or_df",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 276447232,
+     "median": 276316160,
+     "min": 273252352,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": null,
+    "tracked_live_tensor_bytes": null
+   },
+   "method": "PBE0",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.0003114159990218468,
+    "median": 0.00030645899823866785,
+    "min": 0.00028995799948461354,
+    "n": 3
+   },
+   "phase_exclusive_s": {
+    "accelerator": {
+     "max": 0.00024537299999999996,
+     "median": 0.000237542,
+     "min": 0.00023579,
+     "n": 3
+    },
+    "ao_xc_vxc": {
+     "max": 2.397719458,
+     "median": 2.340386332,
+     "min": 2.216222749,
+     "n": 3
+    },
+    "density": {
+     "max": 2.575e-05,
+     "median": 2.3499000000000003e-05,
+     "min": 2.2874999999999997e-05,
+     "n": 3
+    },
+    "diagonalization": {
+     "max": 0.000514831,
+     "median": 0.0004883360000000001,
+     "min": 0.00047370900000000005,
+     "n": 3
+    },
+    "final_rebuild_other": {
+     "max": 5.746999999972635e-06,
+     "median": 5.625000000009095e-06,
+     "min": 5.583000000031202e-06,
+     "n": 3
+    },
+    "grid_construction": {
+     "max": 0.004567833,
+     "median": 0.004366917,
+     "min": 0.004357375,
+     "n": 3
+    },
+    "j": {
+     "max": 0.015692835,
+     "median": 0.015678042000000003,
+     "min": 0.015671667,
+     "n": 3
+    },
+    "k": {
+     "max": 0.015741209,
+     "median": 0.01570025,
+     "min": 0.015525042999999999,
+     "n": 3
+    },
+    "setup": {
+     "max": 0.001683168,
+     "median": 0.0016596669999999999,
+     "min": 0.0016402510000000003,
+     "n": 3
+    },
+    "stability": {
+     "max": 2.731387,
+     "median": 2.646246875,
+     "min": 2.639070417,
+     "n": 3
+    },
+    "unclassified": {
+     "max": 0.00018612700000186777,
+     "median": 0.00017412299999985947,
+     "min": 0.0001633359999999584,
+     "n": 3
+    }
+   },
+   "route": "direct",
+   "scf_mode_resolved": "DIRECT",
+   "scf_wall_s": {
+    "max": 5.110779874994478,
+    "median": 5.075995792001777,
+    "min": 4.901749500000733,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 2.731383792,
+    "median": 2.646242917,
+    "min": 2.639066834,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    1
+   ],
+   "threads_requested": 1,
+   "timing_reconciled": true
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "direct",
+   "case_id": "H2O__def2-svp__PBE0__direct",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": false,
+   "converged": true,
+   "cosx_variant": null,
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "0812f23c7ccb7009",
+   "dims": {
+    "cosx_stage_points": null,
+    "n_ao": 24,
+    "n_aux": null,
+    "n_occ": 5,
+    "xc_grid_points": 137700
+   },
+   "energy_eh": -76.27331205067213,
+   "energy_spread_eh": 5.684341886080802e-14,
+   "fail_reasons": [],
+   "final_grad_above_recipe": false,
+   "final_grad_norm_max": 1.0450376690860079e-07,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    12
+   ],
+   "k_build": "exact_or_df",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 315670528,
+     "median": 310181888,
+     "min": 300892160,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": null,
+    "tracked_live_tensor_bytes": null
+   },
+   "method": "PBE0",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.00032587500027148053,
+    "median": 0.00030458300170721486,
+    "min": 0.00028774999373126775,
+    "n": 3
+   },
+   "phase_exclusive_s": {},
+   "route": "direct",
+   "scf_mode_resolved": "DIRECT",
+   "scf_wall_s": {
+    "max": 2.1023868340053014,
+    "median": 1.8246145419980166,
+    "min": 1.729993832996115,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 1.186215458,
+    "median": 1.032134333,
+    "min": 0.99702825,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    4
+   ],
+   "threads_requested": 4,
+   "timing_reconciled": null
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "direct",
+   "case_id": "H2O__def2-svp__PBE0__direct",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": true,
+   "converged": true,
+   "cosx_variant": null,
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "0812f23c7ccb7009",
+   "dims": {
+    "cosx_stage_points": null,
+    "n_ao": 24,
+    "n_aux": null,
+    "n_occ": 5,
+    "xc_grid_points": 137700
+   },
+   "energy_eh": -76.2733120506721,
+   "energy_spread_eh": 2.842170943040401e-14,
+   "fail_reasons": [],
+   "final_grad_above_recipe": false,
+   "final_grad_norm_max": 1.0450381761169023e-07,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    12
+   ],
+   "k_build": "exact_or_df",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 322158592,
+     "median": 320585728,
+     "min": 309772288,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": null,
+    "tracked_live_tensor_bytes": null
+   },
+   "method": "PBE0",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.0004309579962864518,
+    "median": 0.00035829199623549357,
+    "min": 0.0003336669979034923,
+    "n": 3
+   },
+   "phase_exclusive_s": {
+    "accelerator": {
+     "max": 0.00025266599999999997,
+     "median": 0.000245669,
+     "min": 0.00024166599999999997,
+     "n": 3
+    },
+    "ao_xc_vxc": {
+     "max": 0.7460894600000001,
+     "median": 0.7439609159999999,
+     "min": 0.7156442499999999,
+     "n": 3
+    },
+    "density": {
+     "max": 2.6372999999999996e-05,
+     "median": 2.0499e-05,
+     "min": 2.0416999999999998e-05,
+     "n": 3
+    },
+    "diagonalization": {
+     "max": 0.00049071,
+     "median": 0.0004357489999999999,
+     "min": 0.000425125,
+     "n": 3
+    },
+    "final_rebuild_other": {
+     "max": 6.873999999996994e-06,
+     "median": 6.291999999998021e-06,
+     "min": 5.418000000000089e-06,
+     "n": 3
+    },
+    "grid_construction": {
+     "max": 0.001796083,
+     "median": 0.001563875,
+     "min": 0.001539792,
+     "n": 3
+    },
+    "j": {
+     "max": 0.005330085,
+     "median": 0.005290835000000001,
+     "min": 0.005069956999999999,
+     "n": 3
+    },
+    "k": {
+     "max": 0.005359375,
+     "median": 0.005238081,
+     "min": 0.005039416999999999,
+     "n": 3
+    },
+    "setup": {
+     "max": 0.002130457,
+     "median": 0.0020462500000000003,
+     "min": 0.0020387490000000003,
+     "n": 3
+    },
+    "stability": {
+     "max": 1.038779458,
+     "median": 1.03357325,
+     "min": 1.026159459,
+     "n": 3
+    },
+    "unclassified": {
+     "max": 0.000210084999999971,
+     "median": 0.00018324799999969166,
+     "min": 0.0001793350000001137,
+     "n": 3
+    }
+   },
+   "route": "direct",
+   "scf_mode_resolved": "DIRECT",
+   "scf_wall_s": {
+    "max": 1.7989008750009816,
+    "median": 1.7956983749973006,
+    "min": 1.7571286670063273,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 1.038775459,
+    "median": 1.033570875,
+    "min": 1.026153625,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    4
+   ],
+   "threads_requested": 4,
+   "timing_reconciled": true
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "ri_j_cosx_k",
+   "case_id": "H2O__def2-svp__PBE0__rijcosx",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": false,
+   "converged": true,
+   "cosx_variant": "FITTED",
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "b2a4cfbfb4ef08c7",
+   "dims": {
+    "cosx_stage_points": [
+     3954,
+     9444,
+     23862
+    ],
+    "n_ao": 24,
+    "n_aux": 71,
+    "n_occ": 5,
+    "xc_grid_points": 137700
+   },
+   "energy_eh": -76.27342104655935,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": true,
+   "final_grad_norm_max": 0.003775734866169403,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    13
+   ],
+   "k_build": "cosx",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 226377728,
+     "median": 226246656,
+     "min": 226230272,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": null,
+    "tracked_live_tensor_bytes": null
+   },
+   "method": "PBE0",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.0002734160007094033,
+    "median": 0.00026287500077160075,
+    "min": 0.00022941699717193842,
+    "n": 3
+   },
+   "phase_exclusive_s": {},
+   "route": "rijcosx",
+   "scf_mode_resolved": "not_used",
+   "scf_wall_s": {
+    "max": 3.916519165999489,
+    "median": 3.710490083001787,
+    "min": 3.7002192920044763,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 0.0,
+    "median": 0.0,
+    "min": 0.0,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    1
+   ],
+   "threads_requested": 1,
+   "timing_reconciled": null
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "ri_j_cosx_k",
+   "case_id": "H2O__def2-svp__PBE0__rijcosx",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": true,
+   "converged": true,
+   "cosx_variant": "FITTED",
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "b2a4cfbfb4ef08c7",
+   "dims": {
+    "cosx_stage_points": [
+     3954,
+     9444,
+     23862
+    ],
+    "n_ao": 24,
+    "n_aux": 71,
+    "n_occ": 5,
+    "xc_grid_points": 137700
+   },
+   "energy_eh": -76.27342104655935,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": true,
+   "final_grad_norm_max": 0.003775734866169403,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    13
+   ],
+   "k_build": "cosx",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 230834176,
+     "median": 226459648,
+     "min": 226377728,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": 1429656.0,
+    "tracked_live_tensor_bytes": 694664.0
+   },
+   "method": "PBE0",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.000374084003851749,
+    "median": 0.00035245800245320424,
+    "min": 0.0002850420059985481,
+    "n": 3
+   },
+   "phase_exclusive_s": {
+    "accelerator": {
+     "max": 0.00038479100000000005,
+     "median": 0.0003764610000000001,
+     "min": 0.00037133299999999995,
+     "n": 3
+    },
+    "ao_xc_vxc": {
+     "max": 2.816689794,
+     "median": 2.644514959,
+     "min": 2.579848541,
+     "n": 3
+    },
+    "density": {
+     "max": 3.3623999999999995e-05,
+     "median": 2.6041e-05,
+     "min": 2.5165e-05,
+     "n": 3
+    },
+    "df_construction": {
+     "max": 0.002055209,
+     "median": 0.001977125,
+     "min": 0.0019715,
+     "n": 3
+    },
+    "diagonalization": {
+     "max": 0.000573085,
+     "median": 0.000537418,
+     "min": 0.000527706,
+     "n": 3
+    },
+    "final_rebuild_other": {
+     "max": 1.0791000000093254e-05,
+     "median": 8.500000000022379e-06,
+     "min": 8.290999999938098e-06,
+     "n": 3
+    },
+    "grid_construction": {
+     "max": 0.021634959,
+     "median": 0.021594751000000002,
+     "min": 0.020961375000000004,
+     "n": 3
+    },
+    "j": {
+     "max": 0.000226166,
+     "median": 0.00022308400000000002,
+     "min": 0.000216791,
+     "n": 3
+    },
+    "k": {
+     "max": 1.050499332,
+     "median": 1.046908416,
+     "min": 1.0440338710000001,
+     "n": 3
+    },
+    "k_correction": {
+     "max": 0.063011,
+     "median": 0.062484917,
+     "min": 0.061939292,
+     "n": 3
+    },
+    "setup": {
+     "max": 0.006193373999999998,
+     "median": 0.005963415,
+     "min": 0.00575596,
+     "n": 3
+    },
+    "stability": {
+     "max": 6.458e-06,
+     "median": 6.333e-06,
+     "min": 5.8750000000000005e-06,
+     "n": 3
+    },
+    "unclassified": {
+     "max": 0.0013726250000010154,
+     "median": 0.0013162100000001509,
+     "min": 0.0013077120000004605,
+     "n": 3
+    }
+   },
+   "route": "rijcosx",
+   "scf_mode_resolved": "not_used",
+   "scf_wall_s": {
+    "max": 3.9637812079963624,
+    "median": 3.784388250001939,
+    "min": 3.724474917005864,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 0.0,
+    "median": 0.0,
+    "min": 0.0,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    1
+   ],
+   "threads_requested": 1,
+   "timing_reconciled": true
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "ri_j_cosx_k",
+   "case_id": "H2O__def2-svp__PBE0__rijcosx",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": false,
+   "converged": true,
+   "cosx_variant": "FITTED",
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "b2a4cfbfb4ef08c7",
+   "dims": {
+    "cosx_stage_points": [
+     3954,
+     9444,
+     23862
+    ],
+    "n_ao": 24,
+    "n_aux": 71,
+    "n_occ": 5,
+    "xc_grid_points": 137700
+   },
+   "energy_eh": -76.27342104655929,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": true,
+   "final_grad_norm_max": 0.003775734866163565,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    13
+   ],
+   "k_build": "cosx",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 283852800,
+     "median": 282705920,
+     "min": 280526848,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": null,
+    "tracked_live_tensor_bytes": null
+   },
+   "method": "PBE0",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.00035687500349013135,
+    "median": 0.00032750000536907464,
+    "min": 0.0003150830016238615,
+    "n": 3
+   },
+   "phase_exclusive_s": {},
+   "route": "rijcosx",
+   "scf_mode_resolved": "not_used",
+   "scf_wall_s": {
+    "max": 1.3467195840057684,
+    "median": 1.3227854170036153,
+    "min": 1.3039392920036335,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 0.0,
+    "median": 0.0,
+    "min": 0.0,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    4
+   ],
+   "threads_requested": 4,
+   "timing_reconciled": null
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "ri_j_cosx_k",
+   "case_id": "H2O__def2-svp__PBE0__rijcosx",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": true,
+   "converged": true,
+   "cosx_variant": "FITTED",
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "b2a4cfbfb4ef08c7",
+   "dims": {
+    "cosx_stage_points": [
+     3954,
+     9444,
+     23862
+    ],
+    "n_ao": 24,
+    "n_aux": 71,
+    "n_occ": 5,
+    "xc_grid_points": 137700
+   },
+   "energy_eh": -76.27342104655929,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": true,
+   "final_grad_norm_max": 0.003775734866163565,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    13
+   ],
+   "k_build": "cosx",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 283738112,
+     "median": 281346048,
+     "min": 280625152,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": 1429656.0,
+    "tracked_live_tensor_bytes": 694664.0
+   },
+   "method": "PBE0",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.0004094160030945204,
+    "median": 0.00038633299845969304,
+    "min": 0.00037491599505301565,
+    "n": 3
+   },
+   "phase_exclusive_s": {
+    "accelerator": {
+     "max": 0.000377918,
+     "median": 0.000376542,
+     "min": 0.000372541,
+     "n": 3
+    },
+    "ao_xc_vxc": {
+     "max": 0.955265253,
+     "median": 0.8710741240000001,
+     "min": 0.8566966679999999,
+     "n": 3
+    },
+    "density": {
+     "max": 3.0582999999999995e-05,
+     "median": 2.5333e-05,
+     "min": 2.4458000000000002e-05,
+     "n": 3
+    },
+    "df_construction": {
+     "max": 0.003214292,
+     "median": 0.0031855,
+     "min": 0.002921583,
+     "n": 3
+    },
+    "diagonalization": {
+     "max": 0.000560877,
+     "median": 0.0005375419999999999,
+     "min": 0.000521707,
+     "n": 3
+    },
+    "final_rebuild_other": {
+     "max": 1.5001000000000597e-05,
+     "median": 1.14600000000048e-05,
+     "min": 1.079099999999611e-05,
+     "n": 3
+    },
+    "grid_construction": {
+     "max": 0.011903500000000001,
+     "median": 0.010381167,
+     "min": 0.010038875,
+     "n": 3
+    },
+    "j": {
+     "max": 0.00024758399999999997,
+     "median": 0.00023266600000000003,
+     "min": 0.00022545899999999996,
+     "n": 3
+    },
+    "k": {
+     "max": 0.30956245900000007,
+     "median": 0.28321129,
+     "min": 0.27618316600000004,
+     "n": 3
+    },
+    "k_correction": {
+     "max": 0.07552341700000001,
+     "median": 0.067821625,
+     "min": 0.065851917,
+     "n": 3
+    },
+    "setup": {
+     "max": 0.005293083,
+     "median": 0.005107124,
+     "min": 0.004927251,
+     "n": 3
+    },
+    "stability": {
+     "max": 7.334e-06,
+     "median": 7.25e-06,
+     "min": 7.167e-06,
+     "n": 3
+    },
+    "unclassified": {
+     "max": 0.0007635780000001535,
+     "median": 0.0007142889999998125,
+     "min": 0.0007047920000002872,
+     "n": 3
+    }
+   },
+   "route": "rijcosx",
+   "scf_mode_resolved": "not_used",
+   "scf_wall_s": {
+    "max": 1.365073624998331,
+    "median": 1.2354710420040647,
+    "min": 1.2301026670029387,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 0.0,
+    "median": 0.0,
+    "min": 0.0,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    4
+   ],
+   "threads_requested": 4,
+   "timing_reconciled": true
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "conventional_four_index",
+   "case_id": "H2O__def2-svp__PBE__auto",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": false,
+   "converged": true,
+   "cosx_variant": null,
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "962872eb6c1ec3db",
+   "dims": {
+    "cosx_stage_points": null,
+    "n_ao": 24,
+    "n_aux": null,
+    "n_occ": 5,
+    "xc_grid_points": 137700
+   },
+   "energy_eh": -76.27096769663967,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": false,
+   "final_grad_norm_max": 2.638114192895812e-07,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    10
+   ],
+   "k_build": "not_applicable",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 262750208,
+     "median": 256720896,
+     "min": 256573440,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": null,
+    "tracked_live_tensor_bytes": null
+   },
+   "method": "PBE",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.00031770799978403375,
+    "median": 0.0002825419942382723,
+    "min": 0.00024783299886621535,
+    "n": 3
+   },
+   "phase_exclusive_s": {},
+   "route": "auto",
+   "scf_mode_resolved": "CONVENTIONAL",
+   "scf_wall_s": {
+    "max": 4.3920341250050114,
+    "median": 4.386248374998104,
+    "min": 4.382682583003771,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 2.513186208,
+    "median": 2.511088792,
+    "min": 2.504130333,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    1
+   ],
+   "threads_requested": 1,
+   "timing_reconciled": null
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "conventional_four_index",
+   "case_id": "H2O__def2-svp__PBE__auto",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": true,
+   "converged": true,
+   "cosx_variant": null,
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "962872eb6c1ec3db",
+   "dims": {
+    "cosx_stage_points": null,
+    "n_ao": 24,
+    "n_aux": null,
+    "n_occ": 5,
+    "xc_grid_points": 137700
+   },
+   "energy_eh": -76.27096769663967,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": false,
+   "final_grad_norm_max": 2.638114192895812e-07,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    10
+   ],
+   "k_build": "not_applicable",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 256770048,
+     "median": 256720896,
+     "min": 256573440,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": null,
+    "tracked_live_tensor_bytes": null
+   },
+   "method": "PBE",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.0003222919986001216,
+    "median": 0.00027300000510877,
+    "min": 0.0002573329984443262,
+    "n": 3
+   },
+   "phase_exclusive_s": {
+    "accelerator": {
+     "max": 0.000799875,
+     "median": 0.0007751660000000001,
+     "min": 0.000767083,
+     "n": 3
+    },
+    "ao_xc_vxc": {
+     "max": 2.022549584,
+     "median": 1.8721850400000002,
+     "min": 1.868225875,
+     "n": 3
+    },
+    "density": {
+     "max": 3.0917e-05,
+     "median": 1.954e-05,
+     "min": 1.7918e-05,
+     "n": 3
+    },
+    "diagonalization": {
+     "max": 0.0003958740000000001,
+     "median": 0.0003877500000000001,
+     "min": 0.00038691799999999993,
+     "n": 3
+    },
+    "final_rebuild_other": {
+     "max": 7.083999999990542e-06,
+     "median": 6.167000000001366e-06,
+     "min": 4.374000000001432e-06,
+     "n": 3
+    },
+    "grid_construction": {
+     "max": 0.004722333,
+     "median": 0.004444833,
+     "min": 0.004308833,
+     "n": 3
+    },
+    "j": {
+     "max": 0.002515124,
+     "median": 0.0024459140000000004,
+     "min": 0.0024408750000000003,
+     "n": 3
+    },
+    "setup": {
+     "max": 0.0032653769999999994,
+     "median": 0.003075208,
+     "min": 0.003041751,
+     "n": 3
+    },
+    "stability": {
+     "max": 2.52446775,
+     "median": 2.522038541,
+     "min": 2.521068833,
+     "n": 3
+    },
+    "unclassified": {
+     "max": 0.00014654099999944492,
+     "median": 0.00014266600000034657,
+     "min": 0.00014221399999936324,
+     "n": 3
+    }
+   },
+   "route": "auto",
+   "scf_mode_resolved": "CONVENTIONAL",
+   "scf_wall_s": {
+    "max": 4.556264500002726,
+    "median": 4.406214916998579,
+    "min": 4.404726459004451,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 2.524464625,
+    "median": 2.522034666,
+    "min": 2.521066083,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    1
+   ],
+   "threads_requested": 1,
+   "timing_reconciled": true
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "conventional_four_index",
+   "case_id": "H2O__def2-svp__PBE__auto",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": false,
+   "converged": true,
+   "cosx_variant": null,
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "962872eb6c1ec3db",
+   "dims": {
+    "cosx_stage_points": null,
+    "n_ao": 24,
+    "n_aux": null,
+    "n_occ": 5,
+    "xc_grid_points": 137700
+   },
+   "energy_eh": -76.27096769663967,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": false,
+   "final_grad_norm_max": 2.638114192895812e-07,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    10
+   ],
+   "k_build": "not_applicable",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 294567936,
+     "median": 293470208,
+     "min": 293027840,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": null,
+    "tracked_live_tensor_bytes": null
+   },
+   "method": "PBE",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.00031283300631912425,
+    "median": 0.00027541699819266796,
+    "min": 0.00027350000164005905,
+    "n": 3
+   },
+   "phase_exclusive_s": {},
+   "route": "auto",
+   "scf_mode_resolved": "CONVENTIONAL",
+   "scf_wall_s": {
+    "max": 1.8506386669978383,
+    "median": 1.6409626250024303,
+    "min": 1.5403217089988175,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 1.119245333,
+    "median": 0.978075875,
+    "min": 0.910224209,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    4
+   ],
+   "threads_requested": 4,
+   "timing_reconciled": null
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "conventional_four_index",
+   "case_id": "H2O__def2-svp__PBE__auto",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": true,
+   "converged": true,
+   "cosx_variant": null,
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "962872eb6c1ec3db",
+   "dims": {
+    "cosx_stage_points": null,
+    "n_ao": 24,
+    "n_aux": null,
+    "n_occ": 5,
+    "xc_grid_points": 137700
+   },
+   "energy_eh": -76.27096769663967,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": false,
+   "final_grad_norm_max": 2.638114192895812e-07,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    10
+   ],
+   "k_build": "not_applicable",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 296747008,
+     "median": 294371328,
+     "min": 293797888,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": null,
+    "tracked_live_tensor_bytes": null
+   },
+   "method": "PBE",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.00041937499918276444,
+    "median": 0.0004036250029457733,
+    "min": 0.0003661250011646189,
+    "n": 3
+   },
+   "phase_exclusive_s": {
+    "accelerator": {
+     "max": 0.0009150399999999999,
+     "median": 0.000859375,
+     "min": 0.000782459,
+     "n": 3
+    },
+    "ao_xc_vxc": {
+     "max": 0.649385291,
+     "median": 0.644039461,
+     "min": 0.629187918,
+     "n": 3
+    },
+    "density": {
+     "max": 2.0416000000000002e-05,
+     "median": 1.9081999999999998e-05,
+     "min": 1.5417e-05,
+     "n": 3
+    },
+    "diagonalization": {
+     "max": 0.00044645800000000005,
+     "median": 0.00037708299999999995,
+     "min": 0.000365459,
+     "n": 3
+    },
+    "final_rebuild_other": {
+     "max": 6.789999999999574e-06,
+     "median": 5.207999999999602e-06,
+     "min": 4.999000000005527e-06,
+     "n": 3
+    },
+    "grid_construction": {
+     "max": 0.001764833,
+     "median": 0.001633917,
+     "min": 0.001591084,
+     "n": 3
+    },
+    "j": {
+     "max": 0.000870127,
+     "median": 0.000789334,
+     "min": 0.0007741250000000001,
+     "n": 3
+    },
+    "setup": {
+     "max": 0.0026797089999999997,
+     "median": 0.002638541,
+     "min": 0.002634541,
+     "n": 3
+    },
+    "stability": {
+     "max": 1.047603667,
+     "median": 0.946461542,
+     "min": 0.894504625,
+     "n": 3
+    },
+    "unclassified": {
+     "max": 0.0002072920000002476,
+     "median": 0.00019645600000006702,
+     "min": 0.0001556249999996595,
+     "n": 3
+    }
+   },
+   "route": "auto",
+   "scf_mode_resolved": "CONVENTIONAL",
+   "scf_wall_s": {
+    "max": 1.6845549589997972,
+    "median": 1.5977341249963501,
+    "min": 1.551044500003627,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 1.047598166,
+    "median": 0.946455292,
+    "min": 0.894500833,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    4
+   ],
+   "threads_requested": 4,
+   "timing_reconciled": true
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "df_j_only",
+   "case_id": "H2O__def2-svp__PBE__df",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": false,
+   "converged": true,
+   "cosx_variant": null,
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "da3541a9a975da54",
+   "dims": {
+    "cosx_stage_points": null,
+    "n_ao": 24,
+    "n_aux": 113,
+    "n_occ": 5,
+    "xc_grid_points": 137700
+   },
+   "energy_eh": -76.2709944629809,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": false,
+   "final_grad_norm_max": 2.620935492764924e-07,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    10
+   ],
+   "k_build": "not_applicable",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 270778368,
+     "median": 260063232,
+     "min": 259932160,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": null,
+    "tracked_live_tensor_bytes": null
+   },
+   "method": "PBE",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.00027016700187232345,
+    "median": 0.0002510419944883324,
+    "min": 0.0002316249956493266,
+    "n": 3
+   },
+   "phase_exclusive_s": {},
+   "route": "df",
+   "scf_mode_resolved": "not_used",
+   "scf_wall_s": {
+    "max": 4.547688458005723,
+    "median": 4.522507083005621,
+    "min": 4.508192207998945,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 2.547622708,
+    "median": 2.526553709,
+    "min": 2.500997792,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    1
+   ],
+   "threads_requested": 1,
+   "timing_reconciled": null
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "df_j_only",
+   "case_id": "H2O__def2-svp__PBE__df",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": true,
+   "converged": true,
+   "cosx_variant": null,
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "da3541a9a975da54",
+   "dims": {
+    "cosx_stage_points": null,
+    "n_ao": 24,
+    "n_aux": 113,
+    "n_occ": 5,
+    "xc_grid_points": 137700
+   },
+   "energy_eh": -76.2709944629809,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": false,
+   "final_grad_norm_max": 2.620935492764924e-07,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    10
+   ],
+   "k_build": "not_applicable",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 261357568,
+     "median": 260177920,
+     "min": 260128768,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": 2389272.0,
+    "tracked_live_tensor_bytes": 1143560.0
+   },
+   "method": "PBE",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.0003311670006951317,
+    "median": 0.00029779099713778123,
+    "min": 0.00028237499645911157,
+    "n": 3
+   },
+   "phase_exclusive_s": {
+    "accelerator": {
+     "max": 0.000802708,
+     "median": 0.0007684159999999998,
+     "min": 0.000751916,
+     "n": 3
+    },
+    "ao_xc_vxc": {
+     "max": 1.9262840419999998,
+     "median": 1.9102187920000002,
+     "min": 1.8949489990000001,
+     "n": 3
+    },
+    "density": {
+     "max": 1.996e-05,
+     "median": 1.9874000000000003e-05,
+     "min": 1.8458999999999994e-05,
+     "n": 3
+    },
+    "df_construction": {
+     "max": 0.001402708,
+     "median": 0.001330084,
+     "min": 0.001305708,
+     "n": 3
+    },
+    "diagonalization": {
+     "max": 0.00044662500000000003,
+     "median": 0.00040733200000000005,
+     "min": 0.000396875,
+     "n": 3
+    },
+    "final_rebuild_other": {
+     "max": 5.459000000013203e-06,
+     "median": 5.2069999999793115e-06,
+     "min": 4.539999999969568e-06,
+     "n": 3
+    },
+    "grid_construction": {
+     "max": 0.0047045,
+     "median": 0.004426375,
+     "min": 0.004397458,
+     "n": 3
+    },
+    "j": {
+     "max": 0.0006164150000000001,
+     "median": 0.0006004630000000001,
+     "min": 0.000593916,
+     "n": 3
+    },
+    "setup": {
+     "max": 0.0038759170000000004,
+     "median": 0.0037199579999999998,
+     "min": 0.003501331,
+     "n": 3
+    },
+    "stability": {
+     "max": 2.516210707,
+     "median": 2.511749038,
+     "min": 2.5038643769999998,
+     "n": 3
+    },
+    "unclassified": {
+     "max": 0.00015767000000010967,
+     "median": 0.00015687500000094445,
+     "min": 0.00015162900000031954,
+     "n": 3
+    }
+   },
+   "route": "df",
+   "scf_mode_resolved": "not_used",
+   "scf_wall_s": {
+    "max": 4.453182666999055,
+    "median": 4.428414291993249,
+    "min": 4.425797124997189,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 2.516559584,
+    "median": 2.512112,
+    "min": 2.504243167,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    1
+   ],
+   "threads_requested": 1,
+   "timing_reconciled": true
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "df_j_only",
+   "case_id": "H2O__def2-svp__PBE__df",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": false,
+   "converged": true,
+   "cosx_variant": null,
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "da3541a9a975da54",
+   "dims": {
+    "cosx_stage_points": null,
+    "n_ao": 24,
+    "n_aux": 113,
+    "n_occ": 5,
+    "xc_grid_points": 137700
+   },
+   "energy_eh": -76.2709944629809,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": false,
+   "final_grad_norm_max": 2.620935492764924e-07,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    10
+   ],
+   "k_build": "not_applicable",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 298500096,
+     "median": 294240256,
+     "min": 293158912,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": null,
+    "tracked_live_tensor_bytes": null
+   },
+   "method": "PBE",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.00031633400067221373,
+    "median": 0.00031454100098926574,
+    "min": 0.00027929200587095693,
+    "n": 3
+   },
+   "phase_exclusive_s": {},
+   "route": "df",
+   "scf_mode_resolved": "not_used",
+   "scf_wall_s": {
+    "max": 1.8426408749946859,
+    "median": 1.8032383329991717,
+    "min": 1.597783667006297,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 1.0921785,
+    "median": 1.086442875,
+    "min": 0.927911458,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    4
+   ],
+   "threads_requested": 4,
+   "timing_reconciled": null
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "df_j_only",
+   "case_id": "H2O__def2-svp__PBE__df",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": true,
+   "converged": true,
+   "cosx_variant": null,
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "da3541a9a975da54",
+   "dims": {
+    "cosx_stage_points": null,
+    "n_ao": 24,
+    "n_aux": 113,
+    "n_occ": 5,
+    "xc_grid_points": 137700
+   },
+   "energy_eh": -76.2709944629809,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": false,
+   "final_grad_norm_max": 2.620935492764924e-07,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    10
+   ],
+   "k_build": "not_applicable",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 300728320,
+     "median": 297648128,
+     "min": 289128448,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": 2389272.0,
+    "tracked_live_tensor_bytes": 1143560.0
+   },
+   "method": "PBE",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.00038329199742292985,
+    "median": 0.0003680829977383837,
+    "min": 0.00032425000244984403,
+    "n": 3
+   },
+   "phase_exclusive_s": {
+    "accelerator": {
+     "max": 0.0009112930000000001,
+     "median": 0.000816083,
+     "min": 0.000795542,
+     "n": 3
+    },
+    "ao_xc_vxc": {
+     "max": 0.7296874170000001,
+     "median": 0.642836082,
+     "min": 0.590192041,
+     "n": 3
+    },
+    "density": {
+     "max": 1.9332999999999996e-05,
+     "median": 1.8794e-05,
+     "min": 1.8794e-05,
+     "n": 3
+    },
+    "df_construction": {
+     "max": 0.001368667,
+     "median": 0.001295625,
+     "min": 0.001225458,
+     "n": 3
+    },
+    "diagonalization": {
+     "max": 0.000401459,
+     "median": 0.00039754300000000004,
+     "min": 0.000376791,
+     "n": 3
+    },
+    "final_rebuild_other": {
+     "max": 8.834999999998705e-06,
+     "median": 8.459000000002326e-06,
+     "min": 5.87600000000188e-06,
+     "n": 3
+    },
+    "grid_construction": {
+     "max": 0.001646958,
+     "median": 0.001557625,
+     "min": 0.001547208,
+     "n": 3
+    },
+    "j": {
+     "max": 0.000678708,
+     "median": 0.0006265,
+     "min": 0.000622376,
+     "n": 3
+    },
+    "setup": {
+     "max": 0.0038701269999999997,
+     "median": 0.0035679990000000005,
+     "min": 0.0035633749999999997,
+     "n": 3
+    },
+    "stability": {
+     "max": 1.0188476670000002,
+     "median": 0.992703625,
+     "min": 0.898793081,
+     "n": 3
+    },
+    "unclassified": {
+     "max": 0.00019424799999989695,
+     "median": 0.00017649099999972329,
+     "min": 0.00016617000000018756,
+     "n": 3
+    }
+   },
+   "route": "df",
+   "scf_mode_resolved": "not_used",
+   "scf_wall_s": {
+    "max": 1.7610094580013538,
+    "median": 1.6471989169949666,
+    "min": 1.500586458001635,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 1.019262167,
+    "median": 0.993085209,
+    "min": 0.899170708,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    4
+   ],
+   "threads_requested": 4,
+   "timing_reconciled": true
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "direct",
+   "case_id": "H2O__def2-svp__PBE__direct",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": false,
+   "converged": true,
+   "cosx_variant": null,
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "66689918f1f791fe",
+   "dims": {
+    "cosx_stage_points": null,
+    "n_ao": 24,
+    "n_aux": null,
+    "n_occ": 5,
+    "xc_grid_points": 137700
+   },
+   "energy_eh": -76.2709676966397,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": false,
+   "final_grad_norm_max": 6.857435563232602e-09,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    13
+   ],
+   "k_build": "not_applicable",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 260227072,
+     "median": 259457024,
+     "min": 256507904,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": null,
+    "tracked_live_tensor_bytes": null
+   },
+   "method": "PBE",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.00027366600261302665,
+    "median": 0.0002572499943198636,
+    "min": 0.00025445899518672377,
+    "n": 3
+   },
+   "phase_exclusive_s": {},
+   "route": "direct",
+   "scf_mode_resolved": "DIRECT",
+   "scf_wall_s": {
+    "max": 5.121490792000259,
+    "median": 5.057305249996716,
+    "min": 5.0328553750005085,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 2.539253334,
+    "median": 2.488474583,
+    "min": 2.466341542,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    1
+   ],
+   "threads_requested": 1,
+   "timing_reconciled": null
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "direct",
+   "case_id": "H2O__def2-svp__PBE__direct",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": true,
+   "converged": true,
+   "cosx_variant": null,
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "66689918f1f791fe",
+   "dims": {
+    "cosx_stage_points": null,
+    "n_ao": 24,
+    "n_aux": null,
+    "n_occ": 5,
+    "xc_grid_points": 137700
+   },
+   "energy_eh": -76.2709676966397,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": false,
+   "final_grad_norm_max": 6.857435563232602e-09,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    13
+   ],
+   "k_build": "not_applicable",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 262586368,
+     "median": 256638976,
+     "min": 256425984,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": null,
+    "tracked_live_tensor_bytes": null
+   },
+   "method": "PBE",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.0003059590017073788,
+    "median": 0.00030174999847076833,
+    "min": 0.00028412500250851735,
+    "n": 3
+   },
+   "phase_exclusive_s": {
+    "accelerator": {
+     "max": 0.00034966800000000003,
+     "median": 0.00034504199999999994,
+     "min": 0.00030712599999999996,
+     "n": 3
+    },
+    "ao_xc_vxc": {
+     "max": 2.6254309969999996,
+     "median": 2.463442041,
+     "min": 2.394522956,
+     "n": 3
+    },
+    "density": {
+     "max": 2.5956e-05,
+     "median": 2.5248e-05,
+     "min": 2.0456000000000002e-05,
+     "n": 3
+    },
+    "diagonalization": {
+     "max": 0.000554667,
+     "median": 0.000535294,
+     "min": 0.00046429299999999995,
+     "n": 3
+    },
+    "final_rebuild_other": {
+     "max": 5.541000000025553e-06,
+     "median": 5.540999999997798e-06,
+     "min": 4.750000000025567e-06,
+     "n": 3
+    },
+    "grid_construction": {
+     "max": 0.00496,
+     "median": 0.004886458,
+     "min": 0.004764958,
+     "n": 3
+    },
+    "j": {
+     "max": 0.017437126999999997,
+     "median": 0.017278959,
+     "min": 0.016822168000000002,
+     "n": 3
+    },
+    "setup": {
+     "max": 0.001815165,
+     "median": 0.00180696,
+     "min": 0.0017835830000000007,
+     "n": 3
+    },
+    "stability": {
+     "max": 2.546002083,
+     "median": 2.523440833,
+     "min": 2.507995083,
+     "n": 3
+    },
+    "unclassified": {
+     "max": 0.00019033499999920878,
+     "median": 0.00018566799999941708,
+     "min": 0.0001646270000001948,
+     "n": 3
+    }
+   },
+   "route": "direct",
+   "scf_mode_resolved": "DIRECT",
+   "scf_wall_s": {
+    "max": 5.159330000002228,
+    "median": 5.013040582998656,
+    "min": 4.965687125004479,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 2.545999375,
+    "median": 2.523437458,
+    "min": 2.507992,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    1
+   ],
+   "threads_requested": 1,
+   "timing_reconciled": true
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "direct",
+   "case_id": "H2O__def2-svp__PBE__direct",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": false,
+   "converged": true,
+   "cosx_variant": null,
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "66689918f1f791fe",
+   "dims": {
+    "cosx_stage_points": null,
+    "n_ao": 24,
+    "n_aux": null,
+    "n_occ": 5,
+    "xc_grid_points": 137700
+   },
+   "energy_eh": -76.2709676966397,
+   "energy_spread_eh": 8.526512829121202e-14,
+   "fail_reasons": [],
+   "final_grad_above_recipe": false,
+   "final_grad_norm_max": 6.857502494314165e-09,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    13
+   ],
+   "k_build": "not_applicable",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 309444608,
+     "median": 297697280,
+     "min": 294141952,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": null,
+    "tracked_live_tensor_bytes": null
+   },
+   "method": "PBE",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.0003067919969907962,
+    "median": 0.00029670900403289124,
+    "min": 0.00029208399791968986,
+    "n": 3
+   },
+   "phase_exclusive_s": {},
+   "route": "direct",
+   "scf_mode_resolved": "DIRECT",
+   "scf_wall_s": {
+    "max": 2.173208832995442,
+    "median": 1.9016714589961339,
+    "min": 1.799606667002081,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 1.135886667,
+    "median": 1.029012958,
+    "min": 0.967801417,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    4
+   ],
+   "threads_requested": 4,
+   "timing_reconciled": null
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "direct",
+   "case_id": "H2O__def2-svp__PBE__direct",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": true,
+   "converged": true,
+   "cosx_variant": null,
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "66689918f1f791fe",
+   "dims": {
+    "cosx_stage_points": null,
+    "n_ao": 24,
+    "n_aux": null,
+    "n_occ": 5,
+    "xc_grid_points": 137700
+   },
+   "energy_eh": -76.27096769663973,
+   "energy_spread_eh": 2.842170943040401e-14,
+   "fail_reasons": [],
+   "final_grad_above_recipe": false,
+   "final_grad_norm_max": 6.8574787736067745e-09,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    13
+   ],
+   "k_build": "not_applicable",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 295616512,
+     "median": 294420480,
+     "min": 293371904,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": null,
+    "tracked_live_tensor_bytes": null
+   },
+   "method": "PBE",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.0004183750061201863,
+    "median": 0.0003932920008082874,
+    "min": 0.00037304199940990657,
+    "n": 3
+   },
+   "phase_exclusive_s": {
+    "accelerator": {
+     "max": 0.00038429099999999993,
+     "median": 0.000356332,
+     "min": 0.000347625,
+     "n": 3
+    },
+    "ao_xc_vxc": {
+     "max": 0.9556088729999999,
+     "median": 0.8281589149999999,
+     "min": 0.777177459,
+     "n": 3
+    },
+    "density": {
+     "max": 2.6458e-05,
+     "median": 2.5376e-05,
+     "min": 2.5207e-05,
+     "n": 3
+    },
+    "diagonalization": {
+     "max": 0.00056254,
+     "median": 0.000509085,
+     "min": 0.000486124,
+     "n": 3
+    },
+    "final_rebuild_other": {
+     "max": 1.0458999999997387e-05,
+     "median": 9.126000000012069e-06,
+     "min": 6.499999999999562e-06,
+     "n": 3
+    },
+    "grid_construction": {
+     "max": 0.00173,
+     "median": 0.001728375,
+     "min": 0.001539334,
+     "n": 3
+    },
+    "j": {
+     "max": 0.006143916,
+     "median": 0.005778251,
+     "min": 0.005600709000000001,
+     "n": 3
+    },
+    "setup": {
+     "max": 0.0022033339999999995,
+     "median": 0.002198709,
+     "min": 0.0020527080000000003,
+     "n": 3
+    },
+    "stability": {
+     "max": 1.035809,
+     "median": 1.033427208,
+     "min": 0.967886167,
+     "n": 3
+    },
+    "unclassified": {
+     "max": 0.00021612700000028795,
+     "median": 0.00021095899999989953,
+     "min": 0.00019641600000008808,
+     "n": 3
+    }
+   },
+   "route": "direct",
+   "scf_mode_resolved": "DIRECT",
+   "scf_wall_s": {
+    "max": 2.0035118750020047,
+    "median": 1.8218104580009822,
+    "min": 1.8075272080022842,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 1.035805542,
+    "median": 1.033421667,
+    "min": 0.967882667,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    4
+   ],
+   "threads_requested": 4,
+   "timing_reconciled": true
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "ri_j_only",
+   "case_id": "H2O__def2-svp__PBE__rijcosx",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": false,
+   "converged": true,
+   "cosx_variant": "FITTED",
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "4357978bc756537d",
+   "dims": {
+    "cosx_stage_points": [
+     3954,
+     9444,
+     23862
+    ],
+    "n_ao": 24,
+    "n_aux": 71,
+    "n_occ": 5,
+    "xc_grid_points": 137700
+   },
+   "energy_eh": -76.27105449334047,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": false,
+   "final_grad_norm_max": 7.899031095056928e-09,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    12
+   ],
+   "k_build": "not_applicable",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 284098560,
+     "median": 274694144,
+     "min": 274661376,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": null,
+    "tracked_live_tensor_bytes": null
+   },
+   "method": "PBE",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.00027887499891221523,
+    "median": 0.0002537500040489249,
+    "min": 0.00024883400328690186,
+    "n": 3
+   },
+   "phase_exclusive_s": {},
+   "route": "rijcosx",
+   "scf_mode_resolved": "not_used",
+   "scf_wall_s": {
+    "max": 7.80132516699814,
+    "median": 7.665233667001303,
+    "min": 7.534585000001243,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 0.0,
+    "median": 0.0,
+    "min": 0.0,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    1
+   ],
+   "threads_requested": 1,
+   "timing_reconciled": null
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "ri_j_only",
+   "case_id": "H2O__def2-svp__PBE__rijcosx",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": true,
+   "converged": true,
+   "cosx_variant": "FITTED",
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "4357978bc756537d",
+   "dims": {
+    "cosx_stage_points": [
+     3954,
+     9444,
+     23862
+    ],
+    "n_ao": 24,
+    "n_aux": 71,
+    "n_occ": 5,
+    "xc_grid_points": 137700
+   },
+   "energy_eh": -76.27105449334047,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": false,
+   "final_grad_norm_max": 7.899031095056928e-09,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    12
+   ],
+   "k_build": "not_applicable",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 274923520,
+     "median": 274808832,
+     "min": 274792448,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": 1429656.0,
+    "tracked_live_tensor_bytes": 694664.0
+   },
+   "method": "PBE",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.00034241699904669076,
+    "median": 0.0002926660017692484,
+    "min": 0.0002883339984691702,
+    "n": 3
+   },
+   "phase_exclusive_s": {
+    "accelerator": {
+     "max": 0.000494832,
+     "median": 0.000448168,
+     "min": 0.00043824900000000004,
+     "n": 3
+    },
+    "ao_xc_vxc": {
+     "max": 2.6987398320000002,
+     "median": 2.4094719989999995,
+     "min": 2.3783419979999993,
+     "n": 3
+    },
+    "density": {
+     "max": 2.5666e-05,
+     "median": 2.2040000000000002e-05,
+     "min": 2.0084000000000003e-05,
+     "n": 3
+    },
+    "df_construction": {
+     "max": 0.001952791,
+     "median": 0.001861583,
+     "min": 0.001807125,
+     "n": 3
+    },
+    "diagonalization": {
+     "max": 0.000529292,
+     "median": 0.000519498,
+     "min": 0.000499834,
+     "n": 3
+    },
+    "final_rebuild_other": {
+     "max": 1.0251999999988382e-05,
+     "median": 9.291999999966327e-06,
+     "min": 8.917000000024933e-06,
+     "n": 3
+    },
+    "grid_construction": {
+     "max": 0.021590666,
+     "median": 0.021259209,
+     "min": 0.020892583,
+     "n": 3
+    },
+    "j": {
+     "max": 0.0007379150000000001,
+     "median": 0.000694086,
+     "min": 0.000690833,
+     "n": 3
+    },
+    "setup": {
+     "max": 0.006182834000000001,
+     "median": 0.00569675,
+     "min": 0.0055956680000000016,
+     "n": 3
+    },
+    "stability": {
+     "max": 5.089439957,
+     "median": 5.015064457,
+     "min": 4.963257125,
+     "n": 3
+    },
+    "unclassified": {
+     "max": 0.001339458000002125,
+     "median": 0.001271752999999265,
+     "min": 0.0012653799999977622,
+     "n": 3
+    }
+   },
+   "route": "rijcosx",
+   "scf_mode_resolved": "not_used",
+   "scf_wall_s": {
+    "max": 7.748949458000425,
+    "median": 7.50198874999478,
+    "min": 7.40622595899913,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 0.0,
+    "median": 0.0,
+    "min": 0.0,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    1
+   ],
+   "threads_requested": 1,
+   "timing_reconciled": true
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "ri_j_only",
+   "case_id": "H2O__def2-svp__PBE__rijcosx",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": false,
+   "converged": true,
+   "cosx_variant": "FITTED",
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "4357978bc756537d",
+   "dims": {
+    "cosx_stage_points": [
+     3954,
+     9444,
+     23862
+    ],
+    "n_ao": 24,
+    "n_aux": 71,
+    "n_occ": 5,
+    "xc_grid_points": 137700
+   },
+   "energy_eh": -76.27105449334047,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": false,
+   "final_grad_norm_max": 7.899031095056928e-09,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    12
+   ],
+   "k_build": "not_applicable",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 341213184,
+     "median": 341147648,
+     "min": 340295680,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": null,
+    "tracked_live_tensor_bytes": null
+   },
+   "method": "PBE",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.0029334170030779205,
+    "median": 0.0003041669988306239,
+    "min": 0.000280708001810126,
+    "n": 3
+   },
+   "phase_exclusive_s": {},
+   "route": "rijcosx",
+   "scf_mode_resolved": "not_used",
+   "scf_wall_s": {
+    "max": 3.273485208002967,
+    "median": 3.070891165996727,
+    "min": 2.851791499997489,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 0.0,
+    "median": 0.0,
+    "min": 0.0,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    4
+   ],
+   "threads_requested": 4,
+   "timing_reconciled": null
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "ri_j_only",
+   "case_id": "H2O__def2-svp__PBE__rijcosx",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": true,
+   "converged": true,
+   "cosx_variant": "FITTED",
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "4357978bc756537d",
+   "dims": {
+    "cosx_stage_points": [
+     3954,
+     9444,
+     23862
+    ],
+    "n_ao": 24,
+    "n_aux": 71,
+    "n_occ": 5,
+    "xc_grid_points": 137700
+   },
+   "energy_eh": -76.27105449334047,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": false,
+   "final_grad_norm_max": 7.899031095056928e-09,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    12
+   ],
+   "k_build": "not_applicable",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 368640000,
+     "median": 346537984,
+     "min": 338280448,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": 1429656.0,
+    "tracked_live_tensor_bytes": 694664.0
+   },
+   "method": "PBE",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.00041254099778598174,
+    "median": 0.0003879159994539805,
+    "min": 0.000385750005079899,
+    "n": 3
+   },
+   "phase_exclusive_s": {
+    "accelerator": {
+     "max": 0.0005501249999999999,
+     "median": 0.0005499610000000002,
+     "min": 0.0004899570000000001,
+     "n": 3
+    },
+    "ao_xc_vxc": {
+     "max": 0.993979251,
+     "median": 0.9210077900000001,
+     "min": 0.8727104159999999,
+     "n": 3
+    },
+    "density": {
+     "max": 2.7042000000000003e-05,
+     "median": 2.6918000000000002e-05,
+     "min": 2.4999e-05,
+     "n": 3
+    },
+    "df_construction": {
+     "max": 0.003461959,
+     "median": 0.003176959,
+     "min": 0.003106333,
+     "n": 3
+    },
+    "diagonalization": {
+     "max": 0.000577913,
+     "median": 0.0005743719999999999,
+     "min": 0.00049825,
+     "n": 3
+    },
+    "final_rebuild_other": {
+     "max": 1.6916999999977422e-05,
+     "median": 1.3165999999995015e-05,
+     "min": 1.0457000000019256e-05,
+     "n": 3
+    },
+    "grid_construction": {
+     "max": 0.012709459,
+     "median": 0.012616916999999998,
+     "min": 0.012566334,
+     "n": 3
+    },
+    "j": {
+     "max": 0.000842291,
+     "median": 0.0008302489999999999,
+     "min": 0.00076704,
+     "n": 3
+    },
+    "setup": {
+     "max": 0.005372624000000001,
+     "median": 0.004994415,
+     "min": 0.004953708,
+     "n": 3
+    },
+    "stability": {
+     "max": 2.450128502,
+     "median": 2.087260708,
+     "min": 1.8965841270000001,
+     "n": 3
+    },
+    "unclassified": {
+     "max": 0.0008587069999999031,
+     "median": 0.0008410070000000047,
+     "min": 0.0007801269999996308,
+     "n": 3
+    }
+   },
+   "route": "rijcosx",
+   "scf_mode_resolved": "not_used",
+   "scf_wall_s": {
+    "max": 3.470957500001532,
+    "median": 3.033952624995436,
+    "min": 2.7948617079964606,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 0.0,
+    "median": 0.0,
+    "min": 0.0,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    4
+   ],
+   "threads_requested": 4,
+   "timing_reconciled": true
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "conventional_four_index",
+   "case_id": "H2O__def2-svp__RHF__auto",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": false,
+   "converged": true,
+   "cosx_variant": null,
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "5d8161430abeef52",
+   "dims": {
+    "cosx_stage_points": null,
+    "n_ao": 24,
+    "n_aux": null,
+    "n_occ": 5,
+    "xc_grid_points": null
+   },
+   "energy_eh": -75.95475970397115,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": false,
+   "final_grad_norm_max": 1.3600464964719085e-07,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    11
+   ],
+   "k_build": "exact_or_df",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 181092352,
+     "median": 180961280,
+     "min": 180879360,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": null,
+    "tracked_live_tensor_bytes": null
+   },
+   "method": "RHF",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.00032416699832538143,
+    "median": 0.0002761669966275804,
+    "min": 0.0002584169997135177,
+    "n": 3
+   },
+   "phase_exclusive_s": {},
+   "route": "auto",
+   "scf_mode_resolved": "CONVENTIONAL",
+   "scf_wall_s": {
+    "max": 0.0249327909987187,
+    "median": 0.024731292003707495,
+    "min": 0.02434391700080596,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 0.016752333,
+    "median": 0.016710417,
+    "min": 0.016346208,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    1
+   ],
+   "threads_requested": 1,
+   "timing_reconciled": null
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "conventional_four_index",
+   "case_id": "H2O__def2-svp__RHF__auto",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": true,
+   "converged": true,
+   "cosx_variant": null,
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "5d8161430abeef52",
+   "dims": {
+    "cosx_stage_points": null,
+    "n_ao": 24,
+    "n_aux": null,
+    "n_occ": 5,
+    "xc_grid_points": null
+   },
+   "energy_eh": -75.95475970397115,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": false,
+   "final_grad_norm_max": 1.3600464964719085e-07,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    11
+   ],
+   "k_build": "exact_or_df",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 181174272,
+     "median": 180944896,
+     "min": 180764672,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": null,
+    "tracked_live_tensor_bytes": null
+   },
+   "method": "RHF",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.00033841699769254774,
+    "median": 0.00030858399986755103,
+    "min": 0.000294707999273669,
+    "n": 3
+   },
+   "phase_exclusive_s": {
+    "accelerator": {
+     "max": 0.0009215,
+     "median": 0.0009086660000000001,
+     "min": 0.000797626,
+     "n": 3
+    },
+    "density": {
+     "max": 2.1084999999999995e-05,
+     "median": 1.9292e-05,
+     "min": 1.725e-05,
+     "n": 3
+    },
+    "diagonalization": {
+     "max": 0.000359206,
+     "median": 0.000357748,
+     "min": 0.000275125,
+     "n": 3
+    },
+    "final_rebuild_other": {
+     "max": 5.1260000000000455e-06,
+     "median": 4.458000000000044e-06,
+     "min": 3.916999999999983e-06,
+     "n": 3
+    },
+    "j": {
+     "max": 0.000250958,
+     "median": 0.000235208,
+     "min": 0.00022925,
+     "n": 3
+    },
+    "jk_fused": {
+     "max": 0.002917582,
+     "median": 0.002845291,
+     "min": 0.002636957,
+     "n": 3
+    },
+    "k": {
+     "max": 0.000239709,
+     "median": 0.000232625,
+     "min": 0.000222083,
+     "n": 3
+    },
+    "setup": {
+     "max": 0.0032971249999999997,
+     "median": 0.0031884999999999995,
+     "min": 0.003042625,
+     "n": 3
+    },
+    "stability": {
+     "max": 0.018021042,
+     "median": 0.017470709,
+     "min": 0.016457333,
+     "n": 3
+    },
+    "unclassified": {
+     "max": 9.737599999999971e-05,
+     "median": 9.233199999999706e-05,
+     "min": 9.225300000000047e-05,
+     "n": 3
+    }
+   },
+   "route": "auto",
+   "scf_mode_resolved": "CONVENTIONAL",
+   "scf_wall_s": {
+    "max": 0.026926708000246435,
+    "median": 0.026160707995586563,
+    "min": 0.024525125001673587,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 0.018019292,
+    "median": 0.017468625,
+    "min": 0.016455458,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    1
+   ],
+   "threads_requested": 1,
+   "timing_reconciled": true
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "conventional_four_index",
+   "case_id": "H2O__def2-svp__RHF__auto",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": false,
+   "converged": true,
+   "cosx_variant": null,
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "5d8161430abeef52",
+   "dims": {
+    "cosx_stage_points": null,
+    "n_ao": 24,
+    "n_aux": null,
+    "n_occ": 5,
+    "xc_grid_points": null
+   },
+   "energy_eh": -75.95475970397115,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": false,
+   "final_grad_norm_max": 1.3600464964719085e-07,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    11
+   ],
+   "k_build": "exact_or_df",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 189087744,
+     "median": 188907520,
+     "min": 188694528,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": null,
+    "tracked_live_tensor_bytes": null
+   },
+   "method": "RHF",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.00028341599681880325,
+    "median": 0.00026041700039058924,
+    "min": 0.0002370410002185963,
+    "n": 3
+   },
+   "phase_exclusive_s": {},
+   "route": "auto",
+   "scf_mode_resolved": "CONVENTIONAL",
+   "scf_wall_s": {
+    "max": 0.011857709003379568,
+    "median": 0.011117874993942678,
+    "min": 0.0110571670011268,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 0.005779542,
+    "median": 0.005430917,
+    "min": 0.005414541,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    4
+   ],
+   "threads_requested": 4,
+   "timing_reconciled": null
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "conventional_four_index",
+   "case_id": "H2O__def2-svp__RHF__auto",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": true,
+   "converged": true,
+   "cosx_variant": null,
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "5d8161430abeef52",
+   "dims": {
+    "cosx_stage_points": null,
+    "n_ao": 24,
+    "n_aux": null,
+    "n_occ": 5,
+    "xc_grid_points": null
+   },
+   "energy_eh": -75.95475970397115,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": false,
+   "final_grad_norm_max": 1.3600464964719085e-07,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    11
+   ],
+   "k_build": "exact_or_df",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 188989440,
+     "median": 188907520,
+     "min": 188776448,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": null,
+    "tracked_live_tensor_bytes": null
+   },
+   "method": "RHF",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.00035437500628177077,
+    "median": 0.0003164169975207187,
+    "min": 0.00030737499764654785,
+    "n": 3
+   },
+   "phase_exclusive_s": {
+    "accelerator": {
+     "max": 0.000952875,
+     "median": 0.000842959,
+     "min": 0.0008337520000000001,
+     "n": 3
+    },
+    "density": {
+     "max": 2.1581e-05,
+     "median": 2.0542e-05,
+     "min": 1.5791999999999997e-05,
+     "n": 3
+    },
+    "diagonalization": {
+     "max": 0.00037920799999999996,
+     "median": 0.00036220899999999995,
+     "min": 0.000338168,
+     "n": 3
+    },
+    "final_rebuild_other": {
+     "max": 5.583000000000004e-06,
+     "median": 4.709000000000012e-06,
+     "min": 4.708000000000023e-06,
+     "n": 3
+    },
+    "j": {
+     "max": 7.525e-05,
+     "median": 7.425e-05,
+     "min": 6.7625e-05,
+     "n": 3
+    },
+    "jk_fused": {
+     "max": 0.000903584,
+     "median": 0.000874374,
+     "min": 0.0008347490000000001,
+     "n": 3
+    },
+    "k": {
+     "max": 7.4042e-05,
+     "median": 7.075e-05,
+     "min": 6.9667e-05,
+     "n": 3
+    },
+    "setup": {
+     "max": 0.0028127079999999997,
+     "median": 0.0025756240000000003,
+     "min": 0.002569208,
+     "n": 3
+    },
+    "stability": {
+     "max": 0.005889334,
+     "median": 0.005377875,
+     "min": 0.005376167,
+     "n": 3
+    },
+    "unclassified": {
+     "max": 0.00011491800000000205,
+     "median": 0.00010949800000000127,
+     "min": 0.0001032489999999997,
+     "n": 3
+    }
+   },
+   "route": "auto",
+   "scf_mode_resolved": "CONVENTIONAL",
+   "scf_wall_s": {
+    "max": 0.01201612499426119,
+    "median": 0.01100787500035949,
+    "min": 0.010985000000800937,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 0.005887959,
+    "median": 0.005376916,
+    "min": 0.005372583,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    4
+   ],
+   "threads_requested": 4,
+   "timing_reconciled": true
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "df_j_k",
+   "case_id": "H2O__def2-svp__RHF__df",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": false,
+   "converged": true,
+   "cosx_variant": null,
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "0f37ec34fc5face0",
+   "dims": {
+    "cosx_stage_points": null,
+    "n_ao": 24,
+    "n_aux": 113,
+    "n_occ": 5,
+    "xc_grid_points": null
+   },
+   "energy_eh": -75.95470343442727,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": false,
+   "final_grad_norm_max": 1.3720071593458244e-07,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    11
+   ],
+   "k_build": "exact_or_df",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 183091200,
+     "median": 182845440,
+     "min": 182681600,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": null,
+    "tracked_live_tensor_bytes": null
+   },
+   "method": "RHF",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.00026516600337345153,
+    "median": 0.0002598749997559935,
+    "min": 0.0002477080051903613,
+    "n": 3
+   },
+   "phase_exclusive_s": {},
+   "route": "df",
+   "scf_mode_resolved": "not_used",
+   "scf_wall_s": {
+    "max": 0.018561332995886914,
+    "median": 0.017752042003849056,
+    "min": 0.01750783400348155,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 0.00766225,
+    "median": 0.007438416,
+    "min": 0.007428083,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    1
+   ],
+   "threads_requested": 1,
+   "timing_reconciled": null
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "df_j_k",
+   "case_id": "H2O__def2-svp__RHF__df",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": true,
+   "converged": true,
+   "cosx_variant": null,
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "0f37ec34fc5face0",
+   "dims": {
+    "cosx_stage_points": null,
+    "n_ao": 24,
+    "n_aux": 113,
+    "n_occ": 5,
+    "xc_grid_points": null
+   },
+   "energy_eh": -75.95470343442727,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": false,
+   "final_grad_norm_max": 1.3720071593458244e-07,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    11
+   ],
+   "k_build": "exact_or_df",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 182992896,
+     "median": 182829056,
+     "min": 182730752,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": 2389272.0,
+    "tracked_live_tensor_bytes": 1143560.0
+   },
+   "method": "RHF",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.0003364160002092831,
+    "median": 0.0003078340014326386,
+    "min": 0.0003007080013048835,
+    "n": 3
+   },
+   "phase_exclusive_s": {
+    "accelerator": {
+     "max": 0.0008865,
+     "median": 0.000824541,
+     "min": 0.000798708,
+     "n": 3
+    },
+    "density": {
+     "max": 2.1126e-05,
+     "median": 1.7707000000000002e-05,
+     "min": 1.5835000000000003e-05,
+     "n": 3
+    },
+    "df_construction": {
+     "max": 0.001500875,
+     "median": 0.001364416,
+     "min": 0.001296333,
+     "n": 3
+    },
+    "diagonalization": {
+     "max": 0.000346666,
+     "median": 0.00031999999999999997,
+     "min": 0.00031879300000000005,
+     "n": 3
+    },
+    "final_rebuild_other": {
+     "max": 5.749000000000016e-06,
+     "median": 3.8329999999999885e-06,
+     "min": 3.3330000000000035e-06,
+     "n": 3
+    },
+    "j": {
+     "max": 0.000823292,
+     "median": 0.000772006,
+     "min": 0.000739293,
+     "n": 3
+    },
+    "jk_fused": {
+     "max": 8.290999999999992e-06,
+     "median": 6.871999999999971e-06,
+     "min": 6.456999999999982e-06,
+     "n": 3
+    },
+    "k": {
+     "max": 0.007677578999999999,
+     "median": 0.007593414999999999,
+     "min": 0.007215457,
+     "n": 3
+    },
+    "setup": {
+     "max": 0.003656251,
+     "median": 0.003602876,
+     "min": 0.0035337090000000003,
+     "n": 3
+    },
+    "stability": {
+     "max": 0.00033187600000000005,
+     "median": 0.00033061999999999935,
+     "min": 0.00032592000000000124,
+     "n": 3
+    },
+    "unclassified": {
+     "max": 8.808200000000321e-05,
+     "median": 8.312599999999934e-05,
+     "min": 7.862999999999967e-05,
+     "n": 3
+    }
+   },
+   "route": "df",
+   "scf_mode_resolved": "not_used",
+   "scf_wall_s": {
+    "max": 0.018636083994351793,
+    "median": 0.01783991599950241,
+    "min": 0.017372374997648876,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 0.007470417,
+    "median": 0.007398042,
+    "min": 0.007007458,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    1
+   ],
+   "threads_requested": 1,
+   "timing_reconciled": true
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "df_j_k",
+   "case_id": "H2O__def2-svp__RHF__df",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": false,
+   "converged": true,
+   "cosx_variant": null,
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "0f37ec34fc5face0",
+   "dims": {
+    "cosx_stage_points": null,
+    "n_ao": 24,
+    "n_aux": 113,
+    "n_occ": 5,
+    "xc_grid_points": null
+   },
+   "energy_eh": -75.95470343442727,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": false,
+   "final_grad_norm_max": 1.3720071593458244e-07,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    11
+   ],
+   "k_build": "exact_or_df",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 190906368,
+     "median": 190775296,
+     "min": 190709760,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": null,
+    "tracked_live_tensor_bytes": null
+   },
+   "method": "RHF",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.00030541599699063227,
+    "median": 0.00026787500246427953,
+    "min": 0.00026116699882550165,
+    "n": 3
+   },
+   "phase_exclusive_s": {},
+   "route": "df",
+   "scf_mode_resolved": "not_used",
+   "scf_wall_s": {
+    "max": 0.019297208993521053,
+    "median": 0.016912042003241368,
+    "min": 0.015719875002105255,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 0.008000333,
+    "median": 0.005783958,
+    "min": 0.005365208,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    4
+   ],
+   "threads_requested": 4,
+   "timing_reconciled": null
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "df_j_k",
+   "case_id": "H2O__def2-svp__RHF__df",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": true,
+   "converged": true,
+   "cosx_variant": null,
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "0f37ec34fc5face0",
+   "dims": {
+    "cosx_stage_points": null,
+    "n_ao": 24,
+    "n_aux": 113,
+    "n_occ": 5,
+    "xc_grid_points": null
+   },
+   "energy_eh": -75.95470343442727,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": false,
+   "final_grad_norm_max": 1.3720071593458244e-07,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    11
+   ],
+   "k_build": "exact_or_df",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 191692800,
+     "median": 190873600,
+     "min": 190840832,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": 2389272.0,
+    "tracked_live_tensor_bytes": 1143560.0
+   },
+   "method": "RHF",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.00033962500310735777,
+    "median": 0.0003339589966344647,
+    "min": 0.00030295800388557836,
+    "n": 3
+   },
+   "phase_exclusive_s": {
+    "accelerator": {
+     "max": 0.000940623,
+     "median": 0.000830628,
+     "min": 0.000797083,
+     "n": 3
+    },
+    "density": {
+     "max": 2.2e-05,
+     "median": 1.975e-05,
+     "min": 1.8125e-05,
+     "n": 3
+    },
+    "df_construction": {
+     "max": 0.001368083,
+     "median": 0.00129725,
+     "min": 0.00123675,
+     "n": 3
+    },
+    "diagonalization": {
+     "max": 0.00035370999999999997,
+     "median": 0.00031179099999999996,
+     "min": 0.00028683399999999997,
+     "n": 3
+    },
+    "final_rebuild_other": {
+     "max": 4.042e-06,
+     "median": 3.6659999999999883e-06,
+     "min": 3.416999999999998e-06,
+     "n": 3
+    },
+    "j": {
+     "max": 0.0008614970000000001,
+     "median": 0.0007697469999999999,
+     "min": 0.0006922550000000001,
+     "n": 3
+    },
+    "jk_fused": {
+     "max": 1.3121999999999987e-05,
+     "median": 6.831000000000003e-06,
+     "min": 6.124999999999986e-06,
+     "n": 3
+    },
+    "k": {
+     "max": 0.008102088,
+     "median": 0.007700207999999998,
+     "min": 0.007659041,
+     "n": 3
+    },
+    "setup": {
+     "max": 0.004123833,
+     "median": 0.003540708,
+     "min": 0.003540166,
+     "n": 3
+    },
+    "stability": {
+     "max": 0.00037141699999999975,
+     "median": 0.0003406720000000028,
+     "min": 0.00033207999999999935,
+     "n": 3
+    },
+    "unclassified": {
+     "max": 8.983499999999991e-05,
+     "median": 8.20430000000004e-05,
+     "min": 8.045499999999838e-05,
+     "n": 3
+    }
+   },
+   "route": "df",
+   "scf_mode_resolved": "not_used",
+   "scf_wall_s": {
+    "max": 0.01971662500000093,
+    "median": 0.017928791996382643,
+    "min": 0.0177795409981627,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 0.007946042,
+    "median": 0.007536375,
+    "min": 0.007476292,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    4
+   ],
+   "threads_requested": 4,
+   "timing_reconciled": true
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "direct",
+   "case_id": "H2O__def2-svp__RHF__direct",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": false,
+   "converged": true,
+   "cosx_variant": null,
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "31dae4e715da9a1b",
+   "dims": {
+    "cosx_stage_points": null,
+    "n_ao": 24,
+    "n_aux": null,
+    "n_occ": 5,
+    "xc_grid_points": null
+   },
+   "energy_eh": -75.95475970397109,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": false,
+   "final_grad_norm_max": 7.311324496779732e-08,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    13
+   ],
+   "k_build": "exact_or_df",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 180879360,
+     "median": 180830208,
+     "min": 180830208,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": null,
+    "tracked_live_tensor_bytes": null
+   },
+   "method": "RHF",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.00028770900098606944,
+    "median": 0.00027429200417827815,
+    "min": 0.0002361250008107163,
+    "n": 3
+   },
+   "phase_exclusive_s": {},
+   "route": "direct",
+   "scf_mode_resolved": "DIRECT",
+   "scf_wall_s": {
+    "max": 0.10341887500544544,
+    "median": 0.0997575420042267,
+    "min": 0.09697666699503316,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 0.079663,
+    "median": 0.076924958,
+    "min": 0.0748795,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    1
+   ],
+   "threads_requested": 1,
+   "timing_reconciled": null
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "direct",
+   "case_id": "H2O__def2-svp__RHF__direct",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": true,
+   "converged": true,
+   "cosx_variant": null,
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "31dae4e715da9a1b",
+   "dims": {
+    "cosx_stage_points": null,
+    "n_ao": 24,
+    "n_aux": null,
+    "n_occ": 5,
+    "xc_grid_points": null
+   },
+   "energy_eh": -75.95475970397109,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": false,
+   "final_grad_norm_max": 7.311324496779732e-08,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    13
+   ],
+   "k_build": "exact_or_df",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 181075968,
+     "median": 180862976,
+     "min": 180731904,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": null,
+    "tracked_live_tensor_bytes": null
+   },
+   "method": "RHF",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.0003369999976712279,
+    "median": 0.000295165998977609,
+    "min": 0.0002905839937739074,
+    "n": 3
+   },
+   "phase_exclusive_s": {
+    "accelerator": {
+     "max": 0.00027108200000000007,
+     "median": 0.000269208,
+     "min": 0.000265374,
+     "n": 3
+    },
+    "density": {
+     "max": 2.0289999999999997e-05,
+     "median": 1.9374999999999997e-05,
+     "min": 1.8415e-05,
+     "n": 3
+    },
+    "diagonalization": {
+     "max": 0.00040641700000000006,
+     "median": 0.00040195900000000007,
+     "min": 0.00039354200000000003,
+     "n": 3
+    },
+    "final_rebuild_other": {
+     "max": 5.166999999999932e-06,
+     "median": 4.874999999999671e-06,
+     "min": 4.167000000000233e-06,
+     "n": 3
+    },
+    "j": {
+     "max": 0.001235792,
+     "median": 0.001225459,
+     "min": 0.001210667,
+     "n": 3
+    },
+    "jk_fused": {
+     "max": 0.017229333,
+     "median": 0.016395709,
+     "min": 0.016310958,
+     "n": 3
+    },
+    "k": {
+     "max": 0.001281667,
+     "median": 0.001228458,
+     "min": 0.00119375,
+     "n": 3
+    },
+    "setup": {
+     "max": 0.0017561249999999999,
+     "median": 0.001661542,
+     "min": 0.001633625,
+     "n": 3
+    },
+    "stability": {
+     "max": 0.078553125,
+     "median": 0.075231458,
+     "min": 0.074140667,
+     "n": 3
+    },
+    "unclassified": {
+     "max": 0.00011204199999999276,
+     "median": 0.00010716699999999135,
+     "min": 0.00010291900000000687,
+     "n": 3
+    }
+   },
+   "route": "direct",
+   "scf_mode_resolved": "DIRECT",
+   "scf_wall_s": {
+    "max": 0.10162920799484709,
+    "median": 0.09722195900394581,
+    "min": 0.09602370899665402,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 0.078549167,
+    "median": 0.07523025,
+    "min": 0.07413925,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    1
+   ],
+   "threads_requested": 1,
+   "timing_reconciled": true
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "direct",
+   "case_id": "H2O__def2-svp__RHF__direct",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": false,
+   "converged": true,
+   "cosx_variant": null,
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "31dae4e715da9a1b",
+   "dims": {
+    "cosx_stage_points": null,
+    "n_ao": 24,
+    "n_aux": null,
+    "n_occ": 5,
+    "xc_grid_points": null
+   },
+   "energy_eh": -75.95475970397112,
+   "energy_spread_eh": 8.526512829121202e-14,
+   "fail_reasons": [],
+   "final_grad_above_recipe": false,
+   "final_grad_norm_max": 7.311328797683898e-08,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    13
+   ],
+   "k_build": "exact_or_df",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 188825600,
+     "median": 188792832,
+     "min": 188678144,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": null,
+    "tracked_live_tensor_bytes": null
+   },
+   "method": "RHF",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.00031508400570601225,
+    "median": 0.000254625003435649,
+    "min": 0.00024066700279945508,
+    "n": 3
+   },
+   "phase_exclusive_s": {},
+   "route": "direct",
+   "scf_mode_resolved": "DIRECT",
+   "scf_wall_s": {
+    "max": 0.035950915997091215,
+    "median": 0.03388275000179419,
+    "min": 0.033421042004192714,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 0.02642975,
+    "median": 0.024179542,
+    "min": 0.023122208,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    4
+   ],
+   "threads_requested": 4,
+   "timing_reconciled": null
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "direct",
+   "case_id": "H2O__def2-svp__RHF__direct",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": true,
+   "converged": true,
+   "cosx_variant": null,
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "31dae4e715da9a1b",
+   "dims": {
+    "cosx_stage_points": null,
+    "n_ao": 24,
+    "n_aux": null,
+    "n_occ": 5,
+    "xc_grid_points": null
+   },
+   "energy_eh": -75.95475970397109,
+   "energy_spread_eh": 5.684341886080802e-14,
+   "fail_reasons": [],
+   "final_grad_above_recipe": false,
+   "final_grad_norm_max": 7.311326985999389e-08,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    13
+   ],
+   "k_build": "exact_or_df",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 189038592,
+     "median": 188891136,
+     "min": 188858368,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": null,
+    "tracked_live_tensor_bytes": null
+   },
+   "method": "RHF",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.00032449999707750976,
+    "median": 0.0003109579993179068,
+    "min": 0.00030129200604278594,
+    "n": 3
+   },
+   "phase_exclusive_s": {
+    "accelerator": {
+     "max": 0.00029433499999999995,
+     "median": 0.00025712699999999995,
+     "min": 0.000246581,
+     "n": 3
+    },
+    "density": {
+     "max": 2.4291e-05,
+     "median": 2.0040999999999997e-05,
+     "min": 1.8873e-05,
+     "n": 3
+    },
+    "diagonalization": {
+     "max": 0.00041033199999999996,
+     "median": 0.0004004170000000001,
+     "min": 0.000360666,
+     "n": 3
+    },
+    "final_rebuild_other": {
+     "max": 5.583000000000085e-06,
+     "median": 5.12500000000003e-06,
+     "min": 4.666999999999974e-06,
+     "n": 3
+    },
+    "j": {
+     "max": 0.000412375,
+     "median": 0.000389042,
+     "min": 0.000380791,
+     "n": 3
+    },
+    "jk_fused": {
+     "max": 0.0055407500000000005,
+     "median": 0.0052019169999999995,
+     "min": 0.005149086,
+     "n": 3
+    },
+    "k": {
+     "max": 0.000420542,
+     "median": 0.000401417,
+     "min": 0.000397417,
+     "n": 3
+    },
+    "setup": {
+     "max": 0.0023138749999999995,
+     "median": 0.002125667,
+     "min": 0.002113499,
+     "n": 3
+    },
+    "stability": {
+     "max": 0.02673275,
+     "median": 0.026575458,
+     "min": 0.025139209,
+     "n": 3
+    },
+    "unclassified": {
+     "max": 0.00011708399999999647,
+     "median": 0.00011145900000000125,
+     "min": 0.00010816599999999982,
+     "n": 3
+    }
+   },
+   "route": "direct",
+   "scf_mode_resolved": "DIRECT",
+   "scf_wall_s": {
+    "max": 0.03708787500363542,
+    "median": 0.03620641700399574,
+    "min": 0.03470300000481075,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 0.026728291,
+    "median": 0.026571292,
+    "min": 0.0251375,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    4
+   ],
+   "threads_requested": 4,
+   "timing_reconciled": true
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "ri_j_cosx_k",
+   "case_id": "H2O__def2-svp__RHF__rijcosx",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": false,
+   "converged": true,
+   "cosx_variant": "FITTED",
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "e9786d02ecae01d0",
+   "dims": {
+    "cosx_stage_points": [
+     3954,
+     9444,
+     23862
+    ],
+    "n_ao": 24,
+    "n_aux": 71,
+    "n_occ": 5,
+    "xc_grid_points": null
+   },
+   "energy_eh": -75.95492165555484,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": true,
+   "final_grad_norm_max": 0.014907918272788647,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    15
+   ],
+   "k_build": "cosx",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 215859200,
+     "median": 215859200,
+     "min": 215826432,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": null,
+    "tracked_live_tensor_bytes": null
+   },
+   "method": "RHF",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.0002749169943854213,
+    "median": 0.0002618340004119091,
+    "min": 0.0002477079979144037,
+    "n": 3
+   },
+   "phase_exclusive_s": {},
+   "route": "rijcosx",
+   "scf_mode_resolved": "not_used",
+   "scf_wall_s": {
+    "max": 1.3541547079948941,
+    "median": 1.2710859579965472,
+    "min": 1.2531687500013504,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 0.0,
+    "median": 0.0,
+    "min": 0.0,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    1
+   ],
+   "threads_requested": 1,
+   "timing_reconciled": null
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "ri_j_cosx_k",
+   "case_id": "H2O__def2-svp__RHF__rijcosx",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": true,
+   "converged": true,
+   "cosx_variant": "FITTED",
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "e9786d02ecae01d0",
+   "dims": {
+    "cosx_stage_points": [
+     3954,
+     9444,
+     23862
+    ],
+    "n_ao": 24,
+    "n_aux": 71,
+    "n_occ": 5,
+    "xc_grid_points": null
+   },
+   "energy_eh": -75.95492165555484,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": true,
+   "final_grad_norm_max": 0.014907918272788647,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    15
+   ],
+   "k_build": "cosx",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 215973888,
+     "median": 215973888,
+     "min": 215957504,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": 1429656.0,
+    "tracked_live_tensor_bytes": 694664.0
+   },
+   "method": "RHF",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.0003303749981569126,
+    "median": 0.00028154200117569417,
+    "min": 0.0002754580054897815,
+    "n": 3
+   },
+   "phase_exclusive_s": {
+    "accelerator": {
+     "max": 0.0005487080000000001,
+     "median": 0.0005483759999999999,
+     "min": 0.0005297520000000001,
+     "n": 3
+    },
+    "density": {
+     "max": 4.204e-05,
+     "median": 3.3665000000000004e-05,
+     "min": 3.1668e-05,
+     "n": 3
+    },
+    "df_construction": {
+     "max": 0.001996458,
+     "median": 0.001948541,
+     "min": 0.001873,
+     "n": 3
+    },
+    "diagonalization": {
+     "max": 0.0005908339999999999,
+     "median": 0.0005761290000000001,
+     "min": 0.000566833,
+     "n": 3
+    },
+    "final_rebuild_other": {
+     "max": 9.498999999968394e-06,
+     "median": 9.417000000004616e-06,
+     "min": 8.667000000017744e-06,
+     "n": 3
+    },
+    "grid_construction": {
+     "max": 0.017631459,
+     "median": 0.017469500000000002,
+     "min": 0.017433375,
+     "n": 3
+    },
+    "j": {
+     "max": 0.00025545699999999995,
+     "median": 0.000238418,
+     "min": 0.000227289,
+     "n": 3
+    },
+    "jk_fused": {
+     "max": 2.3087999999976683e-05,
+     "median": 2.1875000000025346e-05,
+     "min": 2.1583000000019448e-05,
+     "n": 3
+    },
+    "k": {
+     "max": 1.204309085,
+     "median": 1.1775283349999999,
+     "min": 1.166956456,
+     "n": 3
+    },
+    "k_correction": {
+     "max": 0.065266584,
+     "median": 0.063509501,
+     "min": 0.06258908299999999,
+     "n": 3
+    },
+    "setup": {
+     "max": 0.005862125,
+     "median": 0.005585709999999999,
+     "min": 0.005540791,
+     "n": 3
+    },
+    "stability": {
+     "max": 1.0583e-05,
+     "median": 7.875e-06,
+     "min": 4.374e-06,
+     "n": 3
+    },
+    "unclassified": {
+     "max": 0.0013123329999999989,
+     "median": 0.0012591660000003113,
+     "min": 0.0012533269999999153,
+     "n": 3
+    }
+   },
+   "route": "rijcosx",
+   "scf_mode_resolved": "not_used",
+   "scf_wall_s": {
+    "max": 1.3000647079970804,
+    "median": 1.269764958997257,
+    "min": 1.2602010000045993,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 0.0,
+    "median": 0.0,
+    "min": 0.0,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    1
+   ],
+   "threads_requested": 1,
+   "timing_reconciled": true
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "ri_j_cosx_k",
+   "case_id": "H2O__def2-svp__RHF__rijcosx",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": false,
+   "converged": true,
+   "cosx_variant": "FITTED",
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "e9786d02ecae01d0",
+   "dims": {
+    "cosx_stage_points": [
+     3954,
+     9444,
+     23862
+    ],
+    "n_ao": 24,
+    "n_aux": 71,
+    "n_occ": 5,
+    "xc_grid_points": null
+   },
+   "energy_eh": -75.95492165555507,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": true,
+   "final_grad_norm_max": 0.01490791827279323,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    15
+   ],
+   "k_build": "cosx",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 253968384,
+     "median": 253722624,
+     "min": 253722624,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": null,
+    "tracked_live_tensor_bytes": null
+   },
+   "method": "RHF",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.00027804200362879783,
+    "median": 0.0002777079935185611,
+    "min": 0.00027195800066692755,
+    "n": 3
+   },
+   "phase_exclusive_s": {},
+   "route": "rijcosx",
+   "scf_mode_resolved": "not_used",
+   "scf_wall_s": {
+    "max": 0.41046287499921164,
+    "median": 0.3972423750019516,
+    "min": 0.38837933399918256,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 0.0,
+    "median": 0.0,
+    "min": 0.0,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    4
+   ],
+   "threads_requested": 4,
+   "timing_reconciled": null
+  },
+  {
+   "basis_sha256": "c972088067f1888e88b9eb3a303c763f47f94c91b26e4f839aa14848ae232e2a",
+   "blas": "Accelerate.framework",
+   "builder": "ri_j_cosx_k",
+   "case_id": "H2O__def2-svp__RHF__rijcosx",
+   "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+   "component_timing": true,
+   "converged": true,
+   "cosx_variant": "FITTED",
+   "cpu_model": "Apple M5 Max",
+   "dedupe_key": "e9786d02ecae01d0",
+   "dims": {
+    "cosx_stage_points": [
+     3954,
+     9444,
+     23862
+    ],
+    "n_ao": 24,
+    "n_aux": 71,
+    "n_occ": 5,
+    "xc_grid_points": null
+   },
+   "energy_eh": -75.95492165555507,
+   "energy_spread_eh": 0.0,
+   "fail_reasons": [],
+   "final_grad_above_recipe": true,
+   "final_grad_norm_max": 0.01490791827279323,
+   "geometry_sha256": "ab7b28e8b5b16a7d90e3a88fe87524c909d2f49386626746edd156d327f98e63",
+   "identity_ok": true,
+   "iterations": [
+    15
+   ],
+   "k_build": "cosx",
+   "memory": {
+    "process_peak_rss_bytes": {
+     "max": 253853696,
+     "median": 253739008,
+     "min": 253673472,
+     "n": 3
+    },
+    "tracked_construction_peak_bytes": 1429656.0,
+    "tracked_live_tensor_bytes": 694664.0
+   },
+   "method": "RHF",
+   "n_runs": 3,
+   "native_sha256": "f7ba7161beb89d52074e0472403013e38050705b4d46a060072ddb101ab6d623",
+   "output_s": {
+    "max": 0.0003440829968894832,
+    "median": 0.00033562499447725713,
+    "min": 0.0002838340005837381,
+    "n": 3
+   },
+   "phase_exclusive_s": {
+    "accelerator": {
+     "max": 0.0005139589999999999,
+     "median": 0.0004962100000000001,
+     "min": 0.00046504000000000006,
+     "n": 3
+    },
+    "density": {
+     "max": 2.7040000000000002e-05,
+     "median": 2.5876e-05,
+     "min": 2.1127e-05,
+     "n": 3
+    },
+    "df_construction": {
+     "max": 0.003169625,
+     "median": 0.002974708,
+     "min": 0.002937041,
+     "n": 3
+    },
+    "diagonalization": {
+     "max": 0.000550332,
+     "median": 0.0005485819999999999,
+     "min": 0.000470541,
+     "n": 3
+    },
+    "final_rebuild_other": {
+     "max": 9.041000000004767e-06,
+     "median": 6.623999999996744e-06,
+     "min": 6.459000000000326e-06,
+     "n": 3
+    },
+    "grid_construction": {
+     "max": 0.009727875,
+     "median": 0.009213333,
+     "min": 0.0090345,
+     "n": 3
+    },
+    "j": {
+     "max": 0.00025129,
+     "median": 0.000245501,
+     "min": 0.000222165,
+     "n": 3
+    },
+    "jk_fused": {
+     "max": 1.9711000000002116e-05,
+     "median": 1.6540000000002386e-05,
+     "min": 1.608099999999245e-05,
+     "n": 3
+    },
+    "k": {
+     "max": 0.321141333,
+     "median": 0.30810621,
+     "min": 0.30061296099999996,
+     "n": 3
+    },
+    "k_correction": {
+     "max": 0.070053916,
+     "median": 0.066236583,
+     "min": 0.062929959,
+     "n": 3
+    },
+    "setup": {
+     "max": 0.005197626,
+     "median": 0.005111499,
+     "min": 0.00504621,
+     "n": 3
+    },
+    "stability": {
+     "max": 8.125e-06,
+     "median": 7.708e-06,
+     "min": 5.334e-06,
+     "n": 3
+    },
+    "unclassified": {
+     "max": 0.0006794999999998885,
+     "median": 0.0006377520000001025,
+     "min": 0.0005685829999999559,
+     "n": 3
+    }
+   },
+   "route": "rijcosx",
+   "scf_mode_resolved": "not_used",
+   "scf_wall_s": {
+    "max": 0.41353929199976847,
+    "median": 0.3958623329963302,
+    "min": 0.3844322500008275,
+    "n": 3
+   },
+   "source_sha": "679f03e59f83c667c04d9f6940faaaa972525583",
+   "stability_wall_s": {
+    "max": 0.0,
+    "median": 0.0,
+    "min": 0.0,
+    "n": 3
+   },
+   "status": "PASS",
+   "threads_observed": [
+    4
+   ],
+   "threads_requested": 4,
+   "timing_reconciled": true
+  }
+ ],
+ "schema": "vibeqc.gpu_g0.summary/1",
+ "timing_on_off": [
+  {
+   "case_id": "H2O__def2-svp__PBE0__auto",
+   "energy_delta_eh": 0.0,
+   "iterations_equal": true,
+   "median_wall_off_s": 4.449723458994413,
+   "median_wall_on_s": 4.516443625005195,
+   "overhead_fraction": 0.014994227534728566,
+   "ranges_overlap": true,
+   "threads_requested": 1
+  },
+  {
+   "case_id": "H2O__def2-svp__PBE0__auto",
+   "energy_delta_eh": 0.0,
+   "iterations_equal": true,
+   "median_wall_off_s": 1.5865994170017075,
+   "median_wall_on_s": 1.618948666000506,
+   "overhead_fraction": 0.020389046316385828,
+   "ranges_overlap": false,
+   "threads_requested": 4
+  },
+  {
+   "case_id": "H2O__def2-svp__PBE0__df",
+   "energy_delta_eh": 0.0,
+   "iterations_equal": true,
+   "median_wall_off_s": 4.5265692500033765,
+   "median_wall_on_s": 4.493530249994365,
+   "overhead_fraction": -0.0072989052379983654,
+   "ranges_overlap": true,
+   "threads_requested": 1
+  },
+  {
+   "case_id": "H2O__def2-svp__PBE0__df",
+   "energy_delta_eh": 0.0,
+   "iterations_equal": true,
+   "median_wall_off_s": 1.6110000000044238,
+   "median_wall_on_s": 1.7331059170028311,
+   "overhead_fraction": 0.07579510676478707,
+   "ranges_overlap": true,
+   "threads_requested": 4
+  },
+  {
+   "case_id": "H2O__def2-svp__PBE0__direct",
+   "energy_delta_eh": 0.0,
+   "iterations_equal": true,
+   "median_wall_off_s": 4.9359840420002,
+   "median_wall_on_s": 5.075995792001777,
+   "overhead_fraction": 0.028365519177173004,
+   "ranges_overlap": true,
+   "threads_requested": 1
+  },
+  {
+   "case_id": "H2O__def2-svp__PBE0__direct",
+   "energy_delta_eh": 2.842170943040401e-14,
+   "iterations_equal": true,
+   "median_wall_off_s": 1.8246145419980166,
+   "median_wall_on_s": 1.7956983749973006,
+   "overhead_fraction": -0.015847822285276703,
+   "ranges_overlap": true,
+   "threads_requested": 4
+  },
+  {
+   "case_id": "H2O__def2-svp__PBE0__rijcosx",
+   "energy_delta_eh": 0.0,
+   "iterations_equal": true,
+   "median_wall_off_s": 3.710490083001787,
+   "median_wall_on_s": 3.784388250001939,
+   "overhead_fraction": 0.019916012533947702,
+   "ranges_overlap": true,
+   "threads_requested": 1
+  },
+  {
+   "case_id": "H2O__def2-svp__PBE0__rijcosx",
+   "energy_delta_eh": 0.0,
+   "iterations_equal": true,
+   "median_wall_off_s": 1.3227854170036153,
+   "median_wall_on_s": 1.2354710420040647,
+   "overhead_fraction": -0.06600796612751891,
+   "ranges_overlap": true,
+   "threads_requested": 4
+  },
+  {
+   "case_id": "H2O__def2-svp__PBE__auto",
+   "energy_delta_eh": 0.0,
+   "iterations_equal": true,
+   "median_wall_off_s": 4.386248374998104,
+   "median_wall_on_s": 4.406214916998579,
+   "overhead_fraction": 0.004552077377625308,
+   "ranges_overlap": false,
+   "threads_requested": 1
+  },
+  {
+   "case_id": "H2O__def2-svp__PBE__auto",
+   "energy_delta_eh": 0.0,
+   "iterations_equal": true,
+   "median_wall_off_s": 1.6409626250024303,
+   "median_wall_on_s": 1.5977341249963501,
+   "overhead_fraction": -0.026343378787201832,
+   "ranges_overlap": true,
+   "threads_requested": 4
+  },
+  {
+   "case_id": "H2O__def2-svp__PBE__df",
+   "energy_delta_eh": 0.0,
+   "iterations_equal": true,
+   "median_wall_off_s": 4.522507083005621,
+   "median_wall_on_s": 4.428414291993249,
+   "overhead_fraction": -0.020805449120455233,
+   "ranges_overlap": false,
+   "threads_requested": 1
+  },
+  {
+   "case_id": "H2O__def2-svp__PBE__df",
+   "energy_delta_eh": 0.0,
+   "iterations_equal": true,
+   "median_wall_off_s": 1.8032383329991717,
+   "median_wall_on_s": 1.6471989169949666,
+   "overhead_fraction": -0.08653288539218118,
+   "ranges_overlap": true,
+   "threads_requested": 4
+  },
+  {
+   "case_id": "H2O__def2-svp__PBE__direct",
+   "energy_delta_eh": 0.0,
+   "iterations_equal": true,
+   "median_wall_off_s": 5.057305249996716,
+   "median_wall_on_s": 5.013040582998656,
+   "overhead_fraction": -0.008752619193411193,
+   "ranges_overlap": true,
+   "threads_requested": 1
+  },
+  {
+   "case_id": "H2O__def2-svp__PBE__direct",
+   "energy_delta_eh": -2.842170943040401e-14,
+   "iterations_equal": true,
+   "median_wall_off_s": 1.9016714589961339,
+   "median_wall_on_s": 1.8218104580009822,
+   "overhead_fraction": -0.041995162002015474,
+   "ranges_overlap": true,
+   "threads_requested": 4
+  },
+  {
+   "case_id": "H2O__def2-svp__PBE__rijcosx",
+   "energy_delta_eh": 0.0,
+   "iterations_equal": true,
+   "median_wall_off_s": 7.665233667001303,
+   "median_wall_on_s": 7.50198874999478,
+   "overhead_fraction": -0.02129679590973066,
+   "ranges_overlap": true,
+   "threads_requested": 1
+  },
+  {
+   "case_id": "H2O__def2-svp__PBE__rijcosx",
+   "energy_delta_eh": 0.0,
+   "iterations_equal": true,
+   "median_wall_off_s": 3.070891165996727,
+   "median_wall_on_s": 3.033952624995436,
+   "overhead_fraction": -0.012028606357106675,
+   "ranges_overlap": true,
+   "threads_requested": 4
+  },
+  {
+   "case_id": "H2O__def2-svp__RHF__auto",
+   "energy_delta_eh": 0.0,
+   "iterations_equal": true,
+   "median_wall_off_s": 0.024731292003707495,
+   "median_wall_on_s": 0.026160707995586563,
+   "overhead_fraction": 0.057797869665069834,
+   "ranges_overlap": true,
+   "threads_requested": 1
+  },
+  {
+   "case_id": "H2O__def2-svp__RHF__auto",
+   "energy_delta_eh": 0.0,
+   "iterations_equal": true,
+   "median_wall_off_s": 0.011117874993942678,
+   "median_wall_on_s": 0.01100787500035949,
+   "overhead_fraction": -0.00989397646970469,
+   "ranges_overlap": true,
+   "threads_requested": 4
+  },
+  {
+   "case_id": "H2O__def2-svp__RHF__df",
+   "energy_delta_eh": 0.0,
+   "iterations_equal": true,
+   "median_wall_off_s": 0.017752042003849056,
+   "median_wall_on_s": 0.01783991599950241,
+   "overhead_fraction": 0.0049500781732207955,
+   "ranges_overlap": true,
+   "threads_requested": 1
+  },
+  {
+   "case_id": "H2O__def2-svp__RHF__df",
+   "energy_delta_eh": 0.0,
+   "iterations_equal": true,
+   "median_wall_off_s": 0.016912042003241368,
+   "median_wall_on_s": 0.017928791996382643,
+   "overhead_fraction": 0.060119883391160256,
+   "ranges_overlap": true,
+   "threads_requested": 4
+  },
+  {
+   "case_id": "H2O__def2-svp__RHF__direct",
+   "energy_delta_eh": 0.0,
+   "iterations_equal": true,
+   "median_wall_off_s": 0.0997575420042267,
+   "median_wall_on_s": 0.09722195900394581,
+   "overhead_fraction": -0.025417456658800464,
+   "ranges_overlap": true,
+   "threads_requested": 1
+  },
+  {
+   "case_id": "H2O__def2-svp__RHF__direct",
+   "energy_delta_eh": 2.842170943040401e-14,
+   "iterations_equal": true,
+   "median_wall_off_s": 0.03388275000179419,
+   "median_wall_on_s": 0.03620641700399574,
+   "overhead_fraction": 0.06857964604639522,
+   "ranges_overlap": true,
+   "threads_requested": 4
+  },
+  {
+   "case_id": "H2O__def2-svp__RHF__rijcosx",
+   "energy_delta_eh": 0.0,
+   "iterations_equal": true,
+   "median_wall_off_s": 1.2710859579965472,
+   "median_wall_on_s": 1.269764958997257,
+   "overhead_fraction": -0.001039268029813134,
+   "ranges_overlap": true,
+   "threads_requested": 1
+  },
+  {
+   "case_id": "H2O__def2-svp__RHF__rijcosx",
+   "energy_delta_eh": 0.0,
+   "iterations_equal": true,
+   "median_wall_off_s": 0.3972423750019516,
+   "median_wall_on_s": 0.3958623329963302,
+   "overhead_fraction": -0.003474055368878015,
+   "ranges_overlap": true,
+   "threads_requested": 4
+  }
+ ]
+}

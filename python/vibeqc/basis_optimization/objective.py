@@ -44,9 +44,13 @@ class Objective(Protocol):
 
     Implementations may be stateful (caching SCF results across calls
     is fine, e.g. for warm-start guesses) but must be safe to call
-    repeatedly with arbitrary parameter vectors. They MUST raise
-    rather than return NaN on a failed evaluation; the driver decides
-    how to recover.
+    repeatedly with arbitrary parameter vectors. On a failed evaluation
+    they MUST raise or return ``+inf``, not NaN. A raise ends the run.
+    For ``+inf``, ``optimize_scipy``, ``optimize_minuit``,
+    ``optimize_bobyqa`` and ``optimize_dfols`` hand their optimiser a
+    finite stand-in (see :mod:`vibeqc.basis_optimization.drivers`),
+    ``optimize_bdiis`` backtracks and ``optimize_cmaes`` ranks the point
+    last.
     """
 
     n_params: int

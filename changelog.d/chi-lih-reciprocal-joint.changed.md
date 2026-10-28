@@ -1,1 +1,0 @@
-- Document precision-controlled LiH reciprocal tests through 240 Ha and the radius-44 joint recheck: ten fresh HF sources and forty prepared/bounded local MP2 solves pass numerical qualification, while reciprocal and joint support convergence remain unestablished under unchanged caps and gates. Chi remains experimental; D93 fitted/post-HF remains not-qualified.

@@ -1190,11 +1190,9 @@ class KExchangeLongRangeCache:
                 q_canonical,
                 self.K_max,
             )
-            if K_vectors.shape[0] == 0:
-                raise RuntimeError(
-                    "KExchangeLongRangeCache: empty shifted K-list for "
-                    f"q = {q_canonical}; K_max = {self.K_max}"
-                )
+            # An elongated cell can have no q+G vectors inside this finite
+            # sphere although its unshifted G sphere is populated. That
+            # channel is an empty sum, not a missing Coulomb zero mode.
             a = np.asarray(self.system.lattice, dtype=float)
             V = float(abs(np.linalg.det(a)))
             K2 = (K_vectors**2).sum(axis=1)
@@ -1221,6 +1219,9 @@ class KExchangeLongRangeCache:
             return self.j_cache.kernel, ft_bloch
 
         chan = self._nonzero_channel(key, q_canonical)
+        if chan.kernel.size == 0:
+            nbf = int(self.basis.nbasis)
+            return chan.kernel, np.empty((nbf, nbf, 0), dtype=complex)
 
         k_prime = np.asarray(k_prime_cart, dtype=float).reshape(3)
         k_key = _k_cache_key(k_prime)
@@ -1455,7 +1456,7 @@ def compute_K_long_range_mesh(
         if not np.any(np.frombuffer(key, dtype=float)):
             continue
         channel = x_cache._nonzero_channel(key, q)
-        if nbf * nbf * 16 > batch_cap:
+        if channel.kernel.size and nbf * nbf * 16 > batch_cap:
             raise MemoryError("One reciprocal slice exceeds max_batch_bytes")
 
     retained = sum(
@@ -1489,6 +1490,8 @@ def compute_K_long_range_mesh(
                 consume(x_cache.j_cache.kernel, panel, source, targets)
             continue
         channel = x_cache.q_channels[key]
+        if channel.kernel.size == 0:
+            continue
         pending = []
         for source, targets in sources.items():
             panel = channel.b_per_k.get(_k_cache_key(points[source]))

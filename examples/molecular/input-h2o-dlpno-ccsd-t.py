@@ -28,7 +28,12 @@ See ``docs/user_guide/dlpno_mp2.md`` § DLPNO-CCSD and
 ``docs/tutorial/dlpno_local_correlation.md``.
 
 Run:
-    .venv/bin/python examples/molecular/input-h2o-dlpno-ccsd-t.py
+    python input-h2o-dlpno-ccsd-t.py > console.log
+
+Copy this script to a separate run directory first, and use the installed
+engine's Python. Coordinates are in bohr and energies are in hartree.
+The energy summary is printed to stdout; console.log captures it together
+with progress messages. Existing files with the same stem are overwritten.
 
 Outputs (next to this script):
     input-h2o-dlpno-ccsd-t.out     — banner + RHF trace + DLPNO-CCSD(T) block
@@ -64,6 +69,8 @@ result = vq.run_job(
 )
 
 cc = result.dlpno_ccsd
+if not result.converged or not cc.converged:
+    raise RuntimeError("RHF or DLPNO amplitudes did not converge; inspect the job log")
 print(f"  E(RHF)              = {cc.e_hf:14.8f} Ha")
 print(f"  E_corr(DLPNO-CCSD)  = {cc.e_corr:14.8f} Ha")
 print(f"  E((T) correction)   = {cc.e_t:14.8f} Ha")

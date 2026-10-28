@@ -1,1 +1,0 @@
-- Experimental MANTA short-range metric construction bounds now use positive radial panels with explicit series and omitted-tail bounds, avoiding cancellation between full and long-range Boys enclosures while preserving numerical integrals and accuracy targets.

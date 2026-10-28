@@ -1,1 +1,0 @@
-- Clarify periodic tutorial setup and convergence checks, correct the DFT chain orientation and missing alias, add measured cutoff differences, and replace unmeasured LiH mesh claims with a bounded pilot and resource guidance.

@@ -7663,3 +7663,73 @@ through l=7; numerical matrices and basis conventions are unchanged. Stored
 normalized basis/vector data generation, coupling construction, domains and
 relaxed response remain excluded. Transform-coefficient bounds do not grant
 symmetry reduction or equivariance permissions; see contract Section 5.65.
+
+
+`plan_pair_fourier_construction(bra, ket, n_vectors, budget=...)` and
+`certify_pair_fourier_panel(bra, ket, wave_vectors, budget=...)` expose the
+orbital-pair construction component through l=6 on each axis, with mixed
+pure/Cartesian shells and independent bases. The certificate contains the
+unchanged numerical panel plus flattened real/imaginary lower/upper and
+absolute-error arrays in `(q,bra,ket)` order. It includes Gaussian product
+centers, prefactors, phase, moments, signed contraction and mathematical pure
+transforms. Plans admit storage and work before copying vector payloads.
+
+This experimental diagnostic is a prerequisite to complete three-center
+coupling bounds; it is not yet composed into a periodic coupling or SCF
+accuracy admission. Stored normalized basis and vector generation, image
+translation and Bloch sums, other coupling terms, domains/screening and relaxed
+response remain outside its reference. Existing metric and Fock budgets do
+not change. See scientific contract Section 5.66 for equations and exclusions.
+
+
+`ThreeCenterConstructionTiles(auxiliary, bra, ket, request=..., budget=...)`
+is the experimental streamed construction diagnostic for `(P|mu nu)`.
+`plan_three_center_construction` admits work and maximum live tile storage;
+`evaluate([p, mu, nu])` returns owned `values`, `lower`, `upper`, `error_bounds`
+and the unchanged numerical source identity. Auxiliary l through 7 and each
+orbital l through 6 support Coulomb/erf/erfc, signed contractions and mixed
+pure/Cartesian bases. Storage remains per tile, with no global three-index
+tensor. The reference includes Gaussian product centers, prefactors, radial
+seeds, Hermite/Coulomb recurrences and mathematical pure transforms.
+
+This is a separate component certificate; periodic image/phase sums,
+reciprocal/zero-mode coupling composition and action propagation are still
+required before it can enlarge SCF accuracy admission. Stored normalized
+basis data and centers are exact reference inputs; their generation and
+image translation, domains/screening and relaxed-density response are not
+included. Existing Fock/metric budgets and symmetry permissions stay intact.
+See scientific contract Section 5.67 for the proof and reference boundary.
+
+`PeriodicGDFTiles` now offers an experimental finite coupling diagnostic:
+`plan_coupling_construction(budget)`, `certify_coupling_tile(p, mu, nu, budget)`,
+`certify_forward(input, budget)` and `certify_adjoint(input, budget)`.
+Use an explicit budget for this conservative proof; default work caps can
+refuse even small image domains. Certificates contain `evaluated` (the
+unchanged numerical tile/action), flattened real/imaginary lower/upper arrays,
+`error_bounds`, `maximum_error` and source/reference/certificate identities.
+The separate construction plan includes proof work and storage; the embedded
+numerical receipt still reports only the original action.
+
+The reference uses the unscreened finite image set, exact stored lattice
+translations and shifted centers, SR integrals/phases, reciprocal Fourier
+folds/weights and the existing finite-zero correction. Forward and adjoint
+inputs are exact stored complex128 C/F contiguous arrays. Screened and
+compressed routes retain their values; their full discrepancy from that
+finite reference is enclosed. Do not add this bound to overlapping existing
+approximation/roundoff bounds. The operation streams tiles and panels.
+
+This does not expand SCF/Fock admission or grant symmetry reduction. Source
+input generation, domain completeness and infinite tails, basis/BZ, XC/grid,
+BvK, occupied/density relaxation and total energy remain separate. MANTA is
+experimental; no general speedup or bulk CRYSTAL parity is implied. See
+scientific contract Section 5.68 for equations, identities and exclusions.
+
+Screened contracted periodic fitting now shares libint's budgeted primitive
+selector as well as its shell/image selector. Existing common/coupling-only
+screening controls retain their omission budgets. Split primitives keep
+original coefficients; all-surviving contractions use the original evaluation.
+Screened coupling identities change to identify the corrected retained set;
+zero-screening and multipole sources remain unchanged. Resource plans include
+split calls, transforms and scratch. More shell invocations can accompany
+fewer primitive products, so use actual costs when comparing performance.
+See contract Section 5.69; no total-energy or general speedup claim follows.

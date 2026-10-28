@@ -117,8 +117,14 @@ class PeriodicSpec:
     """Initial spin tags (-1, 0, +1), one per atom, for an unrestricted
     SAD guess. ``None`` leaves the initial guess unpolarized."""
 
+    electrostatic_background: Optional[str] = None
+    """Explicit charged-cell comparison convention; currently uniform-jellium.
+    This declares the existing 3D Ewald convention, not a solver option."""
+
     def __post_init__(self) -> None:
         n = len(self.atoms)
+        if self.electrostatic_background not in (None, "uniform-jellium"):
+            raise ValueError(f"{self.id}: unsupported electrostatic_background")
         if type(self.charge) is not int:
             raise ValueError(f"{self.id}: charge must be an integer")
         if type(self.multiplicity) is not int or self.multiplicity < 1:

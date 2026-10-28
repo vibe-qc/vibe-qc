@@ -247,6 +247,8 @@ def test_entries_carry_only_entry_fields() -> None:
 @pytest.mark.parametrize(
     ("numerics_key", "expected"),
     [
+        ("manta_coupling_construction", {"rump_verification_2010", "sun_berkelbach_gdf_2017", "ye_berkelbach_rsgdf_2021", "neese_shark_2023"}),
+        ("manta_three_center_enclosure", {"rump_verification_2010", "mcmurchie_davidson_1978", "neese_shark_2023"}),
         ("manta_hermitian_spectrum", {"rump_lange_hermitian_bounds_2023"}),
         (
             "manta_hermitian_inverse",

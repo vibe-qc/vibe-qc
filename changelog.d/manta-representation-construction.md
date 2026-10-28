@@ -1,1 +1,0 @@
-- Experimental MANTA Fourier and metric construction bounds now include Cartesian-to-pure coefficient generation through l=7 using a shared verified representation diagnostic; numerical transforms and symmetry permissions are unchanged.

@@ -406,3 +406,183 @@ def test_positive_radial_panel_boundary(target):
             d=np.nextafter(d,direction);b=_basis((0,),False,False,shift=(d,0.,0.))
             c=manta.certify_metric_construction(a,b,request)
             assert 0<c.lower[0,0]<=c.upper[0,0] and np.isfinite(c.error_bounds[0,0])
+
+
+def _decimal_three_center(shells,kernel='coulomb',omega=0.,selected=None,precision=180):
+    """Closed polynomial/Hermite coefficients and finite derivative sum.
+
+    Independent of the producer's Hermite raising and Coulomb recurrence.
+    selected limits high-angular Cartesian witnesses without using native data.
+    """
+    from decimal import Decimal as D,localcontext
+    from math import comb,factorial
+    from functools import lru_cache
+    from tests.test_manta_fourier import _decimal_phase,_cart
+    from tests.test_manta_md import _decimal_representation
+    _decimal_phase([0.],[0.]);a,b,c=shells
+    def pw(x,n):return D(1) if n==0 else x**n
+    with localcontext() as ctx:
+        ctx.prec=precision;pi=+_decimal_phase.pi
+        carts=[_cart(s.l) for s in shells];shape=tuple(len(v) for v in carts)
+        assert selected is None or not any(s.pure for s in shells)
+        indices=list(np.ndindex(shape)) if selected is None else selected
+        cart={idx:D(0) for idx in indices};A,B,C=[list(map(D,s.origin)) for s in shells]
+        for ia,ib,ic in product(*(range(len(s.exponents)) for s in shells)):
+            alpha,beta,gamma=[D(s.exponents[i]) for s,i in zip(shells,(ia,ib,ic))];p=beta+gamma;rho=alpha*p/(alpha+p)
+            center=[(beta*x+gamma*y)/p for x,y in zip(B,C)];delta=[x-y for x,y in zip(A,center)]
+            pa=[x-y for x,y in zip(center,B)];pb=[x-y for x,y in zip(center,C)]
+            t=rho*sum(x*x for x in delta)
+            theta=D(0) if kernel=='coulomb' or omega==0. else D(1) if np.isinf(omega) else D(omega)/(D(omega)**2+rho).sqrt()
+            low,high=(D(0),theta) if kernel=='erf' else (theta,D(1))
+            seeds=[]
+            for n in range(sum(s.l for s in shells)+1):
+                total=D(0);term=D(1)
+                for k in range(4000):
+                    degree=2*n+2*k+1;value=term*(pw(high,degree)-pw(low,degree))/degree;total+=value
+                    if k>int(t)+40 and abs(value)<D('1e-150'):break
+                    term*=-t/(k+1)
+                else:raise AssertionError('three-center reference radial series exhausted')
+                seeds.append(total)
+            @lru_cache(None)
+            def derivative(x,y,z):
+                value=D(0)
+                for i,j,k in product(range(x//2+1),range(y//2+1),range(z//2+1)):
+                    degree=x+y+z-i-j-k;term=pw(-2*rho,degree)*seeds[degree]
+                    for order,pairs,d in zip((x,y,z),(i,j,k),delta):
+                        term*=D(factorial(order))/D(2**pairs*factorial(pairs)*factorial(order-2*pairs))*pw(d,order-2*pairs)
+                    value+=term
+                return value
+            @lru_cache(None)
+            def axis(i,j,h,dimension,auxiliary):
+                if auxiliary:
+                    if h>i or (i-h)%2:return D(0)
+                    return D(factorial(i))/D(factorial((i-h)//2)*factorial(h)*2**i)/pw(alpha,(i+h)//2)
+                value=D(0)
+                for u in range(i+1):
+                    for v in range(j+1):
+                        n=u+v
+                        if n<h or (n-h)%2:continue
+                        coefficient=D(comb(i,u)*comb(j,v)*factorial(n))/D(factorial((n-h)//2)*factorial(h)*2**n)/pw(p,(n+h)//2)
+                        value+=coefficient*pw(pa[dimension],i-u)*pw(pb[dimension],j-v)
+                return value
+            @lru_cache(None)
+            def terms(i,j,auxiliary):
+                first=carts[0 if auxiliary else 1][i];second=(0,0,0) if auxiliary else carts[2][j];result=[]
+                for h in product(*(range(int(x+y)+1) for x,y in zip(first,second))):
+                    weight=D(1)
+                    for d,(x,y,t0) in enumerate(zip(first,second,h)):weight*=axis(int(x),int(y),t0,d,auxiliary)
+                    if weight:result.append((h,weight))
+                return result
+            scale=2*pi*pi*pi.sqrt()/(alpha*p*(alpha+p).sqrt())*(-beta*gamma/p*sum((x-y)**2 for x,y in zip(B,C))).exp()
+            for s,i in zip(shells,(ia,ib,ic)):scale*=D(s.coefficients[i])
+            for idx in indices:
+                i,j,k=idx
+                cart[idx]+=scale*sum(u*v*((-1)**sum(q))*derivative(*(h[d]+q[d] for d in range(3))) for h,u in terms(i,0,True) for q,v in terms(j,k,False))
+        if selected is not None:return cart
+        array=np.empty(shape,dtype=object)
+        for idx,value in cart.items():array[idx]=value
+        for ax,shell in enumerate(shells):
+            transform=np.array(_decimal_representation(shell.l,shell.pure),dtype=object)
+            array=np.moveaxis(np.tensordot(transform,array,axes=(1,ax)),0,ax)
+        return {idx:array[idx] for idx in np.ndindex(array.shape)}
+
+
+def _check_three_center_construction(bases,kernel='erfc',omega=.6,selected=None,precision=180):
+    from decimal import Decimal as D,localcontext
+    request=manta.KernelRequest();request.centers=3;request.kernel=kernel;request.omega=omega if kernel!='coulomb' else 0.
+    proof=manta.ThreeCenterConstructionTiles(*bases,request=request);source=manta.FittingTiles(bases,request=request)
+    assert proof.source_identity==source.source_identity
+    for idx in product(*(range(b.nshells) for b in bases)):
+        tile=proof.evaluate(idx);actual=source.evaluate(idx)
+        np.testing.assert_array_equal(tile['values'],actual['values']);assert tile['source_identity']==source.source_identity
+        expected=_decimal_three_center([b.shells()[i] for b,i in zip(bases,idx)],kernel,omega,selected,precision)
+        with localcontext() as ctx:
+            ctx.prec=precision
+            for key,value in expected.items():
+                assert D(float(tile['lower'][key]))<=value<=D(float(tile['upper'][key])),(idx,key,value,tile['lower'][key],tile['upper'][key])
+                assert abs(D(float(tile['values'][key]))-value)<=D(float(tile['error_bounds'][key]))
+        assert np.all(np.isfinite(tile['error_bounds']))
+    return proof
+
+
+@pytest.mark.parametrize('angular',[(l,1,1) for l in range(8)]+[(1,l,1) for l in range(2,7)]+[(1,1,l) for l in range(2,7)])
+@pytest.mark.parametrize('pure',[False,True])
+def test_three_center_construction_independent_angular(angular,pure):
+    bases=[_basis((l,),pure,False,shift=(.13*i,-.21*i,.32*i)) for i,l in enumerate(angular)]
+    _check_three_center_construction(bases)
+
+
+@pytest.mark.parametrize('kernel,omega',[('coulomb',0.),('erf',.6),('erfc',.6),('erf',0.),('erfc',0.),('erf',float('inf')),('erfc',float('inf')),('erfc',1e8),('erf',1e-8)])
+def test_three_center_construction_contracted_ranges(kernel,omega):
+    bases=[_basis((l,),pure,True,shift=(.2*i,-.1*i,.3*i)) for i,(l,pure) in enumerate([(2,True),(1,False),(2,True)])]
+    if np.isinf(omega):
+        request=manta.KernelRequest();request.centers=3;request.kernel=kernel;request.omega=omega
+        with pytest.raises(ValueError,match='finite'):manta.ThreeCenterConstructionTiles(*bases,request=request)
+    else:_check_three_center_construction(bases,kernel,omega)
+
+
+@pytest.mark.parametrize('angular',[(7,6,6),(6,6,6)])
+def test_three_center_construction_maximum_orders(angular):
+    bases=[_basis((l,),False,False,shift=(.03*i,-.02*i,.01*i)) for i,l in enumerate(angular)]
+    # Fully evaluate the maximum-order tile; independent selected Cartesian
+    # witnesses exercise radial/derivative orders through 19 without rounded E.
+    selected=[(0,0,0),(1,2,3),tuple(b.nbasis-1 for b in bases)]
+    _check_three_center_construction(bases,selected=selected)
+
+
+@pytest.mark.parametrize('kind',['signed','coincident','diffuse','tight','underflow'])
+def test_three_center_construction_extremes(kind):
+    shells=[_basis((l,),True,False,shift=(.2*i,-.1*i,.3*i)).shells()[0] for i,l in enumerate((1,2,1))]
+    omega=.6
+    if kind=='signed':shells[1].exponents=[.7,.7]*4+[1.6];shells[1].coefficients=[1.,-1.]*4+[1e-14]
+    elif kind=='coincident':
+        for s in shells:s.origin=[0.,0.,0.]
+    elif kind=='underflow':
+        shells[0].origin=[50.,0.,0.];shells[1].origin=[0.,0.,0.];shells[2].origin=[100.,0.,0.]
+    else:
+        exponent=1e-6 if kind=='diffuse' else 1e6;omega*=np.sqrt(exponent)
+        for s in shells:s.exponents=[exponent];s.coefficients=[1.];s.origin=[x/np.sqrt(exponent) for x in s.origin]
+    bases=[vq.BasisSet(vq.Molecule([vq.Atom(2,s.origin)]),[s],'three-center-proof',True) for s in shells]
+    _check_three_center_construction(bases,omega=omega)
+
+
+@pytest.mark.parametrize('field,quantity',[('memory_bytes','modeled_peak_bytes'),('scalar_terms','scalar_terms'),('kernel_terms','kernel_terms'),('shell_calls','shell_calls'),('primitive_quartets','primitive_products')])
+def test_three_center_construction_exact_caps(field,quantity):
+    a=_basis((1,),True);p=manta.plan_three_center_construction(a,a,a);b=manta.ResourceBudget();setattr(b,field,getattr(p,quantity))
+    manta.ThreeCenterConstructionTiles(a,a,a,budget=b).evaluate([0,0,0]);setattr(b,field,getattr(p,quantity)-1)
+    with pytest.raises((ValueError,RuntimeError),match='budget'):manta.ThreeCenterConstructionTiles(a,a,a,budget=b)
+
+
+def test_three_center_construction_streaming_lifetime_and_refusals():
+    a=_basis((0,1,2));proof=manta.ThreeCenterConstructionTiles(a,a,a);single=_basis((2,))
+    p=manta.plan_three_center_construction(single,single,single)
+    assert proof.plan.modeled_peak_bytes<2*p.modeled_peak_bytes # metadata scales, never full global tensor
+    saved=proof.evaluate([0,1,2]);original=saved['values'].copy();proof.evaluate([2,1,0]);np.testing.assert_array_equal(saved['values'],original)
+    with pytest.raises(AttributeError):proof.source_identity='wrong'
+    for indices in ([0,0],[0,0,0,0]):
+        with pytest.raises(ValueError,match='arity'):proof.evaluate(indices)
+    with pytest.raises(IndexError):proof.evaluate([0,0,99])
+    request=manta.KernelRequest();request.centers=2
+    with pytest.raises(ValueError,match='center'):manta.plan_three_center_construction(a,a,a,request)
+    request.centers=3;request.derivative=1
+    with pytest.raises(ValueError):manta.plan_three_center_construction(a,a,a,request)
+    with pytest.raises(ValueError,match='angular'):manta.plan_three_center_construction(a,_basis((7,),False),a)
+    with pytest.raises(ValueError,match='angular'):manta.plan_three_center_construction(_basis((8,),False),a,a)
+    shell=_basis((0,),False,False).shells()[0];shell.coefficients=[float('nan')]
+    invalid=vq.BasisSet(vq.Molecule([vq.Atom(2,shell.origin)]),[shell],'invalid',True)
+    with pytest.raises(ValueError):manta.ThreeCenterConstructionTiles(invalid,a,a)
+    del proof;np.testing.assert_array_equal(saved['values'],original)
+
+
+@pytest.mark.parametrize('arity',[2,3])
+def test_fitting_scalar_producer_refuses_derivative_request(arity):
+    a=_basis((0,));request=manta.KernelRequest();request.centers=arity;request.derivative=1
+    for operation in (lambda:manta.plan_fitting([a]*arity,request=request),lambda:manta.FittingTiles([a]*arity,request=request)):
+        with pytest.raises(ValueError,match='derivative=0'):operation()
+    if arity==2:
+        with pytest.raises(ValueError,match='derivative=0'):manta.certify_metric_construction(a,a,request)
+    else:
+        with pytest.raises(ValueError,match='derivative=0'):manta.ThreeCenterConstructionTiles(a,a,a,request)
+    # The existing derivative provider still owns first derivatives.
+    derivative=manta.DerivativeTiles([a]*arity,request=request).evaluate([0]*arity,0,0)
+    assert np.all(np.isfinite(derivative['values']))

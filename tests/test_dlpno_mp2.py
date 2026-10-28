@@ -146,6 +146,125 @@ def test_shared_pair_fock_matches_previous_solve(monkeypatch, h2o_dz, localise, 
         assert getattr(actual, name) == pytest.approx(getattr(previous, name), abs=1e-11)
 
 
+@pytest.fixture(scope="module")
+def separated_water_h2():
+    return _system(H2O_ATOMS + [(1, [0., 0., 20.]), (1, [0., 0., 21.4])], "sto-3g")
+
+
+@pytest.mark.parametrize("n_frozen", [0, 1])
+@pytest.mark.parametrize("case", ["canonical", "localized", "truncated", "screened"])
+def test_named_mp2_pao_fock_preserves_frozen_calculation(
+    h2o_dz, separated_water_h2, monkeypatch, case, n_frozen, record_property,
+):
+    import ast
+    import weakref
+    from vibeqc.dlpno import mp2 as module, pao
+
+    mol, basis, rhf, df, _ = separated_water_h2 if case == "screened" else h2o_dz
+    n_occ = mol.n_electrons() // 2
+    opts = DLPNOMP2Options(
+        n_frozen=n_frozen, localise="none" if case == "canonical" else "boys",
+        tcut_pno=1e-4 if case == "truncated" else 0., tcut_pno_weak=0.,
+        tcut_mkn=1e-3 if case == "screened" else 0.,
+        tcut_pairs=1e-6 if case == "screened" else 0., tcut_pairs_weak=0.,
+        dipole_r_min=8., conv_tol_residual=1e-11, conv_tol_energy=1e-13,
+    )
+    helper, shared = module.semicanonical_pao_basis, pao.solve_dense_fock
+    calls, references = [], []
+
+    def checked_solve(matrix, **metadata):
+        assert all(ref() is None for ref in references)
+        solved = shared(matrix, **metadata)
+        references.append(weakref.ref(solved))
+        assert solved.residual_frame == "orthogonal"
+        assert solved.operator_metadata.spin == "restricted"
+        assert max(solved.residuals) < 1e-11
+        assert solved.orthogonality_error < 1e-12
+        return solved
+
+    def checked_basis(f, s, q, indices, *args, **kwargs):
+        value = helper(f, s, q, indices, *args, **kwargs)
+        assert all(ref() is None for ref in references)
+        old = helper(f, s, q, indices, *args,
+                     **{k: v for k, v in kwargs.items() if k != "fock_basis_id"})
+        v, eps = value
+        np.testing.assert_array_equal(eps, old[1])
+        np.testing.assert_allclose(v @ v.T @ s, old[0] @ old[0].T @ s, atol=1e-12, rtol=0.)
+        np.testing.assert_allclose(v.T @ s @ v, np.eye(len(eps)), atol=1e-12, rtol=0.)
+        np.testing.assert_allclose(v.T @ f @ v, np.diag(eps), atol=1e-11, rtol=0.)
+        np.testing.assert_allclose(np.asarray(rhf.mo_coeffs)[:, :n_occ].T @ s @ v,
+                                   0., atol=1e-12, rtol=0.)
+        calls.append((kwargs["fock_basis_id"], len(eps), tuple(map(int, indices))))
+        return value
+
+    with monkeypatch.context() as patch:
+        patch.setattr(pao, "solve_dense_fock", checked_solve)
+        patch.setattr(module, "semicanonical_pao_basis", checked_basis)
+        actual = run_dlpno_mp2(mol, basis, rhf, df, opts)
+    assert all(ref() is None for ref in references)
+
+    def previous_basis(*args, **kwargs):
+        kwargs.pop("fock_basis_id", None)
+        return helper(*args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(module, "semicanonical_pao_basis", previous_basis)
+        previous = run_dlpno_mp2(mol, basis, rhf, df, opts)
+    assert actual.converged and previous.converged
+    assert actual.source_identity == previous.source_identity
+    assert actual.n_frozen == previous.n_frozen == n_frozen
+    for name in ("pno_per_pair", "fit_dim_per_pair", "n_pairs_screened", "n_iter"):
+        assert getattr(actual, name) == getattr(previous, name)
+    for name in ("e_corr", "e_corr_iterated", "e_pno_correction", "e_distant"):
+        assert getattr(actual, name) == pytest.approx(getattr(previous, name), abs=1e-14, rel=0.)
+    for current_step, old_step in zip(actual.trace, previous.trace):
+        assert current_step == pytest.approx(old_step, abs=1e-14, rel=0.)
+    assert actual.pair_energies == pytest.approx(previous.pair_energies, abs=1e-14, rel=0.)
+    assert actual.trace[-1]["max_r"] < 1e-11
+    assert abs(actual.trace[-1]["delta_e"]) < 1e-13
+    prefix = f"dlpno-mp2:{actual.source_identity}:frozen={n_frozen}:"
+    pairs, occupied = set(), set()
+    for frame, rank, indices in calls:
+        assert frame.startswith(prefix) and frame.endswith(":restricted")
+        name, domain = frame[len(prefix):-len(":restricted")].split(":atoms=")
+        atoms = ast.literal_eval(domain)
+        assert atoms and indices and rank > 0
+        if name.startswith("pair="):
+            pair = tuple(map(int, name[len("pair="):].split(",")))
+            assert n_frozen <= pair[0] <= pair[1] < n_occ and pair not in pairs
+            pairs.add(pair)
+        else:
+            assert name.startswith("screen-occ=")
+            i = int(name[len("screen-occ="):])
+            assert n_frozen <= i < n_occ and i not in occupied
+            occupied.add(i)
+    assert pairs == set(actual.pno_per_pair)
+    assert len(references) == len(calls)
+    if case == "screened":
+        assert occupied == set(range(n_frozen, n_occ))
+        assert actual.n_pairs_screened > 0 and actual.e_distant < 0.
+        assert any(rank < basis.nbasis - n_occ for _, rank, _ in calls)
+    else:
+        assert not occupied and actual.n_pairs_screened == 0
+        if case != "truncated":
+            canonical = _canonical_frozen_core_dfmp2(rhf, df, n_frozen, n_occ)
+            raw_error = abs(actual.e_corr_iterated - canonical)
+            assert raw_error < 1e-8
+            record_property("canonical_raw_error_Eh", raw_error)
+        else:
+            assert min(actual.pno_per_pair.values()) < basis.nbasis - n_occ
+    record_property("raw_correlation_Eh", actual.e_corr_iterated)
+    record_property("pno_correction_Eh", actual.e_pno_correction)
+    record_property("distant_correction_Eh", actual.e_distant)
+    record_property("previous_energy_error_Eh", abs(actual.e_corr-previous.e_corr))
+    record_property("previous_trace_error", max(abs(a[k]-b[k])
+                    for a, b in zip(actual.trace, previous.trace) for k in a))
+    record_property("pao_fock_solves", len(calls))
+    record_property("pao_rank_range", [min(n for _, n, _ in calls), max(n for _, n, _ in calls)])
+    record_property("screened_pairs", actual.n_pairs_screened)
+    record_property("final_iteration", actual.trace[-1])
+
+
 def test_explicit_sources_keep_interleaved_ao_frames(monkeypatch, h2o_sto3g):
     """Nested MP2 runs retain their own nonorthogonal AO frame and core."""
     from dataclasses import asdict, replace

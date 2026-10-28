@@ -211,10 +211,21 @@ def test_sr_record_preserves_selector_and_actual_reciprocal_inputs(monkeypatch):
         system, basis, basis, np.zeros((1, 3)), np.zeros(3), omega=.7,
         pair_cutoff=4.1, auxiliary_cutoff=5.2, ke_cutoff=1.2, linear_dep_thr=1.5,
         memory_byte_cap=32*1024**2, native_workspace_byte_cap=1024**2,
-        image_candidate_cap=1000, reciprocal_candidate_cap=10000, _support_recorder=records.append)
+        image_candidate_cap=1000, reciprocal_candidate_cap=10000, _support_recorder=records.append,
+        metric_decomposition="eigen")
     assert batch.executed_support == records[0]
     record = json.loads(records[0])
     assert record["metric_keep"] == [False, True]
+    assert record["metric_decomposition"] == "eigen"
+    # The default Cholesky-first policy (#179) keeps this positive definite
+    # metric at full rank and records that it did.
+    default = aux._build_lpq_range_separated_shared_q(
+        system, basis, basis, np.zeros((1, 3)), np.zeros(3), omega=.7,
+        pair_cutoff=4.1, auxiliary_cutoff=5.2, ke_cutoff=1.2, linear_dep_thr=1.5,
+        memory_byte_cap=32*1024**2, native_workspace_byte_cap=1024**2,
+        image_candidate_cap=1000, reciprocal_candidate_cap=10000, _support_recorder=records.append)
+    assert json.loads(default.executed_support)["metric_keep"] == [True, True]
+    assert json.loads(default.executed_support)["metric_decomposition"] == "cholesky"
     assert record["metric_eigenvalues"] == [1., 2.]
     np.testing.assert_array_equal(record["reciprocal_vectors"], seen["vectors"])
     assert "not integral call trace" in record["selector_evidence"]

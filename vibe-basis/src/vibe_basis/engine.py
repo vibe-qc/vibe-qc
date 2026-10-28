@@ -62,6 +62,13 @@ import abc
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+#: Failure modes that are about getting a job run, not about the calculation:
+#: the transport lost it, its output never arrived, or the queue killed or
+#: interrupted it. A driver retries these instead of journalling them.
+TRANSIENT_FAILURE_MODES = frozenset(
+    {"transport_error", "no_output_file", "job_killed", "job_interrupted"}
+)
+
 
 @dataclass(frozen=True)
 class EngineEnergy:
@@ -75,9 +82,10 @@ class EngineEnergy:
     ok
         ``True`` iff the evaluation converged and completed. Optimizer
         code branches on this and substitutes ``inf`` for the objective
-        when it is ``False`` -- a derivative-free driver routes around
-        infeasible points, so a failed evaluation must be *reported*,
-        never raised.
+        when it is ``False``, which the ``vibe_basis.optimize`` drivers
+        turn into a finite stand-in -- the optimiser must see an
+        infeasible point as a bad value, so a failed evaluation must be
+        *reported*, never raised.
     engine
         Engine name, e.g. ``"crystal23"``, ``"vibeqc"``, ``"gpaw"``.
     engine_version

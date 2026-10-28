@@ -231,6 +231,16 @@ struct PeriodicGDFCouplingResult {
     std::vector<double> roundoff_bounds; // Actual action versus exact stored graph, per output.
     std::vector<double> metric_column_norm_bounds; // Auxiliary L1 norm per k/AO pair.
 };
+// Complete construction on the literal unscreened finite index source.
+// Includes approximation discrepancy; do not add overlapping older budgets.
+struct PeriodicGDFConstructionBounds {
+    std::vector<double> real_lower,real_upper,imag_lower,imag_upper,error_bounds;
+    std::string source_identity,reference_identity,certificate_identity;
+    Count reference_terms=0;
+    double maximum_error=0.;
+};
+struct PeriodicGDFConstructionTile : PeriodicGDFConstructionBounds {PeriodicGDFTile evaluated;};
+struct PeriodicGDFConstructionAction : PeriodicGDFConstructionBounds {PeriodicGDFCouplingResult evaluated;};
 PeriodicGDFCouplingPlan plan_periodic_gdf_coupling(const PeriodicGDFTilesPlan&,const ResourceBudget&);
 PeriodicGDFCouplingPlan plan_periodic_gdf_coupling_norm_bounds(const PeriodicGDFCouplingPlan&,const ResourceBudget&);
 PeriodicGDFCouplingPlan plan_periodic_gdf_coupling_roundoff(const PeriodicGDFCouplingPlan&,const ResourceBudget&);
@@ -280,6 +290,9 @@ public:
     std::shared_ptr<const PeriodicGDFTiles> refine_multipole(double,const ResourceBudget&) const;
     PeriodicGDFTile metric() const;
     PeriodicGDFTile evaluate(Count auxiliary_shell,Count bra_shell,Count ket_shell) const;
+    PeriodicGDFCouplingPlan plan_coupling_construction(const ResourceBudget&) const;
+    PeriodicGDFConstructionTile certify_coupling_tile(Count,Count,Count,const ResourceBudget&) const;
+    PeriodicGDFConstructionAction certify_coupling_action(const std::vector<std::complex<double>>&,bool forward,const ResourceBudget&) const;
     PeriodicGDFCouplingPlan plan_coupling(const ResourceBudget&) const;
     PeriodicGDFCouplingPlan plan_coupling_norm_bounds(const ResourceBudget&) const;
     PeriodicGDFCouplingPlan plan_coupling_roundoff(const ResourceBudget&) const;
@@ -296,6 +309,7 @@ private:
     friend struct PeriodicGDFPairContractions;
     friend PeriodicGDFShortRangeResult compute_periodic_gdf_short_range(const BasisSet&,const BasisSet&,
         const PeriodicSystem&,const Eigen::Vector3d&,const md::Matrix&,const PeriodicGDFShortRangeOptions&,const ResourceBudget&);
+    PeriodicGDFConstructionBounds coupling_construction_bounds(Count,Count,Count) const;
     PeriodicGDFTile pair_tree_tile(Count,Count,Count) const;
     PeriodicGDFTile pair_tree_tile_impl(Count,Count,Count) const;
     void prepare_pair_tree(PeriodicGDFShortRangeReceipt&) const;

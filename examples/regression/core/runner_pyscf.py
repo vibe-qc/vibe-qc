@@ -173,6 +173,17 @@ def run_periodic(payload):
     pbc_gto = importlib.import_module("pyscf.pbc.gto")
     pbc_scf = importlib.import_module("pyscf.pbc.scf")
 
+    charge = payload.get("charge", 0)
+    background = payload.get("electrostatic_background")
+    if type(charge) is not int or background not in (None, "uniform-jellium"):
+        raise ValueError("invalid periodic charge/background request")
+    if charge and (background != "uniform-jellium"
+                   or payload["method"]["scf"] not in ("uhf", "uks")
+                   or payload["method"].get("post") is not None
+                   or payload.get("dimension", 3) != 3
+                   or payload.get("nelec_per_cell") is None):
+        raise ValueError("charged PySCF comparisons require 3D unrestricted SCF, "
+                         "uniform-jellium and explicit per-cell electron counts")
     lattice_ang = np.asarray(payload["lattice_ang"], dtype=float)
     atom_lines = []
     for atom in payload["atoms"]:
@@ -185,6 +196,7 @@ def run_periodic(payload):
     cell_kwargs = dict(
         atom="; ".join(atom_lines),
         a=lattice_ang.tolist(),
+        charge=charge,
         basis=payload["basis"],
         unit="A",
         verbose=0,
@@ -239,7 +251,8 @@ def run_periodic(payload):
         if payload["method"]["scf"] in ("uhf", "uks"):
             # Pin the uniform per-cell state. K-point classes count electrons
             # over the whole Born-von Karman supercell; cell.spin alone fills
-            # a mixed state there (the OPEN-SHELL TRAP above).
+            # a mixed state there (the OPEN-SHELL TRAP above). The charge
+            # must also be repeated on every cell, not subtracted just once.
             gamma = tuple(int(x) for x in payload["kmesh"]) == (1, 1, 1)
             n_k = 1 if gamma else len(mf.kpts)
             mf.nelec = (n_alpha * n_k, n_beta * n_k)
@@ -292,6 +305,8 @@ def run_periodic(payload):
         "n_basis_shells": int(cell.nbas),
         "n_electrons": int(cell.nelectron),
         "nelec_per_cell": nelec_per_cell,
+        "charge": int(cell.charge),
+        "electrostatic_background": background,
         "identity": identity,
         "wall_s": wall,
         "converged": bool(getattr(mf, "converged", False)),
@@ -563,6 +578,8 @@ def _periodic_payload(spec: PeriodicSpec, basis_name: str, method: MethodSpec,
         "method": _method_payload(method),
         "kmesh": kmesh,
         "multiplicity": state["multiplicity"],
+        "charge": state["charge"],
+        "electrostatic_background": state["electrostatic_background"],
         "nelec_per_cell": [state["n_alpha"], state["n_beta"]],
         "conv_tol_energy": conv_tol_energy,
         "max_iter": max_iter,
@@ -628,6 +645,8 @@ def run_periodic_case(
                                 conv_tol_energy, max_iter)
     result = _run_external_pyscf(payload, log_path, artifact_dir=artifact_dir)
     row = _apply_result(row, result, len(spec.atoms))
+    row.charge = result.get("charge")
+    row.electrostatic_background = result.get("electrostatic_background")
     if result.get("nelec_per_cell") is not None:
         row.n_alpha, row.n_beta = (int(n) for n in result["nelec_per_cell"])
     if artifact_dir is not None and result.get("identity") is not None:

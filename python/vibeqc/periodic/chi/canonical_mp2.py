@@ -74,10 +74,19 @@ class CanonicalFactorAdapter:
             record = matches[0]
             eigenvalues = np.asarray(record['metric_eigenvalues'], dtype=float)
             keep = np.asarray(record['metric_keep'])
+            # SR records name their executed decomposition (#179): the
+            # Cholesky-first fit keeps full rank, the eigen fallback the cut.
+            # (vibeqc.aux_basis._rsgdf_metric_keep, inlined: restart proofs
+            # forbid native imports here.)
+            decomposition = record.get('metric_decomposition', 'eigen')
+            if decomposition not in ('cholesky', 'eigen'):
+                raise ValueError('invalid retained metric decomposition metadata')
+            expected = (np.ones(eigenvalues.shape, dtype=bool) if decomposition == 'cholesky'
+                        else eigenvalues > d.metric_threshold)
             if (eigenvalues.ndim != 1 or keep.dtype != bool or keep.shape != eigenvalues.shape
                     or not np.isfinite(eigenvalues).all() or not keep.any()
                     or np.any(eigenvalues[keep] <= 0)
-                    or not np.array_equal(keep, eigenvalues > d.metric_threshold)):
+                    or not np.array_equal(keep, expected)):
                 raise ValueError('invalid retained metric rank/sign metadata')
             if 'rank' in record and record['rank'] != int(keep.sum()):
                 raise ValueError('metric rank metadata mismatch')

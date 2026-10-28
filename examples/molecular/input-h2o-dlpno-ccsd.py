@@ -9,9 +9,10 @@ reproduces canonical closed-shell CCSD for the same active occupied space.
 The example reports, rather than pre-claims, the recovery of the current
 published NormalPNO default.
 
-This script runs DLPNO-CCSD at the default truncation, then verifies the
-headline property — the full-domain limit reproduces canonical CCSD
-exactly. For the (T) correction use ``method="dlpno-ccsd(t)"`` (DLPNO-(T1),
+This script compares default truncation with a full-domain local CCSD
+calculation on the same RHF reference. It does not run an independent
+canonical CCSD solver and therefore does not itself establish canonical parity.
+For the (T) correction use ``method="dlpno-ccsd(t)"`` (DLPNO-(T1),
 which restores off-diagonal localised-Fock coupling and reaches canonical
 (T) only in the full-domain limit; see ``input-h2o-dlpno-ccsd-t.py``).
 
@@ -34,11 +35,15 @@ mode. The solver carries a generous, overridable
 ``docs/tutorial/dlpno_local_correlation.md``.
 
 Run:
-    .venv/bin/python examples/molecular/input-h2o-dlpno-ccsd.py
+    python input-h2o-dlpno-ccsd.py > console.log
+
+Copy this script to a separate run directory first, and use the installed
+engine's Python. Coordinates are in bohr and energies are in hartree.
+The comparison table is printed to stdout; console.log captures it together
+with progress messages. Existing files with the same stem are overwritten.
 
 Outputs (next to this script):
     input-h2o-dlpno-ccsd.out     — banner + RHF trace + DLPNO-CCSD block
-                                  + appended TCutPNO recovery table
     input-h2o-dlpno-ccsd.molden  — orbitals at the RHF solution
     input-h2o-dlpno-ccsd.system  — provenance manifest
 """
@@ -64,24 +69,28 @@ result = vq.run_job(
     mol,
     basis="cc-pvdz",
     method="dlpno-ccsd",
+    frozen_core="published",
+    dlpno_thresholds="normal",
     output=HERE / STEM,
 )
 cc = result.dlpno_ccsd
+if not result.converged or not cc.converged:
+    raise RuntimeError("RHF or DLPNO amplitudes did not converge; inspect the job log")
 
-# 2. Headline property: the full-domain limit (no PNO truncation, full
-#    PAO domains) reproduces canonical CCSD exactly — the FCI-anchored
-#    M3c parity gate. Compare default-truncation recovery against it.
+# 2. Compare default and full-domain local CCSD on one shared RHF reference.
 basis = vq.BasisSet(mol, "cc-pvdz")
 rhf_opts = vq.RHFOptions()
 rhf_opts.conv_tol_energy = 1e-10
 hf = vq.run_rhf(mol, basis, rhf_opts)
+if not hf.converged:
+    raise RuntimeError("Comparison RHF did not converge")
 
 from vibeqc.density_fitting import DensityFitting
 
 df = DensityFitting(basis, vq.BasisSet(mol, "cc-pvdz-ri"), aux_basis_name="cc-pvdz-ri")
 
 n_frozen = vq.chemical_core_orbital_count(mol)
-exact = run_local_dlpno_ccsd(
+full_domain = run_local_dlpno_ccsd(
     mol,
     basis,
     hf,
@@ -95,23 +104,22 @@ exact = run_local_dlpno_ccsd(
         residual_domain="full",
     ),
 )
+if not full_domain.converged:
+    raise RuntimeError("Full-domain local CCSD did not converge")
 default = run_local_dlpno_ccsd(
     mol, basis, hf, df, LocalCCSDOptions(n_frozen=n_frozen)
 )
+if not default.converged:
+    raise RuntimeError("Default local CCSD did not converge")
 avg = sum(default.pno_per_pair.values()) / max(len(default.pno_per_pair), 1)
 
-out_path = (HERE / STEM).with_suffix(".out")
-with open(out_path, "a") as fh:
-    fh.write("\n=== DLPNO-CCSD vs canonical CCSD/cc-pVDZ ===\n")
-    fh.write(f"  E_corr(full domain == canonical CCSD) = {exact.e_corr:14.8f} Ha\n")
-    fh.write(
-        f"  E_corr(default NormalPNO)             = {default.e_corr:14.8f} Ha"
-        f"   ({default.e_corr / exact.e_corr:.4%} recovery, {avg:.1f} avg PNOs)\n"
-    )
-
+# Keep comparison output separate from the finalized run_job artifacts.
 print(f"  E(RHF)                                = {hf.energy:14.8f} Ha")
-print(f"  E_corr(full domain == canonical CCSD) = {exact.e_corr:14.8f} Ha")
+print(f"  E_corr(full-domain local CCSD)         = {full_domain.e_corr:14.8f} Ha")
 print(
     f"  E_corr(default NormalPNO)             = {default.e_corr:14.8f} Ha"
-    f"   ({default.e_corr / exact.e_corr:.4%} recovery)"
+    f"   ({default.e_corr / full_domain.e_corr:.4%} recovery)"
 )
+delta_uha = 1e6 * (default.e_corr - full_domain.e_corr)
+print(f"  delta(default - full domain)           = {delta_uha:14.4f} uHa")
+print(f"  average retained PNOs per pair         = {avg:.1f}")

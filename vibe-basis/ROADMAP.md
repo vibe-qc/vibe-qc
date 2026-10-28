@@ -13,7 +13,7 @@ is the contract that keeps the two honest about it.
 
 | | |
 |---|---|
-| **Source version (2026-10-26)** | 0.13.0 (M-0 done; code for M0, M1, M2 (0.11.0) and M3 (0.12.0, scan driver 0.13.0) landed; the gates of M0 to M3 are open, see § 4) |
+| **Source version (2026-10-27)** | 0.14.0 (M-0 done; code for M0, M1, M2 (0.11.0), M3 (0.12.0, scan driver 0.13.0) and M4 (0.14.0) landed; M4's kill/resume gate passes (model campaign and vq); the gates of M0 to M3 are open, see § 4) |
 | **1.0.0 criterion** | first production basis published from this driver + frozen backend/transport API ([`VERSIONING.md`](VERSIONING.md)) |
 | **vibe-qc's roadmap** | [`docs/roadmap.md`](../docs/roadmap.md) § "OPTBASIS-style basis optimiser" |
 
@@ -60,7 +60,8 @@ independent; experimental work retains its documented status.
 The already shipped M0-M3 implementation versions remain historical facts.
 Completing their outstanding acceptance alone does not earn another code
 version. New features/fixes follow [VERSIONING.md](VERSIONING.md), updating both
-version sites together; M4/M5 receive numbers when release scope is ready.
+version sites together; M4's code landed in 0.14.0, and M5 receives a number
+when its release scope is ready.
 `1.0` remains the production-basis result plus API freeze, not completion of
 this documentation pass. M-0 is already complete and needs no duplicate open
 milestone. #224 remains the M2 evidence issue and is linked from M0; #225
@@ -198,7 +199,7 @@ receive a version through the normal release process when their scope is ready.
 | **M1** | Γ-point ZPE on the Gaussian route (FD Hessian **from energies** — see BOC-2) | Included by 0.12.0 | MgO + NaCl optical modes within 5 cm⁻¹ of the GAPW route; acoustic within 15 cm⁻¹ of zero | 🟡 **driver + engine landed; gate open** |
 | **M2** | `CohesiveObjective` vs the PW limit | 0.11.0 | evaluating at pob-TZVP-REV2 reproduces MD −24.6 / MAD 35.4 kJ/mol (n=28) | 🟡 **objective landed (0.11.0); rung 2a passes**: the published pob energies through `CohesiveObjective` give −24.58 / 35.40 with the static-lattice and counterpoise conventions pinned (`tests/basisset_dev/test_m2_gate_published_pob.py`); rung 2b, an engine reproducing those energies, is open (#224); its `VibeQcEngine` half is no longer blocked on BOC-3 |
 | **M3** | **Topology search — the d/f scan** | 0.12.0 | Mg-d in MgO + Si-d in SiC: terminates, ranked Pareto front, **rediscovers the shipped pob topology** on a total-energy objective | 🟡 **topology code landed (0.12.0); relax-and-score recipe `vibeqc.basis_optimization.recipes.topology_scan` landed (0.13.0); gate open** (#225) |
-| **M4** | Campaign orchestration on `vq` | Unassigned | 200-eval campaign survives a mid-run kill and resumes identically; zero writes into managed checkouts | ⬜ |
+| **M4** | Campaign orchestration on `vq` | 0.14.0 | 200-eval campaign survives a mid-run kill and resumes identically; zero writes into managed checkouts | 🟢 **gate passes (2026-10-27), not yet released**: `vibe_basis.campaign` + `LedgerTransport`. A 600-evaluation model scan SIGKILLed mid-run resumes to the identical record, adopts its queued jobs and leaves the checkout untouched (`tests/basisset_dev/test_campaign_resume_gate.py`); on vq a SIGKILLed MgO scan driver's restart adopted, fetched and journalled both queued jobs with no resubmission (#692, closed) |
 | **M5** | Cross-validation ladder (Gaussian ↔ PW limit) | Unassigned | ≥ 28 systems, rungs 1/2/2′/3 + extrapolation residual demonstrably smaller than the gap it measures | ⬜ |
 | **M6** | Production run — the optimised basis | **1.0.0** | runs on `VibeQcEngine`; held-out MAD beats pob-TZVP-REV2's 35.4 kJ/mol by a stated margin at equal-or-lower primitive count | ⬜ |
 
@@ -231,7 +232,14 @@ M4 and M5 implementation need not wait for M3's scientific gate.
   bulk Ba carries an f function its counterpoise atoms lack. LiH's H atom
   energy is SCF cycle 1 of a run that crashed. The counterpoise settings
   vary per system (NSTAR 10 to 60, RMAX 5 to 10 Angstrom, relaxed or
-  starting cell). The recomputation has not run yet.
+  starting cell). A first recomputation (2026-10-27) reproduced the NaCl bulk
+  to 5e-7 kJ/mol and its Cl atom to 0.09 kJ/mol, but its Na atom collapsed to
+  -107.7 Ha: the reproduction had read the `.d12` beside each output, which
+  for NaCl was edited after the run (NSTAR, RMAX, basis, cell, SCF input),
+  and had not carried the reference's SCF convergence input. Decks are now
+  read from the outputs' echoed input, with that input; re-audited that way,
+  the MgO, BaO and LiH findings stand, and N is off-family (SP shell) in
+  AlN, BN and TiN. The recomputation is running again.
 - **BOC-3 is landed (e96c2a7c):** the ghost-cluster implementation removes
   the counterpoise capability blocker. The reported MgO comparisons agree
   within 2.7e-6 Ha for Mg in the tested bases and about 1e-7 Ha for O/STO-3G.
@@ -260,8 +268,23 @@ M4 and M5 implementation need not wait for M3's scientific gate.
   Pareto front is a weak rediscovery test because added functions generally
   lower variational energy; discriminating cohesive-objective evidence still
   requires M2's engine reproduction.
-- **M4–M6:** cache/restart primitives and vq transport exist, but the
-  200-evaluation kill/resume gate, integrated cross-validation ladder and
+- **M4 (2026-10-27):** `vibe_basis.campaign.Campaign` owns a campaign
+  directory (journal, job ledger, key-named point directories, bound
+  settings, per-session records, lock, budget) and refuses one inside a git
+  checkout. `LedgerTransport` lets a restarted driver adopt the jobs a dead
+  one left on the queue: on 2026-10-27 the lack of it cost 21 duplicate
+  submissions and 9 SiC points computed three times. The gate test kills a
+  600-evaluation model scan with SIGKILL while it waits on a job; the
+  restart adopts every unfetched job, recomputes no journalled point, ends
+  on the uninterrupted run's record and leaves the checkout it ran in
+  untouched. Killed at five other points it gives the same record and the
+  same 600 jobs. Both #225 scans moved onto it on 2026-10-27. On vq, the
+  MgO driver killed with SIGKILL while two jobs were queued restarted,
+  took over its lock, replayed 21 journalled energies and adopted both
+  jobs without a new submission; a second driver started while the first
+  lived was refused (`CampaignLocked`). Both adopted jobs were fetched and
+  journalled, each submitted once. M4's gate passes; evidence in #692.
+- **M5–M6:** the integrated cross-validation ladder and the
   production-basis result are not established. `GpawEngine` is still a stub.
 
 The next feature release can collect qualified driver changes without waiting

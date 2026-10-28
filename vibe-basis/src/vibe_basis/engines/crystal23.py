@@ -95,6 +95,14 @@ class Crystal23Engine(EnergyEngine):
         is then the final geometry's.
     bsse_nstar, bsse_rmax
         ``ATOMBSSE`` star count and radius (Angstrom) of a counterpoise atom.
+    scf_lines
+        Extra SCF-section input for every deck, written verbatim (a
+        reference deck's ``FMIXING``, ``ANDERSON``, ``ATOMSPIN`` ...); a
+        ``SPINLOCK`` or ``TOLDEE`` among them replaces the emitter's own.
+    atom_n_unpaired, atom_symmremo
+        A counterpoise atom's unpaired electrons and whether its deck
+        removes symmetry. ``None`` is the bare-atom convention: the
+        tabulated ground state, and ``SYMMREMO`` for an open shell.
     expected_version
         CRYSTAL major version this engine claims to be driving. Parsed
         outputs are checked against it and a mismatch is reported (see
@@ -122,6 +130,9 @@ class Crystal23Engine(EnergyEngine):
     optgeom: bool = False
     bsse_nstar: int = 30
     bsse_rmax: float = 10.0
+    scf_lines: tuple[str, ...] = ()
+    atom_n_unpaired: Optional[int] = None
+    atom_symmremo: Optional[bool] = None
     expected_version: int = DEFAULT_CRYSTAL_VERSION
     strict_version: bool = False
 
@@ -185,7 +196,8 @@ class Crystal23Engine(EnergyEngine):
         method: str = "rhf",
     ) -> EngineEnergy:
         deck = emit_input_inline(
-            structure, basis_text, method=method, shrink=self.shrink, optgeom=self.optgeom
+            structure, basis_text, method=method, shrink=self.shrink, optgeom=self.optgeom,
+            scf_lines=self.scf_lines,
         )
         if deck is None:
             # emit_input_inline returns None for an unsupported method or
@@ -226,7 +238,10 @@ class Crystal23Engine(EnergyEngine):
         # a cohesive energy is only comparable to a reference computed
         # under the *same* atom convention: spin-restricting one
         # reference moved KBr's atomization by 37 kJ/mol.
-        n_unpaired = GROUND_STATE_MULTIPLICITY.get(Z, 1) - 1
+        n_unpaired = (
+            self.atom_n_unpaired if self.atom_n_unpaired is not None
+            else GROUND_STATE_MULTIPLICITY.get(Z, 1) - 1
+        )
         shell = "aspherical_spin_polarised" if n_unpaired else "closed_shell"
 
         if host is None:
@@ -247,6 +262,9 @@ class Crystal23Engine(EnergyEngine):
                 Z=Z,
                 nstar=self.bsse_nstar,
                 rmax=self.bsse_rmax,
+                n_unpaired=self.atom_n_unpaired,
+                symmremo=self.atom_symmremo,
+                scf_lines=self.scf_lines,
             )
             if deck is None:
                 return EngineEnergy.failed(
@@ -334,6 +352,12 @@ class Crystal23Engine(EnergyEngine):
         except TransportError as exc:
             return EngineEnergy.failed(
                 self.name, "transport_error", error=str(exc), label=label, **detail
+            )
+        if job.state in ("killed", "interrupted"):
+            # The queue stopped the job (a cancel, a daemon restart): its
+            # partial output says nothing about the basis.
+            return EngineEnergy.failed(
+                self.name, f"job_{job.state}", label=label, job_id=job.handle.job_id, **detail
             )
 
         out_path = job.output_dir / f"{name}.out"

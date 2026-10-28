@@ -17,6 +17,7 @@ import sys
 
 # -I excludes ambient imports and the script directory. Add only our trusted
 # tracked helper directory, never the candidate's package or environment.
+sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from attest_native_image import file_digest, loaded_symbol_path
 

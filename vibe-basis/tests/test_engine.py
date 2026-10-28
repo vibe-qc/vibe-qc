@@ -297,3 +297,21 @@ def test_mpi_invocation_stages_an_input_file_runner(tmp_path, monkeypatch):
 def test_unknown_invocation_is_refused():
     with pytest.raises(ValueError, match="invocation"):
         Crystal23Engine(transport=_CapturingTransport(), invocation="srun")
+
+
+def test_a_job_the_queue_killed_is_not_read_as_an_scf_failure(tmp_path, monkeypatch):
+    """A cancelled job leaves a partial output; that is not about the basis."""
+    from vibe_basis.transports.base import JobHandle, JobResult
+
+    class Killed:
+        def run(self, work_dir, command, dest, **kwargs):
+            out = Path(dest) / "job7"
+            out.mkdir(parents=True)
+            (out / "MgO.out").write_text(" CYCLE   1 TOTAL ENERGY(DFT)(AU)(   1) -2.7E+02\n")
+            return JobResult(JobHandle("job7", Path(work_dir), tuple(command)), "killed", out)
+
+    monkeypatch.chdir(tmp_path)
+    eng = Crystal23Engine(transport=Killed(), crystal_wrapper="crystal23", invocation="stdin")
+    result = eng.crystal_energy("12 0\n99 0\nEND\n", _rocksalt(), method="pw1pw")
+    assert not result.ok and result.failure_mode == "job_killed"
+    assert result.detail["job_id"] == "job7"
