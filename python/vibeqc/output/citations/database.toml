@@ -7006,7 +7006,7 @@ _libxc_always           = ["libxc_2018"]
 "pm7"                   = ["stewart_pm7_2013", "mopac_moussa_stewart_2026"]
 "upm7"                  = ["stewart_pm7_2013", "mopac_moussa_stewart_2026"]
 "om1"                   = ["kolb_thiel_om1_1993", "dral_omx_2016"]
-"om2"                   = ["weber_thiel_om2_2000", "dral_omx_2016"]
+"om2"                   = ["weber_thiel_om2_2000", "dral_omx_2016", "kolb_thiel_om1_1993", "hehre_sto_ng_1969"]
 "om3"                   = ["scholten_om3_2003", "weber_thiel_om2_2000", "dral_omx_2016"]
 # MSINDO method papers; route-specific NDDO multipole references are supplied
 # as explicit extras by SemiempiricalRoutePlan.

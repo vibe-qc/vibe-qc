@@ -503,6 +503,10 @@ def solve_eigenproblem(
         options = SolverOptions()
 
     strategy = get_solver(solver)
+    if options.guess_vectors is not None:
+        from .operators import solver_capabilities
+        if not solver_capabilities(solver).warm_start:
+            raise NotImplementedError(f"{solver} does not support warm starts")
     if not np.isfinite(options.tol) or options.tol <= 0:
         raise ValueError("tol must be positive and finite")
     effective_sigma = options.sigma
@@ -539,10 +543,6 @@ def solve_eigenproblem(
 
     # Dispatch generalised problems
     if isinstance(problem, GeneralizedEigenProblem):
-        if options.guess_vectors is not None:
-            from .operators import solver_capabilities
-            if not solver_capabilities(solver).warm_start:
-                raise NotImplementedError(f"{solver} does not support warm starts")
         if not isinstance(options.n_roots, (int, np.integer)) or options.n_roots < 0:
             raise ValueError("n_roots must be a nonnegative integer")
         if not strategy.supports_generalized:

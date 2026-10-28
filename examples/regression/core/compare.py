@@ -124,6 +124,13 @@ def _case_key(row):
 def _case_mismatch(row, reference) -> bool:
     if _case_key(row) != _case_key(reference):
         return True
+    # A row cannot mix all-electron spin counts with a valence total (ECP),
+    # even if both programs emitted the same contradictory metadata.
+    for candidate in (row, reference):
+        counts = (candidate.n_electrons, candidate.n_alpha, candidate.n_beta)
+        if all(n is not None for n in counts) and (
+                any(n < 0 for n in counts) or counts[1] + counts[2] != counts[0]):
+            return True
     # Charged rows require both runners to confirm charge and convention.
     # Legacy neutral results may lack these additional fields.
     if any(r.charge not in (None, 0) for r in (row, reference)):

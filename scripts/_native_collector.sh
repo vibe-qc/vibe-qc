@@ -84,6 +84,7 @@ try:
                 ("build_fftw.sh", "_native_collector.sh", "_safe_build_env.sh",
                  "_verify_source.sh", "_build_lock.sh")],
             "cmake_builds": [build], "install": install, "artifacts": [],
+            "data_sources": {"include/fftw3.h": {"source": "fftw", "path": "api/fftw3.h"}},
             "artifact_manifest": str(Path(build) / "install_manifest.txt"), "cwd": root}
     # The external collector must authenticate extracted bytes before/after the
     # build. This file merely passes the recipe's pin, not a qualification.

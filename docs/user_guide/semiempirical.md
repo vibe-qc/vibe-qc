@@ -161,10 +161,10 @@ improved conformational energies and rotation barriers; OM3
 small accuracy cost. The parameters vibe-qc ships are the published H, C,
 N, O, F sets of {vibeqc-cite}`dral_omx_2016`. vibe-qc's OM1 lacks the
 analytic ECP, which is why it warns and why its X-H bonds come out about
-0.3 Å short; the OMx two-centre integrals use Klopman-scaled STO monopole
-densities where the publications use scaled-Gaussian multipoles, which
-leaves OM2/OM3 bond minima 0.1 to 0.2 Å long while relative energetics
-survive. Where NDDO helps:
+0.3 Å short. The legacy OM1/OM3 two-centre integrals retain Klopman-scaled
+STO diagonal density products where the publications use complete Gaussian
+density products. Molecular OM2 now uses the coupled Gaussian operator path
+described below; this change alone does not establish molecular accuracy. Where NDDO helps:
 geometries, heats of formation and conformational trends of organic and
 main-group molecules at a cost of $O(N^2)$ integrals. Where it fails:
 metals, electronic spectra, transition-state energetics and anything the
@@ -341,11 +341,15 @@ integer-occupation fixed point converges keep their exact zero-T energies
 (bit-identical to the direct `SCCDFTBModel` result). The zero-temperature
 attempt has a 500-iteration budget. Each rung restarts from zero charges
 with a 1500-iteration budget, wider than the zero-temperature one because a
-smeared, low-mixing SCC converges slowly (the formic-acid dimer needs 573
-iterations on its rung; adenine converges only on the fourth rung, at
-0.002 Ha, in 232 iterations). A rung is entered only after the previous one
-failed, so the wider budget and the fourth rung cannot change any system
-that already converged. The reported iteration count is the cumulative total
+smeared, low-mixing SCC can converge slowly. The formic-acid dimer and adenine
+motivated the wider budget and fourth rung on the historical Hamiltonian;
+with the corrected Wolfsberg-Helmholz hopping they converge at zero
+temperature (48 and 60 iterations, respectively, in the retained regression
+fixtures). Their energies are model-specific regression pins, not external
+reference values. Square cyclobutadiene separately exercises a genuine
+zero-temperature failure followed by the first finite-temperature rung.
+A rung is entered only after the previous one failed, so the wider budget
+and the fourth rung cannot change any system that already converged. The reported iteration count is the cumulative total
 across all attempts. Because the SCC fixed point does
 not depend on the mixing fraction, the retried energies are unchanged from
 the same-temperature model-level run; only the iteration path differs.
@@ -840,6 +844,24 @@ OM1, OM2 and OM3 are experimental and a maintainer retirement target
 (2026-09-02); see the status admonition at the top of this page. They keep
 running until the deprecation lands, but new work should start from PM6 or
 MSINDO.
+The molecular OM2 operator now uses contracted Gaussian operands: the
+printed ECP-3G C/N/O/F basis of {vibeqc-cite}`kolb_thiel_om1_1993` (Table I), and the
+unit-exponent STO-3G 1s expansion of {vibeqc-cite}`hehre_sto_ng_1969` (Table I)
+for hydrogen and core orbitals. Primitive exponents are multiplied by the
+appropriate published `zeta**2`; contractions are explicitly normalized.
+This uses the printed table precision, not unprinted full-precision fits.
+Overlap, all same-center density-product Coulomb and exchange channels,
+penetration-corrected attractions, core repulsion and the ECP core-valence
+overlap use this basis together. The NDDO secular equation still has an
+identity metric; the Gaussian overlap enters the correction terms only.
+The parameter tables, resonance/ORT formulas and finite-difference refusal
+threshold are unchanged. Restricted and unrestricted OM2 share the same
+pair operands. OM1/OM3 retain the legacy STO approximation. Assembled-operator
+checks and molecular energy/derivative/state validation are required before
+claiming published-method accuracy; the earlier internal pair checks alone
+do not qualify this integration. In particular, the earlier optimization
+and frequency results below describe their recorded earlier implementation.
+
 Molecular OM2/OM3 support `run_job(mol, method="om2", hessian=True)` and
 `compute_hessian_fd(mol, "", method="OM2", hessian_options=...)` (likewise
 OM3). The Hessian uses central differences of the existing checked native

@@ -1,0 +1,1 @@
+- Standard and interior eigensolver requests now refuse warm-start orbitals on unsupported backends instead of silently ignoring the supplied seeds.

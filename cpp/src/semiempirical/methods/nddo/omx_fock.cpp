@@ -1,4 +1,4 @@
-// OMx Fock builder — proper OM1/OM2/OM3 Hamiltonian implementation.
+// OMx Fock builder; OM2 Gaussian integration, legacy OM1/OM3 operands.
 //
 // The OMx methods extend the MNDO-type NDDO model with explicit
 // orthogonalization corrections (the "ORT" pseudopotential terms) and, for
@@ -29,7 +29,12 @@
 // V_AB,C = 0.610 eV, V_AC,B = 0.114 eV at 180°/1.1 Å) — pinned in
 // tests/test_semiempirical.py::TestOMxV2AgainstWeber2000.
 //
-// Two-centre Coulomb-class integrals follow the published Klopman–Ohno-scaled
+// OM2 uses normalized Gaussian operands consistently for overlap, complete
+// same-centre density-product J/K, attractions, core repulsion and core-valence
+// overlaps. See omx_gaussian_pair.cpp for published basis-table precision.
+// The internal legacy accessor retains the old operands for discrimination.
+//
+// Legacy OM1/OM3 two-centre Coulomb-class integrals use Klopman–Ohno-scaled
 // analytic scheme (Dral 2016 eqs 13–14 and 18–20) with STO densities standing
 // in for the scaled Gaussian basis:
 //   f_KO(A,B) = γ^K_AB / (s_A s_A, s_B s_B)^a                     (eq 19)
@@ -42,18 +47,19 @@
 // exponential core-repulsion terms — the Pauli wall is carried by the
 // explicit ORT/ECP corrections, the penetration balance by f_KO.
 //
-// Documented approximations relative to the published OMx methods (see
+// Legacy OM1/OM3 approximations relative to the published OMx methods (see
 // the semiempirical PES hardening pass):
 //   * STO radial densities (MSINDO s2int/c2int/v2int kernels) replace the
 //     ζ-scaled Gaussian STO-3G/ECP-3G basis of Dral 2016 §2.3.
-//   * (μμ|νν) cross-channel (pσpπ|pσpπ)-type quadrupole couplings and the
-//     two-centre exchange integrals (μν|μν) keep the spherical Klopman–Ohno
-//     monopole value.
+//   * Only (μμ|νν) channels are stored. Other same-centre density products
+//     are omitted; both Coulomb and exchange use this σ/π-resolved tensor
+//     subset, not a blanket spherical-monopole exchange approximation.
 //   * OM1's core–valence ECP (analytic integrals, Klopman–Ohno scaled) is
 //     omitted — OM1 publishes no semiempirical ECP parameters (Dral 2016
 //     Table 1).  OM2/OM3 use the published ECP formula (Weber 2000 eq 60).
 
 #include "vibeqc/semiempirical/methods/nddo/omx_fock.hpp"
+#include "vibeqc/semiempirical/methods/nddo/omx_gaussian_pair.hpp"
 #include "vibeqc/semiempirical/methods/nddo/gradient_fd_checks.hpp"
 #include "vibeqc/semiempirical/methods/nddo/slater_overlap.hpp"
 
@@ -343,6 +349,13 @@ struct OMxContext {
     Eigen::MatrixXd Vat;       // n_basis × n_atoms: f_KO·⟨μ|1/r_X|μ⟩ (eq 14)
     Eigen::MatrixXd Vs_loc;    // n_basis × n_atoms: −Z_X f_KO (μμ, s_X s_X),
                                // p sph-averaged (eq 10 local energies)
+    struct GaussianPair {
+        int first_a, first_b;
+        OMxGaussianPair operands;
+    };
+    bool gaussian_om2 = false;
+    std::vector<GaussianPair> gaussian_pairs;
+    Eigen::MatrixXd attraction;  // full same-centre Gaussian attraction blocks
     Eigen::MatrixXd H_core;
     double E_core = 0.0;       // Σ f_KO Z_A Z_B / R (eq 20)
 };
@@ -353,7 +366,7 @@ Eigen::MatrixXd build_omx_core_hamiltonian_v2(const Molecule& mol,
                                               const OMxContext& ctx);
 
 OMxContext omx_setup(const Molecule& mol, const OMxParameterSet& params,
-                     const char* who) {
+                     const char* who, bool legacy_operands = false) {
     if (mol.atoms().empty())
         throw std::invalid_argument(std::string(who) + ": empty molecule");
     // Element coverage check.
@@ -436,6 +449,55 @@ OMxContext omx_setup(const Molecule& mol, const OMxParameterSet& params,
     for (int a = 0; a < ctx.n_atoms; ++a)
         ctx.core_charge[a] = omx_valence_electrons(atoms[a].Z);
 
+    ctx.gaussian_om2 = params.variant() == OMxVariant::OM2 && !legacy_operands;
+    if (ctx.gaussian_om2) {
+        ctx.S = Eigen::MatrixXd::Identity(ctx.n_basis, ctx.n_basis);
+        ctx.Vs_loc = Eigen::MatrixXd::Zero(ctx.n_basis, ctx.n_atoms);
+        ctx.attraction = Eigen::MatrixXd::Zero(ctx.n_basis, ctx.n_basis);
+        std::vector<int> first(ctx.n_atoms), count(ctx.n_atoms);
+        for (int mu = 0; mu < ctx.n_basis; ++mu) {
+            const int a = ctx.ao_atom[mu];
+            if (!count[a]) first[a] = mu;
+            ++count[a];
+        }
+        for (int a = 0; a < ctx.n_atoms; ++a) {
+            const auto& ea = *params.omx_data(atoms[a].Z);
+            for (int b = a + 1; b < ctx.n_atoms; ++b) {
+                const auto& eb = *params.omx_data(atoms[b].Z);
+                double r2 = 0.0;
+                for (int d = 0; d < 3; ++d) {
+                    const double delta = atoms[a].xyz[d] - atoms[b].xyz[d];
+                    r2 += delta * delta;
+                }
+                auto pair = evaluate_omx_gaussian_pair(
+                    om2_gaussian_valence(atoms[a].Z, ea.zeta),
+                    om2_gaussian_valence(atoms[b].Z, eb.zeta),
+                    atoms[a].xyz, atoms[b].xyz,
+                    omx_gamma_k(ea, eb, std::sqrt(r2)),
+                    ctx.core_charge[a], ctx.core_charge[b]);
+                const int na = count[a], nb = count[b];
+                ctx.S.block(first[a], first[b], na, nb) = pair.overlap;
+                ctx.S.block(first[b], first[a], nb, na) = pair.overlap.transpose();
+                ctx.attraction.block(first[a], first[a], na, na) += pair.attraction_a_scaled;
+                ctx.attraction.block(first[b], first[b], nb, nb) += pair.attraction_b_scaled;
+                // Eq.10 uses the spherical average of the three p local
+                // matrix elements, not only the bond-axis p component.
+                double p_a = 0.0, p_b = 0.0;
+                for (int i = 1; i < na; ++i) p_a += pair.eri_scaled(i * na + i, 0) / 3.0;
+                for (int j = 1; j < nb; ++j) p_b += pair.eri_scaled(0, j * nb + j) / 3.0;
+                for (int i = 0; i < na; ++i)
+                    ctx.Vs_loc(first[a] + i, b) = -ctx.core_charge[b]
+                        * (i == 0 ? pair.eri_scaled(0, 0) : p_a);
+                for (int j = 0; j < nb; ++j)
+                    ctx.Vs_loc(first[b] + j, a) = -ctx.core_charge[a]
+                        * (j == 0 ? pair.eri_scaled(0, 0) : p_b);
+                ctx.E_core += pair.core_energy;
+                ctx.gaussian_pairs.push_back({first[a], first[b], std::move(pair)});
+            }
+        }
+        ctx.H_core = build_omx_core_hamiltonian_v2(mol, params, ctx);
+        return ctx;
+    }
     ctx.S = build_omx_overlap(mol, params, ctx.ao_Z, ctx.ao_atom, ctx.ao_type);
 
     // ---- Klopman-scaled analytic monopole integrals (eqs 13–14, 18–20) ----
@@ -617,11 +679,13 @@ Eigen::MatrixXd build_omx_core_hamiltonian_v2(const Molecule& mol,
         H(mu, mu) += ctx.U_s[mu];
         const int a = ctx.ao_atom[mu];
         for (int b = 0; b < n_atoms; ++b) {
-            if (b == a) continue;
+            if (b == a || ctx.gaussian_om2) continue;
             // (V^s + V^PI)_μμ,B = −Z_B^core f_KO ⟨μ|1/r_B|μ⟩  (eqs 13–14).
             H(mu, mu) -= static_cast<double>(ctx.core_charge[b]) * ctx.Vat(mu, b);
         }
     }
+
+    if (ctx.gaussian_om2) H += ctx.attraction;
 
     // ---- Two-centre resonance β_μλ (eq 7, first term) ----
     H += Beta;
@@ -714,12 +778,18 @@ Eigen::MatrixXd build_omx_core_hamiltonian_v2(const Molecule& mol,
             const auto& idx_a = aos_on[a];
             const int n_ao_a = static_cast<int>(idx_a.size());
             std::vector<double> S_va(n_ao_a), G_va(n_ao_a);
+            Eigen::MatrixXd gaussian_core_overlap;
+            if (ctx.gaussian_om2)
+                gaussian_core_overlap = omx_gaussian_overlap(
+                    om2_gaussian_valence(atoms[a].Z, zeta_a),
+                    om2_gaussian_core(ed_b->zeta_alpha), atoms[a].xyz, atoms[b].xyz);
             for (int i = 0; i < n_ao_a; ++i) {
                 const int mu = idx_a[i];
                 const int t_mu = ctx.ao_type[mu];
-                S_va[i] = nddo_sto_overlap(n_a, t_mu, zeta_a, zeta_a,
-                                           1, 0, ed_b->zeta_alpha, ed_b->zeta_alpha,
-                                           dx, dy, dz, R);
+                S_va[i] = ctx.gaussian_om2 ? gaussian_core_overlap(i, 0)
+                    : nddo_sto_overlap(n_a, t_mu, zeta_a, zeta_a,
+                                       1, 0, ed_b->zeta_alpha, ed_b->zeta_alpha,
+                                       dx, dy, dz, R);
                 // G_μα (eq 63): valence orbital's plain (non-X–H) β/α on A,
                 // core orbital's β_α/α_α on B; same rotation/sign convention
                 // as the valence resonance.  μ here is the FIRST index of a
@@ -763,6 +833,32 @@ Eigen::MatrixXd build_omx_core_hamiltonian_v2(const Molecule& mol,
 //   −½ Σ_{λ∈A,σ∈B} P_λσ (μλ,νσ): only the (μμ,νν) monopole products
 //   survive, so the SAME Γ_μν integrals enter the exchange pattern.
 // ===========================================================================
+
+// NDDO retains (mu_A nu_A | lambda_B sigma_B). Consequently its
+// Coulomb response is atom-diagonal, while exchange is an A/B block.
+// spin_density is D/2 for RHF or the appropriate spin density for UHF.
+void add_om2_gaussian_jk(const OMxContext& ctx,
+                         const Eigen::MatrixXd& total_density,
+                         const Eigen::MatrixXd& spin_density,
+                         Eigen::MatrixXd& fock) {
+    for (const auto& entry : ctx.gaussian_pairs) {
+        const auto& pair = entry.operands;
+        const int a = entry.first_a, b = entry.first_b;
+        const int na = pair.overlap.rows(), nb = pair.overlap.cols();
+        fock.block(a, a, na, na) += pair.coulomb_a(total_density.block(b, b, nb, nb));
+        fock.block(b, b, nb, nb) += pair.coulomb_b(total_density.block(a, a, na, na));
+        for (int mu = 0; mu < na; ++mu)
+            for (int lam = 0; lam < nb; ++lam) {
+                double exchange = 0.0;
+                for (int nu = 0; nu < na; ++nu)
+                    for (int sig = 0; sig < nb; ++sig)
+                        exchange -= spin_density(a + nu, b + sig)
+                            * pair.eri_scaled(mu * na + nu, lam * nb + sig);
+                fock(a + mu, b + lam) += exchange;
+                fock(b + lam, a + mu) += exchange;
+            }
+    }
+}
 
 Eigen::MatrixXd build_omx_fock_v2(const OMxContext& ctx,
                                   const Eigen::MatrixXd& D) {
@@ -831,6 +927,11 @@ Eigen::MatrixXd build_omx_fock_v2(const OMxContext& ctx,
                 F(nu, mu) += f_off;
             }
         }
+    }
+
+    if (ctx.gaussian_om2) {
+        add_om2_gaussian_jk(ctx, D, 0.5 * D, F);
+        return F;
     }
 
     // ---- Two-centre Coulomb (eq 18, σ/π-resolved) ----
@@ -960,12 +1061,25 @@ OMxLegacyPairOperands evaluate_omx_legacy_pair_operands(
         for (double x : atom.xyz)
             if (!std::isfinite(x))
                 throw std::invalid_argument("OMx legacy operands: nonfinite coordinate");
-    const OMxContext ctx = omx_setup(mol, params, "OMx legacy operands");
+    const OMxContext ctx = omx_setup(mol, params, "OMx legacy operands", true);
     if (density.rows() != ctx.n_basis || density.cols() != ctx.n_basis
         || !density.allFinite() || !density.isApprox(density.transpose(), 1e-12))
         throw std::invalid_argument("OMx legacy operands: invalid density");
     const Eigen::MatrixXd zero = Eigen::MatrixXd::Zero(ctx.n_basis, ctx.n_basis);
     return {ctx.S, build_omx_fock_v2(ctx, density) - build_omx_fock_v2(ctx, zero)};
+}
+
+OM2GaussianOperands evaluate_om2_gaussian_operands(
+    const Molecule& mol, const OMxParameterSet& params,
+    const Eigen::MatrixXd& density) {
+    if (params.variant() != OMxVariant::OM2)
+        throw std::invalid_argument("OM2 Gaussian operands require OM2 parameters");
+    const auto ctx = omx_setup(mol, params, "OM2 Gaussian operands");
+    if (density.rows() != ctx.n_basis || density.cols() != ctx.n_basis
+        || !density.allFinite() || !density.isApprox(density.transpose(), 1e-12))
+        throw std::invalid_argument("OM2 Gaussian operands: invalid density");
+    const auto fock = build_omx_fock_v2(ctx, density);
+    return {ctx.S, ctx.H_core, fock, ctx.E_core, omx_energy(ctx, density, fock)};
 }
 
 PM6Result run_omx_v2(
@@ -1226,25 +1340,31 @@ UPM6Result run_uomx_v2(
         }
 
         // ---- Two-centre Coulomb (eq 18) + exchange ----
-        for (int mu = 0; mu < ctx.n_basis; ++mu) {
-            double v = 0.0;
-            for (int nu = 0; nu < ctx.n_basis; ++nu) {
-                if (ctx.ao_atom[nu] == ctx.ao_atom[mu]) continue;
-                v += D_tot(nu, nu) * ctx.Gamma_ee(mu, nu);
+        if (ctx.gaussian_om2) {
+            add_om2_gaussian_jk(ctx, D_tot, Da, Fa);
+            add_om2_gaussian_jk(ctx, D_tot, Db, Fb);
+        } else {
+            for (int mu = 0; mu < ctx.n_basis; ++mu) {
+                double v = 0.0;
+                for (int nu = 0; nu < ctx.n_basis; ++nu) {
+                    if (ctx.ao_atom[nu] == ctx.ao_atom[mu]) continue;
+                    v += D_tot(nu, nu) * ctx.Gamma_ee(mu, nu);
+                }
+                Fa(mu, mu) += v;
+                Fb(mu, mu) += v;
             }
-            Fa(mu, mu) += v;
-            Fb(mu, mu) += v;
-        }
-        for (int mu = 0; mu < ctx.n_basis; ++mu) {
-            int a_mu = ctx.ao_atom[mu];
-            for (int nu = mu + 1; nu < ctx.n_basis; ++nu) {
-                int a_nu = ctx.ao_atom[nu];
-                if (a_mu == a_nu) continue;
-                double exa = -Da(mu, nu) * ctx.Gamma_ee(mu, nu);
-                double exb = -Db(mu, nu) * ctx.Gamma_ee(mu, nu);
-                Fa(mu, nu) += exa; Fa(nu, mu) += exa;
-                Fb(mu, nu) += exb; Fb(nu, mu) += exb;
+            for (int mu = 0; mu < ctx.n_basis; ++mu) {
+                int a_mu = ctx.ao_atom[mu];
+                for (int nu = mu + 1; nu < ctx.n_basis; ++nu) {
+                    int a_nu = ctx.ao_atom[nu];
+                    if (a_mu == a_nu) continue;
+                    double exa = -Da(mu, nu) * ctx.Gamma_ee(mu, nu);
+                    double exb = -Db(mu, nu) * ctx.Gamma_ee(mu, nu);
+                    Fa(mu, nu) += exa; Fa(nu, mu) += exa;
+                    Fb(mu, nu) += exb; Fb(nu, mu) += exb;
+                }
             }
+
         }
 
         // ---- DIIS residuals (orthogonal basis: [F, P] per spin) ----

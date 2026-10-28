@@ -162,6 +162,7 @@ def _write_molecule_qvf_artifact(
 
 
 def _classify_periodic_exception(row: CodeRow, exc: Exception) -> None:
+    row.status = "error"
     row.note = f"{type(exc).__name__}: {str(exc)[:160]}"
     if _DENSE_IONIC_EWALD_RETIRED in str(exc):
         row.status = "unavailable"
@@ -459,21 +460,28 @@ def run_periodic_case(
         system = _build_periodic_system(spec)
         row.charge = int(system.charge)
         row.electrostatic_background = state["electrostatic_background"]
-        row.n_electrons = int(system.n_electrons())
-        unpaired = int(system.multiplicity) - 1
-        row.n_alpha = (row.n_electrons + unpaired) // 2
-        row.n_beta = (row.n_electrons - unpaired) // 2
-        plog.info(
-            f"system: {len(system.unit_cell)} atoms / {row.n_electrons} electrons "
-            f"(alpha {row.n_alpha}, beta {row.n_beta}; {state['convention']})"
-        )
-
         basis = vq.make_basis(system.unit_cell_molecule(), basis_name)
         plog.info(
             f"basis:  {basis_name} / {basis.nbasis} bf / {basis.nshells} shells"
         )
         row.n_basis_functions = int(basis.nbasis)
         row.n_basis_shells = int(basis.nshells)
+        # The spec counts all electrons; a scalar ECP removes paired core
+        # electrons. Resolve the same basis metadata as the public driver.
+        from vibeqc.periodic_runner import _resolve_ecp_data
+        _, _, _, total_core = _resolve_ecp_data(system, basis)
+        row.n_electrons = int(system.n_electrons()) - total_core
+        unpaired = int(system.multiplicity) - 1
+        if (total_core < 0 or total_core % 2 or row.n_electrons < unpaired
+                or (row.n_electrons - unpaired) % 2):
+            raise ValueError("invalid periodic ECP valence electron/spin counts")
+        row.n_alpha = (row.n_electrons + unpaired) // 2
+        row.n_beta = (row.n_electrons - unpaired) // 2
+        plog.info(
+            f"system: {len(system.unit_cell)} atoms / {row.n_electrons} explicit electrons "
+            f"({total_core} replaced core; alpha {row.n_alpha}, beta {row.n_beta}; "
+            f"{state['convention']})"
+        )
         if artifact_dir is not None:
             _write_json(artifact_dir / "input_identity.json",
                         _input_identity(system, basis, basis_name, method))
@@ -508,13 +516,18 @@ def run_periodic_case(
         row.severity = eigs.worst_severity
         row.min_eigval_S = float(eigs.worst_min_eigenvalue)
 
-        # Build kmesh (IBZ reduction needs system.symmetry populated).
+        # This preflight mesh is only for logging. Attaching symmetry here
+        # changes later public-driver admission: scalar BIPOLE ECP currently
+        # requires the full mesh, so do not mutate its system into an IBZ job.
+        use_mesh_symmetry = not (jk_method == "bipole" and total_core)
         if kmesh == (1, 1, 1):
             kpts = vq.KPoints.gamma(system)
         else:
-            vq.attach_symmetry(system)
-            kpts = vq.KPoints.monkhorst_pack(system, list(kmesh), symmetry=True)
-        plog.info(f"kpts: {len(kpts)} IBZ-reduced point(s) for mesh {kmesh}")
+            if use_mesh_symmetry:
+                vq.attach_symmetry(system)
+            kpts = vq.KPoints.monkhorst_pack(system, list(kmesh), symmetry=use_mesh_symmetry)
+        mesh_kind = "IBZ-reduced" if use_mesh_symmetry else "full-mesh"
+        plog.info(f"kpts: {len(kpts)} {mesh_kind} point(s) for mesh {kmesh}")
 
         plog.banner("SCF")
         t0 = time.perf_counter()
@@ -556,6 +569,12 @@ def run_periodic_case(
             progress=plog,
         )
         wall = time.perf_counter() - t0
+        # BIPOLE retains its applied ECP core count. A conflicting or missing
+        # receipt cannot substantiate the preflight valence state.
+        observed_core = getattr(result, "ecp_total_ncore", None)
+        if ((observed_core is not None and observed_core != total_core)
+                or (jk_method == "bipole" and total_core and observed_core is None)):
+            raise ValueError("periodic result ECP core count does not confirm the requested state")
 
         row.wall_s = wall
         row.converged = bool(getattr(result, "converged", False))

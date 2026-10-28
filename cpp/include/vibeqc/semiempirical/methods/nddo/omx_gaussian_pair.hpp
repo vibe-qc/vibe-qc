@@ -9,13 +9,22 @@ namespace vibeqc::semiempirical::nddo {
 
 // Coefficients multiply normalized Cartesian primitives. A required s shell
 // and an optional p shell share exponents (bohr^-2 before zeta^2 scaling).
-// Each contraction is explicitly normalized; no basis tables are supplied.
+// Each contraction is explicitly normalized. The struct takes explicit data;
+// the OM2 helpers below supply the documented printed-precision tables.
 struct OMxGaussianContraction {
     std::vector<double> exponents;
     std::vector<double> s_coefficients;
     std::vector<double> p_coefficients;
     double zeta = 1.0;
 };
+
+// Unit-exponent STO-3G 1s and printed ECP-3G valence contractions.
+// Basis precision is the published table precision, not an unprinted fit.
+OMxGaussianContraction om2_gaussian_valence(int atomic_number, double zeta);
+OMxGaussianContraction om2_gaussian_core(double zeta);
+Eigen::MatrixXd omx_gaussian_overlap(
+    const OMxGaussianContraction& a, const OMxGaussianContraction& b,
+    const std::array<double, 3>& origin_a, const std::array<double, 3>& origin_b);
 
 struct OMxGaussianPair {
     // Atom-local AO order s,px,py,pz, or s only; positive Cartesian phases.

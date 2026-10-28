@@ -690,3 +690,8 @@ Legacy Lanczos also refuses explicit root counts larger than its available
 Krylov dimension before any operator application. It cannot silently lower
 the requested count and certify a partial spectrum. A later Krylov breakdown
 that yields fewer roots still reports an unconverged result.
+
+Warm-start capability admission applies to all legacy descriptor routes,
+including standard and interior problems. Backends that do not consume seeds
+refuse supplied `guess_vectors` before dispatch, using the shared capability
+table. Supported Davidson seeds and caller-owned options remain unchanged.

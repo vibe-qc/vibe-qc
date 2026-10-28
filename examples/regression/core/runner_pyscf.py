@@ -240,6 +240,7 @@ def run_periodic(payload):
         payload["method"], cell, payload["kmesh"], pbc_dft, pbc_scf
     )
     nelec_per_cell = payload.get("nelec_per_cell")
+    resolved_nelec_per_cell = None
     if nelec_per_cell is not None:
         # The request counts all electrons; an ECP removes paired core
         # electrons, so each spin loses half of them.
@@ -248,6 +249,7 @@ def run_periodic(payload):
         if n_core % 2 or n_alpha + n_beta != cell.nelectron or n_beta < 0:
             raise RuntimeError(f"cell has {cell.nelectron} valence electrons "
                                f"({n_core} in ECP cores), request {nelec_per_cell}")
+        resolved_nelec_per_cell = [n_alpha, n_beta]
         if payload["method"]["scf"] in ("uhf", "uks"):
             # Pin the uniform per-cell state. K-point classes count electrons
             # over the whole Born-von Karman supercell; cell.spin alone fills
@@ -304,7 +306,7 @@ def run_periodic(payload):
         "n_basis_functions": int(cell.nao_nr()),
         "n_basis_shells": int(cell.nbas),
         "n_electrons": int(cell.nelectron),
-        "nelec_per_cell": nelec_per_cell,
+        "nelec_per_cell": resolved_nelec_per_cell,
         "charge": int(cell.charge),
         "electrostatic_background": background,
         "identity": identity,

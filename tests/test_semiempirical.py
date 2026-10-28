@@ -4064,3 +4064,68 @@ class TestRestrictedNDDOOrbitalResult:
         np.testing.assert_array_equal(result.density, before[1])
         assert result.parameter_identity == before[2]
         assert result.parameter_sha256 == before[3]
+
+
+# Production Gaussian OM2 operators: no molecular accuracy claim.
+def _om2_production_operands(z, xyz, density):
+    from vibeqc.semiempirical.methods.omx_params import load_omx_params
+    mol = Molecule([Atom(a, x) for a, x in zip(z, xyz)])
+    return _se.nddo._evaluate_om2_gaussian_operands(mol, load_omx_params("om2"), density)
+
+
+def test_om2_production_carbon_missing_channel_witness():
+    xyz = [[0., 0., 0.], [0., 0., 3.]]
+    zero = _om2_production_operands([6, 6], xyz, np.zeros((8, 8)))
+    p = np.zeros((8, 8)); p[4, 4] = 2
+    loaded = _om2_production_operands([6, 6], xyz, p)
+    assert zero.overlap[0, 4] == pytest.approx(0.14127900442324967, abs=1e-12, rel=0)
+    assert (loaded.fock-zero.fock)[0, 3] == pytest.approx(0.11237394971404491, abs=1e-12, rel=0)
+
+
+def test_om2_production_full_exchange_block_uses_offdiagonal_pair_channels():
+    # Only cross-centre P_sA,sB: the pzA/sB exchange channel is nonzero.
+    xyz = [[0., 0., 0.], [0., 0., 3.]]
+    zero = _om2_production_operands([6, 6], xyz, np.zeros((8, 8)))
+    p = np.zeros((8, 8)); p[0, 4] = p[4, 0] = 0.4
+    loaded = _om2_production_operands([6, 6], xyz, p)
+    assert (loaded.fock-zero.fock)[3, 4] == pytest.approx(
+        -0.2*0.056186974857022454, abs=1e-12, rel=0)
+
+
+def test_om2_production_energy_density_derivative_and_response_reciprocity():
+    xyz = [[0., 0., 0.], [0.4, -0.7, 2.4], [-1.1, 0.3, 0.4]]
+    rng = np.random.default_rng(496)
+    p = rng.normal(size=(9, 9)); p = (p+p.T)*0.05
+    dp = rng.normal(size=(9, 9)); dp = (dp+dp.T)*0.05
+    base = _om2_production_operands([6, 8, 1], xyz, p)
+    step = 1e-4
+    plus = _om2_production_operands([6, 8, 1], xyz, p+step*dp)
+    minus = _om2_production_operands([6, 8, 1], xyz, p-step*dp)
+    assert (plus.total_energy-minus.total_energy)/(2*step) == pytest.approx(
+        np.sum(base.fock*dp), abs=2e-9, rel=0)
+    zero = _om2_production_operands([6, 8, 1], xyz, np.zeros_like(p))
+    other = _om2_production_operands([6, 8, 1], xyz, dp)
+    assert np.sum(p*(other.fock-zero.fock)) == pytest.approx(
+        np.sum(dp*(base.fock-zero.fock)), abs=1e-12, rel=0)
+
+
+def test_om2_production_rotated_asymmetric_molecule_operator_covariance():
+    xyz = np.array([[0., 0., 0.], [0.4, -0.7, 2.4], [-1.1, 0.3, 0.4]])
+    q, _ = np.linalg.qr(np.array([[1., 2., 4.], [-2., 1., 3.], [1., 1., -2.]]))
+    if np.linalg.det(q) < 0: q[:, 0] *= -1
+    u = np.eye(9); u[1:4, 1:4] = q; u[5:8, 5:8] = q
+    rng = np.random.default_rng(493)
+    p = rng.normal(size=(9, 9)); p = (p+p.T)*0.05
+    a = _om2_production_operands([6, 8, 1], xyz.tolist(), p)
+    b = _om2_production_operands([6, 8, 1], (xyz@q.T + [3., 1., -2.]).tolist(), u@p@u.T)
+    for field in ["overlap", "core_hamiltonian", "fock"]:
+        np.testing.assert_allclose(getattr(b, field), u@getattr(a, field)@u.T, atol=2e-11, rtol=0)
+    assert a.total_energy == pytest.approx(b.total_energy, abs=2e-11, rel=0)
+    assert a.core_energy == pytest.approx(b.core_energy, abs=2e-11, rel=0)
+
+
+def test_om2_production_om3_is_not_silently_changed_to_om2():
+    from vibeqc.semiempirical.methods.omx_params import load_omx_params
+    mol = Molecule([Atom(1, [0., 0., 0.]), Atom(1, [0., 0., 1.4])])
+    with pytest.raises(ValueError, match="OM2 parameters"):
+        _se.nddo._evaluate_om2_gaussian_operands(mol, load_omx_params("om3"), np.eye(2))

@@ -16595,6 +16595,24 @@ py::class_<vibeqc::semiempirical::SemiempiricalMethodRegistry>(
         }, py::arg("mol"), py::arg("params"), py::arg("density"),
         "Internal unchanged-route overlap and F(P)-F(0); no SCF is run.");
 
+    using OM2GaussianOperands = vibeqc::semiempirical::nddo::OM2GaussianOperands;
+    py::class_<OM2GaussianOperands>(m_nddo, "_OM2GaussianOperands")
+        .def_readonly("overlap", &OM2GaussianOperands::overlap)
+        .def_readonly("core_hamiltonian", &OM2GaussianOperands::core_hamiltonian)
+        .def_readonly("fock", &OM2GaussianOperands::fock)
+        .def_readonly("core_energy", &OM2GaussianOperands::core_energy)
+        .def_readonly("total_energy", &OM2GaussianOperands::total_energy);
+    m_nddo.def("_evaluate_om2_gaussian_operands",
+        [](const vibeqc::Molecule& mol,
+           const vibeqc::semiempirical::nddo::OMxParameterSet& params,
+           const Eigen::MatrixXd& density) {
+            return run_with_parameter_snapshot(params, [&](const auto& snapshot) {
+                return vibeqc::semiempirical::nddo::evaluate_om2_gaussian_operands(
+                    mol, snapshot, density);
+            });
+        }, py::arg("mol"), py::arg("params"), py::arg("density"),
+        "Assembled OM2 Gaussian operators at an explicit density; no SCF.");
+
     // --- OMx driver ---
     m_nddo.def(
         "run_omx_v2",

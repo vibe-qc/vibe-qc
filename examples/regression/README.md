@@ -144,7 +144,17 @@ separate from the total spin count. The state is part of a case's identity
 (`..._uhf__2x1x1__mult3`), crosses process isolation explicitly, and each
 row records the resolved per-cell `n_alpha` and `n_beta`. A comparison fails
 when the two codes report different counts, or when only one side confirms
-a polarized state.
+a polarized state. With an ECP, the request counts all electrons but result
+rows report the explicit valence total and spin counts after removing paired
+core electrons. This is the valence Hamiltonian of Hay and Wadt,
+DOI:10.1063/1.448799, Sec. II Eqs. (5), (10)-(11). BIPOLE results must confirm
+the resolved ECP core count. Rows whose spin counts do not sum to their
+electron total are rejected, even if both programs report the same mismatch.
+The comparison preflight keeps scalar BIPOLE ECP on its supported full mesh;
+it does not attach symmetry merely to print a reduced mesh. Default PySCF
+GDF Cl2/LANL2DZ totals still miss the 0.1 mHa comparison gate, despite matched
+valence counts. The runner reports that numerical failure; it is not accepted
+ECP energy parity. Reference convergence is tracked separately in #699.
 
 These requests are refused before any calculation:
 

@@ -392,3 +392,77 @@ def test_charged_state_serialization_survives_process_boundary(tmp_path, monkeyp
     monkeypatch.setattr(runner_vibeqc, "run_periodic_case", receive)
     _isolated_runner._run_periodic("vibeqc", H2, "sto-3g", METHODS["uhf"],
                                    tmp_path / "case.log", "t", "dev", "t")
+
+
+def _cl2_ecp_spec():
+    from vibeqc_spec import AtomFrac
+    a = 20 * 0.529177210903
+    return replace(H2, id="cl2_ecp", atoms=(
+        AtomFrac("Cl", 17, (0., 0., -0.995 / a)),
+        AtomFrac("Cl", 17, (0., 0., 0.995 / a))),
+        lattice_ang=((a, 0., 0.), (0., a, 0.), (0., 0., a)),
+        default_cutoff_bohr=12., default_nuclear_cutoff_bohr=20.,
+        default_omega=0.39987715934900675, default_damping=0.)
+
+
+def test_ecp_comparison_row_uses_valence_counts(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner_vibeqc.vq, "run_periodic_job", lambda *a, **kw:
+                        SimpleNamespace(energy=-29., converged=True, n_iter=2,
+                                        ecp_total_ncore=20, backend="pbc-bipole"))
+    row = runner_vibeqc.run_periodic_case(
+        run_id="t", target="dev", code_version="t", spec=_cl2_ecp_spec(),
+        basis_name="lanl2dz", method=METHODS["uhf"], kmesh=(1, 1, 1), jk_method="bipole",
+        log_path=tmp_path / "case.log")
+    assert row.converged
+    assert (row.n_electrons, row.n_alpha, row.n_beta) == (14, 7, 7)
+
+
+def test_comparison_rejects_internally_inconsistent_spin_totals():
+    ref = replace(_counted("pyscf", 17, 17), n_electrons=14)
+    assert _case_mismatch(ref, replace(ref, code="vibeqc"))
+    assert _case_mismatch(replace(ref, n_alpha=7, n_beta=7), ref)
+
+
+@pytest.mark.skipif(importlib.util.find_spec("pyscf") is None, reason="PySCF not installed")
+@pytest.mark.parametrize("method", ["rhf", "uhf"])
+@pytest.mark.parametrize("mesh", [(1, 1, 1), (3, 1, 1)])
+def test_ecp_reference_comparison_preserves_valence_state(tmp_path, method, mesh):
+    spec = _cl2_ecp_spec()
+    shared = dict(run_id="t", target="dev", spec=spec, basis_name="lanl2dz",
+                  method=METHODS[method], kmesh=mesh)
+    ref = runner_pyscf.run_periodic_case(
+        **shared, log_path=tmp_path / "pyscf.log", artifact_dir=tmp_path / "pyscf")
+    assert ref.converged, ref.note
+    assert (ref.n_electrons, ref.n_alpha, ref.n_beta) == (14, 7, 7)
+    row = runner_vibeqc.run_periodic_case(
+        **shared, code_version="t", jk_method="bipole", log_path=tmp_path / "vibeqc.log",
+        artifact_dir=tmp_path / "vibeqc")
+    assert row.converged, row.note
+    assert (row.n_electrons, row.n_alpha, row.n_beta) == (14, 7, 7)
+    assert not _case_mismatch(row, ref)
+    # Keep #658's original direct-RSJK reference and 1e-6 Ha BIPOLE gate.
+    direct = {(1, 1, 1): -29.3455846237986, (3, 1, 1): -29.340156129936254}
+    assert row.energy_ha == pytest.approx(direct[mesh], abs=1e-6)
+    # Default GDF misses the predeclared 0.1 mHa gate on this ECP fixture.
+    # Correct counts must expose that numerical failure, not a state mismatch.
+    from examples.regression.core.compare import annotate_against_reference
+    from vibeqc_spec import ExpectedRef
+    expected = ExpectedRef(system_id=spec.id, basis="lanl2dz", method_id=method,
+                           kmesh=mesh, primary_source="pyscf_at_runtime",
+                           tolerance_ha=1e-4, tolerance_rationale="Existing GDF gate")
+    annotate_against_reference([row, ref], "pyscf", expected)
+    assert row.status == "fail"
+    assert abs(row.delta_ha_vs_ref) > 1e-4
+
+
+@pytest.mark.parametrize("receipt", [None, 0, 18])
+def test_ecp_comparison_refuses_missing_or_wrong_bipole_core_receipt(tmp_path, monkeypatch, receipt):
+    monkeypatch.setattr(runner_vibeqc.vq, "run_periodic_job", lambda *a, **kw:
+                        SimpleNamespace(energy=-29., converged=True, n_iter=2,
+                                        ecp_total_ncore=receipt, backend="pbc-bipole"))
+    row = runner_vibeqc.run_periodic_case(
+        run_id="t", target="dev", code_version="t", spec=_cl2_ecp_spec(),
+        basis_name="lanl2dz", method=METHODS["uhf"], kmesh=(1, 1, 1), jk_method="bipole",
+        log_path=tmp_path / "case.log")
+    assert row.status == "error" and row.energy_ha is None
+    assert "ECP core count" in row.note

@@ -76,6 +76,52 @@ void validate_density(const Eigen::MatrixXd& density, Eigen::Index size) {
 
 }  // namespace
 
+// Hehre, Stewart & Pople, JCP 51, 2657 (1969), Table I, K=3 1s,
+// DOI 10.1063/1.1672392. Unit Slater exponent; zeta is applied once below.
+OMxGaussianContraction om2_gaussian_core(double zeta) {
+    return {{2.22766, 0.405771, 0.109818},
+            {0.154329, 0.535328, 0.444635}, {}, zeta};
+}
+
+OMxGaussianContraction om2_gaussian_valence(int z, double zeta) {
+    if (z == 1) return om2_gaussian_core(zeta);
+    // Kolb & Thiel, JCC 14, 775 (1993), p.783 Table I,
+    // DOI 10.1002/jcc.540140704. Preserve printed five-decimal precision.
+    // s and p coefficients multiply normalized primitives; append_shells
+    // normalizes each contraction and scales primitive exponents by zeta^2.
+    switch (z) {
+    case 6: return {{2.64486, 0.54215, 0.14466},
+                    {-0.19188, 0.61628, 0.54896},
+                    {0.20259, 0.55830, 0.45514}, zeta};
+    case 7: return {{3.68849, 0.77534, 0.20498},
+                    {-0.19269, 0.61888, 0.54926},
+                    {0.22281, 0.56032, 0.43859}, zeta};
+    case 8: return {{4.78449, 0.99860, 0.25687},
+                    {-0.19248, 0.66952, 0.50270},
+                    {0.24158, 0.55890, 0.43160}, zeta};
+    case 9: return {{6.01783, 1.25315, 0.31760},
+                    {-0.18850, 0.69800, 0.47427},
+                    {0.25667, 0.56013, 0.42139}, zeta};
+    default: throw std::invalid_argument("OM2 Gaussian basis supports H/C/N/O/F only");
+    }
+}
+
+Eigen::MatrixXd omx_gaussian_overlap(
+    const OMxGaussianContraction& a, const OMxGaussianContraction& b,
+    const std::array<double, 3>& origin_a, const std::array<double, 3>& origin_b) {
+    for (int d = 0; d < 3; ++d)
+        require(std::isfinite(origin_a[d]) && std::isfinite(origin_b[d]),
+                "OMx Gaussian overlap: nonfinite coordinate");
+    std::vector<ShellInfo> shells;
+    append_shells(a, origin_a, 0, shells);
+    append_shells(b, origin_b, 1, shells);
+    const BasisSet basis(Molecule({Atom{1, origin_a}, Atom{1, origin_b}}),
+                         shells, "<omx-explicit-overlap>", true);
+    const Eigen::Index na = a.p_coefficients.empty() ? 1 : 4;
+    const Eigen::Index nb = b.p_coefficients.empty() ? 1 : 4;
+    return compute_overlap(basis).block(0, na, na, nb);
+}
+
 OMxGaussianPair evaluate_omx_gaussian_pair(
     const OMxGaussianContraction& a, const OMxGaussianContraction& b,
     const std::array<double, 3>& origin_a,

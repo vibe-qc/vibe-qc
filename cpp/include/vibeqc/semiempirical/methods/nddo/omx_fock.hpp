@@ -1,4 +1,4 @@
-// OMx Fock matrix builder — proper OM1/OM2/OM3 Hamiltonian.
+// OMx Fock matrix builder — Gaussian OM2 and legacy OM1/OM3 operands.
 //
 // Implements the orthogonalization-corrected NDDO Hamiltonians
 // from the Thiel group:
@@ -16,9 +16,9 @@
 //   3. Orthogonalization corrections V^ORT: one-centre (eq 8, F1/F2) and,
 //      for OM2/OM3, three-centre (eq 9, G1/G2).
 //   4. Semiempirical ECP for OM2/OM3 (Weber 2000 eqs 60/63).
-//   5. Spherical Klopman–Ohno γ for all two-electron integrals and the
-//      core–core repulsion E_AB = Z_A^c Z_B^c γ_AB (eq 20 with f_KO/R → γ;
-//      no MNDO-style empirical exponential repulsion terms).
+//   5. OM2: complete Gaussian density-product pair integrals with uniform
+//      Klopman–Ohno scaling; core repulsion f_KO Z_A^c Z_B^c/R (eq 20).
+//      OM1/OM3 retain their σ/π-resolved STO diagonal-pair approximation.
 
 #pragma once
 
@@ -49,7 +49,7 @@ double omx_resonance_integral(
     const OMxParameterSet& params);
 
 // ---------------------------------------------------------------------------
-// OMx valence overlap matrix: STO overlaps with the per-element exponent ζ
+// Legacy OMx valence overlap matrix: STO overlaps with the per-element exponent ζ
 // (Dral 2016 Tables 1–3); one-centre blocks are identity.  Used only inside
 // the ORT/ECP correction terms — never in the secular equation.
 // ---------------------------------------------------------------------------
@@ -67,6 +67,16 @@ struct OMxLegacyPairOperands {
     Eigen::MatrixXd fock_delta;
 };
 OMxLegacyPairOperands evaluate_omx_legacy_pair_operands(
+    const Molecule& mol, const OMxParameterSet& params,
+    const Eigen::MatrixXd& density);
+
+// Assembled production OM2 operators at an explicit spin-summed density.
+// Algebraic diagnostic only: no SCF convergence or molecular acceptance implied.
+struct OM2GaussianOperands {
+    Eigen::MatrixXd overlap, core_hamiltonian, fock;
+    double core_energy = 0.0, total_energy = 0.0;
+};
+OM2GaussianOperands evaluate_om2_gaussian_operands(
     const Molecule& mol, const OMxParameterSet& params,
     const Eigen::MatrixXd& density);
 

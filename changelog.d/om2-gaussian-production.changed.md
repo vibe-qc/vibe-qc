@@ -1,0 +1,1 @@
+- Molecular OM2 now assembles Gaussian overlap, complete pair Coulomb/exchange, attraction/core and core-valence operands consistently from published printed-precision contractions; OM1/OM3 remain unchanged. Published-method accuracy and molecular state acceptance require validation beyond internal pair tests.

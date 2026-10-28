@@ -2095,3 +2095,32 @@ def test_legacy_lanczos_breakdown_does_not_certify_missing_roots():
     assert len(result.eigenvalues) == 1
     assert not result.converged
     assert result.residuals.max() < 1e-10
+
+
+@pytest.mark.parametrize("solver,interior", [("dense", False), ("lobpcg", False), ("jd", False), ("gplhr", False), ("lanczos", False), ("dense", True), ("jd", True), ("gplhr", True)])
+def test_legacy_standard_refuses_ignored_warm_start(monkeypatch, solver, interior):
+    from vibeqc.solvers.eigensolver import get_solver
+    def forbidden(*args, **kwargs):
+        pytest.fail("Unsupported warm start reached backend dispatch")
+    monkeypatch.setattr(type(get_solver(solver)), "solve", forbidden)
+    problem = EigenProblem(matrix=np.diag([-1., 2.]))
+    if interior:
+        problem = InteriorEigenProblem(problem, sigma=-.9)
+    options = SolverOptions(n_roots=1, guess_vectors=np.eye(2)[:, :1])
+    with pytest.raises(NotImplementedError, match="warm starts"):
+        solve_eigenproblem(problem, options, solver=solver)
+
+
+@pytest.mark.parametrize("solver", ["davidson", "hermitian_davidson"])
+def test_legacy_standard_warm_capability_preserves_valid_solve(solver):
+    seed = np.eye(2) if solver == "davidson" else np.eye(2)*np.exp(.3j)
+    before = seed.copy()
+    options = SolverOptions(n_roots=2, guess_vectors=seed, tol=1e-10)
+    f = np.diag([-1., 2.])
+    result = solve_eigenproblem(EigenProblem(matrix=f), options, solver=solver)
+    assert result.converged
+    c = result.eigenvectors
+    np.testing.assert_allclose(result.eigenvalues, [-1., 2.], atol=1e-12)
+    np.testing.assert_allclose(f @ c, c * result.eigenvalues, atol=1e-12)
+    np.testing.assert_allclose(c @ c.conj().T, np.eye(2), atol=1e-12)
+    np.testing.assert_array_equal(seed, before)
